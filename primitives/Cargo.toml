@@ -13,9 +13,7 @@ scale-info = { workspace = true }
 sp-core = { workspace = true }
 sp-runtime = { workspace = true }
 sp-std = { workspace = true }
-bitvec = { workspace = true }
 serde = { workspace = true, optional = true }
-blake2 = { workspace = true }
 
 [features]
 default = ["std"]
@@ -25,8 +23,6 @@ std = [
     "sp-core/std",
     "sp-runtime/std",
     "sp-std/std",
-    "bitvec/std",
     "serde/std",
-    "blake2/std",
 ]
 serde = ["dep:serde", "sp-core/serde"]

@@ -8,11 +8,15 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use bitvec::{order::Lsb0, vec::BitVec};
-use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
-use sp_runtime::RuntimeDebug;
+
+// Debug is available in no_std, core Debug in std
+#[cfg(feature = "std")]
+use core::fmt::Debug;
+#[cfg(not(feature = "std"))]
+use core::fmt::Debug;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
@@ -30,7 +34,7 @@ pub const HISTORICAL_ROOT_PRIMES: [u32; 6] = [3, 7, 11, 23, 47, 113];
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Role within a bucket determining access permissions.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Role {
     /// Can modify members, manage settings, delete data (if not frozen)
@@ -46,7 +50,7 @@ pub enum Role {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Provider role for a specific bucket agreement.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProviderRole<Balance, BlockNumber> {
     /// Receives data directly from writers.
@@ -77,7 +81,7 @@ pub enum ProviderRole<Balance, BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Action to take when ending an agreement.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EndAction {
     /// Pay provider in full
@@ -90,7 +94,7 @@ pub enum EndAction {
 }
 
 /// Reason for removing a primary provider from a bucket.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RemovalReason {
     /// Provider was slashed for failing a challenge
@@ -102,7 +106,7 @@ pub enum RemovalReason {
 }
 
 /// Parameters specific to replica agreement requests.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaRequestParams<Balance, BlockNumber> {
     /// Initial sync balance to fund per-sync payments
@@ -116,7 +120,7 @@ pub struct ReplicaRequestParams<Balance, BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Challenge identifier combining deadline and index.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeId<BlockNumber> {
     /// Block by which provider must respond
@@ -130,7 +134,7 @@ pub struct ChallengeId<BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// MMR leaf containing data root and size information.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrLeaf {
     /// Merkle root of chunk tree
@@ -142,7 +146,7 @@ pub struct MmrLeaf {
 }
 
 /// Merkle proof for verifying inclusion.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MerkleProof {
     /// Sibling hashes from leaf to root
@@ -152,7 +156,7 @@ pub struct MerkleProof {
 }
 
 /// MMR proof for verifying leaf inclusion.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrProof {
     /// Peaks of the MMR
@@ -168,7 +172,7 @@ pub struct MmrProof {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Payload that providers sign to commit to bucket state.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CommitmentPayload {
     /// Protocol version for future compatibility
@@ -214,7 +218,7 @@ impl CommitmentPayload {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Bucket snapshot representing canonical state at a checkpoint.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, RuntimeDebug)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BucketSnapshot<BlockNumber> {
     /// Canonical MMR root
@@ -227,7 +231,8 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i is set if primary_providers[i] signed.
-    pub primary_signers: BitVec<u8, Lsb0>,
+    /// Stored as bytes where bit at position n is at bytes[n/8] & (1 << (n%8))
+    pub primary_signers: Vec<u8>,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
@@ -248,13 +253,8 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 
 /// Compute blake2b-256 hash of data
 pub fn blake2_256(data: &[u8]) -> H256 {
-    use blake2::{Blake2b, Digest};
-    use sp_core::crypto::ByteArray;
-
-    let mut hasher = Blake2b::<sp_core::U32>::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    H256::from_slice(result.as_slice())
+    // Use sp_core's blake2_256 which is optimized and available in both std and no_std
+    sp_core::hashing::blake2_256(data).into()
 }
 
 /// Compute hash of two children for internal Merkle node

@@ -59,8 +59,10 @@ Normal operations (reads, writes, storage) happen off-chain between clients and 
 scalable-web3-storage/
 ├── primitives/           # Shared types (BucketId, Role, MMR types, etc.)
 ├── pallet/               # Substrate pallet (on-chain logic)
+├── runtime/              # Parachain runtime for Polkadot/Rococo
 ├── provider-node/        # Off-chain provider node (HTTP server)
 ├── client/               # Client library for storage operations
+├── chain-specs/          # Chain specification files
 └── docs/                 # Design documents
 ```
 
@@ -297,6 +299,105 @@ curl -X POST http://localhost:3000/commit \
 # 3. Get commitment
 curl "http://localhost:3000/commitment?bucket_id=1"
 ```
+
+## Running as a Parachain
+
+This project is designed to run as a parachain on Polkadot or Rococo using the **Polkadot Omni Node** approach. You only need to build the runtime WASM and use the generic collator provided by the Polkadot SDK.
+
+### Prerequisites
+
+1. Install the Polkadot Omni Node:
+```bash
+# From polkadot-sdk repository
+cargo build --release -p polkadot-omni-node
+```
+
+Or download a pre-built binary from the [Polkadot SDK releases](https://github.com/paritytech/polkadot-sdk/releases).
+
+### Build the Runtime
+
+```bash
+# Build the parachain runtime
+cargo build --release -p storage-parachain-runtime
+
+# The WASM blob will be at:
+# target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm
+```
+
+### Local Development (Zombienet)
+
+For local testing, use [Zombienet](https://github.com/paritytech/zombienet) to spin up a local relay chain and your parachain:
+
+1. Install Zombienet:
+```bash
+# Download from releases or build from source
+cargo install zombienet
+```
+
+2. Create a zombienet configuration (`zombienet.toml`):
+```toml
+[relaychain]
+default_command = "polkadot"
+chain = "rococo-local"
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+
+[[parachains]]
+id = 4000
+chain_spec_path = "chain-specs/storage-rococo.json"
+
+  [parachains.collator]
+  name = "storage-collator"
+  command = "polkadot-omni-node"
+  args = ["--runtime", "target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm"]
+```
+
+3. Start the network:
+```bash
+zombienet spawn zombienet.toml
+```
+
+### Deploy to Rococo
+
+To deploy to the Rococo testnet:
+
+1. **Build the runtime**:
+```bash
+cargo build --release -p storage-parachain-runtime
+```
+
+2. **Register your parachain**:
+   - Go to [Rococo Faucet](https://faucet.polkadot.io/) to get test tokens
+   - Reserve a ParaId on Rococo using the registrar pallet
+   - Submit the runtime WASM and genesis state
+
+3. **Run your collator**:
+```bash
+polkadot-omni-node \
+  --collator \
+  --chain chain-specs/storage-rococo.json \
+  --runtime target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm \
+  --relay-chain-rpc-urls wss://rococo-rpc.polkadot.io
+```
+
+### Chain Spec Configuration
+
+The chain spec at `chain-specs/storage-rococo.json` contains:
+- **Para ID**: 4000 (change this to your registered ID)
+- **Token**: STOR with 12 decimals
+- **Initial balances**: Pre-funded accounts for testing
+- **Collators**: Initial collator set
+
+To customize for your deployment:
+1. Update the `para_id` to your registered parachain ID
+2. Update initial balances and collators
+3. Set the sudo key to your admin account
 
 ## On-Chain Integration
 
