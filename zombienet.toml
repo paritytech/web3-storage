@@ -1,0 +1,28 @@
+[settings]
+timeout = 1000
+
+[relaychain]
+default_command = "polkadot"
+chain = "rococo-local"
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+  rpc_port = 9900
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+  rpc_port = 9901
+
+[[parachains]]
+id = 4000
+chain_spec_path = "chain-specs/storage-rococo.json"
+
+  [parachains.collator]
+  name = "storage-collator"
+  command = "polkadot-omni-node"
+  rpc_port = 9944
+  args = [
+    "--runtime=target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm"
+  ]
