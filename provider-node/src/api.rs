@@ -1,0 +1,413 @@
+//! HTTP API handlers for the provider node.
+
+use crate::error::Error;
+use crate::storage::{hex_decode, hex_encode, Storage};
+use crate::types::*;
+use crate::ProviderState;
+use axum::{
+    extract::{Query, State},
+    routing::{get, post},
+    Json, Router,
+};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use sp_core::H256;
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+
+/// Create the API router with all endpoints.
+pub fn create_router(state: Arc<ProviderState>) -> Router {
+    Router::new()
+        // Health and info
+        .route("/health", get(health))
+        .route("/info", get(info))
+        // Node operations
+        .route("/node", get(get_node).put(upload_node))
+        .route("/exists", post(check_exists))
+        // Commit and read
+        .route("/commit", post(commit))
+        .route("/read", get(read_chunks))
+        // Commitment and proofs
+        .route("/commitment", get(get_commitment))
+        .route("/mmr_proof", get(get_mmr_proof))
+        .route("/chunk_proof", get(get_chunk_proof))
+        // Bucket operations
+        .route("/buckets", get(list_buckets))
+        .route("/delete", post(delete_data))
+        // Replica sync
+        .route("/mmr_peaks", get(get_mmr_peaks))
+        .route("/mmr_subtree", get(get_mmr_subtree))
+        .route("/fetch_nodes", post(fetch_nodes))
+        .layer(CorsLayer::permissive())
+        .with_state(state)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health and Info
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "healthy".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+async fn info() -> Json<InfoResponse> {
+    Json(InfoResponse {
+        status: "healthy".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Node Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct GetNodeQuery {
+    hash: String,
+}
+
+async fn get_node(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<GetNodeQuery>,
+) -> Result<Json<DownloadNodeResponse>, Error> {
+    let hash_bytes = hex_decode(&query.hash).map_err(|_| Error::InvalidHash {
+        expected: query.hash.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let hash = H256::from_slice(&hash_bytes);
+
+    let node = state
+        .storage
+        .get_node(&hash)
+        .ok_or_else(|| Error::NodeNotFound(query.hash.clone()))?;
+
+    Ok(Json(DownloadNodeResponse {
+        hash: query.hash,
+        data: BASE64.encode(&node.data),
+        children: node.children.map(|c| {
+            c.iter()
+                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .collect()
+        }),
+    }))
+}
+
+async fn upload_node(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<UploadNodeRequest>,
+) -> Result<Json<UploadNodeResponse>, Error> {
+    // Decode hash
+    let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
+        expected: request.hash.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let hash = H256::from_slice(&hash_bytes);
+
+    // Decode data
+    let data = BASE64
+        .decode(&request.data)
+        .map_err(|e| Error::Serialization(e.to_string()))?;
+
+    // Decode children
+    let children = request
+        .children
+        .map(|c| {
+            c.iter()
+                .map(|h| {
+                    let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
+                        expected: h.clone(),
+                        actual: "invalid hex".to_string(),
+                    })?;
+                    Ok(H256::from_slice(&bytes))
+                })
+                .collect::<Result<Vec<_>, Error>>()
+        })
+        .transpose()?;
+
+    // Initialize bucket if needed
+    state.storage.init_bucket(request.bucket_id, u64::MAX);
+
+    // Store node
+    state
+        .storage
+        .store_node(request.bucket_id, hash, data, children)?;
+
+    Ok(Json(UploadNodeResponse { stored: true }))
+}
+
+async fn check_exists(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<ExistsRequest>,
+) -> Result<Json<ExistsResponse>, Error> {
+    let hashes: Vec<H256> = request
+        .hashes
+        .iter()
+        .map(|h| {
+            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
+                expected: h.clone(),
+                actual: "invalid hex".to_string(),
+            })?;
+            Ok(H256::from_slice(&bytes))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
+
+    Ok(Json(ExistsResponse {
+        exists: exists
+            .iter()
+            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .collect(),
+        missing: missing
+            .iter()
+            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .collect(),
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commit and Read
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn commit(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<CommitRequest>,
+) -> Result<Json<CommitResponse>, Error> {
+    let data_roots: Vec<H256> = request
+        .data_roots
+        .iter()
+        .map(|h| {
+            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
+                expected: h.clone(),
+                actual: "invalid hex".to_string(),
+            })?;
+            Ok(H256::from_slice(&bytes))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let (mmr_root, start_seq, leaf_indices) = state.storage.commit(request.bucket_id, data_roots)?;
+
+    // Generate signature (simplified - would use actual key)
+    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+
+    Ok(Json(CommitResponse {
+        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        start_seq,
+        leaf_indices,
+        provider_signature: signature,
+    }))
+}
+
+async fn read_chunks(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<ReadQuery>,
+) -> Result<Json<ReadResponse>, Error> {
+    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+        expected: query.data_root.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let data_root = H256::from_slice(&root_bytes);
+
+    // Calculate chunk indices
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
+    let start_chunk = query.offset / chunk_size;
+    let end_chunk = (query.offset + query.length + chunk_size - 1) / chunk_size;
+
+    let mut chunks = Vec::new();
+    for chunk_idx in start_chunk..end_chunk {
+        match state.storage.get_chunk_at_index(data_root, chunk_idx) {
+            Ok((data, proof)) => {
+                chunks.push(ChunkWithProof {
+                    hash: format!(
+                        "0x{}",
+                        hex_encode(storage_primitives::blake2_256(&data).as_bytes())
+                    ),
+                    data: BASE64.encode(&data),
+                    proof: proof
+                        .iter()
+                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .collect(),
+                });
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok(Json(ReadResponse { chunks }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commitment and Proofs
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn get_commitment(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<CommitmentQuery>,
+) -> Result<Json<CommitmentResponse>, Error> {
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    // Generate signature (simplified)
+    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+
+    Ok(Json(CommitmentResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        start_seq: bucket.start_seq,
+        leaf_count: bucket.leaf_count(),
+        provider_signature: signature,
+    }))
+}
+
+async fn get_mmr_proof(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<MmrProofQuery>,
+) -> Result<Json<MmrProofResponse>, Error> {
+    let (leaf, peaks) = state.storage.get_mmr_proof(query.bucket_id, query.leaf_index)?;
+
+    Ok(Json(MmrProofResponse {
+        leaf: MmrLeafData {
+            data_root: format!("0x{}", hex_encode(leaf.data_root.as_bytes())),
+            data_size: leaf.data_size,
+            total_size: leaf.total_size,
+        },
+        proof: MmrProofData {
+            peaks: peaks
+                .iter()
+                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .collect(),
+            siblings: vec![],
+        },
+    }))
+}
+
+async fn get_chunk_proof(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<ChunkProofQuery>,
+) -> Result<Json<ChunkProofResponse>, Error> {
+    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+        expected: query.data_root.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let data_root = H256::from_slice(&root_bytes);
+
+    let (chunk_data, proof) = state.storage.get_chunk_at_index(data_root, query.chunk_index)?;
+    let chunk_hash = storage_primitives::blake2_256(&chunk_data);
+
+    Ok(Json(ChunkProofResponse {
+        chunk_hash: format!("0x{}", hex_encode(chunk_hash.as_bytes())),
+        proof: MerkleProofData {
+            siblings: proof
+                .iter()
+                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .collect(),
+            path: vec![],
+        },
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bucket Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn list_buckets(
+    State(state): State<Arc<ProviderState>>,
+) -> Json<ListBucketsResponse> {
+    Json(ListBucketsResponse {
+        buckets: state.storage.list_buckets(),
+    })
+}
+
+async fn delete_data(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<DeleteRequest>,
+) -> Result<Json<DeleteResponse>, Error> {
+    // Note: In production, would verify admin_signature
+    let _ = request.admin_signature;
+
+    let (mmr_root, start_seq, leaf_count) = state
+        .storage
+        .delete_before(request.bucket_id, request.new_start_seq)?;
+
+    // Generate signature (simplified)
+    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+
+    Ok(Json(DeleteResponse {
+        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        start_seq,
+        leaf_count,
+        provider_signature: signature,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn get_mmr_peaks(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<MmrPeaksQuery>,
+) -> Result<Json<MmrPeaksResponse>, Error> {
+    let (mmr_root, peaks) = state.storage.get_mmr_peaks(query.bucket_id)?;
+
+    Ok(Json(MmrPeaksResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        peaks: peaks
+            .iter()
+            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .collect(),
+    }))
+}
+
+async fn get_mmr_subtree(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<MmrSubtreeQuery>,
+) -> Result<Json<MmrSubtreeResponse>, Error> {
+    // Simplified implementation
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    Ok(Json(MmrSubtreeResponse {
+        nodes: vec![MmrNode {
+            position: 0,
+            hash: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+            children: None,
+        }],
+    }))
+}
+
+async fn fetch_nodes(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<FetchNodesRequest>,
+) -> Result<Json<FetchNodesResponse>, Error> {
+    let mut nodes = Vec::new();
+
+    for hash_str in &request.hashes {
+        let hash_bytes = hex_decode(hash_str).map_err(|_| Error::InvalidHash {
+            expected: hash_str.clone(),
+            actual: "invalid hex".to_string(),
+        })?;
+        let hash = H256::from_slice(&hash_bytes);
+
+        if let Some(node) = state.storage.get_node(&hash) {
+            nodes.push(FetchedNode {
+                hash: hash_str.clone(),
+                data: BASE64.encode(&node.data),
+                children: node.children.map(|c| {
+                    c.iter()
+                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .collect()
+                }),
+            });
+        }
+    }
+
+    Ok(Json(FetchNodesResponse { nodes }))
+}
