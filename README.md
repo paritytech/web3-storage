@@ -19,39 +19,58 @@ Normal operations (reads, writes, storage) happen off-chain between clients and 
 
 ## Architecture
 
+The system consists of two node types that work together:
+
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           ON-CHAIN                                  │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                    pallet-storage-provider                    │  │
-│  │  ├── Providers: registration, stake, settings                 │  │
-│  │  ├── Buckets: membership, snapshots, agreements               │  │
-│  │  ├── StorageAgreements: primary & replica contracts           │  │
-│  │  └── Challenges: dispute resolution, slashing                 │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-│    Chain touched for: bucket creation, agreement setup,             │
-│    checkpoints (infrequent), disputes (rare)                        │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-                                    ▲
-                                    │ rare interactions
-                                    │
-┌─────────────────────────────────────────────────────────────────────┐
-│                          OFF-CHAIN                                  │
-│                                                                     │
-│   ┌─────────────┐    writes     ┌─────────────────────────────┐    │
-│   │   Client    │ ────────────► │    Provider Node            │    │
-│   │  (storage-  │               │  (storage-provider-node)    │    │
-│   │   client)   │ ◄──────────── │                             │    │
-│   └─────────────┘    reads      │  • HTTP API                 │    │
-│                                 │  • Content-addressed store  │    │
-│                                 │  • MMR commitments          │    │
-│                                 └─────────────────────────────┘    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              BLOCKCHAIN LAYER                               │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │              Polkadot Omni Node + storage-parachain-runtime           │  │
+│  │                                                                       │  │
+│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
+│  │  │                    pallet-storage-provider                      │  │  │
+│  │  │  • Provider registration & stake management                     │  │  │
+│  │  │  • Bucket creation & membership                                 │  │  │
+│  │  │  • Storage agreements (primary & replica)                       │  │  │
+│  │  │  • Checkpoints & dispute resolution                             │  │  │
+│  │  └─────────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│    Touched for: registration, agreements, checkpoints, disputes             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+                                      │ extrinsics (infrequent)
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              STORAGE LAYER                                  │
+│                                                                             │
+│   ┌─────────────┐                  ┌─────────────────────────────────────┐  │
+│   │   Client    │   HTTP API       │         Provider Node               │  │
+│   │  (storage-  │ ◄──────────────► │    (storage-provider-node)          │  │
+│   │   client)   │  reads/writes    │                                     │  │
+│   └─────────────┘                  │  • Content-addressed storage        │  │
+│                                    │  • MMR commitments                  │  │
+│                                    │  • Challenge responses              │  │
+│                                    │  • Replica sync                     │  │
+│                                    └─────────────────────────────────────┘  │
+│                                                                             │
+│    Hot path: all data reads/writes happen here (no blockchain)              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Two Nodes, Two Purposes
+
+| Node | Purpose | Run by |
+|------|---------|--------|
+| **Parachain Node** (Omni Node + Runtime) | Blockchain consensus, state transitions, finality | Collators (parachain validators) |
+| **Provider Node** | Store actual data, serve clients, respond to challenges | Storage providers |
+
+**Yes, you run both nodes** if you're a storage provider:
+- The **parachain node** participates in the blockchain network
+- The **provider node** handles actual storage operations
 
 ## Project Structure
 
@@ -88,6 +107,124 @@ cargo build -p storage-provider-node
 cargo build -p storage-client
 ```
 
+## Quick Start
+
+This guide shows how to run a complete local development environment with both nodes.
+
+### Prerequisites
+
+- Rust 1.74+ with `wasm32-unknown-unknown` target
+- [Zombienet](https://github.com/paritytech/zombienet) for local relay chain
+- [Polkadot Omni Node](https://github.com/paritytech/polkadot-sdk) binary
+
+```bash
+# Install wasm target
+rustup target add wasm32-unknown-unknown
+
+# Install zombienet (option 1: cargo)
+cargo install zombienet
+
+# Or download from releases (option 2)
+# https://github.com/paritytech/zombienet/releases
+```
+
+### Step 1: Build Everything
+
+```bash
+# Build all crates including the runtime
+cargo build --release
+
+# The runtime WASM will be at:
+# target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm
+```
+
+### Step 2: Start the Blockchain (Parachain Node)
+
+**Option A: Local Development with Zombienet**
+
+Create `zombienet.toml`:
+```toml
+[relaychain]
+default_command = "polkadot"
+chain = "rococo-local"
+
+  [[relaychain.nodes]]
+  name = "alice"
+  validator = true
+
+  [[relaychain.nodes]]
+  name = "bob"
+  validator = true
+
+[[parachains]]
+id = 4000
+chain_spec_path = "chain-specs/storage-rococo.json"
+
+  [parachains.collator]
+  name = "storage-collator"
+  command = "polkadot-omni-node"
+  args = ["--runtime", "target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm"]
+```
+
+Start the network:
+```bash
+zombienet spawn zombienet.toml
+```
+
+**Option B: Connect to Existing Network**
+
+```bash
+polkadot-omni-node \
+  --collator \
+  --chain chain-specs/storage-rococo.json \
+  --runtime target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm \
+  --relay-chain-rpc-urls wss://rococo-rpc.polkadot.io
+```
+
+### Step 3: Start the Provider Node (Storage Server)
+
+In a new terminal:
+```bash
+# Set your provider's account (must match on-chain registered provider)
+export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY  # Alice
+
+# Set the parachain RPC endpoint
+export CHAIN_RPC=ws://127.0.0.1:9944
+
+# Start the provider node
+cargo run --release -p storage-provider-node
+
+# Or with custom port
+BIND_ADDR=0.0.0.0:8080 cargo run --release -p storage-provider-node
+```
+
+### Step 4: Verify Both Nodes are Running
+
+```bash
+# Check provider node health
+curl http://localhost:3000/health
+# {"status":"healthy","version":"0.1.0"}
+
+# Check parachain via RPC (if using polkadot.js or similar)
+# Connect to ws://127.0.0.1:9944
+```
+
+### Step 5: Use the Client
+
+```bash
+# In another terminal, run an example
+cargo run --example upload_file -p storage-client
+```
+
+Or use the client library in your code:
+```rust
+use storage_client::StorageClient;
+
+let client = StorageClient::new("http://localhost:3000");
+let health = client.health().await?;
+println!("Provider: {}", health.status);
+```
+
 ## Testing
 
 ### Run all tests
@@ -121,14 +258,24 @@ cargo test --test client_integration -p storage-client
 
 ## Running the Provider Node
 
+The provider node is a separate process that handles actual data storage. It must be run alongside a parachain node (or connect to one via RPC).
+
 ### Start a provider node
 
 ```bash
-# Default configuration (port 3000)
-cargo run -p storage-provider-node
+# Minimum required: set your provider account
+export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
 
-# Custom port and provider ID
-BIND_ADDR=0.0.0.0:8080 PROVIDER_ID=0xYourProviderAddress cargo run -p storage-provider-node
+# Start with defaults (port 3000, connects to local chain)
+cargo run --release -p storage-provider-node
+
+# Production example with all options
+BIND_ADDR=0.0.0.0:8080 \
+PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+CHAIN_RPC=ws://127.0.0.1:9944 \
+DATA_DIR=/var/lib/storage-provider \
+RUST_LOG=storage_provider_node=info \
+cargo run --release -p storage-provider-node
 ```
 
 ### Environment variables
@@ -136,7 +283,9 @@ BIND_ADDR=0.0.0.0:8080 PROVIDER_ID=0xYourProviderAddress cargo run -p storage-pr
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BIND_ADDR` | Address to bind the HTTP server | `0.0.0.0:3000` |
-| `PROVIDER_ID` | Provider's on-chain account ID | `0x0000...` |
+| `PROVIDER_ID` | Provider's on-chain account ID (SS58) | Required |
+| `CHAIN_RPC` | Parachain WebSocket RPC endpoint | `ws://127.0.0.1:9944` |
+| `DATA_DIR` | Directory for storing data | `./data` |
 | `RUST_LOG` | Log level | `storage_provider_node=debug` |
 
 ### Health check
@@ -144,6 +293,24 @@ BIND_ADDR=0.0.0.0:8080 PROVIDER_ID=0xYourProviderAddress cargo run -p storage-pr
 ```bash
 curl http://localhost:3000/health
 # {"status":"healthy","version":"0.1.0"}
+```
+
+### Running Both Nodes Together
+
+For a storage provider, you need both nodes running:
+
+```
+Terminal 1 (Parachain):          Terminal 2 (Provider):
+┌─────────────────────┐          ┌─────────────────────┐
+│  polkadot-omni-node │◄────────►│ storage-provider-   │
+│  --collator         │   RPC    │ node                │
+│  --chain ...        │          │                     │
+│  --runtime ...      │          │ Serves HTTP API     │
+└─────────────────────┘          └─────────────────────┘
+        │                                  │
+        │ consensus                        │ data
+        ▼                                  ▼
+   Relay Chain                        Clients
 ```
 
 ## Client Usage
@@ -300,70 +467,11 @@ curl -X POST http://localhost:3000/commit \
 curl "http://localhost:3000/commitment?bucket_id=1"
 ```
 
-## Running as a Parachain
+## Deployment
 
-This project is designed to run as a parachain on Polkadot or Rococo using the **Polkadot Omni Node** approach. You only need to build the runtime WASM and use the generic collator provided by the Polkadot SDK.
+This section covers deploying to testnets and production. For local development, see [Quick Start](#quick-start).
 
-### Prerequisites
-
-1. Install the Polkadot Omni Node:
-```bash
-# From polkadot-sdk repository
-cargo build --release -p polkadot-omni-node
-```
-
-Or download a pre-built binary from the [Polkadot SDK releases](https://github.com/paritytech/polkadot-sdk/releases).
-
-### Build the Runtime
-
-```bash
-# Build the parachain runtime
-cargo build --release -p storage-parachain-runtime
-
-# The WASM blob will be at:
-# target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm
-```
-
-### Local Development (Zombienet)
-
-For local testing, use [Zombienet](https://github.com/paritytech/zombienet) to spin up a local relay chain and your parachain:
-
-1. Install Zombienet:
-```bash
-# Download from releases or build from source
-cargo install zombienet
-```
-
-2. Create a zombienet configuration (`zombienet.toml`):
-```toml
-[relaychain]
-default_command = "polkadot"
-chain = "rococo-local"
-
-  [[relaychain.nodes]]
-  name = "alice"
-  validator = true
-
-  [[relaychain.nodes]]
-  name = "bob"
-  validator = true
-
-[[parachains]]
-id = 4000
-chain_spec_path = "chain-specs/storage-rococo.json"
-
-  [parachains.collator]
-  name = "storage-collator"
-  command = "polkadot-omni-node"
-  args = ["--runtime", "target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm"]
-```
-
-3. Start the network:
-```bash
-zombienet spawn zombienet.toml
-```
-
-### Deploy to Rococo
+### Deploy to Rococo Testnet
 
 To deploy to the Rococo testnet:
 
@@ -386,6 +494,14 @@ polkadot-omni-node \
   --relay-chain-rpc-urls wss://rococo-rpc.polkadot.io
 ```
 
+4. **Run your provider node** (in a separate process):
+```bash
+PROVIDER_ID=<your-registered-provider-account> \
+CHAIN_RPC=ws://127.0.0.1:9944 \
+DATA_DIR=/var/lib/storage-provider \
+cargo run --release -p storage-provider-node
+```
+
 ### Chain Spec Configuration
 
 The chain spec at `chain-specs/storage-rococo.json` contains:
@@ -398,6 +514,17 @@ To customize for your deployment:
 1. Update the `para_id` to your registered parachain ID
 2. Update initial balances and collators
 3. Set the sudo key to your admin account
+
+### Production Checklist
+
+For production deployments, ensure:
+
+- [ ] **Collator node**: Running with `--collator` flag, connected to relay chain
+- [ ] **Provider node**: Running with correct `PROVIDER_ID` and `CHAIN_RPC`
+- [ ] **Provider registered**: Account registered on-chain with sufficient stake
+- [ ] **Firewall**: Collator P2P ports open (30333), provider HTTP port accessible
+- [ ] **Monitoring**: Both nodes have health checks and logging configured
+- [ ] **Backups**: Provider data directory backed up regularly
 
 ## On-Chain Integration
 
