@@ -1,5 +1,6 @@
 [settings]
 timeout = 1000
+provider = "native"
 
 [relaychain]
 default_command = "polkadot"
@@ -17,12 +18,9 @@ chain = "rococo-local"
 
 [[parachains]]
 id = 4000
-chain_spec_path = "chain-specs/storage-rococo.json"
+chain_spec_path = "/Users/naren/DevBox/scalable-web3-storage/chain-specs/storage-local.json"
 
   [parachains.collator]
   name = "storage-collator"
   command = "polkadot-omni-node"
   rpc_port = 9944
-  args = [
-    "--runtime=target/release/wbuild/storage-parachain-runtime/storage_parachain_runtime.compact.compressed.wasm"
-  ]
