@@ -3,8 +3,9 @@ timeout = 1000
 provider = "native"
 
 [relaychain]
-default_command = "polkadot"
+default_command = "./bin/polkadot"
 chain = "rococo-local"
+default_args = ["--network-backend=libp2p"]
 
   [[relaychain.nodes]]
   name = "alice"
@@ -18,9 +19,12 @@ chain = "rococo-local"
 
 [[parachains]]
 id = 4000
-chain_spec_path = "/Users/naren/DevBox/scalable-web3-storage/chain-specs/storage-local.json"
+chain_spec_path = "storage-local.json"
+cumulus_based = true
+onboard_as_parachain = true
 
   [parachains.collator]
   name = "storage-collator"
   command = "polkadot-omni-node"
   rpc_port = 9944
+  args = ["--collator", "--no-mdns", "--network-backend=libp2p"]

@@ -257,7 +257,7 @@ impl frame_system::Config for Runtime {
 impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
     type OnTimestampSet = Aura;
-    type MinimumPeriod = ConstU64<0>;
+    type MinimumPeriod = ConstU64<3000>; // Half of slot duration (6000ms)
     type WeightInfo = ();
 }
 
