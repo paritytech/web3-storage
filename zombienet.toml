@@ -1,5 +1,8 @@
 # Before running:
 # export POLKADOT_BINARY_PATH=~/Projects/polkadot-sdk/target/release/polkadot or similar
+# 
+# Then:
+# ./zombienet spawn -p native zombienet.toml
 
 [settings]
 timeout = 1000
