@@ -1,10 +1,13 @@
+# Before running:
+# export POLKADOT_BINARY_PATH=~/Projects/polkadot-sdk/target/release/polkadot or similar
+
 [settings]
 timeout = 1000
 provider = "native"
 
 [relaychain]
-default_command = "./bin/polkadot"
-chain = "rococo-local"
+default_command = "{{POLKADOT_BINARY_PATH}}"
+chain = "westend-local"
 default_args = ["--network-backend=libp2p"]
 
   [[relaychain.nodes]]
@@ -19,7 +22,7 @@ default_args = ["--network-backend=libp2p"]
 
 [[parachains]]
 id = 4000
-chain_spec_path = "storage-local.json"
+chain_spec_path = "chain-specs/storage-local.json"
 cumulus_based = true
 onboard_as_parachain = true
 
