@@ -14,6 +14,7 @@ sp-core = { workspace = true }
 sp-runtime = { workspace = true }
 sp-std = { workspace = true }
 serde = { workspace = true, optional = true }
+bitvec = { workspace = true }
 
 [features]
 default = ["std"]
@@ -24,5 +25,6 @@ std = [
     "sp-runtime/std",
     "sp-std/std",
     "serde/std",
+    "bitvec/std",
 ]
 serde = ["dep:serde", "sp-core/serde"]

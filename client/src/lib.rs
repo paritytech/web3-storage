@@ -26,6 +26,8 @@
 //! }
 //! ```
 
+pub mod verification;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

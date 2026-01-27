@@ -17,6 +17,7 @@ tokio = { workspace = true }
 base64 = "0.22"
 thiserror = "2.0"
 tracing = "0.1"
+rand = "0.8"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

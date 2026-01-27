@@ -145,16 +145,48 @@ impl Mmr {
         })
     }
 
-    /// Verify a proof.
+    /// Verify a proof against an MMR root.
+    ///
+    /// This verifies that:
+    /// 1. The leaf hashes up through siblings to reach a peak
+    /// 2. The peaks bag to the expected root
     pub fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
-        // Simplified verification
+        // Hash up from leaf through siblings to reach a peak
         let mut current = leaf_hash;
+        let mut pos = Self::leaf_index_to_pos(proof.leaf_index);
+        let mut height = 0u32;
+
         for sibling in &proof.siblings {
-            current = hash_children(current, *sibling);
+            // Determine if sibling is on left or right based on position
+            let sibling_pos = Self::sibling_pos(pos, height);
+            current = if sibling_pos < pos {
+                hash_children(*sibling, current)
+            } else {
+                hash_children(current, *sibling)
+            };
+            pos = Self::parent_pos(pos, height);
+            height += 1;
         }
 
-        // Check against peaks
-        proof.peaks.contains(&current) || current == root
+        // Current should now be one of the peaks
+        if !proof.peaks.contains(&current) {
+            return false;
+        }
+
+        // Verify that peaks bag to the root
+        let bagged_root = proof
+            .peaks
+            .iter()
+            .rev()
+            .fold(None, |acc: Option<H256>, &peak| {
+                Some(match acc {
+                    None => peak,
+                    Some(right) => hash_children(peak, right),
+                })
+            })
+            .unwrap_or(H256::zero());
+
+        bagged_root == root
     }
 
     // Helper functions

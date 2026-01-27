@@ -8,6 +8,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use bitvec::{order::Lsb0, vec::BitVec as BitVector};
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
@@ -231,8 +232,8 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i is set if primary_providers[i] signed.
-    /// Stored as bytes where bit at position n is at bytes[n/8] & (1 << (n%8))
-    pub primary_signers: Vec<u8>,
+    /// Uses BitVec with LSB0 ordering for efficient bit manipulation.
+    pub primary_signers: BitVector<u8, Lsb0>,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
@@ -299,6 +300,46 @@ pub fn verify_merkle_proof(
     }
 
     current == *root
+}
+
+/// Verify an MMR proof
+///
+/// This verifies that a leaf at the given index with the given hash
+/// is part of an MMR with the given root.
+pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
+    // First verify the Merkle proof gets us to the data root
+    let leaf_hash = blake2_256(&proof.leaf.encode());
+
+    // Hash up from leaf through the Merkle proof to reach a peak
+    let mut current = leaf_hash;
+    for (i, sibling) in proof.leaf_proof.siblings.iter().enumerate() {
+        let is_right = proof.leaf_proof.path.get(i).copied().unwrap_or(false);
+        current = if is_right {
+            hash_children(*sibling, current)
+        } else {
+            hash_children(current, *sibling)
+        };
+    }
+
+    // Current should be one of the peaks
+    if !proof.peaks.contains(&current) {
+        return false;
+    }
+
+    // Verify that peaks bag to the root
+    let bagged_root = proof
+        .peaks
+        .iter()
+        .rev()
+        .fold(None, |acc: Option<H256>, &peak| {
+            Some(match acc {
+                None => peak,
+                Some(right) => hash_children(peak, right),
+            })
+        })
+        .unwrap_or(H256::zero());
+
+    bagged_root == *root
 }
 
 #[cfg(test)]
