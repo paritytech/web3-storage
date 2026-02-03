@@ -13,11 +13,18 @@ reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+sp-keyring = { workspace = true }
 tokio = { workspace = true }
 base64 = "0.22"
 thiserror = "2.0"
 tracing = "0.1"
 rand = "0.8"
+hex = "0.4"
+async-trait = "0.1"
+subxt = "0.37"
+subxt-signer = "0.37"
+futures = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

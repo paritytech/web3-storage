@@ -1,32 +1,113 @@
-//! # Storage Client Library
+//! # Storage Client SDK
 //!
-//! Client library for interacting with the scalable Web3 storage system.
+//! Comprehensive off-chain SDK for interacting with the scalable Web3 storage system.
 //!
-//! ## Usage
+//! ## Architecture
 //!
-//! ```rust,no_run
-//! use storage_client::{StorageClient, ChunkingStrategy};
+//! The SDK provides specialized clients for different user roles:
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let client = StorageClient::new("http://localhost:3000");
+//! ### For Storage Users
+//! [`StorageUserClient`](storage_user::StorageUserClient) - Upload, download, and verify data
+//! ```no_run
+//! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy};
 //!
-//!     // Upload data
-//!     let data = b"Hello, World!";
-//!     let data_root = client.upload(1, data, ChunkingStrategy::Fixed(256 * 1024)).await?;
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = StorageUserClient::with_defaults()?;
 //!
-//!     // Commit to MMR
-//!     let commit = client.commit(1, vec![data_root]).await?;
+//! // Upload data
+//! let data = b"Hello, decentralized world!";
+//! let data_root = client.upload(1, data, ChunkingStrategy::default()).await?;
 //!
-//!     // Read back
-//!     let read_data = client.read(&data_root, 0, data.len() as u64).await?;
-//!     assert_eq!(read_data, data);
+//! // Commit to chain
+//! let commitment = client.commit(1, vec![data_root]).await?;
 //!
-//!     Ok(())
-//! }
+//! // Download and verify
+//! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
+//! assert_eq!(retrieved, data);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### For Storage Providers
+//! [`ProviderClient`](provider::ProviderClient) - Manage provider operations
+//! ```no_run
+//! use storage_client::{ProviderClient, ClientConfig};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
+//!
+//! // Register as provider
+//! client.register(
+//!     "/ip4/1.2.3.4/tcp/3000".to_string(),
+//!     vec![0u8; 32], // public key
+//!     1_000_000_000_000, // stake
+//! ).await?;
+//!
+//! // Accept agreements
+//! client.accept_agreement(1).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### For Bucket Administrators
+//! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
+//! ```no_run
+//! use storage_client::{AdminClient, ClientConfig};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+//!
+//! // Create bucket
+//! let bucket_id = client.create_bucket(2).await?;
+//!
+//! // Request storage
+//! client.request_agreement(
+//!     bucket_id,
+//!     "5FHneW46...".to_string(),
+//!     10 * 1024 * 1024 * 1024, // 10 GB
+//!     100_000, // blocks
+//!     1_000_000_000_000, // payment
+//!     None,
+//! ).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### For Data Integrity Monitors
+//! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
+//! ```no_run
+//! use storage_client::{ChallengerClient, ClientConfig};
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+//!
+//! // Challenge a provider
+//! let challenge_id = client.challenge_checkpoint(
+//!     1, // bucket_id
+//!     "5FHneW46...".to_string(), // provider
+//!     5, // leaf_index
+//!     123, // chunk_index
+//! ).await?;
+//! # Ok(())
+//! # }
 //! ```
 
+// Re-export main types
+pub mod base;
+pub mod storage_user;
+pub mod provider;
+pub mod admin;
+pub mod challenger;
 pub mod verification;
+pub mod substrate;
+
+// Re-export commonly used types
+pub use base::{ClientConfig, ClientError, ClientResult, ChunkingStrategy};
+pub use storage_user::StorageUserClient;
+pub use provider::ProviderClient;
+pub use admin::AdminClient;
+pub use challenger::ChallengerClient;
+pub use verification::ClientVerifier;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use reqwest::Client;

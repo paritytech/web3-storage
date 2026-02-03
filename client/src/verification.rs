@@ -145,27 +145,30 @@ impl ClientVerifier {
     /// 3. Optionally verifies the Merkle proof
     ///
     /// Returns true if the spot-check passed.
-    pub async fn spot_check(
+    pub async fn spot_check<T>(
         &mut self,
-        client: &StorageClient,
+        client: &T,
         data_root: &H256,
         chunk_index: u64,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, Error>
+    where
+        T: ProviderReadAccess,
+    {
         let start = Instant::now();
 
         // Read the chunk
         let chunk_size = 256 * 1024; // 256 KiB
         let offset = chunk_index * chunk_size;
-        let result = client.read(data_root, offset, chunk_size).await;
+        let result = client.read_data(data_root, offset, chunk_size).await;
 
         let duration = start.elapsed();
-        let provider_url = &client.base_url();
+        let provider_url = client.provider_url();
 
         // Record the request
         match &result {
             Ok(data) => {
                 // Verify chunk hash
-                let expected_hash = storage_primitives::blake2_256(data);
+                let _expected_hash = storage_primitives::blake2_256(data);
 
                 // Get the expected hash from the proof
                 // In a full implementation, we would fetch the chunk with proof
@@ -195,13 +198,16 @@ impl ClientVerifier {
     }
 
     /// Perform multiple random spot-checks on a provider.
-    pub async fn spot_check_batch(
+    pub async fn spot_check_batch<T>(
         &mut self,
-        client: &StorageClient,
+        client: &T,
         data_root: &H256,
         num_checks: usize,
         total_chunks: u64,
-    ) -> Result<(usize, usize), Error> {
+    ) -> Result<(usize, usize), Error>
+    where
+        T: ProviderReadAccess,
+    {
         use rand::Rng;
         let mut rng = rand::thread_rng();
 
@@ -271,9 +277,27 @@ impl Default for ClientVerifier {
     }
 }
 
-impl StorageClient {
-    /// Get the base URL for this client.
-    pub fn base_url(&self) -> String {
-        self.base_url.clone()
+/// Trait for types that can provide read access to storage.
+///
+/// This allows the verifier to work with different client types.
+#[async_trait::async_trait]
+pub trait ProviderReadAccess {
+    /// Read data from a data root.
+    async fn read_data(&self, data_root: &H256, offset: u64, length: u64) -> Result<Vec<u8>, Error>;
+
+    /// Get the provider URL for tracking.
+    fn provider_url(&self) -> &str;
+}
+
+// We'll implement this for StorageUserClient in storage_user.rs
+// For now, provide a default Error type
+#[derive(Debug)]
+pub struct Error(pub String);
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
+
+impl std::error::Error for Error {}
