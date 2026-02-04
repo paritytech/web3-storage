@@ -34,7 +34,18 @@ pub const HISTORICAL_ROOT_PRIMES: [u32; 6] = [3, 7, 11, 23, 47, 113];
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Role within a bucket determining access permissions.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Role {
     /// Can modify members, manage settings, delete data (if not frozen)
@@ -50,7 +61,9 @@ pub enum Role {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Provider role for a specific bucket agreement.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProviderRole<Balance, BlockNumber> {
     /// Receives data directly from writers.
@@ -81,7 +94,18 @@ pub enum ProviderRole<Balance, BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Action to take when ending an agreement.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EndAction {
     /// Pay provider in full
@@ -94,7 +118,18 @@ pub enum EndAction {
 }
 
 /// Reason for removing a primary provider from a bucket.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RemovalReason {
     /// Provider was slashed for failing a challenge
@@ -106,7 +141,9 @@ pub enum RemovalReason {
 }
 
 /// Parameters specific to replica agreement requests.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaRequestParams<Balance, BlockNumber> {
     /// Initial sync balance to fund per-sync payments
@@ -120,7 +157,18 @@ pub struct ReplicaRequestParams<Balance, BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Challenge identifier combining deadline and index.
-#[derive(Clone, Copy, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeId<BlockNumber> {
     /// Block by which provider must respond
@@ -134,7 +182,9 @@ pub struct ChallengeId<BlockNumber> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// MMR leaf containing data root and size information.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MmrLeaf {
     /// Merkle root of chunk tree
@@ -172,7 +222,9 @@ pub struct MmrProof {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Payload that providers sign to commit to bucket state.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CommitmentPayload {
     /// Protocol version for future compatibility
@@ -231,7 +283,7 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i is set if primary_providers[i] signed.
-    /// Stored as raw bytes with LSB0 ordering (bit 0 of byte 0 = provider 0).
+    /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
 }
 
@@ -244,6 +296,24 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
     /// Check if a sequence number is within this snapshot's range
     pub fn contains_seq(&self, seq: u64) -> bool {
         seq >= self.start_seq && seq < self.range_end()
+    }
+
+    /// Check if a provider at the given index has signed this snapshot
+    pub fn has_provider_signed(&self, provider_index: usize) -> bool {
+        let byte_index = provider_index / 8;
+        let bit_index = provider_index % 8;
+        self.primary_signers
+            .get(byte_index)
+            .map(|byte| (byte & (1 << bit_index)) != 0)
+            .unwrap_or(false)
+    }
+
+    /// Count the number of providers who signed this snapshot
+    pub fn count_signers(&self) -> usize {
+        self.primary_signers
+            .iter()
+            .map(|byte| byte.count_ones() as usize)
+            .sum()
     }
 }
 
@@ -270,12 +340,7 @@ pub fn hash_children(left: H256, right: H256) -> H256 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Verify a Merkle proof
-pub fn verify_merkle_proof(
-    leaf_hash: H256,
-    index: u64,
-    proof: &MerkleProof,
-    root: &H256,
-) -> bool {
+pub fn verify_merkle_proof(leaf_hash: H256, index: u64, proof: &MerkleProof, root: &H256) -> bool {
     if proof.siblings.len() != proof.path.len() {
         return false;
     }

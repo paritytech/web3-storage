@@ -19,7 +19,11 @@ fn storage_parachain_genesis(
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
-            balances: endowed_accounts.iter().cloned().map(|k| (k, endowment)).collect(),
+            balances: endowed_accounts
+                .iter()
+                .cloned()
+                .map(|k| (k, endowment))
+                .collect(),
         },
         parachain_info: ParachainInfoConfig { parachain_id: id },
         collator_selection: CollatorSelectionConfig {
@@ -38,7 +42,9 @@ fn storage_parachain_genesis(
                 })
                 .collect(),
         },
-        polkadot_xcm: PolkadotXcmConfig { safe_xcm_version: Some(xcm::latest::VERSION) },
+        polkadot_xcm: PolkadotXcmConfig {
+            safe_xcm_version: Some(xcm::latest::VERSION)
+        },
         sudo: SudoConfig { key: sudo_account },
     })
 }
@@ -49,10 +55,18 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
         sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
             vec![
-                (Sr25519Keyring::Alice.to_account_id(), Sr25519Keyring::Alice.public().into()),
-                (Sr25519Keyring::Bob.to_account_id(), Sr25519Keyring::Bob.public().into()),
+                (
+                    Sr25519Keyring::Alice.to_account_id(),
+                    Sr25519Keyring::Alice.public().into(),
+                ),
+                (
+                    Sr25519Keyring::Bob.to_account_id(),
+                    Sr25519Keyring::Bob.public().into(),
+                ),
             ],
-            Sr25519Keyring::well_known().map(|k| k.to_account_id()).collect(),
+            Sr25519Keyring::well_known()
+                .map(|k| k.to_account_id())
+                .collect(),
             UNIT * 1_000_000,
             PARA_ID,
             // Sudo
@@ -60,7 +74,10 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
         ),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
-            vec![(Sr25519Keyring::Alice.to_account_id(), Sr25519Keyring::Alice.public().into())],
+            vec![(
+                Sr25519Keyring::Alice.to_account_id(),
+                Sr25519Keyring::Alice.public().into(),
+            )],
             vec![
                 Sr25519Keyring::Alice.to_account_id(),
                 Sr25519Keyring::Bob.to_account_id(),

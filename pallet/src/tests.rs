@@ -104,7 +104,9 @@ mod provider_tests {
 
             let balance_before = Balances::free_balance(1);
 
-            assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(1)));
+            assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
+                1
+            )));
 
             // Check provider removed
             assert!(Providers::<Test>::get(1).is_none());
@@ -135,7 +137,10 @@ mod provider_tests {
                 100,
                 1000
             ));
-            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             // Try to deregister
             assert_noop!(
@@ -332,7 +337,11 @@ mod bucket_tests {
                 Role::Writer
             ));
 
-            assert_ok!(StorageProvider::remove_member(RuntimeOrigin::signed(1), 0, 2));
+            assert_ok!(StorageProvider::remove_member(
+                RuntimeOrigin::signed(1),
+                0,
+                2
+            ));
 
             let bucket = Buckets::<Test>::get(0).unwrap();
             assert_eq!(bucket.members.len(), 1);
@@ -450,7 +459,10 @@ mod agreement_tests {
                 1000
             ));
 
-            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             // Check agreement created
             let agreement = StorageAgreements::<Test>::get(0, 2).unwrap();
@@ -491,7 +503,10 @@ mod agreement_tests {
             // Some funds should be reserved
             assert!(Balances::free_balance(1) < balance_before);
 
-            assert_ok!(StorageProvider::reject_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::reject_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             // Funds should be returned
             assert_eq!(Balances::free_balance(1), balance_before);
@@ -581,7 +596,10 @@ mod agreement_tests {
                     100,
                     1000
                 ));
-                assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(i), 0));
+                assert_ok!(StorageProvider::accept_agreement(
+                    RuntimeOrigin::signed(i),
+                    0
+                ));
             }
 
             // 6th provider should fail

@@ -20,10 +20,7 @@ struct TestServer {
 impl TestServer {
     async fn new() -> Self {
         let storage = Arc::new(Storage::new());
-        let state = Arc::new(ProviderState::new(
-            storage,
-            "0xtest_provider".to_string(),
-        ));
+        let state = Arc::new(ProviderState::new(storage, "0xtest_provider".to_string()));
 
         let app = create_router(state);
 
@@ -72,12 +69,7 @@ async fn test_health_endpoint() {
 async fn test_info_endpoint() {
     let server = TestServer::new().await;
 
-    let response = server
-        .client
-        .get(server.url("/info"))
-        .send()
-        .await
-        .unwrap();
+    let response = server.client.get(server.url("/info")).send().await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -173,7 +165,9 @@ async fn test_check_exists() {
     let missing = body["missing"].as_array().unwrap();
 
     assert!(exists.iter().any(|h| h.as_str().unwrap() == hash_hex));
-    assert!(missing.iter().any(|h| h.as_str().unwrap() == non_existent_hash));
+    assert!(missing
+        .iter()
+        .any(|h| h.as_str().unwrap() == non_existent_hash));
 }
 
 #[tokio::test]

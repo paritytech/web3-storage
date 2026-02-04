@@ -86,7 +86,8 @@ impl ChallengerClient {
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
         // Create and submit the extrinsic
-        let tx = extrinsics::challenge_checkpoint(bucket_id, provider_account, leaf_index, chunk_index);
+        let tx =
+            extrinsics::challenge_checkpoint(bucket_id, provider_account, leaf_index, chunk_index);
 
         let tx_progress = chain
             .api()

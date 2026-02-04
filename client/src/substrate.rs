@@ -115,18 +115,13 @@ pub mod extrinsics {
     use subxt::tx::Payload;
 
     /// Create a register_provider extrinsic payload.
-    pub fn register_provider(
-        multiaddr: Vec<u8>,
-        public_key: Vec<u8>,
-        stake: u128,
-    ) -> impl Payload {
+    pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
             "register_provider",
             vec![
                 subxt::dynamic::Value::from_bytes(multiaddr),
                 subxt::dynamic::Value::from_bytes(public_key),
-                subxt::dynamic::Value::u128(stake),
             ],
         )
     }
@@ -156,9 +151,8 @@ pub mod extrinsics {
         provider: AccountId32,
         max_bytes: u64,
         duration: u32,
-        max_payment: u128,
-        sync_balance: u128,
-        min_sync_interval: u32,
+        payment: u128,
+        replica_for: Option<AccountId32>,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
@@ -168,33 +162,14 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::u128(max_bytes as u128),
                 subxt::dynamic::Value::u128(duration as u128),
-                subxt::dynamic::Value::u128(max_payment),
-                // ReplicaRequestParams struct
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    subxt::dynamic::Value::u128(sync_balance),
-                    subxt::dynamic::Value::u128(min_sync_interval as u128),
-                ]),
-            ],
-        )
-    }
-
-    /// Create a request_primary_agreement extrinsic payload.
-    pub fn request_primary_agreement(
-        bucket_id: u64,
-        provider: AccountId32,
-        max_bytes: u64,
-        duration: u32,
-        max_payment: u128,
-    ) -> impl Payload {
-        subxt::dynamic::tx(
-            "StorageProvider",
-            "request_primary_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(max_bytes as u128),
-                subxt::dynamic::Value::u128(duration as u128),
-                subxt::dynamic::Value::u128(max_payment),
+                subxt::dynamic::Value::u128(payment),
+                match replica_for {
+                    Some(acc) => subxt::dynamic::Value::unnamed_variant(
+                        "Some",
+                        [subxt::dynamic::Value::from_bytes(acc.as_ref() as &[u8])],
+                    ),
+                    None => subxt::dynamic::Value::unnamed_variant("None", []),
+                },
             ],
         )
     }
@@ -287,10 +262,7 @@ pub mod storage {
     }
 
     /// Query agreement info.
-    pub fn agreement_info(
-        bucket_id: u64,
-        provider: &AccountId32,
-    ) -> impl Address {
+    pub fn agreement_info(bucket_id: u64, provider: &AccountId32) -> impl Address {
         subxt::dynamic::storage(
             "StorageProvider",
             "Agreements",
@@ -307,7 +279,8 @@ pub mod storage {
 /// Parse a hex string to H256.
 pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
-    let bytes = hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {}", e)))?;
+    let bytes =
+        hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {}", e)))?;
     if bytes.len() != 32 {
         return Err(ClientError::Serialization(format!(
             "Expected 32 bytes, got {}",

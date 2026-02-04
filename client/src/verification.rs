@@ -282,7 +282,8 @@ impl Default for ClientVerifier {
 #[async_trait::async_trait]
 pub trait ProviderReadAccess {
     /// Read data from a data root.
-    async fn read_data(&self, data_root: &H256, offset: u64, length: u64) -> Result<Vec<u8>, Error>;
+    async fn read_data(&self, data_root: &H256, offset: u64, length: u64)
+        -> Result<Vec<u8>, Error>;
 
     /// Get the provider URL for tracking.
     fn provider_url(&self) -> &str;

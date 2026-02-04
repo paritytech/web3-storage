@@ -8,19 +8,19 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod storage;
 pub mod disk_storage;
+pub mod error;
 pub mod mmr;
 pub mod replica_sync;
+pub mod storage;
 pub mod types;
-pub mod error;
 
 pub use api::create_router;
-pub use storage::Storage;
 pub use disk_storage::DiskStorage;
-pub use replica_sync::ReplicaSync;
-pub use types::*;
 pub use error::Error;
+pub use replica_sync::ReplicaSync;
+pub use storage::Storage;
+pub use types::*;
 
 use std::sync::Arc;
 

@@ -74,7 +74,9 @@ impl Storage {
     /// Initialize a bucket with the given quota.
     pub fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) {
         let mut buckets = self.buckets.write();
-        buckets.entry(bucket_id).or_insert_with(|| BucketState::new(max_bytes));
+        buckets
+            .entry(bucket_id)
+            .or_insert_with(|| BucketState::new(max_bytes));
     }
 
     /// Get bucket state.
@@ -129,7 +131,9 @@ impl Storage {
         // Check quota
         {
             let buckets = self.buckets.read();
-            let bucket = buckets.get(&bucket_id).ok_or(Error::BucketNotFound(bucket_id))?;
+            let bucket = buckets
+                .get(&bucket_id)
+                .ok_or(Error::BucketNotFound(bucket_id))?;
 
             let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
             if new_size > bucket.max_bytes {
@@ -144,13 +148,8 @@ impl Storage {
         if !self.nodes.contains_key(&expected_hash) {
             let data_len = data.len() as u64;
 
-            self.nodes.insert(
-                expected_hash,
-                StoredNode {
-                    data,
-                    children,
-                },
-            );
+            self.nodes
+                .insert(expected_hash, StoredNode { data, children });
 
             // Update quota
             let mut buckets = self.buckets.write();
@@ -283,7 +282,9 @@ impl Storage {
         leaf_index: u64,
     ) -> Result<(MmrLeaf, Vec<H256>), Error> {
         let buckets = self.buckets.read();
-        let bucket = buckets.get(&bucket_id).ok_or(Error::BucketNotFound(bucket_id))?;
+        let bucket = buckets
+            .get(&bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let leaf = bucket
             .leaves
@@ -303,10 +304,9 @@ impl Storage {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), Error> {
-        let node = self
-            .nodes
-            .get(&data_root)
-            .ok_or_else(|| Error::RootNotFound(format!("0x{}", hex::encode(data_root.as_bytes()))))?;
+        let node = self.nodes.get(&data_root).ok_or_else(|| {
+            Error::RootNotFound(format!("0x{}", hex::encode(data_root.as_bytes())))
+        })?;
 
         // For simplicity, traverse to find the chunk
         // Real implementation would have proper indexing
@@ -372,7 +372,9 @@ impl Storage {
     /// Get MMR peaks.
     pub fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         let buckets = self.buckets.read();
-        let bucket = buckets.get(&bucket_id).ok_or(Error::BucketNotFound(bucket_id))?;
+        let bucket = buckets
+            .get(&bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // Simplified: return root as only peak
         // Real implementation would compute actual MMR peaks

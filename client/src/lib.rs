@@ -93,20 +93,20 @@
 //! ```
 
 // Re-export main types
-pub mod base;
-pub mod storage_user;
-pub mod provider;
 pub mod admin;
+pub mod base;
 pub mod challenger;
-pub mod verification;
+pub mod provider;
+pub mod storage_user;
 pub mod substrate;
+pub mod verification;
 
 // Re-export commonly used types
-pub use base::{ClientConfig, ClientError, ClientResult, ChunkingStrategy};
-pub use storage_user::StorageUserClient;
-pub use provider::ProviderClient;
 pub use admin::AdminClient;
+pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
+pub use provider::ProviderClient;
+pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -144,13 +144,11 @@ impl StorageClient {
         let chunks = self.chunk_data(data, strategy);
 
         // Upload chunks (leaves)
-        let chunk_hashes: Vec<H256> = chunks
-            .iter()
-            .map(|chunk| blake2_256(chunk))
-            .collect();
+        let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
 
         for (chunk, hash) in chunks.iter().zip(chunk_hashes.iter()) {
-            self.upload_node(bucket_id, *hash, chunk.clone(), None).await?;
+            self.upload_node(bucket_id, *hash, chunk.clone(), None)
+                .await?;
         }
 
         // Build Merkle tree bottom-up
@@ -185,7 +183,10 @@ impl StorageClient {
             return Err(Error::Api(error.error));
         }
 
-        response.json().await.map_err(|e| Error::Serialization(e.to_string()))
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Read data from a data root.
@@ -194,7 +195,10 @@ impl StorageClient {
             .http
             .get(format!("{}/read", self.base_url))
             .query(&[
-                ("data_root", format!("0x{}", hex_encode(data_root.as_bytes()))),
+                (
+                    "data_root",
+                    format!("0x{}", hex_encode(data_root.as_bytes())),
+                ),
                 ("offset", offset.to_string()),
                 ("length", length.to_string()),
             ])
@@ -215,8 +219,8 @@ impl StorageClient {
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
             // Verify chunk hash
-            let expected_hash = hex_decode(&chunk.hash)
-                .map_err(|e| Error::Serialization(e.to_string()))?;
+            let expected_hash =
+                hex_decode(&chunk.hash).map_err(|e| Error::Serialization(e.to_string()))?;
             let actual_hash = blake2_256(&chunk_data);
             if actual_hash.as_bytes() != expected_hash.as_slice() {
                 return Err(Error::VerificationFailed);
@@ -249,7 +253,10 @@ impl StorageClient {
             return Err(Error::Api(error.error));
         }
 
-        response.json().await.map_err(|e| Error::Serialization(e.to_string()))
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Check which nodes exist on the provider.
@@ -278,7 +285,10 @@ impl StorageClient {
             return Err(Error::Api(error.error));
         }
 
-        response.json().await.map_err(|e| Error::Serialization(e.to_string()))
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Serialization(e.to_string()))
     }
 
     /// Health check.
@@ -289,7 +299,10 @@ impl StorageClient {
             .send()
             .await?;
 
-        response.json().await.map_err(|e| Error::Serialization(e.to_string()))
+        response
+            .json()
+            .await
+            .map_err(|e| Error::Serialization(e.to_string()))
     }
 
     // Private helper methods
@@ -339,11 +352,7 @@ impl StorageClient {
         Ok(())
     }
 
-    async fn build_merkle_tree(
-        &self,
-        bucket_id: BucketId,
-        leaves: &[H256],
-    ) -> Result<H256, Error> {
+    async fn build_merkle_tree(&self, bucket_id: BucketId, leaves: &[H256]) -> Result<H256, Error> {
         if leaves.is_empty() {
             return Ok(H256::zero());
         }
@@ -366,13 +375,8 @@ impl StorageClient {
                     node_data.extend_from_slice(chunk[1].as_bytes());
 
                     // Upload internal node
-                    self.upload_node(
-                        bucket_id,
-                        parent,
-                        node_data,
-                        Some(vec![chunk[0], chunk[1]]),
-                    )
-                    .await?;
+                    self.upload_node(bucket_id, parent, node_data, Some(vec![chunk[0], chunk[1]]))
+                        .await?;
 
                     next_level.push(parent);
                 } else {

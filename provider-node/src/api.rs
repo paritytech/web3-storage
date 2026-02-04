@@ -187,7 +187,8 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_indices) = state.storage.commit(request.bucket_id, data_roots)?;
+    let (mmr_root, start_seq, leaf_indices) =
+        state.storage.commit(request.bucket_id, data_roots)?;
 
     // Generate signature (simplified - would use actual key)
     let signature = format!("0x{}", hex_encode(&[0u8; 64]));
@@ -267,7 +268,9 @@ async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<MmrProofResponse>, Error> {
-    let (leaf, peaks) = state.storage.get_mmr_proof(query.bucket_id, query.leaf_index)?;
+    let (leaf, peaks) = state
+        .storage
+        .get_mmr_proof(query.bucket_id, query.leaf_index)?;
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
@@ -295,7 +298,9 @@ async fn get_chunk_proof(
     })?;
     let data_root = H256::from_slice(&root_bytes);
 
-    let (chunk_data, proof) = state.storage.get_chunk_at_index(data_root, query.chunk_index)?;
+    let (chunk_data, proof) = state
+        .storage
+        .get_chunk_at_index(data_root, query.chunk_index)?;
     let chunk_hash = storage_primitives::blake2_256(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
@@ -314,9 +319,7 @@ async fn get_chunk_proof(
 // Bucket Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn list_buckets(
-    State(state): State<Arc<ProviderState>>,
-) -> Json<ListBucketsResponse> {
+async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucketsResponse> {
     Json(ListBucketsResponse {
         buckets: state.storage.list_buckets(),
     })

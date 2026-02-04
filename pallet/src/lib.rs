@@ -29,6 +29,7 @@ mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
+    use alloc::vec;
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
@@ -37,11 +38,10 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero, Verify};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Verify, Zero};
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof,
-        MmrProof, ProviderRole, RemovalReason, ReplicaRequestParams, Role,
-        HISTORICAL_ROOT_PRIMES,
+        BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
+        ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
@@ -124,8 +124,7 @@ pub mod pallet {
     /// Provider registry.
     #[pallet::storage]
     #[pallet::getter(fn providers)]
-    pub type Providers<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
+    pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]
@@ -193,7 +192,17 @@ pub mod pallet {
     }
 
     /// Provider settings controlling pricing and availability.
-    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, MaxEncodedLen, DebugNoBound)]
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        DebugNoBound,
+    )]
     #[scale_info(skip_type_params(T))]
     pub struct ProviderSettings<T: Config> {
         /// Minimum agreement duration provider will accept.
@@ -225,7 +234,15 @@ pub mod pallet {
 
     /// On-chain statistics for evaluating provider quality.
     #[derive(
-        CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, TypeInfo, MaxEncodedLen, DebugNoBound, DefaultNoBound,
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        TypeInfo,
+        MaxEncodedLen,
+        DebugNoBound,
+        DefaultNoBound,
     )]
     #[scale_info(skip_type_params(T))]
     pub struct ProviderStats<T: Config> {
@@ -338,7 +355,16 @@ pub mod pallet {
     }
 
     /// Challenge response from provider.
-    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, DebugNoBound)]
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        DebugNoBound,
+    )]
     #[scale_info(skip_type_params(T))]
     pub enum ChallengeResponse<T: Config> {
         /// Provide the chunk with proofs.
@@ -631,7 +657,10 @@ pub mod pallet {
                 !Providers::<T>::contains_key(&who),
                 Error::<T>::ProviderAlreadyRegistered
             );
-            ensure!(stake >= T::MinProviderStake::get(), Error::<T>::InsufficientStake);
+            ensure!(
+                stake >= T::MinProviderStake::get(),
+                Error::<T>::InsufficientStake
+            );
 
             // Validate public key length (32 bytes for Sr25519/Ed25519, 33 for Ecdsa compressed)
             let key_len = public_key.len();
@@ -674,7 +703,9 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
-                let provider = maybe_provider.as_mut().ok_or(Error::<T>::ProviderNotFound)?;
+                let provider = maybe_provider
+                    .as_mut()
+                    .ok_or(Error::<T>::ProviderNotFound)?;
 
                 T::Currency::reserve(&who, amount)?;
 
@@ -729,7 +760,9 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
-                let provider = maybe_provider.as_mut().ok_or(Error::<T>::ProviderNotFound)?;
+                let provider = maybe_provider
+                    .as_mut()
+                    .ok_or(Error::<T>::ProviderNotFound)?;
                 provider.settings = settings;
                 Ok(())
             })?;
@@ -749,14 +782,18 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            ensure!(Providers::<T>::contains_key(&who), Error::<T>::ProviderNotFound);
+            ensure!(
+                Providers::<T>::contains_key(&who),
+                Error::<T>::ProviderNotFound
+            );
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &who,
                 |maybe_agreement| -> DispatchResult {
-                    let agreement =
-                        maybe_agreement.as_mut().ok_or(Error::<T>::AgreementNotFound)?;
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
                     agreement.extensions_blocked = blocked;
                     Ok(())
                 },
@@ -857,7 +894,7 @@ pub mod pallet {
                 let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
                 // Count set bits in the bitfield
-                let signer_count: usize = snapshot.primary_signers.iter().map(|b| b.count_ones() as usize).sum();
+                let signer_count = snapshot.count_signers();
                 ensure!(
                     signer_count >= bucket.min_providers as usize,
                     Error::<T>::MinProvidersNotMet
@@ -968,8 +1005,12 @@ pub mod pallet {
             let _who = ensure_signed(origin)?;
 
             // Verify provider is slashed (zero stake)
-            let provider_info = Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
-            ensure!(provider_info.stake.is_zero(), Error::<T>::ProviderNotSlashed);
+            let provider_info =
+                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            ensure!(
+                provider_info.stake.is_zero(),
+                Error::<T>::ProviderNotSlashed
+            );
 
             // Get and remove the agreement
             let agreement = StorageAgreements::<T>::take(bucket_id, &provider)
@@ -1027,7 +1068,10 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            ensure!(Buckets::<T>::contains_key(bucket_id), Error::<T>::BucketNotFound);
+            ensure!(
+                Buckets::<T>::contains_key(bucket_id),
+                Error::<T>::BucketNotFound
+            );
 
             let provider_info =
                 Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
@@ -1165,19 +1209,26 @@ pub mod pallet {
         pub fn accept_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            ensure!(Providers::<T>::contains_key(&who), Error::<T>::ProviderNotFound);
+            ensure!(
+                Providers::<T>::contains_key(&who),
+                Error::<T>::ProviderNotFound
+            );
 
             let request = AgreementRequests::<T>::take(&who, bucket_id)
                 .ok_or(Error::<T>::AgreementRequestNotFound)?;
 
             let current_block = frame_system::Pallet::<T>::block_number();
-            ensure!(current_block <= request.expires_at, Error::<T>::RequestExpired);
+            ensure!(
+                current_block <= request.expires_at,
+                Error::<T>::RequestExpired
+            );
 
             let expires_at = current_block.saturating_add(request.duration);
 
             // Create the role based on whether replica params exist
             let role = if let Some(replica_params) = request.replica_params {
-                let provider_info = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
+                let provider_info =
+                    Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
                 let sync_price = provider_info
                     .settings
                     .replica_sync_price
@@ -1203,8 +1254,7 @@ pub mod pallet {
                 ProviderRole::Primary
             };
 
-            let provider_info =
-                Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
+            let provider_info = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
 
             // Enforce stake-to-bytes ratio
             // New commitment = existing + requested
@@ -1367,15 +1417,22 @@ pub mod pallet {
                 // After expiry, only owner can end (within settlement window)
                 ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                let settlement_deadline =
-                    agreement.expires_at.saturating_add(T::SettlementTimeout::get());
+                let settlement_deadline = agreement
+                    .expires_at
+                    .saturating_add(T::SettlementTimeout::get());
                 ensure!(
                     current_block <= settlement_deadline,
                     Error::<T>::SettlementWindowPassed
                 );
             }
 
-            Self::finalize_agreement(bucket_id, &provider, &agreement, action, is_early_termination)
+            Self::finalize_agreement(
+                bucket_id,
+                &provider,
+                &agreement,
+                action,
+                is_early_termination,
+            )
         }
 
         /// Claim payment for expired agreement (provider only).
@@ -1392,10 +1449,14 @@ pub mod pallet {
 
             let current_block = frame_system::Pallet::<T>::block_number();
 
-            ensure!(current_block > agreement.expires_at, Error::<T>::AgreementNotExpired);
+            ensure!(
+                current_block > agreement.expires_at,
+                Error::<T>::AgreementNotExpired
+            );
 
-            let settlement_deadline =
-                agreement.expires_at.saturating_add(T::SettlementTimeout::get());
+            let settlement_deadline = agreement
+                .expires_at
+                .saturating_add(T::SettlementTimeout::get());
             ensure!(
                 current_block > settlement_deadline,
                 Error::<T>::AgreementNotExpired
@@ -1420,13 +1481,16 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let provider_info = Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            let provider_info =
+                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &provider,
                 |maybe_agreement| -> DispatchResult {
-                    let agreement = maybe_agreement.as_mut().ok_or(Error::<T>::AgreementNotFound)?;
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
 
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
@@ -1507,7 +1571,8 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let provider_info = Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            let provider_info =
+                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
 
             // Check provider is accepting extensions
             ensure!(
@@ -1519,10 +1584,15 @@ pub mod pallet {
                 bucket_id,
                 &provider,
                 |maybe_agreement| -> DispatchResult {
-                    let agreement = maybe_agreement.as_mut().ok_or(Error::<T>::AgreementNotFound)?;
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
 
                     // Check per-agreement extension block
-                    ensure!(!agreement.extensions_blocked, Error::<T>::AgreementExtensionsBlocked);
+                    ensure!(
+                        !agreement.extensions_blocked,
+                        Error::<T>::AgreementExtensionsBlocked
+                    );
 
                     // Validate duration
                     Self::validate_duration(&provider_info.settings, additional_duration)?;
@@ -1530,7 +1600,8 @@ pub mod pallet {
                     let current_block = frame_system::Pallet::<T>::block_number();
 
                     // Check if price increased
-                    let price_increased = provider_info.settings.price_per_byte > agreement.price_per_byte;
+                    let price_increased =
+                        provider_info.settings.price_per_byte > agreement.price_per_byte;
 
                     // If price increased, only owner can extend
                     if price_increased {
@@ -1575,7 +1646,10 @@ pub mod pallet {
                         additional_duration,
                     )?;
 
-                    ensure!(extension_payment <= max_payment, Error::<T>::PaymentExceedsMax);
+                    ensure!(
+                        extension_payment <= max_payment,
+                        Error::<T>::PaymentExceedsMax
+                    );
 
                     // Lock new payment from caller (not necessarily the owner)
                     T::Currency::reserve(&who, extension_payment)?;
@@ -1657,17 +1731,20 @@ pub mod pallet {
 
                 // Check frozen constraint
                 if let Some(frozen_start) = bucket.frozen_start_seq {
-                    ensure!(start_seq >= frozen_start, Error::<T>::SnapshotViolatesFrozen);
+                    ensure!(
+                        start_seq >= frozen_start,
+                        Error::<T>::SnapshotViolatesFrozen
+                    );
                 }
 
                 // Verify signatures and build signer bitfield
                 let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
                 let encoded_payload = payload.encode();
 
-                // Create bitfield as Vec<u8> (LSB0 ordering: bit 0 of byte 0 = provider 0)
+                // Create bitfield using Vec<u8>
                 let num_providers = bucket.primary_providers.len();
                 let num_bytes = (num_providers + 7) / 8;
-                let mut primary_signers = alloc::vec![0u8; num_bytes];
+                let mut primary_signers = vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
 
@@ -1682,8 +1759,10 @@ pub mod pallet {
                     // Verify the signature using the provider's registered public key
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit at position idx (LSB0 ordering)
-                    primary_signers[idx / 8] |= 1 << (idx % 8);
+                    // Set bit at position idx using manual bit manipulation
+                    let byte_idx = idx / 8;
+                    let bit_idx = idx % 8;
+                    primary_signers[byte_idx] |= 1 << bit_idx;
                     signing_count += 1;
                     signing_providers.push(signer.clone());
                 }
@@ -1766,11 +1845,11 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Check if already signed (LSB0 bit ordering)
+                    // Check if already signed using bit manipulation
                     let byte_idx = idx / 8;
                     let bit_idx = idx % 8;
-                    if byte_idx < primary_signers.len() {
-                        if (primary_signers[byte_idx] & (1 << bit_idx)) != 0 {
+                    if let Some(byte) = primary_signers.get(byte_idx) {
+                        if (byte & (1 << bit_idx)) != 0 {
                             continue; // Skip already-signed providers
                         }
                     }
@@ -1778,7 +1857,7 @@ pub mod pallet {
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit (LSB0 bit ordering)
+                    // Set bit using manual bit manipulation
                     if byte_idx < primary_signers.len() {
                         primary_signers[byte_idx] |= 1 << bit_idx;
                     }
@@ -1832,11 +1911,8 @@ pub mod pallet {
                 .position(|p| p == &provider)
                 .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-            // Check if provider bit is set in the bitfield (LSB0 ordering)
-            let byte_idx = provider_idx / 8;
-            let bit_idx = provider_idx % 8;
-            let provider_signed = byte_idx < snapshot.primary_signers.len()
-                && (snapshot.primary_signers[byte_idx] & (1 << bit_idx)) != 0;
+            // Check if provider bit is set in the bitfield
+            let provider_signed = snapshot.has_provider_signed(provider_idx);
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
 
             Self::create_challenge(
@@ -1871,7 +1947,10 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             // Verify the bucket exists
-            ensure!(Buckets::<T>::contains_key(bucket_id), Error::<T>::BucketNotFound);
+            ensure!(
+                Buckets::<T>::contains_key(bucket_id),
+                Error::<T>::BucketNotFound
+            );
 
             // Verify provider has an agreement for this bucket
             ensure!(
@@ -1925,7 +2004,7 @@ pub mod pallet {
                     // We need to get the start_seq from the bucket's snapshot at that root
                     // For simplicity, we'll use 0 here - in production this should be tracked
                     (*root, 0u64)
-                },
+                }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
 
@@ -1950,8 +2029,8 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut challenges = Challenges::<T>::get(challenge_id.deadline)
-                .ok_or(Error::<T>::ChallengeNotFound)?;
+            let mut challenges =
+                Challenges::<T>::get(challenge_id.deadline).ok_or(Error::<T>::ChallengeNotFound)?;
 
             let challenge = challenges
                 .get(challenge_id.index as usize)
@@ -1966,7 +2045,8 @@ pub mod pallet {
             );
 
             // Verify response
-            let bucket = Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            let bucket =
+                Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
             match &response {
                 ChallengeResponse::Proof {
@@ -2043,7 +2123,9 @@ pub mod pallet {
             }
 
             // Calculate response time (blocks since challenge was created)
-            let challenge_created_at = challenge_id.deadline.saturating_sub(T::ChallengeTimeout::get());
+            let challenge_created_at = challenge_id
+                .deadline
+                .saturating_sub(T::ChallengeTimeout::get());
             let response_time = current_block.saturating_sub(challenge_created_at);
 
             // Calculate cost split based on response time
@@ -2120,8 +2202,9 @@ pub mod pallet {
                 bucket_id,
                 &who,
                 |maybe_agreement| -> DispatchResult {
-                    let agreement =
-                        maybe_agreement.as_mut().ok_or(Error::<T>::AgreementNotFound)?;
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
 
                     let (sync_balance, sync_price, min_sync_interval, last_sync) =
                         match &mut agreement.role {
@@ -2139,10 +2222,7 @@ pub mod pallet {
                     // Check sync interval
                     if let Some((_, last_block)) = last_sync {
                         let min_next_block = last_block.saturating_add(*min_sync_interval);
-                        ensure!(
-                            current_block >= min_next_block,
-                            Error::<T>::SyncTooFrequent
-                        );
+                        ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
                     // Find matching root position
@@ -2203,8 +2283,9 @@ pub mod pallet {
                 bucket_id,
                 &provider,
                 |maybe_agreement| -> DispatchResult {
-                    let agreement =
-                        maybe_agreement.as_mut().ok_or(Error::<T>::AgreementNotFound)?;
+                    let agreement = maybe_agreement
+                        .as_mut()
+                        .ok_or(Error::<T>::AgreementNotFound)?;
 
                     let sync_balance = match &mut agreement.role {
                         ProviderRole::Replica { sync_balance, .. } => sync_balance,
@@ -2262,7 +2343,7 @@ pub mod pallet {
                     let mut key_bytes = [0u8; 32];
                     key_bytes.copy_from_slice(public_key_bytes);
                     sp_runtime::AccountId32::new(key_bytes)
-                },
+                }
                 sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
                     // Ecdsa/Eth public keys are 33 bytes (compressed), AccountId32 is blake2_256 hash
                     if public_key_bytes.len() != 33 {
@@ -2270,7 +2351,7 @@ pub mod pallet {
                     }
                     let hash = sp_io::hashing::blake2_256(public_key_bytes);
                     sp_runtime::AccountId32::new(hash)
-                },
+                }
             };
 
             // Verify signature against the account ID
@@ -2305,8 +2386,14 @@ pub mod pallet {
             settings: &ProviderSettings<T>,
             duration: BlockNumberFor<T>,
         ) -> DispatchResult {
-            ensure!(duration >= settings.min_duration, Error::<T>::DurationTooShort);
-            ensure!(duration <= settings.max_duration, Error::<T>::DurationTooLong);
+            ensure!(
+                duration >= settings.min_duration,
+                Error::<T>::DurationTooShort
+            );
+            ensure!(
+                duration <= settings.max_duration,
+                Error::<T>::DurationTooLong
+            );
             Ok(())
         }
 
@@ -2339,7 +2426,8 @@ pub mod pallet {
                 EndAction::Pay => (agreement.payment_locked, Zero::zero()),
                 EndAction::Burn { burn_percent } => {
                     let burn_percent = burn_percent.min(100);
-                    let burn_amount = agreement.payment_locked * burn_percent.into() / 100u32.into();
+                    let burn_amount =
+                        agreement.payment_locked * burn_percent.into() / 100u32.into();
                     let pay_amount = agreement.payment_locked.saturating_sub(burn_amount);
                     (pay_amount, burn_amount)
                 }
@@ -2379,8 +2467,10 @@ pub mod pallet {
                         provider_info.stats.agreements_burned =
                             provider_info.stats.agreements_burned.saturating_add(1);
                     } else {
-                        provider_info.stats.agreements_not_extended =
-                            provider_info.stats.agreements_not_extended.saturating_add(1);
+                        provider_info.stats.agreements_not_extended = provider_info
+                            .stats
+                            .agreements_not_extended
+                            .saturating_add(1);
                     }
                 }
             });
@@ -2462,10 +2552,7 @@ pub mod pallet {
                 }
             });
 
-            let challenge_id = ChallengeId {
-                deadline,
-                index,
-            };
+            let challenge_id = ChallengeId { deadline, index };
 
             Self::deposit_event(Event::ChallengeCreated {
                 challenge_id,
@@ -2483,9 +2570,7 @@ pub mod pallet {
             current_block: BlockNumberFor<T>,
             mmr_root: H256,
         ) {
-            let block_num: u32 = current_block
-                .try_into()
-                .unwrap_or(0u32);
+            let block_num: u32 = current_block.try_into().unwrap_or(0u32);
 
             for (i, &prime) in HISTORICAL_ROOT_PRIMES.iter().enumerate() {
                 let quotient = block_num / prime;
@@ -2536,7 +2621,8 @@ pub mod pallet {
 
                 // Unreserve and slash the stake
                 // In Substrate, slashing typically burns or sends to treasury
-                let (_, remaining) = T::Currency::slash_reserved(&challenge.provider, slashed_amount);
+                let (_, remaining) =
+                    T::Currency::slash_reserved(&challenge.provider, slashed_amount);
                 let actually_slashed = slashed_amount.saturating_sub(remaining);
 
                 // Calculate challenger reward (e.g., 10% of slashed amount, rest goes to treasury)
@@ -2575,88 +2661,106 @@ pub mod pallet {
         // ─────────────────────────────────────────────────────────────────────────
 
         /// Query provider information.
-        pub fn query_provider_info(provider: &T::AccountId) -> Option<crate::runtime_api::ProviderInfoResponse> {
+        pub fn query_provider_info(
+            provider: &T::AccountId,
+        ) -> Option<crate::runtime_api::ProviderInfoResponse> {
             use sp_runtime::traits::SaturatedConversion;
 
-            Providers::<T>::get(provider).map(|info| {
-                crate::runtime_api::ProviderInfoResponse {
-                    multiaddr: info.multiaddr.to_vec(),
-                    public_key: info.public_key.to_vec(),
-                    stake: info.stake.saturated_into::<u128>(),
-                    committed_bytes: info.committed_bytes,
-                    min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                    max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                    price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                    accepting_primary: info.settings.accepting_primary,
-                    replica_sync_price: info.settings.replica_sync_price.map(|p| p.saturated_into::<u128>()),
-                    accepting_extensions: info.settings.accepting_extensions,
-                    registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                    agreements_total: info.stats.agreements_total,
-                    agreements_extended: info.stats.agreements_extended,
-                    agreements_not_extended: info.stats.agreements_not_extended,
-                    agreements_burned: info.stats.agreements_burned,
-                    challenges_received: info.stats.challenges_received,
-                    challenges_failed: info.stats.challenges_failed,
-                }
+            Providers::<T>::get(provider).map(|info| crate::runtime_api::ProviderInfoResponse {
+                multiaddr: info.multiaddr.to_vec(),
+                public_key: info.public_key.to_vec(),
+                stake: info.stake.saturated_into::<u128>(),
+                committed_bytes: info.committed_bytes,
+                min_duration: info.settings.min_duration.saturated_into::<u32>(),
+                max_duration: info.settings.max_duration.saturated_into::<u32>(),
+                price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
+                accepting_primary: info.settings.accepting_primary,
+                replica_sync_price: info
+                    .settings
+                    .replica_sync_price
+                    .map(|p| p.saturated_into::<u128>()),
+                accepting_extensions: info.settings.accepting_extensions,
+                registered_at: info.stats.registered_at.saturated_into::<u32>(),
+                agreements_total: info.stats.agreements_total,
+                agreements_extended: info.stats.agreements_extended,
+                agreements_not_extended: info.stats.agreements_not_extended,
+                agreements_burned: info.stats.agreements_burned,
+                challenges_received: info.stats.challenges_received,
+                challenges_failed: info.stats.challenges_failed,
             })
         }
 
         /// Query all providers (paginated).
-        pub fn query_providers(offset: u32, limit: u32) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
+        pub fn query_providers(
+            offset: u32,
+            limit: u32,
+        ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
             use sp_runtime::traits::SaturatedConversion;
 
             Providers::<T>::iter()
                 .skip(offset as usize)
                 .take(limit as usize)
                 .filter_map(|(account, info)| {
-                    Some((account, crate::runtime_api::ProviderInfoResponse {
-                        multiaddr: info.multiaddr.to_vec(),
-                        public_key: info.public_key.to_vec(),
-                        stake: info.stake.saturated_into::<u128>(),
-                        committed_bytes: info.committed_bytes,
-                        min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                        max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                        price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                        accepting_primary: info.settings.accepting_primary,
-                        replica_sync_price: info.settings.replica_sync_price.map(|p| p.saturated_into::<u128>()),
-                        accepting_extensions: info.settings.accepting_extensions,
-                        registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                        agreements_total: info.stats.agreements_total,
-                        agreements_extended: info.stats.agreements_extended,
-                        agreements_not_extended: info.stats.agreements_not_extended,
-                        agreements_burned: info.stats.agreements_burned,
-                        challenges_received: info.stats.challenges_received,
-                        challenges_failed: info.stats.challenges_failed,
-                    }))
+                    Some((
+                        account,
+                        crate::runtime_api::ProviderInfoResponse {
+                            multiaddr: info.multiaddr.to_vec(),
+                            public_key: info.public_key.to_vec(),
+                            stake: info.stake.saturated_into::<u128>(),
+                            committed_bytes: info.committed_bytes,
+                            min_duration: info.settings.min_duration.saturated_into::<u32>(),
+                            max_duration: info.settings.max_duration.saturated_into::<u32>(),
+                            price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
+                            accepting_primary: info.settings.accepting_primary,
+                            replica_sync_price: info
+                                .settings
+                                .replica_sync_price
+                                .map(|p| p.saturated_into::<u128>()),
+                            accepting_extensions: info.settings.accepting_extensions,
+                            registered_at: info.stats.registered_at.saturated_into::<u32>(),
+                            agreements_total: info.stats.agreements_total,
+                            agreements_extended: info.stats.agreements_extended,
+                            agreements_not_extended: info.stats.agreements_not_extended,
+                            agreements_burned: info.stats.agreements_burned,
+                            challenges_received: info.stats.challenges_received,
+                            challenges_failed: info.stats.challenges_failed,
+                        },
+                    ))
                 })
                 .collect()
         }
 
         /// Query bucket information.
-        pub fn query_bucket_info(bucket_id: BucketId) -> Option<crate::runtime_api::BucketResponse> {
+        pub fn query_bucket_info(
+            bucket_id: BucketId,
+        ) -> Option<crate::runtime_api::BucketResponse> {
             use sp_runtime::traits::SaturatedConversion;
 
-            Buckets::<T>::get(bucket_id).map(|bucket| {
-                crate::runtime_api::BucketResponse {
-                    bucket_id,
-                    members: bucket.members.iter().map(|m| {
-                        crate::runtime_api::BucketMemberResponse {
-                            account: m.account.encode(),
-                            role: m.role,
-                        }
-                    }).collect(),
-                    frozen_start_seq: bucket.frozen_start_seq,
-                    min_providers: bucket.min_providers,
-                    primary_providers: bucket.primary_providers.iter().map(|p| p.encode()).collect(),
-                    snapshot: bucket.snapshot.map(|s| BucketSnapshot {
-                        mmr_root: s.mmr_root,
-                        start_seq: s.start_seq,
-                        leaf_count: s.leaf_count,
-                        checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
-                        primary_signers: s.primary_signers.clone(),
-                    }),
-                    total_snapshots: bucket.total_snapshots,
-                }
+            Buckets::<T>::get(bucket_id).map(|bucket| crate::runtime_api::BucketResponse {
+                bucket_id,
+                members: bucket
+                    .members
+                    .iter()
+                    .map(|m| crate::runtime_api::BucketMemberResponse {
+                        account: m.account.encode(),
+                        role: m.role,
+                    })
+                    .collect(),
+                frozen_start_seq: bucket.frozen_start_seq,
+                min_providers: bucket.min_providers,
+                primary_providers: bucket
+                    .primary_providers
+                    .iter()
+                    .map(|p| p.encode())
+                    .collect(),
+                snapshot: bucket.snapshot.map(|s| BucketSnapshot {
+                    mmr_root: s.mmr_root,
+                    start_seq: s.start_seq,
+                    leaf_count: s.leaf_count,
+                    checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
+                    primary_signers: s.primary_signers.clone(),
+                }),
+                total_snapshots: bucket.total_snapshots,
             })
         }
 
@@ -2668,7 +2772,10 @@ pub mod pallet {
         }
 
         /// Query agreement information.
-        pub fn query_agreement_info(bucket_id: BucketId, provider: &T::AccountId) -> Option<crate::runtime_api::AgreementResponse> {
+        pub fn query_agreement_info(
+            bucket_id: BucketId,
+            provider: &T::AccountId,
+        ) -> Option<crate::runtime_api::AgreementResponse> {
             use sp_runtime::traits::SaturatedConversion;
 
             StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
@@ -2682,14 +2789,18 @@ pub mod pallet {
                     extensions_blocked: agreement.extensions_blocked,
                     role: match agreement.role {
                         ProviderRole::Primary => ProviderRole::Primary,
-                        ProviderRole::Replica { sync_balance, sync_price, min_sync_interval, last_sync } => {
-                            ProviderRole::Replica {
-                                sync_balance: sync_balance.saturated_into::<u128>(),
-                                sync_price: sync_price.saturated_into::<u128>(),
-                                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync.map(|(root, block)| (root, block.saturated_into::<u32>())),
-                            }
-                        }
+                        ProviderRole::Replica {
+                            sync_balance,
+                            sync_price,
+                            min_sync_interval,
+                            last_sync,
+                        } => ProviderRole::Replica {
+                            sync_balance: sync_balance.saturated_into::<u128>(),
+                            sync_price: sync_price.saturated_into::<u128>(),
+                            min_sync_interval: min_sync_interval.saturated_into::<u32>(),
+                            last_sync: last_sync
+                                .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                        },
                     },
                     started_at: agreement.started_at.saturated_into::<u32>(),
                 }
@@ -2697,12 +2808,14 @@ pub mod pallet {
         }
 
         /// Query all agreements for a bucket.
-        pub fn query_bucket_agreements(bucket_id: BucketId) -> Vec<crate::runtime_api::AgreementResponse> {
+        pub fn query_bucket_agreements(
+            bucket_id: BucketId,
+        ) -> Vec<crate::runtime_api::AgreementResponse> {
             use sp_runtime::traits::SaturatedConversion;
 
             StorageAgreements::<T>::iter_prefix(bucket_id)
-                .map(|(provider, agreement)| {
-                    crate::runtime_api::AgreementResponse {
+                .map(
+                    |(provider, agreement)| crate::runtime_api::AgreementResponse {
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -2712,18 +2825,22 @@ pub mod pallet {
                         extensions_blocked: agreement.extensions_blocked,
                         role: match agreement.role {
                             ProviderRole::Primary => ProviderRole::Primary,
-                            ProviderRole::Replica { sync_balance, sync_price, min_sync_interval, last_sync } => {
-                                ProviderRole::Replica {
-                                    sync_balance: sync_balance.saturated_into::<u128>(),
-                                    sync_price: sync_price.saturated_into::<u128>(),
-                                    min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                    last_sync: last_sync.map(|(root, block)| (root, block.saturated_into::<u32>())),
-                                }
-                            }
+                            ProviderRole::Replica {
+                                sync_balance,
+                                sync_price,
+                                min_sync_interval,
+                                last_sync,
+                            } => ProviderRole::Replica {
+                                sync_balance: sync_balance.saturated_into::<u128>(),
+                                sync_price: sync_price.saturated_into::<u128>(),
+                                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
+                                last_sync: last_sync
+                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                            },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
-                    }
-                })
+                    },
+                )
                 .collect()
         }
 
@@ -2732,10 +2849,14 @@ pub mod pallet {
             use sp_runtime::traits::SaturatedConversion;
 
             if let Some(provider_info) = Providers::<T>::get(provider) {
-                let new_committed_bytes = provider_info.committed_bytes.saturating_add(additional_bytes);
+                let new_committed_bytes = provider_info
+                    .committed_bytes
+                    .saturating_add(additional_bytes);
                 let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
 
-                if let Some(required_stake) = T::MinStakePerByte::get().checked_mul(&bytes_as_balance) {
+                if let Some(required_stake) =
+                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
+                {
                     return provider_info.stake >= required_stake;
                 }
             }

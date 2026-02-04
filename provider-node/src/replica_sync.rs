@@ -94,7 +94,8 @@ impl ReplicaSync {
             .peaks
             .iter()
             .map(|h| {
-                let bytes = hex_decode(h).map_err(|_| Error::Storage("Invalid peak hash".to_string()))?;
+                let bytes =
+                    hex_decode(h).map_err(|_| Error::Storage("Invalid peak hash".to_string()))?;
                 Ok(H256::from_slice(&bytes))
             })
             .collect::<Result<Vec<_>, Error>>()?;
@@ -115,62 +116,62 @@ impl ReplicaSync {
         primary_url: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
         Box::pin(async move {
-        // Check if we already have this node
-        if self.storage.get_node(&root_hash).is_some() {
-            return Ok(());
-        }
-
-        // Fetch the node from primary
-        let response = self
-            .http
-            .get(format!("{}/node", primary_url))
-            .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
-            .send()
-            .await
-            .map_err(|e| Error::Storage(format!("Failed to fetch node: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(Error::Storage(format!(
-                "Primary returned error for node: {}",
-                response.status()
-            )));
-        }
-
-        let node_response: DownloadNodeResponse = response
-            .json()
-            .await
-            .map_err(|e| Error::Serialization(e.to_string()))?;
-
-        // Decode node data
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(&node_response.data)
-            .map_err(|e| Error::Serialization(e.to_string()))?;
-
-        // Decode children if present
-        let children = node_response
-            .children
-            .map(|c| {
-                c.iter()
-                    .map(|h| {
-                        let bytes = hex_decode(h)?;
-                        Ok(H256::from_slice(&bytes))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()
-            })
-            .transpose()?;
-
-        // Store locally
-        self.storage
-            .store_node(bucket_id, root_hash, data, children.clone())?;
-
-        // Recursively fetch children
-        if let Some(child_hashes) = children {
-            for child in child_hashes {
-                self.fetch_subtree(bucket_id, child, primary_url).await?;
+            // Check if we already have this node
+            if self.storage.get_node(&root_hash).is_some() {
+                return Ok(());
             }
-        }
 
-        Ok(())
+            // Fetch the node from primary
+            let response = self
+                .http
+                .get(format!("{}/node", primary_url))
+                .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
+                .send()
+                .await
+                .map_err(|e| Error::Storage(format!("Failed to fetch node: {}", e)))?;
+
+            if !response.status().is_success() {
+                return Err(Error::Storage(format!(
+                    "Primary returned error for node: {}",
+                    response.status()
+                )));
+            }
+
+            let node_response: DownloadNodeResponse = response
+                .json()
+                .await
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+
+            // Decode node data
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(&node_response.data)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+
+            // Decode children if present
+            let children = node_response
+                .children
+                .map(|c| {
+                    c.iter()
+                        .map(|h| {
+                            let bytes = hex_decode(h)?;
+                            Ok(H256::from_slice(&bytes))
+                        })
+                        .collect::<Result<Vec<_>, Error>>()
+                })
+                .transpose()?;
+
+            // Store locally
+            self.storage
+                .store_node(bucket_id, root_hash, data, children.clone())?;
+
+            // Recursively fetch children
+            if let Some(child_hashes) = children {
+                for child in child_hashes {
+                    self.fetch_subtree(bucket_id, child, primary_url).await?;
+                }
+            }
+
+            Ok(())
         })
     }
 

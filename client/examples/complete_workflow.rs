@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     provider_client
         .register(
             "/ip4/203.0.113.1/tcp/3000".to_string(),
-            vec![0u8; 32], // Mock public key
+            vec![0u8; 32],      // Mock public key
             10_000_000_000_000, // 10 tokens stake
         )
         .await?;
@@ -70,9 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             bucket_id,
             provider_account.to_string(),
             10 * 1024 * 1024 * 1024, // 10 GB
-            100_000,                  // ~2 weeks at 6 sec blocks
-            5_000_000_000_000,        // 5 tokens payment
-            None,                     // Primary (not replica)
+            100_000,                 // ~2 weeks at 6 sec blocks
+            5_000_000_000_000,       // 5 tokens payment
+            None,                    // Primary (not replica)
         )
         .await?;
     println!("  ✓ Agreement requested: 10 GB for 100,000 blocks");
@@ -129,8 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🎯 Step 6: Data Integrity Challenge");
 
     let challenger_account = "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy";
-    let challenger_client =
-        ChallengerClient::new(config.clone(), challenger_account.to_string())?;
+    let challenger_client = ChallengerClient::new(config.clone(), challenger_account.to_string())?;
 
     println!("  Challenger analyzing provider...");
     let analysis = challenger_client
@@ -144,8 +143,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .challenge_checkpoint(
             bucket_id,
             provider_account.to_string(),
-            0,  // leaf_index
-            0,  // chunk_index
+            0, // leaf_index
+            0, // chunk_index
         )
         .await?;
     println!(
@@ -175,7 +174,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Provider statistics:");
     let provider_stats = provider_client.get_stats().await?;
-    println!("    - Total agreements: {}", provider_stats.agreements_total);
+    println!(
+        "    - Total agreements: {}",
+        provider_stats.agreements_total
+    );
     println!(
         "    - Challenges received: {}",
         provider_stats.challenges_received
@@ -191,14 +193,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "    - Success rate: {:.1}%",
         if challenge_stats.total_challenges > 0 {
-            (challenge_stats.successful_challenges as f64
-                / challenge_stats.total_challenges as f64)
+            (challenge_stats.successful_challenges as f64 / challenge_stats.total_challenges as f64)
                 * 100.0
         } else {
             0.0
         }
     );
-    println!("    - Total earnings: {} tokens", challenge_stats.total_earnings);
+    println!(
+        "    - Total earnings: {} tokens",
+        challenge_stats.total_earnings
+    );
 
     println!("\n=== Workflow Complete ===");
     println!("\n💡 Key Takeaways:");

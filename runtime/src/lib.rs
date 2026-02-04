@@ -16,6 +16,7 @@ pub mod xcm_config;
 
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
@@ -45,7 +46,6 @@ use sp_runtime::{
     ApplyExtrinsicResult, MultiSignature, SaturatedConversion,
 };
 use sp_version::RuntimeVersion;
-use alloc::borrow::Cow;
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -126,8 +126,7 @@ impl frame_support::weights::WeightToFee for WeightToFee {
     type Balance = Balance;
 
     fn weight_to_fee(weight: &Weight) -> Self::Balance {
-        Self::Balance::saturated_from(weight.ref_time())
-            .saturating_mul(WEIGHT_FEE.saturated_into())
+        Self::Balance::saturated_from(weight.ref_time()).saturating_mul(WEIGHT_FEE.saturated_into())
     }
 }
 
@@ -152,7 +151,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 /// The version information used to identify this runtime when compiled natively.
 #[cfg(feature = "std")]
 pub fn native_version() -> NativeVersion {
-    NativeVersion { runtime_version: VERSION, can_author_with: Default::default() }
+    NativeVersion {
+        runtime_version: VERSION,
+        can_author_with: Default::default(),
+    }
 }
 
 // Unit = the base number of indivisible units for balances
@@ -449,7 +451,7 @@ impl frame_support::traits::Get<AccountId> for TreasuryAccount {
         // Use a well-known account derived from "modl" + pallet name
         // In production, this would be a proper treasury pallet
         sp_runtime::traits::AccountIdConversion::<AccountId>::into_account_truncating(
-            &frame_support::PalletId(*b"py/trsry")
+            &frame_support::PalletId(*b"py/trsry"),
         )
     }
 }
@@ -463,7 +465,7 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = MinProviderStake;
-    type MaxChunkSize = ConstU32<262144>;  // 256 KiB
+    type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;

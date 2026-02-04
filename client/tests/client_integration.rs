@@ -12,10 +12,7 @@ async fn start_test_server() -> String {
     use storage_provider_node::{create_router, ProviderState, Storage};
 
     let storage = Arc::new(Storage::new());
-    let state = Arc::new(ProviderState::new(
-        storage,
-        "0xtest_provider".to_string(),
-    ));
+    let state = Arc::new(ProviderState::new(storage, "0xtest_provider".to_string()));
 
     let app = create_router(state);
 
@@ -113,9 +110,7 @@ async fn test_client_upload_large_data_multiple_chunks() {
 
     // Create data larger than one chunk (using small chunk size for test)
     let chunk_size = 1024; // 1 KiB chunks for testing
-    let original_data: Vec<u8> = (0..chunk_size * 3 + 500)
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let original_data: Vec<u8> = (0..chunk_size * 3 + 500).map(|i| (i % 256) as u8).collect();
     let bucket_id = 1;
 
     // Upload with small chunk size

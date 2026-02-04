@@ -169,8 +169,7 @@ impl StorageUserClient {
                 .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
             // Verify chunk hash
-            let expected_hash =
-                BaseClient::hex_decode(&chunk.hash)?;
+            let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
             let actual_hash = blake2_256(&chunk_data);
             if actual_hash.as_bytes() != expected_hash.as_slice() {
                 return Err(ClientError::VerificationFailed);
@@ -332,11 +331,7 @@ impl StorageUserClient {
     /// Perform a spot-check on a provider to verify data integrity.
     ///
     /// Returns true if the check passed.
-    pub async fn spot_check(
-        &mut self,
-        data_root: &H256,
-        chunk_index: u64,
-    ) -> ClientResult<bool> {
+    pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
         use std::time::Instant;
 
         let chunk_size = 256 * 1024u64; // 256 KiB
@@ -387,7 +382,10 @@ impl StorageUserClient {
     }
 
     /// Get provider statistics for a specific provider URL.
-    pub fn get_provider_stats(&self, provider_url: &str) -> Option<&crate::verification::ProviderStats> {
+    pub fn get_provider_stats(
+        &self,
+        provider_url: &str,
+    ) -> Option<&crate::verification::ProviderStats> {
         self.verifier.get_stats(provider_url)
     }
 
@@ -496,7 +494,12 @@ impl StorageUserClient {
 // Implement ProviderReadAccess for verification
 #[async_trait::async_trait]
 impl crate::verification::ProviderReadAccess for StorageUserClient {
-    async fn read_data(&self, data_root: &H256, offset: u64, length: u64) -> Result<Vec<u8>, crate::ClientError> {
+    async fn read_data(
+        &self,
+        data_root: &H256,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, crate::ClientError> {
         self.download(data_root, offset, length).await
     }
 

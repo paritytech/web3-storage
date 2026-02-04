@@ -30,23 +30,16 @@ download-polkadot:
     set -euo pipefail
     mkdir -p .bin
 
-    # Determine platform suffix (only arm64 macOS binaries are available)
-    if [[ "{{os}}" == "darwin" ]]; then
-        if [[ "{{arch}}" != "arm64" ]]; then
-            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
-            exit 1
-        fi
-        SUFFIX="-aarch64-apple-darwin"
-    else
-        SUFFIX=""
-    fi
-
     # Download polkadot
     if [[ -x .bin/polkadot ]]; then
         echo "polkadot already exists in .bin/"
     else
         echo "Downloading polkadot for {{os}}/{{arch}}..."
-        curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot${SUFFIX}"
+        if [[ "{{os}}" == "darwin" ]]; then
+            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-aarch64-apple-darwin"
+        else
+            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot"
+        fi
         chmod +x .bin/polkadot
         echo "polkadot downloaded to .bin/polkadot"
     fi
@@ -56,7 +49,11 @@ download-polkadot:
         echo "polkadot-execute-worker already exists in .bin/"
     else
         echo "Downloading polkadot-execute-worker for {{os}}/{{arch}}..."
-        curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker${SUFFIX}"
+        if [[ "{{os}}" == "darwin" ]]; then
+            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker-aarch64-apple-darwin"
+        else
+            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker"
+        fi
         chmod +x .bin/polkadot-execute-worker
         echo "polkadot-execute-worker downloaded to .bin/polkadot-execute-worker"
     fi
@@ -66,7 +63,11 @@ download-polkadot:
         echo "polkadot-prepare-worker already exists in .bin/"
     else
         echo "Downloading polkadot-prepare-worker for {{os}}/{{arch}}..."
-        curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker${SUFFIX}"
+        if [[ "{{os}}" == "darwin" ]]; then
+            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker-aarch64-apple-darwin"
+        else
+            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker"
+        fi
         chmod +x .bin/polkadot-prepare-worker
         echo "polkadot-prepare-worker downloaded to .bin/polkadot-prepare-worker"
     fi
@@ -80,20 +81,12 @@ download-polkadot-omni-node:
         exit 0
     fi
     mkdir -p .bin
-
-    # Determine platform suffix (only arm64 macOS binaries are available)
-    if [[ "{{os}}" == "darwin" ]]; then
-        if [[ "{{arch}}" != "arm64" ]]; then
-            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
-            exit 1
-        fi
-        SUFFIX="-aarch64-apple-darwin"
-    else
-        SUFFIX=""
-    fi
-
     echo "Downloading polkadot-omni-node for {{os}}/{{arch}}..."
-    curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node${SUFFIX}"
+    if [[ "{{os}}" == "darwin" ]]; then
+        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node-aarch64-apple-darwin"
+    else
+        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node"
+    fi
     chmod +x .bin/polkadot-omni-node
     echo "polkadot-omni-node downloaded to .bin/polkadot-omni-node"
 
@@ -106,20 +99,12 @@ download-chain-spec-builder:
         exit 0
     fi
     mkdir -p .bin
-
-    # Determine platform suffix (only arm64 macOS binaries are available)
-    if [[ "{{os}}" == "darwin" ]]; then
-        if [[ "{{arch}}" != "arm64" ]]; then
-            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
-            exit 1
-        fi
-        SUFFIX="-aarch64-apple-darwin"
-    else
-        SUFFIX=""
-    fi
-
     echo "Downloading chain-spec-builder for {{os}}/{{arch}}..."
-    curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder${SUFFIX}"
+    if [[ "{{os}}" == "darwin" ]]; then
+        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder-aarch64-apple-darwin"
+    else
+        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder"
+    fi
     chmod +x .bin/chain-spec-builder
     echo "chain-spec-builder downloaded to .bin/chain-spec-builder"
 
@@ -193,15 +178,6 @@ start-services: check build
 # Health check for provider node
 health:
     curl -s http://localhost:3000/health | jq .
-
-# Demo: setup bucket and storage agreement (run once before demo-upload)
-demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
-    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
-
-# Demo: upload test data to provider (includes timestamp by default)
-demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
-    #!/usr/bin/env bash
-    cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
 
 # Generate chain spec
 generate-chain-spec: build

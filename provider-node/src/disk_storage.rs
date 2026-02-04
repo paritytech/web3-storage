@@ -87,13 +87,17 @@ impl DiskStorage {
 
         // Check if bucket already exists
         let key = bucket_id.to_le_bytes();
-        if self.db.get_cf(&cf, &key).map_err(|e| Error::Storage(e.to_string()))?.is_some() {
+        if self
+            .db
+            .get_cf(&cf, &key)
+            .map_err(|e| Error::Storage(e.to_string()))?
+            .is_some()
+        {
             return Ok(()); // Already exists
         }
 
         let bucket = BucketState::new(max_bytes);
-        let value = bincode::serialize(&bucket)
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
             .put_cf(&cf, &key, &value)
@@ -118,8 +122,7 @@ impl DiskStorage {
             .ok_or_else(|| Error::Storage("Buckets CF not found".to_string()))?;
 
         let key = bucket_id.to_le_bytes();
-        let value = bincode::serialize(bucket)
-            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let value = bincode::serialize(bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
             .put_cf(&cf, &key, &value)
@@ -183,16 +186,23 @@ impl DiskStorage {
 
             for child_hash in child_hashes {
                 let key = child_hash.as_bytes();
-                if self.db.get_cf(&cf_nodes, key).map_err(|e| Error::Storage(e.to_string()))?.is_none() {
-                    return Err(Error::ChildrenMissing(vec![
-                        format!("0x{}", hex::encode(child_hash.as_bytes()))
-                    ]));
+                if self
+                    .db
+                    .get_cf(&cf_nodes, key)
+                    .map_err(|e| Error::Storage(e.to_string()))?
+                    .is_none()
+                {
+                    return Err(Error::ChildrenMissing(vec![format!(
+                        "0x{}",
+                        hex::encode(child_hash.as_bytes())
+                    )]));
                 }
             }
         }
 
         // Check quota
-        let mut bucket = self.get_bucket(bucket_id)
+        let mut bucket = self
+            .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let new_size = bucket.used_bytes.saturating_add(data.len() as u64);
@@ -210,11 +220,16 @@ impl DiskStorage {
             .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
 
         let key = expected_hash.as_bytes();
-        if self.db.get_cf(&cf_nodes, key).map_err(|e| Error::Storage(e.to_string()))?.is_none() {
+        if self
+            .db
+            .get_cf(&cf_nodes, key)
+            .map_err(|e| Error::Storage(e.to_string()))?
+            .is_none()
+        {
             let data_len = data.len() as u64;
             let node = StoredNode { data, children };
-            let value = bincode::serialize(&node)
-                .map_err(|e| Error::Serialization(e.to_string()))?;
+            let value =
+                bincode::serialize(&node).map_err(|e| Error::Serialization(e.to_string()))?;
 
             self.db
                 .put_cf(&cf_nodes, key, &value)
@@ -272,7 +287,12 @@ impl DiskStorage {
 
         for root in &data_roots {
             let key = root.as_bytes();
-            if self.db.get_cf(&cf_nodes, key).map_err(|e| Error::Storage(e.to_string()))?.is_none() {
+            if self
+                .db
+                .get_cf(&cf_nodes, key)
+                .map_err(|e| Error::Storage(e.to_string()))?
+                .is_none()
+            {
                 return Err(Error::RootNotFound(format!(
                     "0x{}",
                     hex::encode(root.as_bytes())
@@ -281,7 +301,8 @@ impl DiskStorage {
         }
 
         // Get bucket and update MMR
-        let mut bucket = self.get_bucket(bucket_id)
+        let mut bucket = self
+            .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let start_seq = bucket.start_seq.saturating_add(bucket.leaf_count());
@@ -297,7 +318,7 @@ impl DiskStorage {
         for data_root in data_roots {
             let leaf = MmrLeaf {
                 data_root,
-                data_size: 0, // Would calculate from node tree
+                data_size: 0,  // Would calculate from node tree
                 total_size: 0, // Would track cumulative
             };
             let leaf_hash = blake2_256(&leaf.encode());
@@ -330,7 +351,8 @@ impl DiskStorage {
         bucket_id: BucketId,
         new_start_seq: u64,
     ) -> Result<(H256, u64, u64), Error> {
-        let mut bucket = self.get_bucket(bucket_id)
+        let mut bucket = self
+            .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         // Remove leaves before new_start_seq
@@ -358,7 +380,8 @@ impl DiskStorage {
         bucket_id: BucketId,
         leaf_index: u64,
     ) -> Result<(MmrLeaf, Vec<H256>), Error> {
-        let bucket = self.get_bucket(bucket_id)
+        let bucket = self
+            .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let leaf = bucket
@@ -372,7 +395,8 @@ impl DiskStorage {
             mmr.push(blake2_256(&l.encode()));
         }
 
-        let proof = mmr.proof(leaf_index)
+        let proof = mmr
+            .proof(leaf_index)
             .ok_or(Error::Storage("Failed to generate proof".to_string()))?;
 
         Ok((leaf.clone(), proof.peaks))
@@ -380,7 +404,8 @@ impl DiskStorage {
 
     /// Get MMR peaks.
     pub fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
-        let bucket = self.get_bucket(bucket_id)
+        let bucket = self
+            .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
         let mut mmr = crate::mmr::Mmr::new();

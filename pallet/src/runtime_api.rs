@@ -59,7 +59,7 @@ pub struct BucketResponse {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementResponse {
-    pub owner: Vec<u8>, // Encoded AccountId
+    pub owner: Vec<u8>,    // Encoded AccountId
     pub provider: Vec<u8>, // Encoded AccountId
     pub max_bytes: u64,
     pub payment_locked: u128,
@@ -75,7 +75,7 @@ pub struct AgreementResponse {
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChallengeResponse {
     pub bucket_id: BucketId,
-    pub provider: Vec<u8>, // Encoded AccountId
+    pub provider: Vec<u8>,   // Encoded AccountId
     pub challenger: Vec<u8>, // Encoded AccountId
     pub mmr_root: H256,
     pub start_seq: u64,
