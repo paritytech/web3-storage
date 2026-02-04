@@ -21,6 +21,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "std")]
+extern crate std;
+
 use alloc::{string::String, vec::Vec};
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;

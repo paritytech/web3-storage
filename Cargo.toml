@@ -11,6 +11,7 @@ members = [
     # Storage Interfaces: File System Interface
     "storage-interfaces/file-system/primitives",
     "storage-interfaces/file-system/pallet-registry",
+    "storage-interfaces/file-system/client",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ storage-parachain-runtime = { path = "runtime" }
 # Storage Interfaces: File System Interface
 file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
 pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
+file-system-client = { path = "storage-interfaces/file-system/client" }
 
 # Substrate frame
 frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }

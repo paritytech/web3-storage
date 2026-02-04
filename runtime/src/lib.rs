@@ -471,6 +471,16 @@ impl pallet_storage_provider::Config for Runtime {
     type RequestTimeout = RequestTimeout;
 }
 
+// --------------------------------
+// Drive Registry Pallet Config
+// --------------------------------
+
+impl pallet_drive_registry::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type MaxDriveNameLength = ConstU32<128>;
+    type MaxDrivesPerUser = ConstU32<100>;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
 mod runtime {
@@ -543,6 +553,10 @@ mod runtime {
     // Storage Provider
     #[runtime::pallet_index(50)]
     pub type StorageProvider = pallet_storage_provider;
+
+    // Drive Registry (Layer 1: File System)
+    #[runtime::pallet_index(51)]
+    pub type DriveRegistry = pallet_drive_registry;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {
