@@ -98,6 +98,30 @@ impl Storage {
             .collect()
     }
 
+    /// Get storage statistics per bucket.
+    pub fn get_bucket_stats(&self) -> Vec<BucketStats> {
+        self.buckets
+            .read()
+            .iter()
+            .map(|(id, state)| BucketStats {
+                bucket_id: *id,
+                leaf_count: state.leaf_count(),
+                node_count: 0, // Would need to track per-bucket
+                bytes_stored: state.used_bytes,
+            })
+            .collect()
+    }
+
+    /// Get total node count.
+    pub fn total_nodes(&self) -> u64 {
+        self.nodes.len() as u64
+    }
+
+    /// Get total bytes stored across all nodes.
+    pub fn total_bytes(&self) -> u64 {
+        self.nodes.iter().map(|n| n.data.len() as u64).sum()
+    }
+
     /// Store a node (chunk or internal node).
     pub fn store_node(
         &self,

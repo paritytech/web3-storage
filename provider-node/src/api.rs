@@ -10,9 +10,12 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use codec::Encode;
 use sp_core::H256;
 use std::sync::Arc;
+use storage_primitives::CommitmentPayload;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
@@ -20,6 +23,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Health and info
         .route("/health", get(health))
         .route("/info", get(info))
+        .route("/stats", get(stats))
         // Node operations
         .route("/node", get(get_node).put(upload_node))
         .route("/exists", post(check_exists))
@@ -37,6 +41,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
+        .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -56,6 +61,20 @@ async fn info() -> Json<InfoResponse> {
     Json(InfoResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+async fn stats(State(state): State<Arc<ProviderState>>) -> Json<StatsResponse> {
+    let bucket_stats = state.storage.get_bucket_stats();
+    let total_bytes = state.storage.total_bytes();
+    let total_nodes = state.storage.total_nodes();
+
+    Json(StatsResponse {
+        provider_id: state.provider_id.clone(),
+        total_buckets: bucket_stats.len(),
+        total_nodes,
+        total_bytes,
+        buckets: bucket_stats,
     })
 }
 
@@ -190,8 +209,10 @@ async fn commit(
     let (mmr_root, start_seq, leaf_indices) =
         state.storage.commit(request.bucket_id, data_roots)?;
 
-    // Generate signature (simplified - would use actual key)
-    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+    // Create commitment payload and sign it
+    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
+    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    let signature = state.sign(&payload.encode());
 
     Ok(Json(CommitResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
@@ -252,8 +273,10 @@ async fn get_commitment(
         .get_bucket(query.bucket_id)
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
-    // Generate signature (simplified)
-    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+    // Create commitment payload and sign it
+    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
+    let payload = CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, 0);
+    let signature = state.sign(&payload.encode());
 
     Ok(Json(CommitmentResponse {
         bucket_id: query.bucket_id,
@@ -336,8 +359,10 @@ async fn delete_data(
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Generate signature (simplified)
-    let signature = format!("0x{}", hex_encode(&[0u8; 64]));
+    // Create commitment payload and sign it
+    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
+    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    let signature = state.sign(&payload.encode());
 
     Ok(Json(DeleteResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),

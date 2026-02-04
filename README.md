@@ -24,6 +24,14 @@ just setup
 
 # Start blockchain network + provider node
 just start-services
+# Alternatively:
+# just start-chain
+# just start-provider
+
+# Terminal 2:
+# Setup (register provider, create bucket, establish agreement)
+# Upload test data + challenge
+just demo
 ```
 
 **That's it!** Your local network is running with a provider ready to accept data.

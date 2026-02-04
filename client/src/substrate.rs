@@ -115,13 +115,14 @@ pub mod extrinsics {
     use subxt::tx::Payload;
 
     /// Create a register_provider extrinsic payload.
-    pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>) -> impl Payload {
+    pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
             "register_provider",
             vec![
                 subxt::dynamic::Value::from_bytes(multiaddr),
                 subxt::dynamic::Value::from_bytes(public_key),
+                subxt::dynamic::Value::u128(stake),
             ],
         )
     }
@@ -144,7 +145,28 @@ pub mod extrinsics {
         )
     }
 
-    /// Create a request_agreement extrinsic payload.
+    /// Create a request_primary_agreement extrinsic payload (admin only).
+    pub fn request_primary_agreement(
+        bucket_id: u64,
+        provider: AccountId32,
+        max_bytes: u64,
+        duration: u32,
+        payment: u128,
+    ) -> impl Payload {
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "request_primary_agreement",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                subxt::dynamic::Value::u128(max_bytes as u128),
+                subxt::dynamic::Value::u128(duration as u128),
+                subxt::dynamic::Value::u128(payment),
+            ],
+        )
+    }
+
+    /// Create a request_agreement extrinsic payload (replica agreements).
     #[allow(clippy::too_many_arguments)]
     pub fn request_agreement(
         bucket_id: u64,
@@ -152,7 +174,8 @@ pub mod extrinsics {
         max_bytes: u64,
         duration: u32,
         payment: u128,
-        replica_for: Option<AccountId32>,
+        sync_balance: u128,
+        min_sync_interval: u32,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
@@ -163,13 +186,11 @@ pub mod extrinsics {
                 subxt::dynamic::Value::u128(max_bytes as u128),
                 subxt::dynamic::Value::u128(duration as u128),
                 subxt::dynamic::Value::u128(payment),
-                match replica_for {
-                    Some(acc) => subxt::dynamic::Value::unnamed_variant(
-                        "Some",
-                        [subxt::dynamic::Value::from_bytes(acc.as_ref() as &[u8])],
-                    ),
-                    None => subxt::dynamic::Value::unnamed_variant("None", []),
-                },
+                // ReplicaRequestParams struct
+                subxt::dynamic::Value::named_composite([
+                    ("sync_balance", subxt::dynamic::Value::u128(sync_balance)),
+                    ("min_sync_interval", subxt::dynamic::Value::u128(min_sync_interval as u128)),
+                ]),
             ],
         )
     }
@@ -189,6 +210,37 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::u128(leaf_index as u128),
                 subxt::dynamic::Value::u128(chunk_index as u128),
+            ],
+        )
+    }
+
+    /// Create a challenge_offchain extrinsic payload.
+    ///
+    /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
+    pub fn challenge_offchain(
+        bucket_id: u64,
+        provider: AccountId32,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_index: u64,
+        chunk_index: u64,
+        provider_signature: Vec<u8>,
+    ) -> impl Payload {
+        // MultiSignature::Sr25519 variant index is 0
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "challenge_offchain",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
+                subxt::dynamic::Value::u128(start_seq as u128),
+                subxt::dynamic::Value::u128(leaf_index as u128),
+                subxt::dynamic::Value::u128(chunk_index as u128),
+                // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
+                subxt::dynamic::Value::unnamed_variant("Sr25519", vec![
+                    subxt::dynamic::Value::from_bytes(&provider_signature),
+                ]),
             ],
         )
     }
@@ -241,10 +293,17 @@ pub mod extrinsics {
 /// Storage queries for reading chain state.
 pub mod storage {
     use super::*;
-    use subxt::storage::Address;
 
     /// Query provider info.
-    pub fn provider_info(account: &AccountId32) -> impl Address {
+    pub fn provider_info(
+        account: &AccountId32,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
         subxt::dynamic::storage(
             "StorageProvider",
             "Providers",
@@ -253,7 +312,15 @@ pub mod storage {
     }
 
     /// Query bucket info.
-    pub fn bucket_info(bucket_id: u64) -> impl Address {
+    pub fn bucket_info(
+        bucket_id: u64,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
         subxt::dynamic::storage(
             "StorageProvider",
             "Buckets",
@@ -262,10 +329,19 @@ pub mod storage {
     }
 
     /// Query agreement info.
-    pub fn agreement_info(bucket_id: u64, provider: &AccountId32) -> impl Address {
+    pub fn agreement_info(
+        bucket_id: u64,
+        provider: &AccountId32,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
         subxt::dynamic::storage(
             "StorageProvider",
-            "Agreements",
+            "StorageAgreements",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),

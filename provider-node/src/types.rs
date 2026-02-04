@@ -235,6 +235,25 @@ pub struct HealthResponse {
     pub version: String,
 }
 
+/// Provider statistics response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatsResponse {
+    pub provider_id: String,
+    pub total_buckets: usize,
+    pub total_nodes: u64,
+    pub total_bytes: u64,
+    pub buckets: Vec<BucketStats>,
+}
+
+/// Per-bucket statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketStats {
+    pub bucket_id: BucketId,
+    pub leaf_count: u64,
+    pub node_count: u64,
+    pub bytes_stored: u64,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Replica Sync Types
 // ─────────────────────────────────────────────────────────────────────────────

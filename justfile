@@ -138,46 +138,95 @@ check: download-binaries
 
 # Start the blockchain (relay chain + parachain)
 start-chain: check build
-    .bin/zombienet spawn zombienet.toml
-
-# Start all services (zombienet + provider node)
-start-services: check build
     #!/usr/bin/env bash
-    set -euo pipefail
-
     echo ""
-    echo "=== Starting Local Development Environment ==="
+    echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
     echo "Web UIs (once ready):"
-    echo "  Relay chain:    https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
-    echo "  Parachain:      https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
-    echo "  Provider health: http://127.0.0.1:3000/health"
+    echo "  Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
+    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
     echo ""
+    .bin/zombienet spawn zombienet.toml
 
-    # Start zombienet in background
-    .bin/zombienet spawn zombienet.toml &
-    ZOMBIENET_PID=$!
-
-    # Cleanup on exit
-    trap "kill $ZOMBIENET_PID 2>/dev/null" EXIT
-
-    # Wait for parachain RPC to be available
-    echo "Waiting for parachain to be ready..."
-    until curl -s -o /dev/null http://127.0.0.1:9944; do
-        sleep 2
-    done
-    echo "Parachain is ready!"
+# Start the storage provider node
+start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
+    #!/usr/bin/env bash
     echo ""
-
-    # Start provider node in foreground
-    echo "Starting provider node..."
-    PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
-    CHAIN_RPC=ws://127.0.0.1:9944 \
+    echo "=== Starting Storage Provider Node ==="
+    echo ""
+    echo "Provider health: http://127.0.0.1:3000/health"
+    echo ""
+    SEED="{{SEED}}" \
+    CHAIN_RPC="{{CHAIN_WS}}" \
     cargo run --release -p storage-provider-node
 
 # Health check for provider node
 health:
     curl -s http://localhost:3000/health | jq .
+
+# Storage stats for provider node
+stats:
+    curl -s http://localhost:3000/stats | jq .
+
+# Demo: setup bucket and storage agreement (run once before demo-upload)
+demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
+# Demo: upload test data to provider (includes timestamp by default)
+demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+    #!/usr/bin/env bash
+    cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
+
+# Demo: challenge a storage provider (verify they have the data)
+# For off-chain challenge, provide MMR_ROOT, START_SEQ, and SIGNATURE
+demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" LEAF="0" CHUNK="0" MMR_ROOT="" START_SEQ="0" SIGNATURE="":
+    #!/usr/bin/env bash
+    if [ -n "{{MMR_ROOT}}" ] && [ -n "{{SIGNATURE}}" ]; then
+        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}" "{{MMR_ROOT}}" "{{START_SEQ}}" "{{SIGNATURE}}"
+    else
+        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
+    fi
+
+# Demo: full workflow - setup, upload, and challenge
+demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "=== Step 1: Setup bucket and agreement ==="
+    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
+    echo ""
+    echo "=== Step 2: Upload data ==="
+    OUTPUT=$(cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
+    echo "$OUTPUT"
+
+    # Extract JSON from output (from line starting with '{' to the end)
+    JSON=$(echo "$OUTPUT" | awk '/^{/,0')
+
+    if [ -z "$JSON" ]; then
+        echo "Error: Could not parse JSON from upload output"
+        exit 1
+    fi
+
+    # Extract challenge parameters
+    LEAF_INDEX=$(echo "$JSON" | jq -r '.challenge.leaf_index')
+    PROVIDER=$(echo "$JSON" | jq -r '.challenge.provider_account')
+    MMR_ROOT=$(echo "$JSON" | jq -r '.mmr_root')
+    START_SEQ=$(echo "$JSON" | jq -r '.start_seq')
+    SIGNATURE=$(echo "$JSON" | jq -r '.provider_signature')
+
+    echo ""
+    echo "=== Step 3: Challenge provider (off-chain) ==="
+    echo "Challenging with:"
+    echo "  bucket_id={{BUCKET_ID}}"
+    echo "  provider=$PROVIDER"
+    echo "  leaf=$LEAF_INDEX"
+    echo "  mmr_root=$MMR_ROOT"
+    echo "  start_seq=$START_SEQ"
+    echo "  signature=${SIGNATURE:0:20}..."
+    echo ""
+
+    cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
 
 # Generate chain spec
 generate-chain-spec: build

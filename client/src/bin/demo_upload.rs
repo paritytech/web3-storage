@@ -32,6 +32,39 @@ struct CommitResponse {
     provider_signature: String,
 }
 
+/// Output struct containing all upload results and challenge information.
+#[derive(serde::Serialize)]
+struct UploadResult {
+    // Upload info
+    provider_url: String,
+    chain_ws_url: String,
+    bucket_id: u64,
+    data_size: usize,
+    content_hash: String,
+
+    // Commit info
+    mmr_root: String,
+    start_seq: u64,
+    leaf_indices: Vec<u64>,
+    provider_signature: String,
+
+    // Challenge info
+    challenge: ChallengeInfo,
+
+    // Verification
+    verified: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ChallengeInfo {
+    provider_account: String,
+    bucket_id: u64,
+    leaf_index: u64,
+    chunk_count: usize,
+    max_chunk_index: usize,
+    command: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -135,22 +168,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let storage_client = StorageUserClient::new(config)?;
 
-    match storage_client.read_node_verified(&content_hash).await {
+    let verified = match storage_client.read_node_verified(&content_hash).await {
         Ok(downloaded_data) => {
             println!("Data verified successfully!");
             println!("Downloaded: {:?}", String::from_utf8_lossy(&downloaded_data));
 
             if downloaded_data == data {
                 println!("Data integrity check: PASSED");
+                true
             } else {
                 println!("Data integrity check: FAILED (content mismatch)");
+                false
             }
         }
         Err(e) => {
             eprintln!("Verification failed: {}", e);
+            false
         }
-    }
+    };
 
-    println!("\nDemo complete!");
+    // Build challenge information
+    // Provider account (Alice is the default provider from demo-setup)
+    let provider_account = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string();
+
+    // Calculate chunk count (256 KiB chunks)
+    let chunk_size = 256 * 1024;
+    let num_chunks = (data.len() + chunk_size - 1) / chunk_size;
+    let leaf_index = *commit_resp.leaf_indices.first().unwrap_or(&0);
+
+    let challenge_command = format!(
+        "just demo-challenge CHAIN_WS=\"{}\" BUCKET_ID=\"{}\" PROVIDER=\"{}\" LEAF=\"{}\" CHUNK=\"0\" MMR_ROOT=\"{}\" START_SEQ=\"{}\" SIGNATURE=\"{}\"",
+        chain_ws_url, bucket_id, provider_account, leaf_index,
+        commit_resp.mmr_root, commit_resp.start_seq, commit_resp.provider_signature
+    );
+
+    let result = UploadResult {
+        provider_url: provider_url.to_string(),
+        chain_ws_url: chain_ws_url.to_string(),
+        bucket_id,
+        data_size: data.len(),
+        content_hash: hash_hex,
+        mmr_root: commit_resp.mmr_root,
+        start_seq: commit_resp.start_seq,
+        leaf_indices: commit_resp.leaf_indices,
+        provider_signature: commit_resp.provider_signature,
+        challenge: ChallengeInfo {
+            provider_account,
+            bucket_id,
+            leaf_index,
+            chunk_count: num_chunks,
+            max_chunk_index: num_chunks.saturating_sub(1),
+            command: challenge_command,
+        },
+        verified,
+    };
+
+    // Output JSON result
+    println!("\n{}", serde_json::to_string_pretty(&result)?);
+
     Ok(())
 }

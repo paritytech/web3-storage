@@ -32,6 +32,17 @@ impl ChallengerClient {
         Self::new(ClientConfig::default(), challenger_account)
     }
 
+    /// Connect to the blockchain. Must be called before any on-chain operations.
+    pub async fn connect(&mut self) -> ClientResult<()> {
+        self.base.connect_chain().await
+    }
+
+    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
+    /// Must be called after connect().
+    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
+        self.base.set_dev_signer(name)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Challenge Operations
     // ═════════════════════════════════════════════════════════════════════════
@@ -117,7 +128,9 @@ impl ChallengerClient {
     /// You need to have obtained a signed commitment from the provider off-chain.
     ///
     /// # Parameters
-    /// - `provider_signature`: The provider's signature on the commitment
+    /// - `mmr_root`: The MMR root from the provider's commitment
+    /// - `start_seq`: The start sequence from the commitment
+    /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
@@ -128,13 +141,47 @@ impl ChallengerClient {
         chunk_index: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
         tracing::info!(
-            "Would challenge {} on bucket {} using off-chain commitment",
+            "Challenging {} on bucket {} using off-chain commitment (leaf {}, chunk {})",
             provider,
-            bucket_id
+            bucket_id,
+            leaf_index,
+            chunk_index
         );
 
+        // Parse provider account
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+
+        // Create and submit the extrinsic
+        let tx = extrinsics::challenge_offchain(
+            bucket_id,
+            provider_account,
+            mmr_root,
+            start_seq,
+            leaf_index,
+            chunk_index,
+            provider_signature,
+        );
+
+        let tx_progress = chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+
+        // Wait for finalization
+        let _events = tx_progress
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+
+        tracing::info!("Off-chain challenge created successfully");
+
+        // TODO: Extract actual challenge ID from events
         Ok(ChallengeId {
             deadline: 1000,
             index: 0,
