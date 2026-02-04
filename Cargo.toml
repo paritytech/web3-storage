@@ -6,6 +6,8 @@ members = [
     "provider-node",
     "client",
     "runtime",
+    "file-system-primitives",
+    "pallet-drive-registry",
 ]
 
 [workspace.package]
@@ -18,9 +20,11 @@ repository = "https://github.com/parity/scalable-web3-storage"
 # Internal crates
 storage-primitives = { path = "primitives", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
+pallet-drive-registry = { path = "pallet-drive-registry", default-features = false }
 storage-provider-node = { path = "provider-node" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtime" }
+file-system-primitives = { path = "file-system-primitives", default-features = false }
 
 # Substrate frame
 frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
