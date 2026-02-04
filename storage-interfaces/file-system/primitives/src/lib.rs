@@ -43,6 +43,9 @@ pub use proto::{DirectoryEntry, DirectoryNode, EntryType, FileChunk, FileManifes
 /// Drive identifier (unique ID for each drive)
 pub type DriveId = u64;
 
+/// Agreement identifier from Layer 0
+pub type AgreementId = u64;
+
 /// Content Identifier (blake2-256 hash)
 pub type Cid = H256;
 
@@ -72,23 +75,80 @@ pub enum FileSystemError {
     NotAFile,
 }
 
+/// Strategy for committing changes to the on-chain root CID
+#[derive(Clone, Copy, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+pub enum CommitStrategy {
+    /// Commit every change immediately (expensive, real-time)
+    Immediate,
+    /// Commit changes in batches after N blocks
+    Batched { interval: u32 },
+    /// User manually triggers commits
+    Manual,
+}
+
+impl Default for CommitStrategy {
+    fn default() -> Self {
+        // Default to batched commits every 100 blocks (~10 minutes)
+        Self::Batched { interval: 100 }
+    }
+}
+
+/// Configuration for creating a drive with storage
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct DriveConfig<AccountId> {
+    /// Total storage size in bytes
+    pub storage_size: u64,
+    /// Budget for storage agreements (total across all providers)
+    pub budget: u128,
+    /// Number of storage providers (1 primary + N-1 replicas)
+    pub num_providers: u8,
+    /// Preferred providers (optional)
+    pub preferred_providers: Vec<AccountId>,
+    /// When to commit changes on-chain
+    pub commit_strategy: CommitStrategy,
+}
+
+#[cfg(feature = "std")]
+impl<AccountId> Default for DriveConfig<AccountId> {
+    fn default() -> Self {
+        Self {
+            storage_size: 10 * 1024 * 1024 * 1024, // 10 GB
+            budget: 100_000_000_000_000, // 100 tokens (assuming 12 decimals)
+            num_providers: 3, // 1 primary + 2 replicas
+            preferred_providers: Vec::new(),
+            commit_strategy: CommitStrategy::default(),
+        }
+    }
+}
+
 /// Drive information stored on-chain
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
-#[scale_info(skip_type_params(MaxNameLength))]
+#[scale_info(skip_type_params(MaxNameLength, MaxAgreements))]
 #[codec(mel_bound())]
 pub struct DriveInfo<
     AccountId: Encode + Decode + MaxEncodedLen,
     BlockNumber: Encode + Decode + MaxEncodedLen,
     MaxNameLength: Get<u32>,
+    MaxAgreements: Get<u32>,
 > {
     /// Owner of the drive
     pub owner: AccountId,
     /// Layer 0 bucket ID where drive data is stored
     pub bucket_id: u64,
-    /// Current root CID (content ID of root directory)
+    /// Storage agreement IDs for this drive (from Layer 0)
+    pub agreement_ids: BoundedVec<AgreementId, MaxAgreements>,
+    /// Current committed root CID (on-chain, visible to all)
     pub root_cid: Cid,
+    /// Pending root CID (not yet committed, only in local state)
+    /// This is stored as an option - None means no pending changes
+    pub pending_root_cid: Option<Cid>,
+    /// Strategy for committing changes
+    pub commit_strategy: CommitStrategy,
     /// Block number when drive was created
     pub created_at: BlockNumber,
+    /// Block number when root_cid was last committed
+    pub last_committed_at: BlockNumber,
     /// Optional human-readable name (bounded)
     pub name: Option<BoundedVec<u8, MaxNameLength>>,
 }
