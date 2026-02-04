@@ -388,7 +388,11 @@ impl AdminClient {
 
 #[derive(Debug, Clone)]
 pub struct ReplicaParams {
+    /// The primary provider this replica syncs from
+    pub primary_provider: Option<String>,
+    /// Initial sync balance to fund per-sync payments
     pub sync_balance: u128,
+    /// Minimum blocks between sync confirmations
     pub min_sync_interval: u32,
 }
 

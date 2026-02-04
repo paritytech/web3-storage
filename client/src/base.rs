@@ -125,7 +125,6 @@ impl BaseClient {
         }
         Ok(self)
     }
-}
 
     /// Get a provider URL (round-robin or based on strategy).
     pub(crate) fn get_provider_url(&self) -> Result<&str, ClientError> {

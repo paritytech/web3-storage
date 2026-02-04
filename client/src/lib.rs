@@ -113,40 +113,10 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
-use std::collections::HashMap;
 use storage_primitives::{blake2_256, BucketId};
-use thiserror::Error;
 
-/// Client errors.
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-
-    #[error("API error: {0}")]
-    Api(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Data verification failed")]
-    VerificationFailed,
-}
-
-/// Chunking strategy for data upload.
-#[derive(Debug, Clone, Copy)]
-pub enum ChunkingStrategy {
-    /// Fixed-size chunks (default: 256 KiB)
-    Fixed(usize),
-    /// Content-defined chunking (not yet implemented)
-    ContentDefined,
-}
-
-impl Default for ChunkingStrategy {
-    fn default() -> Self {
-        Self::Fixed(256 * 1024)
-    }
-}
+// Alias for backward compatibility
+type Error = ClientError;
 
 /// Storage client for interacting with provider nodes.
 pub struct StorageClient {

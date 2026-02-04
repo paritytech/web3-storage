@@ -5,6 +5,7 @@
 
 use crate::error::Error;
 use crate::types::*;
+use codec::Encode;
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;

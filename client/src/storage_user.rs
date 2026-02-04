@@ -262,11 +262,26 @@ impl StorageUserClient {
         data_root: &H256,
         chunk_index: u64,
     ) -> ClientResult<bool> {
-        // This would use the ClientVerifier
-        self.verifier
-            .spot_check(self, data_root, chunk_index)
-            .await
-            .map_err(|e| ClientError::Api(e.to_string()))
+        use std::time::Instant;
+
+        let chunk_size = 256 * 1024u64; // 256 KiB
+        let offset = chunk_index * chunk_size;
+        let provider_url = self.base.get_provider_url()?.to_string();
+
+        let start = Instant::now();
+        let result = self.download(data_root, offset, chunk_size).await;
+        let duration = start.elapsed();
+
+        match result {
+            Ok(_data) => {
+                self.verifier.record_request(&provider_url, duration, true);
+                Ok(true)
+            }
+            Err(_) => {
+                self.verifier.record_request(&provider_url, duration, false);
+                Ok(false)
+            }
+        }
     }
 
     /// Perform multiple random spot-checks on a provider.
@@ -278,10 +293,22 @@ impl StorageUserClient {
         num_checks: usize,
         total_chunks: u64,
     ) -> ClientResult<(usize, usize)> {
-        self.verifier
-            .spot_check_batch(self, data_root, num_checks, total_chunks)
-            .await
-            .map_err(|e| ClientError::Api(e.to_string()))
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        let mut passed = 0;
+        let mut failed = 0;
+
+        for _ in 0..num_checks {
+            let chunk_index = rng.gen_range(0..total_chunks);
+            if self.spot_check(data_root, chunk_index).await? {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+        }
+
+        Ok((passed, failed))
     }
 
     /// Get provider statistics for a specific provider URL.
@@ -388,6 +415,18 @@ impl StorageUserClient {
             .iter()
             .flat_map(|h| h.as_bytes().to_vec())
             .collect()
+    }
+}
+
+// Implement ProviderReadAccess for verification
+#[async_trait::async_trait]
+impl crate::verification::ProviderReadAccess for StorageUserClient {
+    async fn read_data(&self, data_root: &H256, offset: u64, length: u64) -> Result<Vec<u8>, crate::ClientError> {
+        self.download(data_root, offset, length).await
+    }
+
+    fn provider_url(&self) -> &str {
+        self.base.get_provider_url().unwrap_or("unknown")
     }
 }
 

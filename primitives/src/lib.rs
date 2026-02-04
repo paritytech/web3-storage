@@ -9,7 +9,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use bitvec::{order::Lsb0, vec::BitVec as BitVector};
-use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
 

@@ -3,6 +3,9 @@
 //! This provides read-only queries for applications to discover providers,
 //! bucket state, agreements, and challenges without submitting transactions.
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use sp_core::H256;

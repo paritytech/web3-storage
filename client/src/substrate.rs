@@ -162,13 +162,13 @@ pub mod extrinsics {
             "request_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref()),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::u128(max_bytes as u128),
                 subxt::dynamic::Value::u128(duration as u128),
                 subxt::dynamic::Value::u128(payment),
                 match replica_for {
-                    Some(acc) => subxt::dynamic::Value::from_bytes(acc.as_ref()),
-                    None => subxt::dynamic::Value::unit(),
+                    Some(acc) => subxt::dynamic::Value::unnamed_variant("Some", [subxt::dynamic::Value::from_bytes(acc.as_ref() as &[u8])]),
+                    None => subxt::dynamic::Value::unnamed_variant("None", []),
                 },
             ],
         )
@@ -186,7 +186,7 @@ pub mod extrinsics {
             "challenge_checkpoint",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref()),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::u128(leaf_index as u128),
                 subxt::dynamic::Value::u128(chunk_index as u128),
             ],
@@ -215,7 +215,7 @@ pub mod extrinsics {
                     chunk_proof
                         .iter()
                         .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                        .collect(),
+                        .collect::<Vec<_>>(),
                 ),
                 subxt::dynamic::Value::unnamed_composite(vec![
                     subxt::dynamic::Value::unnamed_composite(
@@ -223,14 +223,14 @@ pub mod extrinsics {
                             .0
                             .iter()
                             .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     ),
                     subxt::dynamic::Value::unnamed_composite(
                         mmr_proof
                             .1
                             .iter()
                             .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     ),
                 ]),
             ],
@@ -244,16 +244,16 @@ pub mod storage {
     use subxt::storage::Address;
 
     /// Query provider info.
-    pub fn provider_info(account: &AccountId32) -> Address<subxt::dynamic::Value, (), (), ()> {
+    pub fn provider_info(account: &AccountId32) -> impl Address {
         subxt::dynamic::storage(
             "StorageProvider",
             "Providers",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref())],
+            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
     }
 
     /// Query bucket info.
-    pub fn bucket_info(bucket_id: u64) -> Address<subxt::dynamic::Value, (), (), ()> {
+    pub fn bucket_info(bucket_id: u64) -> impl Address {
         subxt::dynamic::storage(
             "StorageProvider",
             "Buckets",
@@ -265,13 +265,13 @@ pub mod storage {
     pub fn agreement_info(
         bucket_id: u64,
         provider: &AccountId32,
-    ) -> Address<subxt::dynamic::Value, (), (), ()> {
+    ) -> impl Address {
         subxt::dynamic::storage(
             "StorageProvider",
             "Agreements",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref()),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
             ],
         )
     }

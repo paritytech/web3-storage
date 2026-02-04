@@ -7,6 +7,7 @@
 
 use crate::error::Error;
 use crate::storage::Storage;
+use base64::Engine;
 use reqwest::Client;
 use sp_core::H256;
 use std::sync::Arc;
@@ -107,12 +108,13 @@ impl ReplicaSync {
     }
 
     /// Recursively fetch a subtree from a primary provider.
-    async fn fetch_subtree(
-        &self,
+    fn fetch_subtree<'a>(
+        &'a self,
         bucket_id: BucketId,
         root_hash: H256,
-        primary_url: &str,
-    ) -> Result<(), Error> {
+        primary_url: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move {
         // Check if we already have this node
         if self.storage.get_node(&root_hash).is_some() {
             return Ok(());
@@ -169,6 +171,7 @@ impl ReplicaSync {
         }
 
         Ok(())
+        })
     }
 
     /// Continuous sync loop for a replica.

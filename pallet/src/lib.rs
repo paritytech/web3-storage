@@ -38,7 +38,7 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero, Verify, IdentifyAccount};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero, Verify};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof,
         MmrProof, ProviderRole, RemovalReason, ReplicaRequestParams, Role,
@@ -194,7 +194,7 @@ pub mod pallet {
     }
 
     /// Provider settings controlling pricing and availability.
-    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, parity_scale_codec::DecodeWithMemTracking, TypeInfo, MaxEncodedLen, DebugNoBound)]
+    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, MaxEncodedLen, DebugNoBound)]
     #[scale_info(skip_type_params(T))]
     pub struct ProviderSettings<T: Config> {
         /// Minimum agreement duration provider will accept.
@@ -339,7 +339,7 @@ pub mod pallet {
     }
 
     /// Challenge response from provider.
-    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, parity_scale_codec::DecodeWithMemTracking, TypeInfo, DebugNoBound)]
+    #[derive(CloneNoBound, PartialEqNoBound, EqNoBound, Encode, Decode, codec::DecodeWithMemTracking, TypeInfo, DebugNoBound)]
     #[scale_info(skip_type_params(T))]
     pub enum ChallengeResponse<T: Config> {
         /// Provide the chunk with proofs.
@@ -1767,8 +1767,8 @@ pub mod pallet {
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
                     // Check if already signed
-                    if let Some(&already_signed) = primary_signers.get(idx) {
-                        if already_signed {
+                    if let Some(already_signed) = primary_signers.get(idx) {
+                        if *already_signed {
                             continue; // Skip already-signed providers
                         }
                     }
@@ -1834,7 +1834,7 @@ pub mod pallet {
             let provider_signed = snapshot
                 .primary_signers
                 .get(provider_idx)
-                .map(|&b| b)
+                .map(|b| *b)
                 .unwrap_or(false);
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
 
@@ -2077,8 +2077,8 @@ pub mod pallet {
 
             // Slash provider_cost from provider's stake
             // Note: In on_finalize we can't easily handle errors, but here we can
-            let slashed = T::Currency::slash_reserved(&who, provider_cost);
-            let actually_slashed = provider_cost.saturating_sub(slashed.0);
+            let (_, remaining) = T::Currency::slash_reserved(&who, provider_cost);
+            let actually_slashed = provider_cost.saturating_sub(remaining);
 
             // Update provider stake in storage
             Providers::<T>::mutate(&who, |maybe_provider| {
@@ -2251,51 +2251,29 @@ pub mod pallet {
             let provider = Providers::<T>::get(signer).ok_or(Error::<T>::ProviderNotFound)?;
             let public_key_bytes = provider.public_key.as_slice();
 
-            // Verify based on signature type
-            let is_valid = match signature {
-                sp_runtime::MultiSignature::Sr25519(sig) => {
-                    // Sr25519 public keys are 32 bytes
+            // Convert public key to AccountId32 based on signature type
+            let account_id = match signature {
+                sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
+                    // Sr25519 and Ed25519 public keys are 32 bytes, directly used as AccountId32
                     if public_key_bytes.len() != 32 {
                         return Err(Error::<T>::InvalidPublicKey.into());
                     }
-
-                    // Reconstruct Sr25519 public key
                     let mut key_bytes = [0u8; 32];
                     key_bytes.copy_from_slice(public_key_bytes);
-                    let public_key = sp_core::sr25519::Public::from_raw(key_bytes);
-
-                    // Verify signature
-                    signature.verify(message, &public_key)
+                    sp_runtime::AccountId32::new(key_bytes)
                 },
-                sp_runtime::MultiSignature::Ed25519(sig) => {
-                    // Ed25519 public keys are 32 bytes
-                    if public_key_bytes.len() != 32 {
-                        return Err(Error::<T>::InvalidPublicKey.into());
-                    }
-
-                    // Reconstruct Ed25519 public key
-                    let mut key_bytes = [0u8; 32];
-                    key_bytes.copy_from_slice(public_key_bytes);
-                    let public_key = sp_core::ed25519::Public::from_raw(key_bytes);
-
-                    // Verify signature
-                    signature.verify(message, &public_key)
-                },
-                sp_runtime::MultiSignature::Ecdsa(sig) => {
-                    // Ecdsa public keys are 33 bytes (compressed)
+                sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
+                    // Ecdsa/Eth public keys are 33 bytes (compressed), AccountId32 is blake2_256 hash
                     if public_key_bytes.len() != 33 {
                         return Err(Error::<T>::InvalidPublicKey.into());
                     }
-
-                    // Reconstruct Ecdsa public key
-                    let mut key_bytes = [0u8; 33];
-                    key_bytes.copy_from_slice(public_key_bytes);
-                    let public_key = sp_core::ecdsa::Public::from_raw(key_bytes);
-
-                    // Verify signature
-                    signature.verify(message, &public_key)
+                    let hash = sp_io::hashing::blake2_256(public_key_bytes);
+                    sp_runtime::AccountId32::new(hash)
                 },
             };
+
+            // Verify signature against the account ID
+            let is_valid = signature.verify(message, &account_id);
 
             ensure!(is_valid, Error::<T>::InvalidSignature);
 
@@ -2557,7 +2535,7 @@ pub mod pallet {
 
                 // Unreserve and slash the stake
                 // In Substrate, slashing typically burns or sends to treasury
-                let remaining = T::Currency::slash_reserved(&challenge.provider, slashed_amount).0;
+                let (_, remaining) = T::Currency::slash_reserved(&challenge.provider, slashed_amount);
                 let actually_slashed = slashed_amount.saturating_sub(remaining);
 
                 // Calculate challenger reward (e.g., 10% of slashed amount, rest goes to treasury)

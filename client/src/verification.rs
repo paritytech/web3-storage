@@ -5,11 +5,10 @@
 //! - Track provider latency and reliability
 //! - Make informed provider selection decisions
 
-use crate::{Error, StorageClient};
+use crate::ClientError as Error;
 use sp_core::H256;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use storage_primitives::{blake2_256, BucketId};
 
 /// Provider performance statistics.
 #[derive(Debug, Clone, Default)]
@@ -288,16 +287,3 @@ pub trait ProviderReadAccess {
     /// Get the provider URL for tracking.
     fn provider_url(&self) -> &str;
 }
-
-// We'll implement this for StorageUserClient in storage_user.rs
-// For now, provide a default Error type
-#[derive(Debug)]
-pub struct Error(pub String);
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for Error {}

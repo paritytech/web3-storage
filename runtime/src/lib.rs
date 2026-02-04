@@ -437,11 +437,27 @@ parameter_types! {
     pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
     pub const SettlementTimeout: BlockNumber = 24 * HOURS;
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
+    // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
+    pub const MinStakePerByte: Balance = 1_000;
+}
+
+// Treasury account for slashed funds
+pub struct TreasuryAccount;
+impl frame_support::traits::Get<AccountId> for TreasuryAccount {
+    fn get() -> AccountId {
+        // Use a well-known account derived from "modl" + pallet name
+        // In production, this would be a proper treasury pallet
+        sp_runtime::traits::AccountIdConversion::<AccountId>::into_account_truncating(
+            &frame_support::PalletId(*b"py/trsry")
+        )
+    }
 }
 
 impl pallet_storage_provider::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
+    type Treasury = TreasuryAccount;
+    type MinStakePerByte = MinStakePerByte;
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
