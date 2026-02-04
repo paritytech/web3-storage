@@ -1,13 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
+    # Layer 0: Scalable Web3 Storage
     "primitives",
     "pallet",
     "provider-node",
     "client",
     "runtime",
-    "file-system-primitives",
-    "pallet-drive-registry",
+
+    # Storage Interfaces: File System Interface
+    "storage-interfaces/file-system/primitives",
+    "storage-interfaces/file-system/pallet-registry",
 ]
 
 [workspace.package]
@@ -17,14 +20,16 @@ license = "Apache-2.0"
 repository = "https://github.com/parity/scalable-web3-storage"
 
 [workspace.dependencies]
-# Internal crates
+# Layer 0: Scalable Web3 Storage (Internal crates)
 storage-primitives = { path = "primitives", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
-pallet-drive-registry = { path = "pallet-drive-registry", default-features = false }
 storage-provider-node = { path = "provider-node" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtime" }
-file-system-primitives = { path = "file-system-primitives", default-features = false }
+
+# Storage Interfaces: File System Interface
+file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
+pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
 
 # Substrate frame
 frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
