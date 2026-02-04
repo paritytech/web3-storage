@@ -30,16 +30,23 @@ download-polkadot:
     set -euo pipefail
     mkdir -p .bin
 
+    # Determine platform suffix (only arm64 macOS binaries are available)
+    if [[ "{{os}}" == "darwin" ]]; then
+        if [[ "{{arch}}" != "arm64" ]]; then
+            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
+            exit 1
+        fi
+        SUFFIX="-aarch64-apple-darwin"
+    else
+        SUFFIX=""
+    fi
+
     # Download polkadot
     if [[ -x .bin/polkadot ]]; then
         echo "polkadot already exists in .bin/"
     else
         echo "Downloading polkadot for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-macos"
-        else
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot"
-        fi
+        curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot${SUFFIX}"
         chmod +x .bin/polkadot
         echo "polkadot downloaded to .bin/polkadot"
     fi
@@ -49,11 +56,7 @@ download-polkadot:
         echo "polkadot-execute-worker already exists in .bin/"
     else
         echo "Downloading polkadot-execute-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker-macos"
-        else
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker"
-        fi
+        curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker${SUFFIX}"
         chmod +x .bin/polkadot-execute-worker
         echo "polkadot-execute-worker downloaded to .bin/polkadot-execute-worker"
     fi
@@ -63,11 +66,7 @@ download-polkadot:
         echo "polkadot-prepare-worker already exists in .bin/"
     else
         echo "Downloading polkadot-prepare-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker-macos"
-        else
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker"
-        fi
+        curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker${SUFFIX}"
         chmod +x .bin/polkadot-prepare-worker
         echo "polkadot-prepare-worker downloaded to .bin/polkadot-prepare-worker"
     fi
@@ -81,12 +80,20 @@ download-polkadot-omni-node:
         exit 0
     fi
     mkdir -p .bin
-    echo "Downloading polkadot-omni-node for {{os}}/{{arch}}..."
+
+    # Determine platform suffix (only arm64 macOS binaries are available)
     if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node-macos"
+        if [[ "{{arch}}" != "arm64" ]]; then
+            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
+            exit 1
+        fi
+        SUFFIX="-aarch64-apple-darwin"
     else
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node"
+        SUFFIX=""
     fi
+
+    echo "Downloading polkadot-omni-node for {{os}}/{{arch}}..."
+    curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node${SUFFIX}"
     chmod +x .bin/polkadot-omni-node
     echo "polkadot-omni-node downloaded to .bin/polkadot-omni-node"
 
@@ -99,12 +106,20 @@ download-chain-spec-builder:
         exit 0
     fi
     mkdir -p .bin
-    echo "Downloading chain-spec-builder for {{os}}/{{arch}}..."
+
+    # Determine platform suffix (only arm64 macOS binaries are available)
     if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder-macos"
+        if [[ "{{arch}}" != "arm64" ]]; then
+            echo "Error: Only arm64 macOS binaries are available. x86_64 macOS is not supported."
+            exit 1
+        fi
+        SUFFIX="-aarch64-apple-darwin"
     else
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder"
+        SUFFIX=""
     fi
+
+    echo "Downloading chain-spec-builder for {{os}}/{{arch}}..."
+    curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder${SUFFIX}"
     chmod +x .bin/chain-spec-builder
     echo "chain-spec-builder downloaded to .bin/chain-spec-builder"
 
