@@ -30,7 +30,6 @@ mod tests;
 #[frame_support::pallet]
 pub mod pallet {
     use alloc::vec::Vec;
-    use bitvec::{order::Lsb0, vec::BitVec as BitVector};
     use frame_support::{
         pallet_prelude::*,
         traits::{Currency, ExistenceRequirement, ReservableCurrency},
@@ -858,7 +857,7 @@ pub mod pallet {
                 let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
 
                 // Count set bits in the bitfield
-                let signer_count = snapshot.primary_signers.count_ones();
+                let signer_count: usize = snapshot.primary_signers.iter().map(|b| b.count_ones() as usize).sum();
                 ensure!(
                     signer_count >= bucket.min_providers as usize,
                     Error::<T>::MinProvidersNotMet
@@ -1665,9 +1664,10 @@ pub mod pallet {
                 let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
                 let encoded_payload = payload.encode();
 
-                // Create bitfield using BitVec
+                // Create bitfield as Vec<u8> (LSB0 ordering: bit 0 of byte 0 = provider 0)
                 let num_providers = bucket.primary_providers.len();
-                let mut primary_signers = BitVector::<u8, Lsb0>::repeat(false, num_providers);
+                let num_bytes = (num_providers + 7) / 8;
+                let mut primary_signers = alloc::vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
 
@@ -1682,8 +1682,8 @@ pub mod pallet {
                     // Verify the signature using the provider's registered public key
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit at position idx
-                    primary_signers.set(idx, true);
+                    // Set bit at position idx (LSB0 ordering)
+                    primary_signers[idx / 8] |= 1 << (idx % 8);
                     signing_count += 1;
                     signing_providers.push(signer.clone());
                 }
@@ -1766,9 +1766,11 @@ pub mod pallet {
                         .position(|p| p == signer)
                         .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-                    // Check if already signed
-                    if let Some(already_signed) = primary_signers.get(idx) {
-                        if *already_signed {
+                    // Check if already signed (LSB0 bit ordering)
+                    let byte_idx = idx / 8;
+                    let bit_idx = idx % 8;
+                    if byte_idx < primary_signers.len() {
+                        if (primary_signers[byte_idx] & (1 << bit_idx)) != 0 {
                             continue; // Skip already-signed providers
                         }
                     }
@@ -1776,9 +1778,9 @@ pub mod pallet {
                     // Verify signature
                     Self::verify_signature(signature, &encoded_payload, signer)?;
 
-                    // Set bit
-                    if idx < primary_signers.len() {
-                        primary_signers.set(idx, true);
+                    // Set bit (LSB0 bit ordering)
+                    if byte_idx < primary_signers.len() {
+                        primary_signers[byte_idx] |= 1 << bit_idx;
                     }
                     added_providers.push(signer.clone());
                 }
@@ -1830,12 +1832,11 @@ pub mod pallet {
                 .position(|p| p == &provider)
                 .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
-            // Check if provider bit is set in the bitfield
-            let provider_signed = snapshot
-                .primary_signers
-                .get(provider_idx)
-                .map(|b| *b)
-                .unwrap_or(false);
+            // Check if provider bit is set in the bitfield (LSB0 ordering)
+            let byte_idx = provider_idx / 8;
+            let bit_idx = provider_idx % 8;
+            let provider_signed = byte_idx < snapshot.primary_signers.len()
+                && (snapshot.primary_signers[byte_idx] & (1 << bit_idx)) != 0;
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
 
             Self::create_challenge(

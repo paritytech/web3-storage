@@ -149,8 +149,9 @@ start-services: check build
     echo "=== Starting Local Development Environment ==="
     echo ""
     echo "Web UIs (once ready):"
-    echo "  Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
+    echo "  Relay chain:    https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
+    echo "  Parachain:      https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
+    echo "  Provider health: http://127.0.0.1:3000/health"
     echo ""
 
     # Start zombienet in background

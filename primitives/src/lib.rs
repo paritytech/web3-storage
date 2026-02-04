@@ -8,7 +8,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use bitvec::{order::Lsb0, vec::BitVec as BitVector};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
@@ -232,8 +231,8 @@ pub struct BucketSnapshot<BlockNumber> {
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
     /// Bit i is set if primary_providers[i] signed.
-    /// Uses BitVec with LSB0 ordering for efficient bit manipulation.
-    pub primary_signers: BitVector<u8, Lsb0>,
+    /// Stored as raw bytes with LSB0 ordering (bit 0 of byte 0 = provider 0).
+    pub primary_signers: Vec<u8>,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {

@@ -9,7 +9,7 @@ description = "Substrate pallet for scalable Web3 storage"
 
 [dependencies]
 storage-primitives = { workspace = true }
-codec = { workspace = true, package = "parity-scale-codec" }
+codec = { workspace = true }
 scale-info = { workspace = true }
 frame-support = { workspace = true }
 frame-system = { workspace = true }
@@ -20,7 +20,6 @@ sp-std = { workspace = true }
 sp-io = { workspace = true }
 serde = { workspace = true, optional = true }
 log = { workspace = true }
-bitvec = { workspace = true }
 
 [dev-dependencies]
 sp-keyring = { workspace = true }
@@ -40,7 +39,6 @@ std = [
     "sp-io/std",
     "serde/std",
     "log/std",
-    "bitvec/std",
 ]
 runtime-benchmarks = [
     "frame-support/runtime-benchmarks",

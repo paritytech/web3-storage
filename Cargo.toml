@@ -85,7 +85,6 @@ codec = { version = "3.6", default-features = false, features = ["derive"], pack
 scale-info = { version = "2.11", default-features = false, features = ["derive"] }
 
 # External dependencies
-bitvec = { version = "1.0", default-features = false }
 log = { version = "0.4", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
