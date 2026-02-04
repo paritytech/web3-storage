@@ -10,6 +10,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+mod genesis_config_presets;
 mod weights;
 pub mod xcm_config;
 
@@ -155,12 +156,12 @@ pub fn native_version() -> NativeVersion {
 }
 
 // Unit = the base number of indivisible units for balances
-const UNIT: Balance = 1_000_000_000_000;
-const MILLIUNIT: Balance = 1_000_000_000;
-const MICROUNIT: Balance = 1_000_000;
+pub(crate) const UNIT: Balance = 1_000_000_000_000;
+pub(crate) const MILLIUNIT: Balance = 1_000_000_000;
+pub(crate) const MICROUNIT: Balance = 1_000_000;
 
 /// The existential deposit. Set to 1/10 of the Connected Relay Chain.
-const EXISTENTIAL_DEPOSIT: Balance = MILLIUNIT;
+pub(crate) const EXISTENTIAL_DEPOSIT: Balance = MILLIUNIT;
 
 /// We assume that ~5% of the block weight is consumed by `on_initialize` handlers. This is
 /// used to limit the maximal weight of a single extrinsic.
@@ -257,7 +258,7 @@ impl frame_system::Config for Runtime {
 impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
     type OnTimestampSet = Aura;
-    type MinimumPeriod = ConstU64<3000>; // Half of slot duration (6000ms)
+    type MinimumPeriod = ConstU64<0>;
     type WeightInfo = ();
 }
 
@@ -325,7 +326,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = ();
-    type RelayParentOffset = ConstU32<1>;
+    type RelayParentOffset = ConstU32<0>;
 }
 
 impl parachain_info::Config for Runtime {}
@@ -392,7 +393,7 @@ impl pallet_aura::Config for Runtime {
     type DisabledValidators = ();
     type MaxAuthorities = ConstU32<100_000>;
     type AllowMultipleBlocksPerSlot = ConstBool<true>;
-    type SlotDuration = pallet_aura::MinimumPeriodTimesTwo<Runtime>;
+    type SlotDuration = ConstU64<SLOT_DURATION>;
 }
 
 parameter_types! {
@@ -678,17 +679,29 @@ impl_runtime_apis! {
         }
     }
 
+    impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
+        fn relay_parent_offset() -> u32 {
+            0
+        }
+    }
+
+    impl cumulus_primitives_core::GetParachainInfo<Block> for Runtime {
+        fn parachain_id() -> ParaId {
+            ParachainInfo::parachain_id()
+        }
+    }
+
     impl sp_genesis_builder::GenesisBuilder<Block> for Runtime {
         fn build_state(config: Vec<u8>) -> sp_genesis_builder::Result {
             build_state::<RuntimeGenesisConfig>(config)
         }
 
         fn get_preset(id: &Option<sp_genesis_builder::PresetId>) -> Option<Vec<u8>> {
-            get_preset::<RuntimeGenesisConfig>(id, |_| None)
+            get_preset::<RuntimeGenesisConfig>(id, &genesis_config_presets::get_preset)
         }
 
         fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
-            vec![]
+            genesis_config_presets::preset_names()
         }
     }
 

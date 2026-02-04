@@ -1,17 +1,11 @@
-# Before running:
-# export POLKADOT_BINARY_PATH=~/Projects/polkadot-sdk/target/release/polkadot or similar
-# 
-# Then:
-# ./zombienet spawn -p native zombienet.toml
-
 [settings]
 timeout = 1000
 provider = "native"
 
 [relaychain]
-default_command = "{{POLKADOT_BINARY_PATH}}"
+default_command = ".bin/polkadot"
 chain = "westend-local"
-default_args = ["--network-backend=libp2p"]
+default_args = ["-lruntime=debug"]
 
   [[relaychain.nodes]]
   name = "alice"
@@ -25,12 +19,12 @@ default_args = ["--network-backend=libp2p"]
 
 [[parachains]]
 id = 4000
-chain_spec_path = "chain-specs/storage-local.json"
 cumulus_based = true
-onboard_as_parachain = true
+chain_spec_command = "./scripts/build-chain-spec.sh"
 
-  [parachains.collator]
-  name = "storage-collator"
-  command = "polkadot-omni-node"
+  [[parachains.collators]]
+  name = "alice"
+  validator = true
+  command = ".bin/polkadot-omni-node"
   rpc_port = 9944
-  args = ["--collator", "--no-mdns", "--network-backend=libp2p"]
+  args = ["--collator", "-lruntime=debug"]

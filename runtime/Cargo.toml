@@ -15,6 +15,8 @@ pallet-storage-provider = { workspace = true }
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
 scale-info = { workspace = true, features = ["derive"] }
+serde = { optional = true, features = ["derive"], workspace = true, default-features = true }
+serde_json = { features = ["alloc"], workspace = true }
 
 # Substrate
 frame-executive = { workspace = true }
@@ -40,6 +42,7 @@ sp-consensus-aura = { workspace = true }
 sp-core = { workspace = true }
 sp-genesis-builder = { workspace = true }
 sp-inherents = { workspace = true }
+sp-keyring = { workspace = true }
 sp-offchain = { workspace = true }
 sp-runtime = { workspace = true }
 sp-session = { workspace = true }
@@ -104,11 +107,14 @@ std = [
     "sp-core/std",
     "sp-genesis-builder/std",
     "sp-inherents/std",
+    "sp-keyring/std",
     "sp-offchain/std",
     "sp-runtime/std",
     "sp-session/std",
     "sp-transaction-pool/std",
     "sp-version/std",
+    "serde",
+    "serde_json/std",
     # Polkadot
     "pallet-xcm/std",
     "polkadot-parachain-primitives/std",

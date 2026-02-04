@@ -111,6 +111,17 @@ cargo build -p storage-client
 
 This guide shows how to run a complete local development environment with both nodes.
 
+### Using just (Recommended)
+
+The easiest way to run locally:
+
+```bash
+cargo install just       # Install just command runner
+just start-services      # Start everything (relay chain, parachain, provider)
+```
+
+### Manual Setup
+
 ### Prerequisites
 
 - Rust 1.74+ with `wasm32-unknown-unknown` target
