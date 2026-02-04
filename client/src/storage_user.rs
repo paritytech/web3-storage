@@ -195,6 +195,81 @@ impl StorageUserClient {
         self.download(data_root, 0, total_size).await
     }
 
+    /// Read a single node by its hash.
+    ///
+    /// Returns the node data and optionally its children hashes (for internal nodes).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use storage_client::StorageUserClient;
+    /// # use sp_core::H256;
+    /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = StorageUserClient::with_defaults()?;
+    /// let (data, children) = client.read_node(&hash).await?;
+    /// println!("Read {} bytes", data.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn read_node(&self, hash: &H256) -> ClientResult<(Vec<u8>, Option<Vec<H256>>)> {
+        let provider_url = self.base.get_provider_url()?;
+        let hash_hex = BaseClient::hex_encode(hash.as_bytes());
+
+        let response = self
+            .base
+            .http
+            .get(format!("{}/node", provider_url))
+            .query(&[("hash", &hash_hex)])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Api(format!(
+                "Node not found or error: {}",
+                response.status()
+            )));
+        }
+
+        let node_response: NodeResponse = response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+
+        // Decode base64 data
+        let data = BASE64
+            .decode(&node_response.data)
+            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {}", e)))?;
+
+        // Parse children hashes if present
+        let children = node_response
+            .children
+            .map(|c| {
+                c.iter()
+                    .map(|h| {
+                        let bytes = BaseClient::hex_decode(h)?;
+                        Ok(H256::from_slice(&bytes))
+                    })
+                    .collect::<ClientResult<Vec<H256>>>()
+            })
+            .transpose()?;
+
+        Ok((data, children))
+    }
+
+    /// Read a node and verify its hash matches.
+    ///
+    /// Returns the data if hash verification passes.
+    pub async fn read_node_verified(&self, hash: &H256) -> ClientResult<Vec<u8>> {
+        let (data, _children) = self.read_node(hash).await?;
+
+        // Verify the hash
+        let computed_hash = blake2_256(&data);
+        if &computed_hash != hash {
+            return Err(ClientError::VerificationFailed);
+        }
+
+        Ok(data)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // On-Chain Operations
     // ═════════════════════════════════════════════════════════════════════════
@@ -464,4 +539,11 @@ struct ChunkWithProof {
     hash: String,
     data: String,
     proof: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct NodeResponse {
+    hash: String,
+    data: String,
+    children: Option<Vec<String>>,
 }

@@ -1,6 +1,6 @@
 //! Simple demo to upload test data to a provider.
 //!
-//! Usage: cargo run --release -p storage-client --bin demo_upload -- <provider_url> <bucket_id> [data]
+//! Usage: cargo run --release -p storage-client --bin demo_upload -- <provider_url> <bucket_id> <chain_ws_url> [data]
 
 use sp_core::H256;
 use storage_primitives::blake2_256;
@@ -46,20 +46,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    // Get data from third argument or use default
-    let data: Vec<u8> = args.get(3)
+    // Get chain WebSocket URL from third argument
+    let chain_ws_url = args.get(3)
+        .map(|s| s.as_str())
+        .unwrap_or("ws://127.0.0.1:9944");
+
+    // Get data from fourth argument or use default
+    let data: Vec<u8> = args.get(4)
         .map(|s| s.clone().into_bytes())
         .unwrap_or_else(|| b"Hello, Web3 Storage!".to_vec());
 
     println!("Provider:  {}", provider_url);
+    println!("Chain:     {}", chain_ws_url);
     println!("Bucket ID: {}", bucket_id);
     println!("Uploading {} bytes...", data.len());
     println!("Data: {:?}", String::from_utf8_lossy(&data));
 
-    // Compute hash
-    let hash: H256 = blake2_256(&data);
-    let hash_hex = format!("0x{}", hex::encode(hash.as_bytes()));
-    println!("Hash: {}", hash_hex);
+    // Compute content hash (blake2_256)
+    let content_hash: H256 = blake2_256(&data);
+    let hash_hex = format!("0x{}", hex::encode(content_hash.as_bytes()));
+    println!("Content Hash: {}", hash_hex);
 
     // Encode data as base64
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -115,34 +121,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Start Seq: {}", commit_resp.start_seq);
     println!("Leaf Indices: {:?}", commit_resp.leaf_indices);
 
-    // Verify we can read it back
-    println!("\nVerifying data...");
-    let resp = client
-        .get(format!("{}/node?hash={}", provider_url, hash_hex))
-        .send()
-        .await?;
+    // Verify we can read it back using the client library
+    println!("\nVerifying data using StorageUserClient...");
 
-    if resp.status().is_success() {
-        #[derive(serde::Deserialize)]
-        struct DownloadResponse {
-            hash: String,
-            data: String,
-            children: Option<Vec<String>>,
+    use storage_client::{StorageUserClient, ClientConfig};
+
+    let config = ClientConfig {
+        chain_ws_url: chain_ws_url.to_string(),
+        provider_urls: vec![provider_url.to_string()],
+        timeout_secs: 30,
+        enable_retries: true,
+    };
+
+    let storage_client = StorageUserClient::new(config)?;
+
+    match storage_client.read_node_verified(&content_hash).await {
+        Ok(downloaded_data) => {
+            println!("Data verified successfully!");
+            println!("Downloaded: {:?}", String::from_utf8_lossy(&downloaded_data));
+
+            if downloaded_data == data {
+                println!("Data integrity check: PASSED");
+            } else {
+                println!("Data integrity check: FAILED (content mismatch)");
+            }
         }
-
-        let download_resp: DownloadResponse = resp.json().await?;
-        let downloaded_data = BASE64.decode(&download_resp.data)?;
-
-        println!("Data verified successfully!");
-        println!("Downloaded: {:?}", String::from_utf8_lossy(&downloaded_data));
-
-        if downloaded_data == data {
-            println!("Data integrity check: PASSED");
-        } else {
-            println!("Data integrity check: FAILED");
+        Err(e) => {
+            eprintln!("Verification failed: {}", e);
         }
-    } else {
-        eprintln!("Verification failed!");
     }
 
     println!("\nDemo complete!");
