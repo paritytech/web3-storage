@@ -194,6 +194,15 @@ start-services: check build
 health:
     curl -s http://localhost:3000/health | jq .
 
+# Demo: setup bucket and storage agreement (run once before demo-upload)
+demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
+# Demo: upload test data to provider (includes timestamp by default)
+demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1":
+    #!/usr/bin/env bash
+    cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
+
 # Generate chain spec
 generate-chain-spec: build
     ./scripts/build-chain-spec.sh > chain-spec.json

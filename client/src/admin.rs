@@ -34,6 +34,17 @@ impl AdminClient {
         Self::new(ClientConfig::default(), admin_account)
     }
 
+    /// Connect to the blockchain. Must be called before any on-chain operations.
+    pub async fn connect(&mut self) -> ClientResult<()> {
+        self.base.connect_chain().await
+    }
+
+    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
+    /// Must be called after connect().
+    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
+        self.base.set_dev_signer(name)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Bucket Management
     // ═════════════════════════════════════════════════════════════════════════
@@ -201,34 +212,52 @@ impl AdminClient {
         // Parse provider account
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
-        // Extract replica_for if present
-        let replica_for = replica_params
-            .as_ref()
-            .and_then(|p| p.primary_provider.as_ref())
-            .map(|p| SubstrateClient::parse_account(p))
-            .transpose()?;
+        // Use different extrinsic based on whether it's a primary or replica agreement
+        if let Some(params) = replica_params {
+            // Replica agreement
+            let tx = extrinsics::request_agreement(
+                bucket_id,
+                provider_account,
+                max_bytes,
+                duration,
+                payment,
+                params.sync_balance,
+                params.min_sync_interval,
+            );
 
-        // Create and submit the extrinsic
-        let tx = extrinsics::request_agreement(
-            bucket_id,
-            provider_account,
-            max_bytes,
-            duration,
-            payment,
-            replica_for,
-        );
+            let tx_progress = chain
+                .api()
+                .tx()
+                .sign_and_submit_then_watch_default(&tx, signer)
+                .await
+                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
 
-        let tx_progress = chain
-            .api()
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            tx_progress
+                .wait_for_finalized_success()
+                .await
+                .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+        } else {
+            // Primary agreement
+            let tx = extrinsics::request_primary_agreement(
+                bucket_id,
+                provider_account,
+                max_bytes,
+                duration,
+                payment,
+            );
 
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            let tx_progress = chain
+                .api()
+                .tx()
+                .sign_and_submit_then_watch_default(&tx, signer)
+                .await
+                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+
+            tx_progress
+                .wait_for_finalized_success()
+                .await
+                .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+        }
 
         tracing::info!("Agreement request submitted successfully");
         Ok(())

@@ -34,6 +34,17 @@ impl ProviderClient {
         Self::new(ClientConfig::default(), provider_account)
     }
 
+    /// Connect to the blockchain. Must be called before any on-chain operations.
+    pub async fn connect(&mut self) -> ClientResult<()> {
+        self.base.connect_chain().await
+    }
+
+    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
+    /// Must be called after connect().
+    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
+        self.base.set_dev_signer(name)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Provider Registration & Settings
     // ═════════════════════════════════════════════════════════════════════════
@@ -77,7 +88,7 @@ impl ProviderClient {
         );
 
         // Create the extrinsic
-        let tx = extrinsics::register_provider(multiaddr.into_bytes(), public_key);
+        let tx = extrinsics::register_provider(multiaddr.into_bytes(), public_key, stake);
 
         // Submit and wait for inclusion
         let tx_progress = chain

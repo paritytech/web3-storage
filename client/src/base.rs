@@ -113,17 +113,23 @@ impl BaseClient {
             })
     }
 
-    /// Set a signer for submitting extrinsics.
+    /// Set a signer for submitting extrinsics (builder pattern).
     pub fn with_dev_signer(mut self, name: &str) -> Result<Self, ClientError> {
+        self.set_dev_signer(name)?;
+        Ok(self)
+    }
+
+    /// Set a dev signer for submitting extrinsics (mutable reference).
+    pub fn set_dev_signer(&mut self, name: &str) -> Result<(), ClientError> {
         if let Some(client) = self.chain_client.as_mut() {
             let client = Arc::make_mut(client);
             *client = client.clone().with_dev_signer(name)?;
+            Ok(())
         } else {
-            return Err(ClientError::Config(
+            Err(ClientError::Config(
                 "Must connect to chain before setting signer".to_string(),
-            ));
+            ))
         }
-        Ok(self)
     }
 
     /// Get a provider URL (round-robin or based on strategy).

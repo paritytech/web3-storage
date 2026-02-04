@@ -120,6 +120,19 @@ cargo install just       # Install just command runner
 just start-services      # Start everything (relay chain, parachain, provider)
 ```
 
+### Demo: Store and Retrieve Data
+
+Once the network is running, you can test the full storage workflow:
+
+```bash
+# Terminal 1: Start the network
+just start-services
+
+# Terminal 2: Setup (register provider, create bucket, establish agreement)
+just demo-setup
+# Terminal 2: Upload test data with timestamp
+just demo-upload
+```
 ### Manual Setup
 
 ### Prerequisites

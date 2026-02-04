@@ -118,6 +118,7 @@ pub mod extrinsics {
     pub fn register_provider(
         multiaddr: Vec<u8>,
         public_key: Vec<u8>,
+        stake: u128,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
@@ -125,6 +126,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::from_bytes(multiaddr),
                 subxt::dynamic::Value::from_bytes(public_key),
+                subxt::dynamic::Value::u128(stake),
             ],
         )
     }
@@ -154,8 +156,9 @@ pub mod extrinsics {
         provider: AccountId32,
         max_bytes: u64,
         duration: u32,
-        payment: u128,
-        replica_for: Option<AccountId32>,
+        max_payment: u128,
+        sync_balance: u128,
+        min_sync_interval: u32,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "StorageProvider",
@@ -165,11 +168,33 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::u128(max_bytes as u128),
                 subxt::dynamic::Value::u128(duration as u128),
-                subxt::dynamic::Value::u128(payment),
-                match replica_for {
-                    Some(acc) => subxt::dynamic::Value::unnamed_variant("Some", [subxt::dynamic::Value::from_bytes(acc.as_ref() as &[u8])]),
-                    None => subxt::dynamic::Value::unnamed_variant("None", []),
-                },
+                subxt::dynamic::Value::u128(max_payment),
+                // ReplicaRequestParams struct
+                subxt::dynamic::Value::unnamed_composite(vec![
+                    subxt::dynamic::Value::u128(sync_balance),
+                    subxt::dynamic::Value::u128(min_sync_interval as u128),
+                ]),
+            ],
+        )
+    }
+
+    /// Create a request_primary_agreement extrinsic payload.
+    pub fn request_primary_agreement(
+        bucket_id: u64,
+        provider: AccountId32,
+        max_bytes: u64,
+        duration: u32,
+        max_payment: u128,
+    ) -> impl Payload {
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "request_primary_agreement",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                subxt::dynamic::Value::u128(max_bytes as u128),
+                subxt::dynamic::Value::u128(duration as u128),
+                subxt::dynamic::Value::u128(max_payment),
             ],
         )
     }

@@ -26,6 +26,14 @@ subxt = "0.37"
 subxt-signer = "0.37"
 futures = "0.3"
 
+[[bin]]
+name = "demo_setup"
+path = "src/bin/demo_setup.rs"
+
+[[bin]]
+name = "demo_upload"
+path = "src/bin/demo_upload.rs"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 storage-provider-node = { workspace = true }
