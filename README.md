@@ -60,16 +60,73 @@ just demo
 4. **Upload data** - Use the client SDK or HTTP API
    - See: [Client Documentation](./client/README.md)
 
+## File System Interface (Layer 1)
+
+For most users, we recommend using the **Layer 1 File System Interface** instead of Layer 0 directly. It provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
+
+### Quick Start with File System
+
+```bash
+# Full integration test (starts everything + runs example)
+just fs-integration-test
+
+# Or manually:
+just start-services          # Terminal 1: Start infrastructure
+just fs-demo                 # Terminal 2: Run file system demo
+```
+
+**What you get:**
+- ✅ Familiar file/folder interface
+- ✅ Automatic provider selection
+- ✅ Built-in blockchain integration
+- ✅ No infrastructure management needed
+
+### File System Commands
+
+```bash
+just fs-integration-test     # Full test: start everything + run example
+just fs-demo                 # Quick demo (requires running infrastructure)
+just fs-example              # Run basic_usage.rs example
+just fs-test                 # Run unit tests
+just fs-test-all             # Test all file system components
+just fs-build                # Build file system components
+just fs-docs                 # Show documentation links
+```
+
+**Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
+
+### When to Use Layer 0 vs Layer 1
+
+**Use Layer 1 (File System)** if you:
+- Want a familiar file/folder interface
+- Need automatic setup and provider selection
+- Are building a general-purpose file storage app
+- Prefer simplicity over low-level control
+
+**Use Layer 0 (Direct Storage)** if you:
+- Need full control over storage operations
+- Are building custom storage logic
+- Want to implement your own data structures
+- Need direct access to buckets and agreements
+
 ## Common Commands
 
 ```bash
+# General
 just --list                  # Show all available commands
 just check                   # Verify prerequisites
 just build                   # Build the project
+
+# Infrastructure
 just start-chain             # Start blockchain only
 just start-chain             # Start blockchain
 just start-provider          # Start provider node
 just health                  # Check provider health
+
+# File System (Layer 1)
+just fs-integration-test     # Full file system test
+just fs-demo                 # Quick file system demo
+just fs-test-all             # Test all file system components
 ```
 
 ## Documentation
@@ -80,7 +137,9 @@ just health                  # Check provider health
 
 | Document | Description |
 |----------|-------------|
-| [Quick Start Guide](./docs/getting-started/QUICKSTART.md) | Get running fast (5 min) |
+| **[File System Quick Start](./FILE_SYSTEM_QUICKSTART.md)** | **Get started with Layer 1 (Recommended)** |
+| [File System Docs](./docs/filesystems/README.md) | Complete Layer 1 documentation |
+| [Quick Start Guide](./docs/getting-started/QUICKSTART.md) | Layer 0 setup (5 min) |
 | [Manual Testing Guide](./docs/testing/MANUAL_TESTING_GUIDE.md) | Complete testing workflow |
 | [Extrinsics Reference](./docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |

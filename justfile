@@ -245,3 +245,179 @@ generate-chain-spec: build
 setup: download-binaries build
     @echo ""
     @echo "Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network."
+
+# ============================================================
+# File System (Layer 1) Commands
+# ============================================================
+
+# Run the file system basic usage example
+fs-example:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🚀 Running File System Client Example"
+    echo "Prerequisites: blockchain and provider must be running"
+    echo "  - Parachain: ws://127.0.0.1:9944"
+    echo "  - Provider: http://localhost:3000"
+    echo ""
+    cd storage-interfaces/file-system/client
+    RUST_LOG=info cargo run --example basic_usage
+
+# Test file system client (unit tests)
+fs-test:
+    cargo test -p file-system-client
+
+# Test file system client with logs
+fs-test-verbose:
+    RUST_LOG=debug cargo test -p file-system-client -- --nocapture
+
+# Test all file system components (primitives + pallet + client)
+fs-test-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Testing file system primitives..."
+    cargo test -p file-system-primitives
+    echo ""
+    echo "Testing drive registry pallet..."
+    cargo test -p pallet-drive-registry
+    echo ""
+    echo "Testing file system client..."
+    cargo test -p file-system-client
+    echo ""
+    echo "✅ All file system tests passed!"
+
+# Start infrastructure and run file system example (full integration test)
+fs-integration-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo ""
+    echo "=== File System Integration Test ==="
+    echo ""
+    echo "This will:"
+    echo "  1. Start relay chain + parachain"
+    echo "  2. Start provider node"
+    echo "  3. Verify on-chain setup"
+    echo "  4. Run file system example"
+    echo ""
+
+    # Check if zombienet is already running
+    if lsof -i :9944 > /dev/null 2>&1; then
+        echo "⚠️  Parachain already running on port 9944"
+        echo "Skipping blockchain startup..."
+    else
+        echo "Starting blockchain network..."
+        .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
+        ZOMBIENET_PID=$!
+        trap "kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
+
+        echo "Waiting for parachain to be ready..."
+        until curl -s -o /dev/null http://127.0.0.1:9944; do
+            sleep 2
+        done
+        echo "✅ Blockchain ready!"
+    fi
+
+    # Check if provider is already running
+    if lsof -i :3000 > /dev/null 2>&1; then
+        echo "⚠️  Provider already running on port 3000"
+        echo "Skipping provider startup..."
+    else
+        echo ""
+        echo "Starting provider node..."
+        PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+        CHAIN_RPC=ws://127.0.0.1:9944 \
+        cargo run --release -p storage-provider-node > /tmp/provider.log 2>&1 &
+        PROVIDER_PID=$!
+        trap "kill $PROVIDER_PID 2>/dev/null || true; kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
+
+        # Wait for provider to be ready
+        echo "Waiting for provider to be ready..."
+        for i in {1..30}; do
+            if curl -s http://localhost:3000/health > /dev/null 2>&1; then
+                echo "✅ Provider ready!"
+                break
+            fi
+            if [ $i -eq 30 ]; then
+                echo "❌ Provider failed to start"
+                exit 1
+            fi
+            sleep 1
+        done
+    fi
+
+    echo ""
+    echo "Verifying on-chain setup..."
+    bash scripts/verify-setup.sh || {
+        echo ""
+        echo "⚠️  Setup verification failed"
+        echo "You may need to run the setup manually. See:"
+        echo "  docs/getting-started/QUICKSTART.md"
+        echo ""
+        echo "Continuing anyway to test drive creation..."
+    }
+
+    echo ""
+    echo "=== Running File System Example ==="
+    echo ""
+    just fs-example
+
+    echo ""
+    echo "✅ Integration test complete!"
+
+# Quick file system demo (assumes infrastructure is running)
+fs-demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Check prerequisites
+    if ! curl -s http://localhost:3000/health > /dev/null 2>&1; then
+        echo "❌ Provider not running on http://localhost:3000"
+        echo "Run: just start-services"
+        exit 1
+    fi
+
+    if ! curl -s -o /dev/null http://127.0.0.1:9944; then
+        echo "❌ Parachain not running on ws://127.0.0.1:9944"
+        echo "Run: just start-chain"
+        exit 1
+    fi
+
+    echo "✅ Infrastructure is running"
+    echo ""
+    just fs-example
+
+# Build file system components only
+fs-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building file system components..."
+    cargo build --release \
+        -p file-system-primitives \
+        -p pallet-drive-registry \
+        -p file-system-client
+    echo "✅ File system components built!"
+
+# Clean file system build artifacts
+fs-clean:
+    cargo clean -p file-system-primitives
+    cargo clean -p pallet-drive-registry
+    cargo clean -p file-system-client
+
+# Show file system documentation
+fs-docs:
+    @echo "📚 File System Interface Documentation"
+    @echo ""
+    @echo "Getting Started:"
+    @echo "  docs/filesystems/README.md"
+    @echo ""
+    @echo "User Guide:"
+    @echo "  docs/filesystems/USER_GUIDE.md"
+    @echo ""
+    @echo "Example Walkthrough:"
+    @echo "  docs/filesystems/EXAMPLE_WALKTHROUGH.md"
+    @echo ""
+    @echo "API Reference:"
+    @echo "  docs/filesystems/API_REFERENCE.md"
+    @echo ""
+    @echo "Client SDK:"
+    @echo "  storage-interfaces/file-system/client/README.md"
