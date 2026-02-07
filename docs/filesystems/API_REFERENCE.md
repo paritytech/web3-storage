@@ -318,33 +318,88 @@ pub fn create_drive_on_bucket(
 
 ### FileSystemClient
 
-High-level client for file system operations.
+High-level client for file system operations with blockchain integration using `subxt`.
 
 #### Constructor
 
 ```rust
 pub async fn new(
-    chain_rpc: &str,
-    provider_http: &str,
-    signer: impl Signer,
+    chain_endpoint: &str,
+    provider_endpoint: &str,
 ) -> Result<Self>
 ```
 
 **Parameters:**
-- `chain_rpc`: Parachain WebSocket endpoint (e.g., `"ws://localhost:9944"`)
-- `provider_http`: Storage provider HTTP endpoint (e.g., `"http://localhost:3000"`)
-- `signer`: Keypair for signing transactions
+- `chain_endpoint`: Parachain WebSocket endpoint (e.g., `"ws://127.0.0.1:9944"`)
+- `provider_endpoint`: Storage provider HTTP endpoint (e.g., `"http://localhost:3000"`)
+
+**Returns:**
+- `Ok(FileSystemClient)`: Client connected to blockchain and provider
+- `Err(FsClientError)`: Connection or initialization error
 
 **Example:**
 ```rust
 use file_system_client::FileSystemClient;
 
-let fs_client = FileSystemClient::new(
-    "ws://localhost:9944",
+let mut fs_client = FileSystemClient::new(
+    "ws://127.0.0.1:9944",
     "http://localhost:3000",
-    user_keypair,
 ).await?;
 ```
+
+**Note:** After creating the client, you must set a signer using `with_dev_signer()` or `with_signer()`.
+
+---
+
+#### `with_dev_signer`
+
+Set up a development signer for testing.
+
+```rust
+pub async fn with_dev_signer(self, name: &str) -> Result<Self>
+```
+
+**Parameters:**
+- `name`: Dev account name (`"alice"`, `"bob"`, `"charlie"`, `"dave"`, `"eve"`, `"ferdie"`)
+
+**Returns:**
+- `Ok(FileSystemClient)`: Client with dev signer configured
+- `Err(FsClientError)`: Invalid account name
+
+**Example:**
+```rust
+let fs_client = fs_client
+    .with_dev_signer("alice")
+    .await?;
+```
+
+**Use Case:** Testing and development only. Never use dev accounts in production!
+
+---
+
+#### `with_signer`
+
+Set up a production signer.
+
+```rust
+pub fn with_signer(self, signer: Keypair) -> Self
+```
+
+**Parameters:**
+- `signer`: SR25519 keypair for signing transactions
+
+**Returns:**
+- `FileSystemClient`: Client with production signer configured
+
+**Example:**
+```rust
+use subxt_signer::sr25519::Keypair;
+
+let keypair = Keypair::from_seed("your secure seed phrase")?;
+let fs_client = fs_client.with_signer(keypair);
+```
+
+**Use Case:** Production deployments with secure key management.
 
 ---
 

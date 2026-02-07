@@ -314,6 +314,26 @@ if utilization > 80.0 {
 }
 ```
 
+## Layer 1 File System Interface
+
+For most users, consider using the **Layer 1 File System Client** instead, which provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
+
+**When to use Layer 1 (File System Client):**
+- You need a familiar file/folder interface
+- You want automatic setup and provider selection
+- You're building a general-purpose file storage application
+- You prefer simplicity over low-level control
+
+**When to use Layer 0 (Storage Client - this SDK):**
+- You need full control over storage operations
+- You're building custom storage logic
+- You want to implement your own data structures on top of blob storage
+- You need direct access to buckets and agreements
+
+**Layer 1 Documentation:** See [File System Interface Docs](../docs/filesystems/README.md)
+
+**Layer 1 Client:** `storage-interfaces/file-system/client/`
+
 ## Status
 
 This SDK is under active development.

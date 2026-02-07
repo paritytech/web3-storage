@@ -196,6 +196,18 @@ High-level abstraction over Layer 0 storage - use drives and files instead of bu
 
 **Full technical reference for developers building with Layer 1.**
 
+### [Example Walkthrough](./filesystems/EXAMPLE_WALKTHROUGH.md)
+**Step-by-step guide to basic_usage.rs example**
+
+- Prerequisites and infrastructure setup
+- Complete example output with explanations
+- Step-by-step breakdown of each operation
+- Understanding blockchain integration with subxt
+- Troubleshooting common issues
+- Next steps and related documentation
+
+**Perfect for developers learning to use the file system client SDK.**
+
 ---
 
 ## 🎯 Quick Navigation
@@ -204,8 +216,9 @@ High-level abstraction over Layer 0 storage - use drives and files instead of bu
 
 #### **File System User - Simplified Storage (Layer 1)**
 1. [User Guide](./filesystems/USER_GUIDE.md) - Complete file system guide
-2. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Understand Layer 1
-3. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
+2. [Example Walkthrough](./filesystems/EXAMPLE_WALKTHROUGH.md) - Learn by example
+3. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Understand Layer 1
+4. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
 
 #### **File System Admin - Managing Layer 1**
 1. [Admin Guide](./filesystems/ADMIN_GUIDE.md) - System administration

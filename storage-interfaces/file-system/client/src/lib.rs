@@ -35,6 +35,8 @@
 //! let bytes = fs_client.download_file(drive_id, "/documents/report.pdf").await?;
 //! ```
 
+mod substrate;
+
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,
 };
@@ -44,6 +46,7 @@ use storage_client::StorageClient;
 use thiserror::Error;
 
 pub use file_system_primitives::DriveId;
+pub use substrate::SubstrateClient;
 
 /// File system client errors
 #[derive(Debug, Error)]
@@ -77,6 +80,12 @@ pub enum FsClientError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("Blockchain error: {0}")]
+    Blockchain(String),
+
+    #[error("Event not found in transaction")]
+    EventNotFound,
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
@@ -85,8 +94,8 @@ pub type Result<T> = std::result::Result<T, FsClientError>;
 pub struct FileSystemClient {
     /// Layer 0 storage client for blob operations
     storage_client: StorageClient,
-    /// Parachain RPC endpoint
-    chain_endpoint: String,
+    /// Substrate blockchain client
+    substrate_client: SubstrateClient,
     /// In-memory cache of drive root CIDs (drive_id -> root_cid)
     root_cache: HashMap<DriveId, Cid>,
 }
@@ -96,17 +105,29 @@ impl FileSystemClient {
     ///
     /// # Arguments
     ///
-    /// * `chain_endpoint` - Parachain RPC endpoint (e.g., "http://localhost:9944")
+    /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://localhost:9944")
     /// * `provider_endpoint` - Storage provider HTTP endpoint
     pub async fn new(chain_endpoint: &str, provider_endpoint: &str) -> Result<Self> {
-        let storage_client = StorageClient::new(provider_endpoint)
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+        let storage_client = StorageClient::new(provider_endpoint);
+        let substrate_client = SubstrateClient::connect(chain_endpoint).await?;
 
         Ok(Self {
             storage_client,
-            chain_endpoint: chain_endpoint.to_string(),
+            substrate_client,
             root_cache: HashMap::new(),
         })
+    }
+
+    /// Create a client with a development signer (for testing).
+    pub async fn with_dev_signer(mut self, name: &str) -> Result<Self> {
+        self.substrate_client = self.substrate_client.with_dev_signer(name)?;
+        Ok(self)
+    }
+
+    /// Set a custom signer for blockchain transactions.
+    pub fn with_signer(mut self, signer: subxt_signer::sr25519::Keypair) -> Self {
+        self.substrate_client = self.substrate_client.with_signer(signer);
+        self
     }
 
     /// Create a new drive (USER-FACING API)
@@ -216,9 +237,8 @@ impl FileSystemClient {
             self.upload_blob(bucket_id, chunk_data).await?;
 
             chunks.push(file_system_primitives::FileChunk {
-                index: i as u32,
                 cid: Self::cid_to_string(chunk_cid),
-                size: chunk_data.len() as u64,
+                sequence: i as u32,
             });
         }
 
@@ -229,7 +249,6 @@ impl FileSystemClient {
             total_size: data.len() as u64,
             chunks,
             encryption_params: String::new(),
-            metadata: HashMap::new(),
         };
 
         let manifest_bytes = manifest.to_bytes()?;
@@ -311,7 +330,7 @@ impl FileSystemClient {
         let (parent_path, dir_name) = Self::split_path(path)?;
 
         // Create empty directory
-        let new_dir = DirectoryNode::new_empty(dir_name);
+        let new_dir = DirectoryNode::new_empty(dir_name.to_string());
         let new_dir_cid = new_dir.compute_cid()?;
         let new_dir_bytes = new_dir.to_bytes()?;
 
@@ -474,25 +493,32 @@ impl FileSystemClient {
         let new_parent_cid = compute_cid(&new_parent_bytes);
         self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
-        // Recurse to grandparent
-        self.update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)
-            .await
+        // Recurse to grandparent (box the future to avoid infinite size)
+        Box::pin(self.update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)).await
     }
 
     /// Upload a blob to Layer 0 storage
     async fn upload_blob(&self, bucket_id: u64, data: &[u8]) -> Result<()> {
-        self.storage_client
-            .upload_node(bucket_id, data)
+        use storage_client::ChunkingStrategy;
+
+        // Upload data using default chunking strategy
+        let _data_root = self
+            .storage_client
+            .upload(bucket_id, data, ChunkingStrategy::default())
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        // Note: In production, track data_root -> cid mapping
+        // Provider stores data by content hash
         Ok(())
     }
 
     /// Fetch a blob from Layer 0 storage by CID
     async fn fetch_blob(&self, cid: Cid) -> Result<Vec<u8>> {
-        let hash_str = format!("0x{}", hex::encode(cid.as_bytes()));
+        // Use the read API with CID as data root
+        // Note: This assumes provider maps CID to stored data
         self.storage_client
-            .get_node(&hash_str)
+            .read(&cid, 0, u64::MAX)
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))
     }
@@ -570,37 +596,162 @@ impl FileSystemClient {
 
     async fn create_drive_on_chain(
         &self,
-        _name: Option<&str>,
-        _max_capacity: u64,
-        _storage_period: u64,
-        _payment: u128,
-        _min_providers: Option<u8>,
-        _commit_strategy: file_system_primitives::CommitStrategy,
+        name: Option<&str>,
+        max_capacity: u64,
+        storage_period: u64,
+        payment: u128,
+        min_providers: Option<u8>,
+        commit_strategy: file_system_primitives::CommitStrategy,
     ) -> Result<DriveId> {
-        // Placeholder: In real implementation, call DriveRegistry::create_drive extrinsic
-        // The extrinsic will:
-        // 1. Create a bucket in Layer 0
-        // 2. Request storage agreements with providers
-        // 3. Set up the drive infrastructure with specified configuration
-        // 4. Return the drive_id
-        log::warn!("create_drive_on_chain: Using placeholder implementation");
-        log::info!(
-            "In production, this would call: drive_registry.create_drive(name: {:?}, max_capacity: {}, storage_period: {}, payment: {}, min_providers: {:?}, commit_strategy: {:?})",
-            _name, _max_capacity, _storage_period, _payment, _min_providers, _commit_strategy
+        use subxt::dynamic::At;
+
+        let name_bytes = name.map(|n| n.as_bytes().to_vec());
+
+        // Build the extrinsic
+        let call = substrate::extrinsics::create_drive(
+            name_bytes,
+            max_capacity,
+            storage_period,
+            payment,
+            min_providers,
+            commit_strategy,
         );
-        Ok(1)
+
+        // Sign and submit
+        let signer = self.substrate_client.signer()?;
+        let mut progress = self
+            .substrate_client
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&call, signer)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {}", e)))?;
+
+        // Wait for finalization and extract drive_id from event
+        while let Some(event) = progress.next().await {
+            let event = event
+                .map_err(|e| FsClientError::Blockchain(format!("Transaction error: {}", e)))?;
+
+            if let Some(finalized) = event.as_finalized() {
+                // Fetch events from the finalized block
+                let events = finalized
+                    .fetch_events()
+                    .await
+                    .map_err(|e| FsClientError::Blockchain(format!("Failed to fetch events: {}", e)))?;
+
+                // Find DriveCreated or DriveCreatedOnBucket event
+                for ev in events.iter() {
+                    let ev = ev.map_err(|e| {
+                        FsClientError::Blockchain(format!("Event decode error: {}", e))
+                    })?;
+
+                    // Check if this is a DriveRegistry event
+                    if ev.pallet_name() == "DriveRegistry" {
+                        // Try to decode as dynamic value
+                        if let Ok(value) = ev.field_values() {
+                            // Extract drive_id from first field (all drive events have drive_id as first field)
+                            if let Some(drive_id_value) = value.at(0) {
+                                if let Some(drive_id) = drive_id_value.as_u128() {
+                                    log::info!("Drive created with ID: {}", drive_id);
+                                    return Ok(drive_id as DriveId);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return Err(FsClientError::EventNotFound);
+            }
+        }
+
+        Err(FsClientError::Blockchain(
+            "Transaction did not finalize".to_string(),
+        ))
     }
 
-    async fn update_drive_root_cid(&self, _drive_id: DriveId, _new_root_cid: Cid) -> Result<()> {
-        // Placeholder: In real implementation, call DriveRegistry::update_root_cid extrinsic
-        log::warn!("update_drive_root_cid: Using placeholder implementation");
-        Ok(())
+    async fn update_drive_root_cid(&self, drive_id: DriveId, new_root_cid: Cid) -> Result<()> {
+        // Build the extrinsic
+        let call = substrate::extrinsics::update_root_cid(drive_id, new_root_cid);
+
+        // Sign and submit
+        let signer = self.substrate_client.signer()?;
+        let mut progress = self
+            .substrate_client
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&call, signer)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {}", e)))?;
+
+        // Wait for finalization
+        while let Some(event) = progress.next().await {
+            let event = event
+                .map_err(|e| FsClientError::Blockchain(format!("Transaction error: {}", e)))?;
+
+            if event.as_finalized().is_some() {
+                log::info!("Root CID updated for drive {}", drive_id);
+                return Ok(());
+            }
+        }
+
+        Err(FsClientError::Blockchain(
+            "Transaction did not finalize".to_string(),
+        ))
     }
 
-    async fn query_drive_root_cid(&self, _drive_id: DriveId) -> Result<Cid> {
-        // Placeholder: In real implementation, query DriveRegistry::Drives storage
-        log::warn!("query_drive_root_cid: Using placeholder implementation");
-        Ok(H256::zero())
+    async fn query_drive_root_cid(&self, drive_id: DriveId) -> Result<Cid> {
+        let storage_client = self
+            .substrate_client
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {}", e)))?;
+
+        // Build the storage key for Drives storage map
+        // Format: pallet_hash + storage_hash + key_hash(drive_id)
+        use sp_core::twox_128;
+
+        let pallet_hash = twox_128(b"DriveRegistry");
+        let storage_hash = twox_128(b"Drives");
+        let key = drive_id.to_le_bytes();
+        let key_hash = sp_core::blake2_128(&key);
+
+        let mut storage_key = Vec::new();
+        storage_key.extend_from_slice(&pallet_hash);
+        storage_key.extend_from_slice(&storage_hash);
+        storage_key.extend_from_slice(&key_hash);
+        storage_key.extend_from_slice(&key);
+
+        let bytes_opt = storage_client
+            .fetch_raw(storage_key)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {}", e)))?;
+
+        if let Some(bytes) = bytes_opt {
+            // DriveInfo structure:
+            // - owner: AccountId32 (32 bytes)
+            // - bucket_id: u64 (8 bytes
+            // - root_cid: H256 (32 bytes)
+            // - ... more fields
+
+            // We need to skip SCALE encoding overhead and extract root_cid
+            // This is a simplified approach - in production use proper type decoding
+
+            if bytes.len() >= 32 + 8 + 32 {
+                // Skip owner (32 bytes) + bucket_id (8 bytes)
+                let root_cid_offset = 32 + 8;
+                let mut root_cid_bytes = [0u8; 32];
+                root_cid_bytes.copy_from_slice(&bytes[root_cid_offset..root_cid_offset + 32]);
+                return Ok(H256::from(root_cid_bytes));
+            }
+
+            return Err(FsClientError::Blockchain(
+                "Invalid drive info encoding".to_string(),
+            ));
+        }
+
+        Err(FsClientError::DriveNotFound(drive_id))
     }
 }
 

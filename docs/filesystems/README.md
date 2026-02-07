@@ -21,6 +21,7 @@ The File System Interface is a **high-level abstraction** over Layer 0's raw blo
 | **[USER_GUIDE.md](./USER_GUIDE.md)** | End Users | Complete guide for using the file system |
 | **[ADMIN_GUIDE.md](./ADMIN_GUIDE.md)** | Administrators | System management and monitoring |
 | **[API_REFERENCE.md](./API_REFERENCE.md)** | Developers | Complete API documentation |
+| **[EXAMPLE_WALKTHROUGH.md](./EXAMPLE_WALKTHROUGH.md)** | Developers | Step-by-step walkthrough of basic_usage.rs example |
 
 ## Quick Start
 
@@ -256,6 +257,33 @@ Rust library providing:
 - Directory management
 - DAG builder for Merkle trees
 - CID caching and optimization
+- **Blockchain integration** via `subxt` for trustless storage
+- Real on-chain transaction submission and event extraction
+
+### Blockchain Integration
+
+The client SDK uses **`subxt`** for blockchain interaction:
+
+- **Connection**: Connects to parachain WebSocket endpoint
+- **Signing**: Uses SR25519 keypairs (dev accounts or production keys)
+- **Extrinsics**: Submits `DriveRegistry` transactions dynamically
+- **Events**: Extracts drive IDs and transaction results
+- **Storage**: Queries on-chain drive state
+
+**Example:**
+```rust
+// Connect to blockchain
+let mut fs_client = FileSystemClient::new(
+    "ws://127.0.0.1:9944",      // Parachain
+    "http://localhost:3000"      // Provider
+)
+.await?
+.with_dev_signer("alice")       // Testing signer
+.await?;
+
+// Create drive (submits on-chain extrinsic)
+let drive_id = fs_client.create_drive(...).await?;
+```
 
 ### Primitives (Shared Types)
 **Location:** `storage-interfaces/file-system/primitives/`
@@ -288,9 +316,14 @@ file-system-primitives = { path = "storage-interfaces/file-system/primitives" }
 ### 3. Run Examples
 
 ```bash
-# See working examples
-cargo run --example user_workflow_simplified
-cargo run --example admin_workflow_simplified
+# Prerequisites: Start blockchain and provider node
+just start-chain                              # Terminal 1
+cargo run --release -p storage-provider-node  # Terminal 2
+bash scripts/verify-setup.sh                  # Verify setup
+
+# Run examples
+cd storage-interfaces/file-system/client
+cargo run --example basic_usage
 ```
 
 ### 4. Test the System
@@ -310,9 +343,33 @@ bash scripts/quick-test.sh  # Terminal 2
 ## Examples
 
 Complete examples are available in:
-- `storage-interfaces/file-system/examples/user_workflow_simplified.rs`
-- `storage-interfaces/file-system/examples/admin_workflow_simplified.rs`
-- `storage-interfaces/file-system/examples/basic_usage.rs`
+- `storage-interfaces/file-system/client/examples/basic_usage.rs` - Complete file system workflow with blockchain integration
+
+### Running the Basic Usage Example
+
+The `basic_usage.rs` example demonstrates the complete Layer 1 file system workflow with real blockchain integration:
+
+```bash
+# 1. Start infrastructure
+just start-chain                              # Terminal 1
+cargo run --release -p storage-provider-node  # Terminal 2
+
+# 2. Verify setup
+bash scripts/verify-setup.sh
+
+# 3. Run example
+cd storage-interfaces/file-system/client
+cargo run --example basic_usage
+```
+
+**What the example demonstrates:**
+- Connecting to blockchain using `subxt`
+- Creating a drive with automatic infrastructure setup
+- Building nested directory structures
+- Uploading files to different paths
+- Listing directory contents recursively
+- Downloading and verifying files
+- Real on-chain drive registry integration
 
 ## Testing
 
