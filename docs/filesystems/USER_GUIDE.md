@@ -294,18 +294,53 @@ update_drive_name(drive_id, Some("Updated Name")).await?;
 println!("✅ Drive renamed");
 ```
 
-### Delete a Drive
+### Clear Drive Contents
+
+Wipe all data from a drive while keeping the drive and storage agreements:
 
 ```rust
-// Must be the drive owner
+// Removes all files but keeps the drive structure
+clear_drive(drive_id).await?;
+
+println!("✅ Drive cleared - all files removed");
+```
+
+**What happens:**
+- Root CID reset to zero (empty drive)
+- All file data markers cleared
+- Drive structure remains intact
+- Storage agreements continue (no refunds)
+- You can immediately start using the drive again
+
+**Use case:** Start fresh with the same drive, seasonal data cleanup, testing/development resets
+
+### Delete a Drive
+
+Permanently remove a drive, including its bucket and all storage agreements:
+
+```rust
+// Complete removal with refund
 delete_drive(drive_id).await?;
 
-println!("✅ Drive deleted");
+println!("✅ Drive deleted - bucket removed, funds refunded");
 ```
+
+**What happens:**
+1. All storage agreements are ended
+2. Providers are paid for time served
+3. You receive a prorated refund for unused time
+4. The bucket is removed from Layer 0
+5. The drive is removed from your account
 
 **Requirements:**
 - You must be the drive owner
-- Best practice: Delete all files first (cleanup)
+- Operation is permanent and cannot be undone
+
+**Use case:** No longer need the drive, reclaim unused storage funds
+
+**Choosing between Clear and Delete:**
+- **Clear**: Use when you want to keep the drive and agreements but start with empty storage (faster, no refunds)
+- **Delete**: Use when you're done with the drive entirely and want to reclaim funds (permanent, with refunds)
 
 ### Check Drive Status
 

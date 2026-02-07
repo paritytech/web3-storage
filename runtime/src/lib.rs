@@ -479,7 +479,6 @@ impl pallet_drive_registry::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type MaxDriveNameLength = ConstU32<128>;
     type MaxDrivesPerUser = ConstU32<100>;
-    type MaxAgreements = ConstU32<10>; // Max 10 storage providers per drive
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

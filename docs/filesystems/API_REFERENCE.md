@@ -161,9 +161,48 @@ api.tx.driveRegistry.commitChanges(0).signAndSend(account);
 
 ---
 
+### `clear_drive`
+
+Clear all data from a drive while keeping the drive structure intact.
+
+**Signature:**
+```rust
+pub fn clear_drive(
+    origin: OriginFor<T>,
+    drive_id: DriveId,
+) -> DispatchResult
+```
+
+**Parameters:**
+- `origin`: Signed origin (must be drive owner)
+- `drive_id`: Drive identifier
+
+**Returns:**
+- `Ok(())`: Drive contents cleared
+- Emits: `DriveCleared` event with old root CID
+
+**Behavior:**
+1. Resets root_cid to zero (empty drive)
+2. Clears any pending_root_cid
+3. Keeps drive structure, bucket, and agreements intact
+4. No refunds (storage agreements continue)
+
+**Use Case:** Wipe all files but continue using the same drive and storage agreements.
+
+**Example:**
+```javascript
+api.tx.driveRegistry.clearDrive(0).signAndSend(account);
+```
+
+**Errors:**
+- `DriveNotFound`: Drive doesn't exist
+- `NotDriveOwner`: Caller is not the drive owner
+
+---
+
 ### `delete_drive`
 
-Delete a drive (requires drive to be empty).
+Permanently delete a drive, including its bucket and all storage agreements.
 
 **Signature:**
 ```rust
@@ -178,8 +217,18 @@ pub fn delete_drive(
 - `drive_id`: Drive identifier
 
 **Returns:**
-- `Ok(())`: Drive deleted
-- Emits: `DriveDeleted` event
+- `Ok(())`: Drive and bucket deleted successfully
+- Emits: `DriveDeleted` event with bucket_id and refunded amount
+
+**Behavior:**
+1. Ends all storage agreements with providers
+2. Calculates prorated refunds based on remaining time
+3. Pays providers for time served
+4. Returns unspent funds to owner
+5. Removes the bucket from Layer 0
+6. Removes the drive from registry
+
+**Use Case:** Completely remove a drive when no longer needed. Owner receives prorated refund for unused storage time.
 
 **Example:**
 ```javascript
@@ -189,6 +238,9 @@ api.tx.driveRegistry.deleteDrive(0).signAndSend(account);
 **Errors:**
 - `DriveNotFound`: Drive doesn't exist
 - `NotDriveOwner`: Caller is not the drive owner
+- `BucketCleanupFailed`: Failed to cleanup underlying bucket
+
+**Note:** Unlike `clear_drive`, this operation is permanent and cannot be undone.
 
 ---
 
@@ -764,16 +816,38 @@ RootCIDUpdated {
 
 ---
 
+### DriveCleared
+
+Emitted when a drive's contents are cleared.
+
+```rust
+DriveCleared {
+    drive_id: DriveId,
+    owner: T::AccountId,
+    old_root_cid: Cid,
+}
+```
+
+---
+
 ### DriveDeleted
 
-Emitted when a drive is deleted.
+Emitted when a drive is permanently deleted.
 
 ```rust
 DriveDeleted {
     drive_id: DriveId,
     owner: T::AccountId,
+    bucket_id: u64,
+    refunded: Balance,
 }
 ```
+
+**Fields:**
+- `drive_id`: The deleted drive identifier
+- `owner`: Account that owned the drive
+- `bucket_id`: The Layer 0 bucket that was removed
+- `refunded`: Amount of tokens refunded to owner for unused storage time
 
 ---
 
@@ -914,6 +988,21 @@ Failed to create bucket in Layer 0.
 ```rust
 BucketCreationFailed
 ```
+
+---
+
+### BucketCleanupFailed
+
+Failed to cleanup bucket in Layer 0 during drive deletion.
+
+```rust
+BucketCleanupFailed
+```
+
+**Common Causes:**
+- Bucket doesn't exist in Layer 0
+- Drive was created using deprecated API without proper Layer 0 integration
+- Layer 0 cleanup encountered an error
 
 ---
 

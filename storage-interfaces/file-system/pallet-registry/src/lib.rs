@@ -125,10 +125,19 @@ pub mod pallet {
             new_root_cid: Cid,
         },
         /// Drive was deleted
-        /// [drive_id, owner]
+        /// [drive_id, owner, bucket_id, refunded]
         DriveDeleted {
             drive_id: DriveId,
             owner: T::AccountId,
+            bucket_id: u64,
+            refunded: BalanceOf<T>,
+        },
+        /// Drive contents were cleared
+        /// [drive_id, owner, old_root_cid]
+        DriveCleared {
+            drive_id: DriveId,
+            owner: T::AccountId,
+            old_root_cid: Cid,
         },
         /// Drive name was updated
         /// [drive_id, name]
@@ -214,6 +223,8 @@ pub mod pallet {
         InvalidPayment,
         /// Failed to create bucket in Layer 0
         BucketCreationFailed,
+        /// Failed to cleanup bucket in Layer 0
+        BucketCleanupFailed,
         /// No storage providers available
         NoProvidersAvailable,
         /// Insufficient replica providers available
@@ -462,6 +473,19 @@ pub mod pallet {
         ///
         /// Parameters:
         /// - `drive_id`: The drive to delete
+        /// Delete a drive completely
+        ///
+        /// This operation:
+        /// - Ends all storage agreements with prorated refunds
+        /// - Pays providers for time served
+        /// - Removes the bucket from Layer 0
+        /// - Removes the drive from the registry
+        /// - Only the drive owner can perform this operation
+        ///
+        /// The owner receives a prorated refund for unused storage time.
+        ///
+        /// Parameters:
+        /// - `drive_id`: The drive to delete
         #[pallet::call_index(2)]
         #[pallet::weight(10_000)]
         pub fn delete_drive(origin: OriginFor<T>, drive_id: DriveId) -> DispatchResult {
@@ -470,6 +494,17 @@ pub mod pallet {
             // Get drive and verify ownership
             let drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
             ensure!(drive.owner == who, Error::<T>::NotDriveOwner);
+
+            // Call Layer 0 to cleanup bucket and all agreements
+            // This will end all agreements, pay providers fairly, and remove the bucket
+            let total_refunded = pallet_storage_provider::Pallet::<T>::cleanup_bucket_internal(
+                drive.bucket_id,
+                &who,
+            )
+            .map_err(|_| Error::<T>::BucketCleanupFailed)?;
+
+            // Remove bucket-to-drive mapping
+            BucketToDrive::<T>::remove(drive.bucket_id);
 
             // Remove from user's drive list
             let mut user_drives = UserDrives::<T>::get(&who);
@@ -483,6 +518,47 @@ pub mod pallet {
             Self::deposit_event(Event::DriveDeleted {
                 drive_id,
                 owner: who,
+                bucket_id: drive.bucket_id,
+                refunded: total_refunded,
+            });
+
+            Ok(())
+        }
+
+        /// Clear drive contents while keeping the drive structure
+        ///
+        /// This operation:
+        /// - Resets root_cid to zero (empty drive)
+        /// - Clears any pending_root_cid
+        /// - Keeps the drive, bucket, and agreements intact
+        /// - Only the drive owner can perform this operation
+        ///
+        /// Use this when you want to wipe all data but keep using the same drive.
+        ///
+        /// Parameters:
+        /// - `drive_id`: The drive to clear
+        #[pallet::call_index(10)]
+        #[pallet::weight(10_000)]
+        pub fn clear_drive(origin: OriginFor<T>, drive_id: DriveId) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Get drive and verify ownership
+            let mut drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
+            ensure!(drive.owner == who, Error::<T>::NotDriveOwner);
+
+            // Reset root CID to zero (empty)
+            let old_root_cid = drive.root_cid;
+            drive.root_cid = Cid::zero();
+            drive.pending_root_cid = None;
+
+            // Save updated drive
+            Drives::<T>::insert(drive_id, drive);
+
+            // Emit event
+            Self::deposit_event(Event::DriveCleared {
+                drive_id,
+                owner: who,
+                old_root_cid,
             });
 
             Ok(())
