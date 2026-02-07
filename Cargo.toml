@@ -92,7 +92,7 @@ parachain-info = { git = "https://github.com/paritytech/polkadot-sdk", tag = "po
 substrate-wasm-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512" }
 
 # Codec
-codec = { version = "3.6", default-features = false, features = ["derive"], package = "parity-scale-codec" }
+codec = { version = "3.7", default-features = false, features = ["derive", "max-encoded-len"], package = "parity-scale-codec" }
 scale-info = { version = "2.11", default-features = false, features = ["derive"] }
 
 # External dependencies

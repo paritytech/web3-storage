@@ -77,12 +77,16 @@ pub enum FileSystemError {
 
 /// Strategy for committing changes to the on-chain root CID
 #[derive(Clone, Copy, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommitStrategy {
     /// Commit every change immediately (expensive, real-time)
+    #[codec(index = 0)]
     Immediate,
     /// Commit changes in batches after N blocks
+    #[codec(index = 1)]
     Batched { interval: u32 },
     /// User manually triggers commits
+    #[codec(index = 2)]
     Manual,
 }
 
@@ -92,6 +96,7 @@ impl Default for CommitStrategy {
         Self::Batched { interval: 100 }
     }
 }
+
 
 /// Configuration for creating a drive with storage
 #[cfg(feature = "std")]
@@ -122,22 +127,20 @@ impl<AccountId> Default for DriveConfig<AccountId> {
     }
 }
 
-/// Drive information stored on-chain
+/// Drive information stored on-chain (user's virtual drive)
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
-#[scale_info(skip_type_params(MaxNameLength, MaxAgreements))]
+#[scale_info(skip_type_params(MaxNameLength, Balance))]
 #[codec(mel_bound())]
 pub struct DriveInfo<
     AccountId: Encode + Decode + MaxEncodedLen,
     BlockNumber: Encode + Decode + MaxEncodedLen,
     MaxNameLength: Get<u32>,
-    MaxAgreements: Get<u32>,
+    Balance: Encode + Decode + MaxEncodedLen,
 > {
     /// Owner of the drive
     pub owner: AccountId,
-    /// Layer 0 bucket ID where drive data is stored
+    /// Layer 0 bucket ID this drive uses
     pub bucket_id: u64,
-    /// Storage agreement IDs for this drive (from Layer 0)
-    pub agreement_ids: BoundedVec<AgreementId, MaxAgreements>,
     /// Current committed root CID (on-chain, visible to all)
     pub root_cid: Cid,
     /// Pending root CID (not yet committed, only in local state)
@@ -151,6 +154,14 @@ pub struct DriveInfo<
     pub last_committed_at: BlockNumber,
     /// Optional human-readable name (bounded)
     pub name: Option<BoundedVec<u8, MaxNameLength>>,
+    /// Maximum storage capacity in bytes
+    pub max_capacity: u64,
+    /// Storage period in blocks
+    pub storage_period: BlockNumber,
+    /// Expiry block number (created_at + storage_period)
+    pub expires_at: BlockNumber,
+    /// Payment tokens for storage
+    pub payment: Balance,
 }
 
 /// Helper functions for working with protobuf types

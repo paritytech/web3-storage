@@ -4,6 +4,64 @@ This directory contains the Layer 1 file system implementation built on top of L
 
 Located in: `storage-interfaces/file-system/`
 
+## User Experience: Truly Simplified Storage
+
+Layer 1 File System provides a **true abstraction** over Layer 0. Users only need to understand **drives and files** - all infrastructure details are completely hidden!
+
+### User Flow (Simple!)
+
+```rust
+// 1. Create a drive (specify storage needs)
+let drive_id = fs_client.create_drive(
+    Some("My Documents"),
+    10_000_000_000,     // 10 GB storage
+    500,                 // 500 blocks duration
+    1_000_000_000_000,   // 1 token payment (12 decimals)
+    None,                // Use default providers (auto-determined)
+    None,                // Use default commit strategy (batched every 100 blocks)
+).await?;
+
+// 2. Use it like normal file storage!
+fs_client.upload_file(drive_id, "/report.pdf", data).await?;
+let entries = fs_client.list_directory(drive_id, "/").await?;
+let data = fs_client.download_file(drive_id, "/report.pdf").await?;
+
+// Advanced: Create drive with custom configuration
+let drive_id = fs_client.create_drive(
+    Some("Critical Data"),
+    5_000_000_000,       // 5 GB
+    2000,                // Long-term storage
+    2_000_000_000_000,   // 2 tokens
+    Some(5),             // 5 providers (1 primary + 4 replicas)
+    Some(CommitStrategy::Immediate), // Real-time commits
+).await?;
+```
+
+**What happens automatically (hidden from user):**
+- ✅ System creates bucket in Layer 0
+- ✅ System requests storage agreements with providers
+- ✅ System sets up replication and redundancy
+- ✅ System handles provider failures transparently
+
+### Admin Flow (Monitoring & Policies)
+
+Admins focus on system health rather than manual setup:
+
+1. **Ensure Providers Available** - Monitor provider capacity and health
+2. **Set System Policies** - Configure defaults (providers per drive, pricing, duration)
+3. **Monitor System** - Track drives, storage usage, challenges
+4. **Handle Failures** - Replace failed providers when needed
+
+**See Examples:**
+- `examples/user_workflow_simplified.rs` - User creating drives and managing files
+- `examples/admin_workflow_simplified.rs` - Admin monitoring and management
+
+**Key Benefits:**
+- ✅ Users have ZERO knowledge of buckets, agreements, or providers
+- ✅ Single API call to create a drive (vs 5-10 manual steps in Layer 0)
+- ✅ System automates all infrastructure creation
+- ✅ Admin burden reduced by 250× (monitoring vs manual setup)
+
 ## Architecture Overview
 
 Following the three-layered architecture:
@@ -61,20 +119,62 @@ Core data structures and types for the file system.
 ### `pallet-registry/`
 On-chain registry pallet for drive management.
 
-**Extrinsics:**
-- `create_drive(bucket_id, root_cid, name)` - Create new drive
+**User-Facing Extrinsics:**
+- `create_drive(name, max_capacity, storage_period, payment, min_providers, commit_strategy)` - **[PRIMARY API]** Create drive (system auto-creates bucket and agreements)
+  - `name`: Optional human-readable name
+  - `max_capacity`: Maximum storage in bytes (e.g., 10 GB = 10_000_000_000)
+  - `storage_period`: Duration in blocks (e.g., 500 blocks)
+  - `payment`: Upfront payment tokens (e.g., 1_000_000_000_000 for 1 token with 12 decimals)
+  - `min_providers`: Optional minimum number of providers (default: 3 for long-term [>1000 blocks], 1 for short-term)
+  - `commit_strategy`: Optional checkpoint strategy (default: Batched every 100 blocks)
+    - `Immediate`: Commit every change immediately (expensive but real-time)
+    - `Batched { interval }`: Commit changes in batches after N blocks
+    - `Manual`: User manually triggers commits via `commit_changes`
 - `update_root_cid(drive_id, new_root_cid)` - Update after file system changes
+- `commit_changes(drive_id)` - Commit pending changes (for batched/manual strategy)
 - `delete_drive(drive_id)` - Remove drive
 - `update_drive_name(drive_id, name)` - Rename drive
+
+**Internal/Legacy Extrinsics:**
+- `create_drive_with_bucket(bucket_id, root_cid, name)` - Low-level API for existing buckets (deprecated)
+- `create_drive_with_storage(...)` - Old complex flow (deprecated)
+- `raise_drive_dispute(...)` - Admin handles disputes at Layer 0 (deprecated)
+- `replace_provider(...)` - Admin handles provider replacement at Layer 0 (deprecated)
 
 **Storage:**
 - `Drives: DriveId → DriveInfo` - Drive registry
 - `UserDrives: AccountId → Vec<DriveId>` - User's drives
+- `BucketToDrive: u64 → DriveId` - 1-to-1 bucket-drive mapping (internal)
 - `NextDriveId: u64` - Auto-incrementing counter
+
+**Automatic Behavior:**
+The `create_drive` extrinsic automatically:
+1. Creates a bucket in Layer 0 with specified capacity
+2. Determines optimal number of providers:
+   - If `min_providers` specified: uses that value
+   - Otherwise: 3 (1 primary + 2 replicas) for periods > 1000 blocks, 1 provider for shorter periods
+3. Automatically selects providers with sufficient capacity
+4. Requests storage agreements with selected providers for the specified duration
+5. Distributes payment equally across all providers
+6. Configures checkpoint strategy (immediate, batched, or manual)
+7. Creates empty drive structure
+8. Returns drive_id to user
+
+**Default Configuration:**
+- **Replication**:
+  - Short-term (<= 1000 blocks): 1 provider (primary only)
+  - Long-term (> 1000 blocks): 3 providers (1 primary + 2 replicas)
+  - Custom: Specify `min_providers` parameter
+- **Checkpoints**: Batched every 100 blocks (customize with `commit_strategy`)
+- **Provider selection**: Automatic based on availability and capacity
+- Advanced users can customize bucket configuration via Layer 0 APIs directly
 
 **Features:**
 - Multi-drive support (multiple drives per account)
 - Immutable versioning (each root CID = snapshot)
+- Commit strategies (Immediate, Batched, Manual)
+- Automatic infrastructure provisioning
+- Transparent bucket management
 - Event emission for all operations
 
 ## Data Flow

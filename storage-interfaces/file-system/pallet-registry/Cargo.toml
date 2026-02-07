@@ -16,6 +16,7 @@ sp-core = { workspace = true }
 sp-runtime = { workspace = true }
 sp-std = { workspace = true }
 sp-io = { workspace = true }
+pallet-balances = { workspace = true }
 
 # Local dependencies
 file-system-primitives = { workspace = true }
@@ -33,6 +34,7 @@ std = [
     "sp-runtime/std",
     "sp-std/std",
     "sp-io/std",
+    "pallet-balances/std",
     "file-system-primitives/std",
     "storage-primitives/std",
     "pallet-storage-provider/std",

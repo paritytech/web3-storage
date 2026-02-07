@@ -9,10 +9,11 @@ prost = "0.13"
 prost-types = "0.13"
 
 # Substrate/Polkadot primitives
-codec = { package = "parity-scale-codec", version = "3.6.12", default-features = false, features = ["derive"] }
-scale-info = { version = "2.11.1", default-features = false, features = ["derive"] }
+codec = { workspace = true }
+scale-info = { workspace = true }
 sp-core = { workspace = true }
 sp-runtime = { workspace = true }
+serde = { workspace = true, optional = true }
 
 # Hashing
 blake2 = "0.10"
@@ -41,4 +42,5 @@ std = [
     "sp-runtime/std",
     "blake2/std",
     "hex/std",
+    "serde",
 ]

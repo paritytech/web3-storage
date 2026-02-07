@@ -1,10 +1,10 @@
 use crate::{mock::*, Error, Event};
-use file_system_primitives::compute_cid;
+use file_system_primitives::{compute_cid, CommitStrategy};
 use frame_support::{assert_noop, assert_ok};
 use sp_core::H256;
 
 #[test]
-fn create_drive_works() {
+fn create_drive_with_bucket_works() {
     new_test_ext().execute_with(|| {
         System::set_block_number(1);
 
@@ -13,8 +13,9 @@ fn create_drive_works() {
         let root_cid = H256::zero();
         let name = Some(b"My Drive".to_vec());
 
-        // Create drive
-        assert_ok!(DriveRegistry::create_drive(
+        // Create drive with existing bucket (legacy API)
+        #[allow(deprecated)]
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             bucket_id,
             root_cid,
@@ -56,7 +57,7 @@ fn create_multiple_drives_works() {
         let alice = 1u64;
 
         // Create first drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -64,7 +65,7 @@ fn create_multiple_drives_works() {
         ));
 
         // Create second drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             2,
             H256::zero(),
@@ -89,7 +90,7 @@ fn create_drive_name_too_long_fails() {
         let long_name = vec![b'a'; 257]; // Max is 256
 
         assert_noop!(
-            DriveRegistry::create_drive(
+            DriveRegistry::create_drive_with_bucket(
                 RuntimeOrigin::signed(alice),
                 1,
                 H256::zero(),
@@ -109,7 +110,7 @@ fn update_root_cid_works() {
         let initial_cid = H256::zero();
 
         // Create drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             bucket_id,
             initial_cid,
@@ -147,7 +148,7 @@ fn update_root_cid_not_owner_fails() {
         let bob = 2u64;
 
         // Alice creates drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -183,7 +184,7 @@ fn delete_drive_works() {
         let alice = 1u64;
 
         // Create drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -219,7 +220,7 @@ fn delete_drive_not_owner_fails() {
         let bob = 2u64;
 
         // Alice creates drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -241,7 +242,7 @@ fn update_drive_name_works() {
         let alice = 1u64;
 
         // Create drive
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -280,7 +281,7 @@ fn update_drive_name_clear_works() {
         let alice = 1u64;
 
         // Create drive with name
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
@@ -307,13 +308,13 @@ fn helper_functions_work() {
         let bob = 2u64;
 
         // Create drives for Alice
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             1,
             H256::zero(),
             None
         ));
-        assert_ok!(DriveRegistry::create_drive(
+        assert_ok!(DriveRegistry::create_drive_with_bucket(
             RuntimeOrigin::signed(alice),
             2,
             H256::zero(),
@@ -336,5 +337,259 @@ fn helper_functions_work() {
         assert!(DriveRegistry::is_drive_owner(0, &alice));
         assert!(!DriveRegistry::is_drive_owner(0, &bob));
         assert!(!DriveRegistry::is_drive_owner(999, &alice));
+    });
+}
+
+// ============================================================
+// Bucket-Based Model Tests
+// ============================================================
+
+#[test]
+fn create_drive_on_bucket_works() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+
+        let alice = 1u64;
+        let bucket_id = 42u64;
+        let root_cid = H256::zero();
+        let name = Some(b"My Drive".to_vec());
+
+        // Create drive on bucket (simplified flow)
+        // NOTE: In production, this would validate:
+        // - Bucket exists in Layer 0
+        // - User has Reader+Writer permissions
+        // For now, we just test the basic functionality
+        assert_ok!(DriveRegistry::create_drive_on_bucket(
+            RuntimeOrigin::signed(alice),
+            bucket_id,
+            root_cid,
+            name.clone()
+        ));
+
+        // Check drive was created
+        let drive = DriveRegistry::drives(0).unwrap();
+        assert_eq!(drive.owner, alice);
+        assert_eq!(drive.bucket_id, bucket_id);
+        assert_eq!(drive.root_cid, root_cid);
+
+        // Check BucketToDrive mapping was established (1-to-1)
+        assert_eq!(DriveRegistry::bucket_to_drive(bucket_id), Some(0));
+
+        // Check user drives
+        let user_drives = DriveRegistry::user_drives(alice);
+        assert_eq!(user_drives.len(), 1);
+        assert_eq!(user_drives[0], 0);
+
+        // Check event
+        System::assert_last_event(
+            Event::DriveCreatedOnBucket {
+                drive_id: 0,
+                owner: alice,
+                bucket_id,
+                root_cid,
+            }
+            .into(),
+        );
+    });
+}
+
+#[test]
+fn create_drive_on_bucket_already_used_fails() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let bob = 2u64;
+        let bucket_id = 42u64;
+
+        // Alice creates drive on bucket 42
+        assert_ok!(DriveRegistry::create_drive_on_bucket(
+            RuntimeOrigin::signed(alice),
+            bucket_id,
+            H256::zero(),
+            Some(b"Alice's Drive".to_vec())
+        ));
+
+        // Bob tries to create drive on same bucket - should fail
+        assert_noop!(
+            DriveRegistry::create_drive_on_bucket(
+                RuntimeOrigin::signed(bob),
+                bucket_id,
+                H256::zero(),
+                Some(b"Bob's Drive".to_vec())
+            ),
+            Error::<Test>::BucketAlreadyUsed
+        );
+
+        // Verify Alice's drive exists
+        assert_eq!(DriveRegistry::bucket_to_drive(bucket_id), Some(0));
+        let drive = DriveRegistry::drives(0).unwrap();
+        assert_eq!(drive.owner, alice);
+
+        // Verify Bob has no drives
+        assert_eq!(DriveRegistry::user_drives(bob).len(), 0);
+    });
+}
+
+#[test]
+fn multiple_users_can_use_different_buckets() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let bob = 2u64;
+
+        // Alice creates drive on bucket 1
+        assert_ok!(DriveRegistry::create_drive_on_bucket(
+            RuntimeOrigin::signed(alice),
+            1,
+            H256::zero(),
+            Some(b"Alice's Drive".to_vec())
+        ));
+
+        // Bob creates drive on bucket 2 (different bucket)
+        assert_ok!(DriveRegistry::create_drive_on_bucket(
+            RuntimeOrigin::signed(bob),
+            2,
+            H256::zero(),
+            Some(b"Bob's Drive".to_vec())
+        ));
+
+        // Verify both drives exist
+        assert_eq!(DriveRegistry::bucket_to_drive(1), Some(0));
+        assert_eq!(DriveRegistry::bucket_to_drive(2), Some(1));
+
+        // Verify ownership
+        let alice_drive = DriveRegistry::drives(0).unwrap();
+        assert_eq!(alice_drive.owner, alice);
+        assert_eq!(alice_drive.bucket_id, 1);
+
+        let bob_drive = DriveRegistry::drives(1).unwrap();
+        assert_eq!(bob_drive.owner, bob);
+        assert_eq!(bob_drive.bucket_id, 2);
+    });
+}
+
+#[test]
+fn bucket_to_drive_mapping_persists() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let bucket_id = 42u64;
+
+        // Create drive
+        assert_ok!(DriveRegistry::create_drive_on_bucket(
+            RuntimeOrigin::signed(alice),
+            bucket_id,
+            H256::zero(),
+            None
+        ));
+
+        // Verify mapping exists
+        assert_eq!(DriveRegistry::bucket_to_drive(bucket_id), Some(0));
+
+        // Query the drive
+        let drive = DriveRegistry::drives(0).unwrap();
+        assert_eq!(drive.bucket_id, bucket_id);
+
+        // Verify we can find the drive via bucket
+        assert!(DriveRegistry::bucket_to_drive(bucket_id).is_some());
+
+        // Verify other buckets have no mapping
+        assert!(DriveRegistry::bucket_to_drive(999).is_none());
+    });
+}
+
+// ============================================================
+// Simplified User API Tests
+// ============================================================
+
+#[test]
+fn create_drive_simplified_api_fails_without_providers() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let name = Some(b"My Documents".to_vec());
+        let max_capacity = 10_000_000_000u64; // 10 GB
+        let storage_period = 500u64; // 500 blocks
+        let payment = 1_000_000_000_000u128; // 1 token (12 decimals)
+
+        // Attempt to create drive with simplified API using defaults
+        // Bucket creation will succeed, but it will fail when trying to find
+        // available providers since none are registered in the test
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(alice),
+                name,
+                max_capacity,
+                storage_period,
+                payment,
+                None, // Use default providers
+                false, // Not immediate
+                Some(100), // Batched every 100 blocks (default)
+            ),
+            Error::<Test>::NoProvidersAvailable
+        );
+    });
+}
+
+#[test]
+fn create_drive_validates_inputs() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+
+        // Test invalid storage size (zero)
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(alice),
+                Some(b"My Drive".to_vec()),
+                0, // Invalid: zero capacity
+                500,
+                1_000_000_000_000,
+                None,
+                false,
+                Some(100),
+            ),
+            Error::<Test>::InvalidStorageSize
+        );
+
+        // Test invalid storage period (zero)
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(alice),
+                Some(b"My Drive".to_vec()),
+                10_000_000_000,
+                0, // Invalid: zero period
+                1_000_000_000_000,
+                None,
+                false,
+                Some(100),
+            ),
+            Error::<Test>::InvalidStoragePeriod
+        );
+
+        // Test invalid payment (zero)
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(alice),
+                Some(b"My Drive".to_vec()),
+                10_000_000_000,
+                500,
+                0, // Invalid: zero payment
+                None,
+                false,
+                Some(100),
+            ),
+            Error::<Test>::InvalidPayment
+        );
+
+        // Test invalid min_providers (zero)
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(alice),
+                Some(b"My Drive".to_vec()),
+                10_000_000_000,
+                500,
+                1_000_000_000_000,
+                Some(0), // Invalid: zero providers
+                false, // Not immediate
+                Some(100), // Batched
+            ),
+            Error::<Test>::InvalidProviderCount
+        );
     });
 }

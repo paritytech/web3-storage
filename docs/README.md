@@ -9,7 +9,8 @@ docs/
 ├── getting-started/          # Quick start guides
 ├── testing/                  # Testing guides and procedures
 ├── reference/                # API references and calculators
-└── design/                   # Architecture and design documents
+├── design/                   # Architecture and design documents
+└── filesystems/              # File System Interface (Layer 1) documentation
 ```
 
 ### 🤖 For Claude Code and Contributors
@@ -141,18 +142,85 @@ High-level design documents and implementation details.
 
 ---
 
+## 📂 File System Interface (Layer 1)
+
+High-level abstraction over Layer 0 storage - use drives and files instead of buckets and agreements!
+
+### [File System Interface Overview](./filesystems/FILE_SYSTEM_INTERFACE.md)
+**Architecture, capabilities, and use cases**
+
+- What is the File System Interface?
+- Key concepts: Drives, directories, commit strategies
+- User vs Admin capabilities
+- Comparison with Layer 0
+- Use cases and examples
+
+**Read this to understand Layer 1's value proposition.**
+
+### [User Guide](./filesystems/USER_GUIDE.md)
+**Complete guide for end users**
+
+- Getting started and installation
+- Creating your first drive
+- File operations (upload, download, delete)
+- Directory operations (create, list, navigate)
+- Drive management (list, rename, delete)
+- Advanced configuration (redundancy, commit strategies)
+- Best practices and troubleshooting
+
+**Perfect for users who want to store files without infrastructure complexity.**
+
+### [Admin Guide](./filesystems/ADMIN_GUIDE.md)
+**System administration and monitoring**
+
+- Admin responsibilities and philosophy
+- System setup and configuration
+- Provider management (register, monitor, handle failures)
+- Drive monitoring and metrics
+- Policy configuration (defaults, limits)
+- Maintenance operations
+- Dispute resolution
+- System health monitoring
+
+**Essential for administrators managing File System Interface deployment.**
+
+### [API Reference](./filesystems/API_REFERENCE.md)
+**Complete API documentation**
+
+- On-chain extrinsics (create_drive, update_root_cid, etc.)
+- Client SDK methods (upload_file, download_file, etc.)
+- Primitives (DriveInfo, CommitStrategy, DirectoryNode)
+- Storage queries and events
+- Error reference
+- Complete code examples
+
+**Full technical reference for developers building with Layer 1.**
+
+---
+
 ## 🎯 Quick Navigation
 
 ### By User Type
 
-#### **New User - First Time Setup**
+#### **File System User - Simplified Storage (Layer 1)**
+1. [User Guide](./filesystems/USER_GUIDE.md) - Complete file system guide
+2. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Understand Layer 1
+3. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
+
+#### **File System Admin - Managing Layer 1**
+1. [Admin Guide](./filesystems/ADMIN_GUIDE.md) - System administration
+2. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Architecture
+3. [API Reference](./filesystems/API_REFERENCE.md) - Technical reference
+
+#### **New User - First Time Setup (Layer 0)**
 1. [Quick Start Guide](./getting-started/QUICKSTART.md) - Get running fast
 2. [Manual Testing Guide](./testing/MANUAL_TESTING_GUIDE.md) - Understand the system
 
 #### **Developer - Building Applications**
-1. [Client SDK Documentation](../client/README.md) - SDK usage
-2. [Extrinsics Reference](./reference/EXTRINSICS_REFERENCE.md) - Blockchain API
-3. [Payment Calculator](./reference/PAYMENT_CALCULATOR.md) - Cost estimation
+1. **Layer 1 (Recommended)**: [File System API Reference](./filesystems/API_REFERENCE.md) - High-level API
+2. **Layer 0 (Advanced)**: [Client SDK Documentation](../client/README.md) - Low-level SDK
+3. [Extrinsics Reference](./reference/EXTRINSICS_REFERENCE.md) - Blockchain API
+4. [Payment Calculator](./reference/PAYMENT_CALCULATOR.md) - Cost estimation
 
 #### **Provider Operator - Running Storage**
 1. [Quick Start Guide](./getting-started/QUICKSTART.md) - Setup environment
@@ -166,7 +234,8 @@ High-level design documents and implementation details.
 
 #### **Researcher/Architect - Understanding Design**
 1. [Design Document](./design/scalable-web3-storage.md) - Architecture
-2. [Implementation Details](./design/scalable-web3-storage-implementation.md) - Technical specs
+2. [File System Interface](./filesystems/FILE_SYSTEM_INTERFACE.md) - Layer 1 design
+3. [Implementation Details](./design/scalable-web3-storage-implementation.md) - Technical specs
 
 ---
 
@@ -263,6 +332,11 @@ just health
 | Design Document | ✅ Ready | Current | Complete |
 | Implementation Details | ✅ Ready | Current | Complete |
 | Storage Marketplace | ✅ Ready | Current | Complete |
+| **File System Interface** | | | |
+| - Overview | ✅ Ready | Feb 2026 | Complete |
+| - User Guide | ✅ Ready | Feb 2026 | Complete |
+| - Admin Guide | ✅ Ready | Feb 2026 | Complete |
+| - API Reference | ✅ Ready | Feb 2026 | Complete |
 
 ---
 

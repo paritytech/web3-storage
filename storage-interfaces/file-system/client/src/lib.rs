@@ -109,27 +109,87 @@ impl FileSystemClient {
         })
     }
 
-    /// Create a new drive with an empty root directory
+    /// Create a new drive (USER-FACING API)
+    ///
+    /// This is the primary way for users to create drives. The system automatically:
+    /// - Creates a bucket in Layer 0
+    /// - Requests storage agreements with providers
+    /// - Sets up the drive infrastructure
+    ///
+    /// Users don't need to understand buckets, agreements, or providers - they just
+    /// specify their storage requirements and get a drive!
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Optional human-readable name for the drive
+    /// * `max_capacity` - Maximum storage capacity in bytes (e.g., 10 GB = 10_000_000_000)
+    /// * `storage_period` - Storage duration in blocks (e.g., 500 blocks)
+    /// * `payment` - Upfront payment tokens for storage agreements
+    /// * `min_providers` - Optional minimum number of providers (default: 3 for long-term, 1 for short-term)
+    /// * `commit_strategy` - Optional strategy for committing changes (default: Batched every 100 blocks)
     ///
     /// # Returns
     ///
     /// The newly created drive ID
-    pub async fn create_drive(&mut self, bucket_id: u64, name: Option<&str>) -> Result<DriveId> {
-        // Create empty root directory
-        let root_dir = DirectoryNode::new_empty("root");
-        let root_cid = root_dir.compute_cid()?;
-        let root_bytes = root_dir.to_bytes()?;
-
-        // Upload root to Layer 0
-        self.upload_blob(bucket_id, &root_bytes).await?;
-
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use file_system_primitives::CommitStrategy;
+    ///
+    /// // Create a 10 GB drive with defaults
+    /// let drive_id = fs_client.create_drive(
+    ///     Some("My Documents"),
+    ///     10_000_000_000,  // 10 GB
+    ///     500,              // 500 blocks
+    ///     1_000_000_000_000, // 1 token (12 decimals)
+    ///     None,             // Use default providers (auto-determined)
+    ///     None,             // Use default commit strategy
+    /// ).await?;
+    ///
+    /// // Create a highly replicated drive with immediate commits
+    /// let drive_id = fs_client.create_drive(
+    ///     Some("Critical Data"),
+    ///     5_000_000_000,
+    ///     500,
+    ///     2_000_000_000_000, // 2 tokens for more providers
+    ///     Some(5),           // 1 primary + 4 replicas
+    ///     Some(CommitStrategy::Immediate),
+    /// ).await?;
+    /// ```
+    pub async fn create_drive(
+        &mut self,
+        name: Option<&str>,
+        max_capacity: u64,
+        storage_period: u64,
+        payment: u128,
+        min_providers: Option<u8>,
+        commit_strategy: Option<file_system_primitives::CommitStrategy>,
+    ) -> Result<DriveId> {
         // Call on-chain extrinsic to create drive
-        // NOTE: In a real implementation, this would use subxt or similar to call the chain
-        // For now, we'll return a placeholder
-        let drive_id = self.create_drive_on_chain(bucket_id, root_cid, name).await?;
+        // The system automatically:
+        // 1. Creates a bucket in Layer 0
+        // 2. Requests storage agreements with providers
+        // 3. Creates an empty root directory
+        // 4. Returns the drive_id
+        //
+        // NOTE: In a real implementation, this would use subxt or similar to call:
+        // drive_registry.create_drive(name, max_capacity, storage_period, payment, min_providers, commit_strategy)
 
-        // Cache the root CID
-        self.root_cache.insert(drive_id, root_cid);
+        // Convert CommitStrategy to primitive parameters
+        let strategy = commit_strategy.unwrap_or_default();
+        let (commit_immediately, commit_interval) = match strategy {
+            file_system_primitives::CommitStrategy::Immediate => (true, None),
+            file_system_primitives::CommitStrategy::Batched { interval } => (false, Some(interval)),
+            file_system_primitives::CommitStrategy::Manual => (false, None),
+        };
+
+        let drive_id = self
+            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers, commit_immediately, commit_interval)
+            .await?;
+
+        // The root CID will be zero initially (empty drive)
+        self.root_cache.insert(drive_id, Cid::zero());
 
         Ok(drive_id)
     }
@@ -515,12 +575,25 @@ impl FileSystemClient {
 
     async fn create_drive_on_chain(
         &self,
-        _bucket_id: u64,
-        _root_cid: Cid,
         _name: Option<&str>,
+        _max_capacity: u64,
+        _storage_period: u64,
+        _payment: u128,
+        _min_providers: Option<u8>,
+        _commit_immediately: bool,
+        _commit_interval: Option<u32>,
     ) -> Result<DriveId> {
         // Placeholder: In real implementation, call DriveRegistry::create_drive extrinsic
+        // The extrinsic will:
+        // 1. Create a bucket in Layer 0
+        // 2. Request storage agreements with providers
+        // 3. Set up the drive infrastructure with specified configuration
+        // 4. Return the drive_id
         log::warn!("create_drive_on_chain: Using placeholder implementation");
+        log::info!(
+            "In production, this would call: drive_registry.create_drive(name: {:?}, max_capacity: {}, storage_period: {}, payment: {}, min_providers: {:?}, commit_immediately: {}, commit_interval: {:?})",
+            _name, _max_capacity, _storage_period, _payment, _min_providers, _commit_immediately, _commit_interval
+        );
         Ok(1)
     }
 
