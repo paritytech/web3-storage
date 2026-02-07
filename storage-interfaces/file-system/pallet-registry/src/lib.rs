@@ -258,8 +258,7 @@ pub mod pallet {
             storage_period: BlockNumberFor<T>,
             payment: BalanceOf<T>,
             min_providers: Option<u8>,
-            commit_immediately: bool,
-            commit_interval: Option<u32>,
+            commit_strategy: CommitStrategy,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -307,22 +306,13 @@ pub mod pallet {
             let current_block = <frame_system::Pallet<T>>::block_number();
             let expires_at = current_block + storage_period;
 
-            // Construct commit strategy from parameters
-            let strategy = if commit_immediately {
-                CommitStrategy::Immediate
-            } else if let Some(interval) = commit_interval {
-                CommitStrategy::Batched { interval }
-            } else {
-                CommitStrategy::Manual
-            };
-
             // Create drive info
             let drive_info = DriveInfo {
                 owner: who.clone(),
                 bucket_id,
                 root_cid,
                 pending_root_cid: None,
-                commit_strategy: strategy,
+                commit_strategy,
                 created_at: current_block,
                 last_committed_at: current_block,
                 name: bounded_name,

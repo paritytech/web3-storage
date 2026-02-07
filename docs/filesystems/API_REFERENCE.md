@@ -38,8 +38,7 @@ pub fn create_drive(
     storage_period: BlockNumberFor<T>,
     payment: BalanceOf<T>,
     min_providers: Option<u8>,
-    commit_immediately: bool,
-    commit_interval: Option<u32>,
+    commit_strategy: CommitStrategy,
 ) -> DispatchResult
 ```
 
@@ -54,9 +53,10 @@ pub fn create_drive(
     - ≤1000 blocks: 1 provider
     - >1000 blocks: 3 providers
   - `Some(n)`: Explicitly use n providers
-- `commit_immediately`: If true, use Immediate commit strategy
-- `commit_interval`: If set and not immediate, use Batched { interval }
-  - `None` with `commit_immediately=false`: Manual strategy
+- `commit_strategy`: Checkpoint strategy
+  - `CommitStrategy::Immediate`: Commit every change immediately
+  - `CommitStrategy::Batched { interval }`: Commit every N blocks
+  - `CommitStrategy::Manual`: User manually triggers commits
 
 **Returns:**
 - `Ok(())`: Drive created successfully
@@ -78,8 +78,7 @@ api.tx.driveRegistry.createDrive(
   500,                            // 500 blocks
   "1000000000000",                // 1 token payment
   null,                           // auto providers
-  false,                          // not immediate
-  100                             // batched every 100 blocks
+  { Batched: { interval: 100 } }  // batched every 100 blocks
 ).signAndSend(account);
 ```
 

@@ -25,7 +25,7 @@ extern crate alloc;
 extern crate std;
 
 use alloc::{string::String, vec::Vec};
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
 use sp_runtime::{traits::Get, BoundedVec, RuntimeDebug};
@@ -76,7 +76,7 @@ pub enum FileSystemError {
 }
 
 /// Strategy for committing changes to the on-chain root CID
-#[derive(Clone, Copy, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(Clone, Copy, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommitStrategy {
     /// Commit every change immediately (expensive, real-time)

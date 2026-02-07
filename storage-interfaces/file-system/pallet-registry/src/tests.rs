@@ -519,8 +519,7 @@ fn create_drive_simplified_api_fails_without_providers() {
                 storage_period,
                 payment,
                 None, // Use default providers
-                false, // Not immediate
-                Some(100), // Batched every 100 blocks (default)
+                CommitStrategy::Batched { interval: 100 }, // Default strategy
             ),
             Error::<Test>::NoProvidersAvailable
         );
@@ -541,8 +540,7 @@ fn create_drive_validates_inputs() {
                 500,
                 1_000_000_000_000,
                 None,
-                false,
-                Some(100),
+                CommitStrategy::Batched { interval: 100 },
             ),
             Error::<Test>::InvalidStorageSize
         );
@@ -556,8 +554,7 @@ fn create_drive_validates_inputs() {
                 0, // Invalid: zero period
                 1_000_000_000_000,
                 None,
-                false,
-                Some(100),
+                CommitStrategy::Batched { interval: 100 },
             ),
             Error::<Test>::InvalidStoragePeriod
         );
@@ -571,8 +568,7 @@ fn create_drive_validates_inputs() {
                 500,
                 0, // Invalid: zero payment
                 None,
-                false,
-                Some(100),
+                CommitStrategy::Batched { interval: 100 },
             ),
             Error::<Test>::InvalidPayment
         );
@@ -586,8 +582,7 @@ fn create_drive_validates_inputs() {
                 500,
                 1_000_000_000_000,
                 Some(0), // Invalid: zero providers
-                false, // Not immediate
-                Some(100), // Batched
+                CommitStrategy::Batched { interval: 100 }, // Default strategy
             ),
             Error::<Test>::InvalidProviderCount
         );

@@ -176,16 +176,11 @@ impl FileSystemClient {
         // NOTE: In a real implementation, this would use subxt or similar to call:
         // drive_registry.create_drive(name, max_capacity, storage_period, payment, min_providers, commit_strategy)
 
-        // Convert CommitStrategy to primitive parameters
+        // Use provided strategy or default
         let strategy = commit_strategy.unwrap_or_default();
-        let (commit_immediately, commit_interval) = match strategy {
-            file_system_primitives::CommitStrategy::Immediate => (true, None),
-            file_system_primitives::CommitStrategy::Batched { interval } => (false, Some(interval)),
-            file_system_primitives::CommitStrategy::Manual => (false, None),
-        };
 
         let drive_id = self
-            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers, commit_immediately, commit_interval)
+            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers, strategy)
             .await?;
 
         // The root CID will be zero initially (empty drive)
@@ -580,8 +575,7 @@ impl FileSystemClient {
         _storage_period: u64,
         _payment: u128,
         _min_providers: Option<u8>,
-        _commit_immediately: bool,
-        _commit_interval: Option<u32>,
+        _commit_strategy: file_system_primitives::CommitStrategy,
     ) -> Result<DriveId> {
         // Placeholder: In real implementation, call DriveRegistry::create_drive extrinsic
         // The extrinsic will:
@@ -591,8 +585,8 @@ impl FileSystemClient {
         // 4. Return the drive_id
         log::warn!("create_drive_on_chain: Using placeholder implementation");
         log::info!(
-            "In production, this would call: drive_registry.create_drive(name: {:?}, max_capacity: {}, storage_period: {}, payment: {}, min_providers: {:?}, commit_immediately: {}, commit_interval: {:?})",
-            _name, _max_capacity, _storage_period, _payment, _min_providers, _commit_immediately, _commit_interval
+            "In production, this would call: drive_registry.create_drive(name: {:?}, max_capacity: {}, storage_period: {}, payment: {}, min_providers: {:?}, commit_strategy: {:?})",
+            _name, _max_capacity, _storage_period, _payment, _min_providers, _commit_strategy
         );
         Ok(1)
     }
