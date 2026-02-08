@@ -9,7 +9,6 @@
 //! Run with: `cargo run --example pallet_interaction`
 
 use file_system_primitives::Cid;
-use sp_core::H256;
 
 fn main() {
     println!("=== Drive Registry Pallet Interaction ===\n");
@@ -164,9 +163,9 @@ fn show_workflow_example() {
     println!("    let signer = PairSigner::new(AccountKeyring::Alice.pair());");
     println!();
     println!("    // Step 1: Create empty root directory");
-    println!("    let root_dir = DirectoryNode::new_empty(\"root\");");
-    println!("    let root_cid = root_dir.compute_cid()?;");
-    println!("    let root_bytes = root_dir.to_bytes()?;");
+    println!("    let root_dir = DirectoryNode::new_empty(1); // drive_id = 1");
+    println!("    let root_cid = root_dir.compute_cid();");
+    println!("    let root_bytes = root_dir.to_scale_bytes();");
     println!();
     println!("    // Step 2: Upload root to Layer 0 storage");
     println!("    let bucket_id = 1u64;");

@@ -38,9 +38,10 @@
 mod substrate;
 
 use file_system_primitives::{
-    compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest, FileSystemError,
+    compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileChunk, FileManifest,
 };
 use sp_core::H256;
+use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use storage_client::StorageClient;
 use thiserror::Error;
@@ -51,9 +52,6 @@ pub use substrate::SubstrateClient;
 /// File system client errors
 #[derive(Debug, Error)]
 pub enum FsClientError {
-    #[error("File system error: {0}")]
-    FileSystem(#[from] FileSystemError),
-
     #[error("Storage client error: {0}")]
     StorageClient(String),
 
@@ -86,6 +84,9 @@ pub enum FsClientError {
 
     #[error("Event not found in transaction")]
     EventNotFound,
+
+    #[error("Bounded collection overflow")]
+    BoundedOverflow,
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
@@ -230,35 +231,32 @@ impl FileSystemClient {
 
         // Split file into chunks (256 KiB chunks)
         const CHUNK_SIZE: usize = 256 * 1024;
-        let mut chunks = Vec::new();
+        let mut manifest = FileManifest {
+            drive_id,
+            mime_type: BoundedVec::try_from(Self::guess_mime_type(file_name).into_bytes())
+                .map_err(|_| FsClientError::BoundedOverflow)?,
+            total_size: data.len() as u64,
+            chunks: BoundedVec::default(),
+            encryption_params: BoundedVec::default(),
+        };
 
         for (i, chunk_data) in data.chunks(CHUNK_SIZE).enumerate() {
             let chunk_cid = compute_cid(chunk_data);
             self.upload_blob(bucket_id, chunk_data).await?;
 
-            chunks.push(file_system_primitives::FileChunk {
-                cid: Self::cid_to_string(chunk_cid),
-                sequence: i as u32,
-            });
+            manifest
+                .add_chunk(chunk_cid, i as u32)
+                .map_err(|_| FsClientError::BoundedOverflow)?;
         }
 
-        // Create FileManifest
-        let manifest = FileManifest {
-            drive_id: drive_id.to_string(),
-            mime_type: Self::guess_mime_type(file_name),
-            total_size: data.len() as u64,
-            chunks,
-            encryption_params: String::new(),
-        };
-
-        let manifest_bytes = manifest.to_bytes()?;
+        let manifest_bytes = manifest.to_scale_bytes();
         let file_cid = compute_cid(&manifest_bytes);
         self.upload_blob(bucket_id, &manifest_bytes).await?;
 
         // Update parent directory
         self.add_entry_to_directory(
             drive_id,
-            &parent_path,
+            parent_path,
             file_name,
             file_cid,
             data.len() as u64,
@@ -281,7 +279,8 @@ impl FileSystemClient {
 
         // Fetch FileManifest
         let manifest_bytes = self.fetch_blob(file_cid).await?;
-        let manifest = FileManifest::from_bytes(&manifest_bytes)?;
+        let manifest = FileManifest::from_scale_bytes(&manifest_bytes)
+            .map_err(|e| FsClientError::Serialization(format!("Invalid manifest: {:?}", e)))?;
 
         // Validate it's a file
         if manifest.chunks.is_empty() {
@@ -292,8 +291,7 @@ impl FileSystemClient {
         let mut file_data = Vec::with_capacity(manifest.total_size as usize);
 
         for chunk in manifest.chunks.iter() {
-            let chunk_cid = Self::string_to_cid(&chunk.cid)?;
-            let chunk_data = self.fetch_blob(chunk_cid).await?;
+            let chunk_data = self.fetch_blob(chunk.cid).await?;
             file_data.extend_from_slice(&chunk_data);
         }
 
@@ -315,9 +313,10 @@ impl FileSystemClient {
 
         // Fetch DirectoryNode
         let dir_bytes = self.fetch_blob(dir_cid).await?;
-        let dir_node = DirectoryNode::from_bytes(&dir_bytes)?;
+        let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
 
-        Ok(dir_node.children)
+        Ok(dir_node.children.into_inner())
     }
 
     /// Create a directory
@@ -330,16 +329,16 @@ impl FileSystemClient {
         let (parent_path, dir_name) = Self::split_path(path)?;
 
         // Create empty directory
-        let new_dir = DirectoryNode::new_empty(dir_name.to_string());
-        let new_dir_cid = new_dir.compute_cid()?;
-        let new_dir_bytes = new_dir.to_bytes()?;
+        let new_dir = DirectoryNode::new_empty(drive_id);
+        let new_dir_cid = new_dir.compute_cid();
+        let new_dir_bytes = new_dir.to_scale_bytes();
 
         self.upload_blob(bucket_id, &new_dir_bytes).await?;
 
         // Add to parent directory
         self.add_entry_to_directory(
             drive_id,
-            &parent_path,
+            parent_path,
             dir_name,
             new_dir_cid,
             0,
@@ -382,16 +381,15 @@ impl FileSystemClient {
         // Traverse path
         for component in components {
             let dir_bytes = self.fetch_blob(current_cid).await?;
-            let dir_node = DirectoryNode::from_bytes(&dir_bytes)?;
+            let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
+                .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
 
             // Find child entry
             let entry = dir_node
-                .children
-                .iter()
-                .find(|e| e.name == component)
+                .find_child(component)
                 .ok_or_else(|| FsClientError::PathNotFound(path.to_string()))?;
 
-            current_cid = Self::string_to_cid(&entry.cid)?;
+            current_cid = entry.cid;
         }
 
         Ok(current_cid)
@@ -411,24 +409,29 @@ impl FileSystemClient {
         // Fetch parent directory
         let parent_cid = self.resolve_path(drive_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
-        let mut parent_node = DirectoryNode::from_bytes(&parent_bytes)?;
+        let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
 
         // Check if entry already exists
-        if parent_node.children.iter().any(|e| e.name == name) {
+        if parent_node.find_child(name).is_some() {
             return Err(FsClientError::EntryExists(name.to_string()));
         }
 
         // Add new entry
-        parent_node.children.push(DirectoryEntry {
-            name: name.to_string(),
-            r#type: entry_type.into(),
-            cid: Self::cid_to_string(cid),
+        let entry = DirectoryEntry {
+            name: BoundedVec::try_from(name.as_bytes().to_vec())
+                .map_err(|_| FsClientError::BoundedOverflow)?,
+            entry_type,
+            cid,
             size,
             mtime: Self::current_timestamp(),
-        });
+        };
+        parent_node
+            .add_child(entry)
+            .map_err(|_| FsClientError::BoundedOverflow)?;
 
         // Upload updated parent
-        let new_parent_bytes = parent_node.to_bytes()?;
+        let new_parent_bytes = parent_node.to_scale_bytes();
         let new_parent_cid = compute_cid(&new_parent_bytes);
         self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
@@ -477,19 +480,17 @@ impl FileSystemClient {
         // Fetch parent
         let parent_cid = self.resolve_path(drive_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
-        let mut parent_node = DirectoryNode::from_bytes(&parent_bytes)?;
+        let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
 
         // Update child entry
-        for entry in &mut parent_node.children {
-            if entry.name == *child_name {
-                entry.cid = Self::cid_to_string(new_child_cid);
-                entry.mtime = Self::current_timestamp();
-                break;
-            }
+        if let Some(entry) = parent_node.find_child_mut(child_name) {
+            entry.cid = new_child_cid;
+            entry.mtime = Self::current_timestamp();
         }
 
         // Upload updated parent
-        let new_parent_bytes = parent_node.to_bytes()?;
+        let new_parent_bytes = parent_node.to_scale_bytes();
         let new_parent_cid = compute_cid(&new_parent_bytes);
         self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
@@ -546,26 +547,6 @@ impl FileSystemClient {
         }
 
         Ok((parent, name))
-    }
-
-    fn cid_to_string(cid: Cid) -> String {
-        format!("0x{}", hex::encode(cid.as_bytes()))
-    }
-
-    fn string_to_cid(s: &str) -> Result<Cid> {
-        let hex_str = s.strip_prefix("0x").unwrap_or(s);
-        let bytes = hex::decode(hex_str)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid hex: {}", e)))?;
-
-        if bytes.len() != 32 {
-            return Err(FsClientError::Serialization(
-                "CID must be 32 bytes".to_string(),
-            ));
-        }
-
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&bytes);
-        Ok(H256::from(hash))
     }
 
     fn current_timestamp() -> u64 {
@@ -775,13 +756,5 @@ mod tests {
         );
         assert!(FileSystemClient::split_path("/").is_err());
         assert!(FileSystemClient::split_path("no-slash").is_err());
-    }
-
-    #[test]
-    fn test_cid_conversion() {
-        let cid = H256::from([1u8; 32]);
-        let s = FileSystemClient::cid_to_string(cid);
-        let cid2 = FileSystemClient::string_to_cid(&s).unwrap();
-        assert_eq!(cid, cid2);
     }
 }

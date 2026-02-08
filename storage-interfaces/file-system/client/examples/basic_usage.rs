@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_entries = fs_client.list_directory(drive_id, "/").await?;
     for entry in root_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name, entry.size);
+        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
     }
 
     // List /documents directory
@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let docs_entries = fs_client.list_directory(drive_id, "/documents").await?;
     for entry in docs_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name, entry.size);
+        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
     }
 
     // List /documents/work directory
@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let work_entries = fs_client.list_directory(drive_id, "/documents/work").await?;
     for entry in work_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name, entry.size);
+        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
     }
 
     // === STEP 6: Download and verify files ===
