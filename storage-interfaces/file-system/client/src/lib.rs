@@ -43,10 +43,11 @@ use file_system_primitives::{
 use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
-use storage_client::StorageClient;
+use storage_client::{CheckpointManager, StorageClient};
 use thiserror::Error;
 
 pub use file_system_primitives::DriveId;
+pub use storage_client::{CheckpointConfig, CheckpointResult};
 pub use substrate::SubstrateClient;
 
 /// File system client errors
@@ -387,6 +388,112 @@ impl FileSystemClient {
         self.root_cache.insert(drive_id, cid);
 
         Ok(cid)
+    }
+
+    // ============ Checkpoint Methods ============
+
+    /// Submit a checkpoint for a drive.
+    ///
+    /// This coordinates with all storage providers to collect their signed commitments,
+    /// verifies consensus (majority agreement), and submits the checkpoint on-chain.
+    ///
+    /// The checkpoint proves that providers have committed to storing the data,
+    /// creating non-repudiable evidence that can be used for challenges if needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `drive_id` - The drive to checkpoint
+    /// * `provider_endpoints` - HTTP endpoints of providers to collect commitments from
+    ///
+    /// # Returns
+    ///
+    /// `CheckpointResult` indicating success or the reason for failure
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Single provider setup (development/testing)
+    /// let result = fs_client.submit_checkpoint(
+    ///     drive_id,
+    ///     vec!["http://localhost:3000".to_string()],
+    /// ).await;
+    ///
+    /// match result {
+    ///     CheckpointResult::Submitted { block_hash, signers } => {
+    ///         println!("Checkpoint submitted! {} providers signed", signers.len());
+    ///     }
+    ///     CheckpointResult::InsufficientConsensus { agreeing, required, .. } => {
+    ///         println!("Not enough providers agreed: {}/{}", agreeing, required);
+    ///     }
+    ///     CheckpointResult::TransactionFailed { error } => {
+    ///         println!("Transaction failed: {}", error);
+    ///     }
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn submit_checkpoint(
+        &self,
+        drive_id: DriveId,
+        provider_endpoints: Vec<String>,
+    ) -> Result<CheckpointResult> {
+        // Get the bucket_id for this drive
+        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+
+        // Get chain endpoint from our substrate client
+        let chain_endpoint = self.substrate_client.endpoint();
+
+        // Create checkpoint manager
+        let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default())
+            .await
+            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        // Configure with provider endpoints
+        let manager = manager.with_providers(provider_endpoints);
+
+        // Use the same signer as the file system client
+        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
+            manager.with_signer(signer.clone())
+        } else {
+            manager
+        };
+
+        // Submit checkpoint
+        Ok(manager.submit_checkpoint(bucket_id).await)
+    }
+
+    /// Submit a checkpoint with a custom configuration.
+    ///
+    /// Use this when you need to customize timeouts, retry behavior, or consensus thresholds.
+    pub async fn submit_checkpoint_with_config(
+        &self,
+        drive_id: DriveId,
+        provider_endpoints: Vec<String>,
+        config: CheckpointConfig,
+    ) -> Result<CheckpointResult> {
+        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+        let chain_endpoint = self.substrate_client.endpoint();
+
+        let manager = CheckpointManager::new(chain_endpoint, config)
+            .await
+            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        let manager = manager.with_providers(provider_endpoints);
+
+        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
+            manager.with_signer(signer.clone())
+        } else {
+            manager
+        };
+
+        Ok(manager.submit_checkpoint(bucket_id).await)
+    }
+
+    /// Get the bucket ID for a drive.
+    ///
+    /// This is useful when you need to interact directly with Layer 0 operations
+    /// for a specific drive.
+    pub async fn get_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
+        self.query_drive_bucket_id(drive_id).await
     }
 
     // ============ Internal Helper Methods ============

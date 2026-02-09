@@ -15,6 +15,7 @@ use subxt_signer::sr25519::Keypair;
 pub struct SubstrateClient {
     api: OnlineClient<PolkadotConfig>,
     signer: Option<Arc<Keypair>>,
+    endpoint: String,
 }
 
 impl SubstrateClient {
@@ -24,7 +25,11 @@ impl SubstrateClient {
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Connection failed: {}", e)))?;
 
-        Ok(Self { api, signer: None })
+        Ok(Self {
+            api,
+            signer: None,
+            endpoint: ws_url.to_string(),
+        })
     }
 
     /// Set the signer for this client.
@@ -66,6 +71,21 @@ impl SubstrateClient {
             .as_ref()
             .map(|s| s.as_ref())
             .ok_or_else(|| FsClientError::InvalidPath("No signer configured".to_string()))
+    }
+
+    /// Get the signer keypair (cloned) if available.
+    ///
+    /// This is useful when you need to pass the keypair to another component.
+    pub fn signer_keypair(&self) -> Result<Keypair, FsClientError> {
+        self.signer
+            .as_ref()
+            .map(|s| (**s).clone())
+            .ok_or_else(|| FsClientError::InvalidPath("No signer configured".to_string()))
+    }
+
+    /// Get the WebSocket endpoint URL.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     /// Parse an SS58 account ID string into AccountId32.
