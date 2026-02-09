@@ -442,6 +442,7 @@ These guidelines are used by the Claude Code review bot and should be followed b
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 | [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
+| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management in Layer 1 |
 | [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
