@@ -38,13 +38,18 @@
 mod substrate;
 
 use file_system_primitives::{
-    compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileChunk, FileManifest,
+    compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
 use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
-use storage_client::{CheckpointManager, StorageClient};
+use std::sync::Arc;
+use storage_client::{
+    BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
+    CheckpointManager, StorageClient,
+};
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 pub use file_system_primitives::DriveId;
 pub use storage_client::{CheckpointConfig, CheckpointResult};
@@ -100,6 +105,10 @@ pub struct FileSystemClient {
     substrate_client: SubstrateClient,
     /// In-memory cache of drive root CIDs (drive_id -> root_cid)
     root_cache: HashMap<DriveId, Cid>,
+    /// Background checkpoint loop handle (if automatic checkpointing is enabled)
+    checkpoint_handle: Option<Arc<Mutex<CheckpointLoopHandle>>>,
+    /// Mapping of drive_id to bucket_id for automatic checkpointing
+    drive_bucket_map: HashMap<DriveId, u64>,
 }
 
 impl FileSystemClient {
@@ -117,6 +126,8 @@ impl FileSystemClient {
             storage_client,
             substrate_client,
             root_cache: HashMap::new(),
+            checkpoint_handle: None,
+            drive_bucket_map: HashMap::new(),
         })
     }
 
@@ -291,6 +302,9 @@ impl FileSystemClient {
         )
         .await?;
 
+        // Mark drive as dirty for automatic checkpointing
+        self.mark_drive_dirty(drive_id).await?;
+
         Ok(())
     }
 
@@ -370,6 +384,9 @@ impl FileSystemClient {
             bucket_id,
         )
         .await?;
+
+        // Mark drive as dirty for automatic checkpointing
+        self.mark_drive_dirty(drive_id).await?;
 
         Ok(())
     }
@@ -494,6 +511,138 @@ impl FileSystemClient {
     /// for a specific drive.
     pub async fn get_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
         self.query_drive_bucket_id(drive_id).await
+    }
+
+    // ============ Automatic Checkpoint Methods ============
+
+    /// Enable automatic batched checkpoints for a drive.
+    ///
+    /// This starts a background loop that periodically submits checkpoints
+    /// according to the drive's CommitStrategy. Changes are automatically tracked,
+    /// and checkpoints are submitted when the interval elapses.
+    ///
+    /// # Arguments
+    ///
+    /// * `drive_id` - The drive to enable automatic checkpoints for
+    /// * `provider_endpoints` - HTTP endpoints of storage providers
+    /// * `interval_blocks` - Number of blocks between checkpoints (default: 100)
+    /// * `callback` - Optional callback invoked after each checkpoint attempt
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Enable automatic checkpoints every 100 blocks
+    /// fs_client.enable_auto_checkpoints(
+    ///     drive_id,
+    ///     vec!["http://localhost:3000".to_string()],
+    ///     Some(100),
+    ///     Some(Arc::new(|bucket_id, result| {
+    ///         match result {
+    ///             CheckpointResult::Submitted { .. } => println!("Checkpoint submitted!"),
+    ///             _ => println!("Checkpoint failed: {:?}", result),
+    ///         }
+    ///     })),
+    /// ).await?;
+    ///
+    /// // Now file operations will automatically mark the drive as dirty
+    /// fs_client.upload_file(drive_id, "/file.txt", data, bucket_id).await?;
+    ///
+    /// // Disable when done
+    /// fs_client.disable_auto_checkpoints().await?;
+    /// ```
+    pub async fn enable_auto_checkpoints(
+        &mut self,
+        drive_id: DriveId,
+        provider_endpoints: Vec<String>,
+        interval_blocks: Option<u32>,
+        callback: Option<CheckpointCallback>,
+    ) -> Result<()> {
+        // Stop existing checkpoint loop if any
+        self.disable_auto_checkpoints().await?;
+
+        // Get the bucket_id for this drive
+        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+        self.drive_bucket_map.insert(drive_id, bucket_id);
+
+        // Get chain endpoint
+        let chain_endpoint = self.substrate_client.endpoint();
+
+        // Create checkpoint manager
+        let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default())
+            .await
+            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        // Configure with provider endpoints
+        let manager = manager.with_providers(provider_endpoints);
+
+        // Use the same signer as the file system client
+        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
+            manager.with_signer(signer.clone())
+        } else {
+            manager
+        };
+
+        // Configure batched checkpoint loop
+        let batched_config = BatchedCheckpointConfig {
+            interval: BatchedInterval::Blocks(interval_blocks.unwrap_or(100)),
+            submit_on_empty: false,
+            max_consecutive_failures: 5,
+            failure_retry_delay: std::time::Duration::from_secs(30),
+        };
+
+        // Start the background loop
+        let handle = Arc::new(manager)
+            .start_checkpoint_loop(bucket_id, batched_config, callback)
+            .await
+            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        self.checkpoint_handle = Some(Arc::new(Mutex::new(handle)));
+
+        Ok(())
+    }
+
+    /// Disable automatic checkpoints.
+    ///
+    /// Stops the background checkpoint loop. Any pending changes will not be
+    /// automatically checkpointed - you should call `submit_checkpoint()` manually
+    /// if needed before disabling.
+    pub async fn disable_auto_checkpoints(&mut self) -> Result<()> {
+        if let Some(handle) = self.checkpoint_handle.take() {
+            let mut guard = handle.lock().await;
+            guard.stop().await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Request immediate checkpoint submission.
+    ///
+    /// This is useful when you want to force a checkpoint outside the normal
+    /// batched interval, for example before a critical operation.
+    pub async fn request_immediate_checkpoint(&self) -> Result<()> {
+        if let Some(handle) = &self.checkpoint_handle {
+            let guard = handle.lock().await;
+            guard.submit_now().await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Check if automatic checkpoints are enabled.
+    pub fn is_auto_checkpoints_enabled(&self) -> bool {
+        self.checkpoint_handle.is_some()
+    }
+
+    /// Mark a drive as having pending changes.
+    ///
+    /// This is called automatically by file operations when auto-checkpoints
+    /// are enabled, but can also be called manually if needed.
+    async fn mark_drive_dirty(&self, drive_id: DriveId) -> Result<()> {
+        if let Some(handle) = &self.checkpoint_handle {
+            if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
+                let guard = handle.lock().await;
+                guard.mark_dirty(bucket_id).await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     // ============ Internal Helper Methods ============
