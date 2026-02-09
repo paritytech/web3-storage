@@ -441,6 +441,7 @@ These guidelines are used by the Claude Code review bot and should be followed b
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
+| [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
 

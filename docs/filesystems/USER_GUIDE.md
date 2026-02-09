@@ -652,6 +652,68 @@ fn list_all_files(fs_client: &FileSystemClient, drive_id: DriveId, path: &str) {
 
 ---
 
+## Security Considerations
+
+### Data Privacy
+
+**Important**: Data is stored in plaintext by default. The system provides integrity (content-addressing), not confidentiality.
+
+**What is protected:**
+- Data integrity via blake2-256 CIDs
+- Data availability via provider replication
+- Accountability via blockchain commitments
+
+**What is NOT protected:**
+- Data confidentiality (anyone with the CID can read)
+- Metadata privacy (directory names, file sizes are visible)
+
+### Client-Side Encryption
+
+For sensitive data, encrypt before uploading:
+
+```rust
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::aead::{Aead, NewAead};
+
+// Generate a key (store securely!)
+let key = Key::from_slice(b"your-32-byte-key-here-");
+let cipher = Aes256Gcm::new(key);
+
+// Encrypt
+let nonce = Nonce::from_slice(b"unique-nonce"); // Must be unique per encryption
+let ciphertext = cipher.encrypt(nonce, plaintext_data.as_ref())?;
+
+// Upload encrypted
+fs_client.upload_file(drive_id, "/secret.enc", &ciphertext, bucket_id).await?;
+
+// Download and decrypt
+let encrypted = fs_client.download_file(drive_id, "/secret.enc").await?;
+let plaintext = cipher.decrypt(nonce, encrypted.as_ref())?;
+```
+
+**Key Management:**
+- Store encryption keys separately from data
+- Never upload keys to the drive
+- Consider using a key management service
+- Backup keys securely (lose key = lose data access)
+
+### Content Addressing Security
+
+Each file and directory has a CID (Content Identifier):
+
+```
+CID = blake2_256(SCALE_encoded_data)
+```
+
+This provides:
+- **Tamper Detection**: Any modification changes the CID
+- **Integrity Verification**: Download → compute CID → compare
+- **Deduplication**: Same content has same CID
+
+See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for details.
+
+---
+
 ## Next Steps
 
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
@@ -661,5 +723,6 @@ fn list_all_files(fs_client: &FileSystemClient, drive_id: DriveId, path: &str) {
 ## Additional Resources
 
 - **[Architecture Overview](./FILE_SYSTEM_INTERFACE.md)** - System design
+- **[Architecture Deep Dive](./ARCHITECTURE.md)** - Encoding, security, blockchain details
 - **[Layer 0 Documentation](../design/scalable-web3-storage.md)** - Underlying storage
 - **[Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)** - Testing procedures

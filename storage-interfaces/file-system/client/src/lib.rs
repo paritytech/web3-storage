@@ -205,8 +205,33 @@ impl FileSystemClient {
             .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers, strategy)
             .await?;
 
-        // The root CID will be zero initially (empty drive)
-        self.root_cache.insert(drive_id, Cid::zero());
+        // Get the bucket_id for this drive
+        let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+
+        // Create an empty root directory and upload it
+        let root_dir = DirectoryNode::new_empty(drive_id);
+        let root_dir_bytes = root_dir.to_scale_bytes();
+
+        // Upload the root directory to the provider
+        // The returned data_root is the hash of the data, which we use as the root CID
+        let root_cid = self.upload_blob(bucket_id, &root_dir_bytes).await?;
+
+        // Verify the CID matches what we would compute locally
+        let expected_cid = compute_cid(&root_dir_bytes);
+        if root_cid != expected_cid {
+            log::warn!(
+                "CID mismatch: data_root={:?}, expected={:?}",
+                root_cid,
+                expected_cid
+            );
+        }
+
+        // Update the on-chain root CID
+        self.update_drive_root_cid(drive_id, root_cid).await?;
+
+        // Cache the root CID
+        log::debug!("create_drive: caching root_cid={:?} for drive {}", root_cid, drive_id);
+        self.root_cache.insert(drive_id, root_cid);
 
         Ok(drive_id)
     }
@@ -241,8 +266,8 @@ impl FileSystemClient {
         };
 
         for (i, chunk_data) in data.chunks(CHUNK_SIZE).enumerate() {
-            let chunk_cid = compute_cid(chunk_data);
-            self.upload_blob(bucket_id, chunk_data).await?;
+            // Upload chunk and use the returned data_root as the chunk CID
+            let chunk_cid = self.upload_blob(bucket_id, chunk_data).await?;
 
             manifest
                 .add_chunk(chunk_cid, i as u32)
@@ -250,8 +275,8 @@ impl FileSystemClient {
         }
 
         let manifest_bytes = manifest.to_scale_bytes();
-        let file_cid = compute_cid(&manifest_bytes);
-        self.upload_blob(bucket_id, &manifest_bytes).await?;
+        // Upload manifest and use the returned data_root as the file CID
+        let file_cid = self.upload_blob(bucket_id, &manifest_bytes).await?;
 
         // Update parent directory
         self.add_entry_to_directory(
@@ -328,12 +353,10 @@ impl FileSystemClient {
     ) -> Result<()> {
         let (parent_path, dir_name) = Self::split_path(path)?;
 
-        // Create empty directory
+        // Create empty directory and upload it
         let new_dir = DirectoryNode::new_empty(drive_id);
-        let new_dir_cid = new_dir.compute_cid();
         let new_dir_bytes = new_dir.to_scale_bytes();
-
-        self.upload_blob(bucket_id, &new_dir_bytes).await?;
+        let new_dir_cid = self.upload_blob(bucket_id, &new_dir_bytes).await?;
 
         // Add to parent directory
         self.add_entry_to_directory(
@@ -354,11 +377,13 @@ impl FileSystemClient {
     pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
         // Check cache first
         if let Some(cid) = self.root_cache.get(&drive_id) {
+            log::debug!("get_root_cid: cache hit for drive {}, cid={:?}", drive_id, cid);
             return Ok(*cid);
         }
 
         // Query on-chain
         let cid = self.query_drive_root_cid(drive_id).await?;
+        log::debug!("get_root_cid: cache miss for drive {}, queried cid={:?}", drive_id, cid);
         self.root_cache.insert(drive_id, cid);
 
         Ok(cid)
@@ -432,8 +457,7 @@ impl FileSystemClient {
 
         // Upload updated parent
         let new_parent_bytes = parent_node.to_scale_bytes();
-        let new_parent_cid = compute_cid(&new_parent_bytes);
-        self.upload_blob(bucket_id, &new_parent_bytes).await?;
+        let new_parent_cid = self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
         // Update ancestors up to root
         let new_root_cid = self
@@ -491,37 +515,55 @@ impl FileSystemClient {
 
         // Upload updated parent
         let new_parent_bytes = parent_node.to_scale_bytes();
-        let new_parent_cid = compute_cid(&new_parent_bytes);
-        self.upload_blob(bucket_id, &new_parent_bytes).await?;
+        let new_parent_cid = self.upload_blob(bucket_id, &new_parent_bytes).await?;
 
         // Recurse to grandparent (box the future to avoid infinite size)
         Box::pin(self.update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)).await
     }
 
-    /// Upload a blob to Layer 0 storage
-    async fn upload_blob(&self, bucket_id: u64, data: &[u8]) -> Result<()> {
+    /// Upload a blob to Layer 0 storage and return the data root
+    async fn upload_blob(&self, bucket_id: u64, data: &[u8]) -> Result<Cid> {
         use storage_client::ChunkingStrategy;
 
         // Upload data using default chunking strategy
-        let _data_root = self
+        let data_root = self
             .storage_client
             .upload(bucket_id, data, ChunkingStrategy::default())
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 
-        // Note: In production, track data_root -> cid mapping
-        // Provider stores data by content hash
-        Ok(())
+        // The data_root returned by the storage client is the hash of the data
+        // which should match our CID for single-chunk uploads
+        log::debug!("Uploaded blob, data_root: {:?}", data_root);
+
+        Ok(data_root)
     }
 
     /// Fetch a blob from Layer 0 storage by CID
     async fn fetch_blob(&self, cid: Cid) -> Result<Vec<u8>> {
         // Use the read API with CID as data root
         // Note: This assumes provider maps CID to stored data
-        self.storage_client
-            .read(&cid, 0, u64::MAX)
+        //
+        // We use a large but safe maximum length (1 TiB) instead of u64::MAX
+        // because the provider's chunk calculation would overflow with u64::MAX:
+        //   end_chunk = (offset + length + chunk_size - 1) / chunk_size
+        // With u64::MAX, this wraps around and results in end_chunk = 0.
+        const MAX_READ_LENGTH: u64 = 1024 * 1024 * 1024 * 1024; // 1 TiB
+
+        let data = self
+            .storage_client
+            .read(&cid, 0, MAX_READ_LENGTH)
             .await
-            .map_err(|e| FsClientError::StorageClient(e.to_string()))
+            .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+
+        log::debug!(
+            "fetch_blob: cid={:?}, data_len={}, data_hex={}",
+            cid,
+            data.len(),
+            hex::encode(&data)
+        );
+
+        Ok(data)
     }
 
     /// Split a path into (parent_path, name)
@@ -725,6 +767,58 @@ impl FileSystemClient {
                 let mut root_cid_bytes = [0u8; 32];
                 root_cid_bytes.copy_from_slice(&bytes[root_cid_offset..root_cid_offset + 32]);
                 return Ok(H256::from(root_cid_bytes));
+            }
+
+            return Err(FsClientError::Blockchain(
+                "Invalid drive info encoding".to_string(),
+            ));
+        }
+
+        Err(FsClientError::DriveNotFound(drive_id))
+    }
+
+    /// Query bucket_id for a drive from on-chain storage
+    async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
+        let storage_client = self
+            .substrate_client
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {}", e)))?;
+
+        // Build the storage key for Drives storage map
+        use sp_core::twox_128;
+
+        let pallet_hash = twox_128(b"DriveRegistry");
+        let storage_hash = twox_128(b"Drives");
+        let key = drive_id.to_le_bytes();
+        let key_hash = sp_core::blake2_128(&key);
+
+        let mut storage_key = Vec::new();
+        storage_key.extend_from_slice(&pallet_hash);
+        storage_key.extend_from_slice(&storage_hash);
+        storage_key.extend_from_slice(&key_hash);
+        storage_key.extend_from_slice(&key);
+
+        let bytes_opt = storage_client
+            .fetch_raw(storage_key)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {}", e)))?;
+
+        if let Some(bytes) = bytes_opt {
+            // DriveInfo structure:
+            // - owner: AccountId32 (32 bytes)
+            // - bucket_id: u64 (8 bytes)
+            // - root_cid: H256 (32 bytes)
+            // - ... more fields
+
+            if bytes.len() >= 32 + 8 {
+                // Skip owner (32 bytes), then read bucket_id (8 bytes)
+                let bucket_id_offset = 32;
+                let mut bucket_id_bytes = [0u8; 8];
+                bucket_id_bytes.copy_from_slice(&bytes[bucket_id_offset..bucket_id_offset + 8]);
+                return Ok(u64::from_le_bytes(bucket_id_bytes));
             }
 
             return Err(FsClientError::Blockchain(

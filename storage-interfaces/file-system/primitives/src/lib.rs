@@ -692,6 +692,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_empty_directory_encoding() {
+        let dir = DirectoryNode::new_empty(2);
+        let bytes = dir.to_scale_bytes();
+        println!("Empty DirectoryNode for drive_id=2:");
+        println!("  Length: {}", bytes.len());
+        println!("  Hex: {}", hex::encode(&bytes));
+        let cid = compute_cid(&bytes);
+        println!("  CID: 0x{}", hex::encode(cid.as_bytes()));
+
+        // Also test roundtrip
+        let decoded = DirectoryNode::from_scale_bytes(&bytes).unwrap();
+        assert_eq!(decoded.drive_id, 2);
+        assert!(decoded.children.is_empty());
+    }
+
+    #[test]
     fn test_directory_node_scale_serialization() {
         let mut dir = DirectoryNode::new_empty(123);
         let entry = DirectoryEntry {

@@ -18,6 +18,7 @@ The File System Interface is a **high-level abstraction** over Layer 0's raw blo
 | Document | Audience | Description |
 |----------|----------|-------------|
 | **[FILE_SYSTEM_INTERFACE.md](./FILE_SYSTEM_INTERFACE.md)** | Everyone | Architecture overview, capabilities, and use cases |
+| **[ARCHITECTURE.md](./ARCHITECTURE.md)** | Developers | Deep dive: encoding, security, encryption, blockchain details |
 | **[USER_GUIDE.md](./USER_GUIDE.md)** | End Users | Complete guide for using the file system |
 | **[ADMIN_GUIDE.md](./ADMIN_GUIDE.md)** | Administrators | System management and monitoring |
 | **[API_REFERENCE.md](./API_REFERENCE.md)** | Developers | Complete API documentation |
@@ -303,6 +304,7 @@ Common types used across components:
 - **Managing the system?** → Start with **[Admin Guide](./ADMIN_GUIDE.md)**
 - **Developing with APIs?** → Start with **[API Reference](./API_REFERENCE.md)**
 - **Understanding the design?** → Start with **[FILE_SYSTEM_INTERFACE.md](./FILE_SYSTEM_INTERFACE.md)**
+- **Technical deep dive?** → Start with **[ARCHITECTURE.md](./ARCHITECTURE.md)** (encoding, security, blockchain)
 
 ### 2. Install and Configure
 

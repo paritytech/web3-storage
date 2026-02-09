@@ -803,11 +803,55 @@ polkadot-js-api query.storageProvider.providers <account_id>
 
 ---
 
+## Technical Reference
+
+### Data Encoding
+
+Understanding the encoding system helps with debugging:
+
+**SCALE Encoding**: All data is encoded using Substrate's SCALE codec:
+- Deterministic: Same data always produces same bytes
+- Used for CID computation and on-chain storage
+- See [Architecture Document](./ARCHITECTURE.md#data-encoding--serialization) for details
+
+**Debug Encoding Issues:**
+```bash
+# Decode a root CID from hex
+echo "e835d9bb4ac2c42bd8895fcfb159903f4ce6de8de863182f4fb87c06a23d18b7" | \
+  xxd -r -p | subxt decode DirectoryNode
+
+# Verify CID computation
+# CID = blake2_256(SCALE_bytes)
+cargo run --example verify_encoding
+```
+
+### Provider API Considerations
+
+When troubleshooting provider issues, note these API behaviors:
+
+**Read Endpoint**: Avoid `u64::MAX` as length parameter:
+```bash
+# BAD: Causes chunk calculation overflow, returns empty
+curl "localhost:3000/read?data_root=0x...&offset=0&length=18446744073709551615"
+
+# GOOD: Use reasonable max (1 TiB)
+curl "localhost:3000/read?data_root=0x...&offset=0&length=1099511627776"
+```
+
+**Upload Verification**: Verify uploaded data by checking CID:
+```bash
+# Upload returns data_root
+# Verify: curl /node?hash=<data_root> returns the data
+```
+
+---
+
 ## Next Steps
 
 - **[User Guide](./USER_GUIDE.md)** - Help users get started
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
 - **[Architecture Overview](./FILE_SYSTEM_INTERFACE.md)** - System design
+- **[Architecture Deep Dive](./ARCHITECTURE.md)** - Encoding, security, blockchain details
 
 ## Additional Resources
 
