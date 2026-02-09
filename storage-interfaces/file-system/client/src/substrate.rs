@@ -171,6 +171,7 @@ pub mod extrinsics {
     }
 
     /// Clear drive extrinsic.
+    #[allow(dead_code)]
     pub fn clear_drive(drive_id: DriveId) -> impl Payload {
         subxt::dynamic::tx(
             "DriveRegistry",
@@ -180,6 +181,7 @@ pub mod extrinsics {
     }
 
     /// Delete drive extrinsic.
+    #[allow(dead_code)]
     pub fn delete_drive(drive_id: DriveId) -> impl Payload {
         subxt::dynamic::tx(
             "DriveRegistry",
@@ -189,6 +191,7 @@ pub mod extrinsics {
     }
 
     /// Update drive name extrinsic.
+    #[allow(dead_code)]
     pub fn update_drive_name(drive_id: DriveId, name: Option<Vec<u8>>) -> impl Payload {
         subxt::dynamic::tx(
             "DriveRegistry",
@@ -204,6 +207,7 @@ pub mod extrinsics {
 }
 
 /// Storage queries for reading chain state.
+#[allow(dead_code)]
 pub mod storage {
     use super::*;
     use subxt::storage::Address;

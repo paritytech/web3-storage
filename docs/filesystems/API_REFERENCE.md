@@ -642,6 +642,172 @@ pub struct DirectoryEntry {
 
 ---
 
+### Checkpoint Operations
+
+#### `submit_checkpoint`
+
+Manually submit a checkpoint for a drive.
+
+```rust
+pub async fn submit_checkpoint(
+    &self,
+    drive_id: DriveId,
+    provider_endpoints: Vec<String>,
+) -> Result<CheckpointResult>
+```
+
+**Parameters:**
+- `drive_id`: Drive identifier
+- `provider_endpoints`: HTTP endpoints of storage providers
+
+**Returns:**
+- `Ok(CheckpointResult)`: Result of checkpoint submission
+- `Err(FsClientError)`: Error during submission
+
+**CheckpointResult Variants:**
+- `Submitted { block_hash, signers }`: Successfully submitted on-chain
+- `InsufficientConsensus { agreeing, required, disagreements }`: Not enough providers agreed
+- `ProvidersUnreachable { providers }`: Could not reach providers
+- `NoProviders`: No providers configured
+- `TransactionFailed { error }`: On-chain transaction failed
+
+**Example:**
+```rust
+let result = fs_client.submit_checkpoint(
+    drive_id,
+    vec!["http://localhost:3000".to_string()],
+).await?;
+
+match result {
+    CheckpointResult::Submitted { signers, .. } => {
+        println!("Checkpoint submitted with {} signers", signers.len());
+    }
+    CheckpointResult::InsufficientConsensus { agreeing, required, .. } => {
+        println!("Only {}/{} providers agreed", agreeing, required);
+    }
+    _ => { /* handle other cases */ }
+}
+```
+
+**Use Case:** Manual checkpoint submission for drives with `CommitStrategy::Manual` or when you want explicit control.
+
+---
+
+#### `enable_auto_checkpoints`
+
+Enable automatic batched checkpoints for a drive.
+
+```rust
+pub async fn enable_auto_checkpoints(
+    &mut self,
+    drive_id: DriveId,
+    provider_endpoints: Vec<String>,
+    interval_blocks: Option<u32>,
+    callback: Option<CheckpointCallback>,
+) -> Result<()>
+```
+
+**Parameters:**
+- `drive_id`: Drive identifier
+- `provider_endpoints`: HTTP endpoints of storage providers
+- `interval_blocks`: Blocks between checkpoints (default: 100)
+- `callback`: Optional callback invoked after each checkpoint attempt
+
+**Returns:**
+- `Ok(())`: Background loop started
+- `Err(FsClientError)`: Failed to start loop
+
+**Behavior:**
+1. Starts a background task that monitors for changes
+2. File operations automatically mark the drive as "dirty"
+3. At each interval, submits checkpoint if changes exist
+4. Handles failures with backoff and retry
+
+**Example:**
+```rust
+use std::sync::Arc;
+
+fs_client.enable_auto_checkpoints(
+    drive_id,
+    vec!["http://localhost:3000".to_string()],
+    Some(100),  // Every 100 blocks (~10 minutes)
+    Some(Arc::new(|bucket_id, result| {
+        println!("Checkpoint for bucket {}: {:?}", bucket_id, result);
+    })),
+).await?;
+
+// File operations now automatically trigger checkpoints
+fs_client.upload_file(drive_id, "/file.txt", data, bucket_id).await?;
+```
+
+**Use Case:** Set-and-forget checkpoint management for drives with `CommitStrategy::Batched`.
+
+---
+
+#### `disable_auto_checkpoints`
+
+Stop the background checkpoint loop.
+
+```rust
+pub async fn disable_auto_checkpoints(&mut self) -> Result<()>
+```
+
+**Returns:**
+- `Ok(())`: Loop stopped
+- `Err(FsClientError)`: Error stopping loop
+
+**Example:**
+```rust
+fs_client.disable_auto_checkpoints().await?;
+```
+
+**Note:** Any pending changes will not be automatically checkpointed after this call. Call `submit_checkpoint()` manually if needed before disabling.
+
+---
+
+#### `request_immediate_checkpoint`
+
+Force immediate checkpoint submission (bypasses batched interval).
+
+```rust
+pub async fn request_immediate_checkpoint(&self) -> Result<()>
+```
+
+**Returns:**
+- `Ok(())`: Immediate checkpoint requested
+- `Err(FsClientError)`: Error or loop not running
+
+**Example:**
+```rust
+// Force checkpoint before a critical operation
+fs_client.request_immediate_checkpoint().await?;
+```
+
+**Use Case:** Before critical operations when you need guaranteed data durability.
+
+---
+
+#### `is_auto_checkpoints_enabled`
+
+Check if automatic checkpoints are active.
+
+```rust
+pub fn is_auto_checkpoints_enabled(&self) -> bool
+```
+
+**Returns:**
+- `true`: Background loop is running
+- `false`: No background loop active
+
+**Example:**
+```rust
+if fs_client.is_auto_checkpoints_enabled() {
+    println!("Auto-checkpoints active");
+}
+```
+
+---
+
 ## Primitives
 
 ### DriveInfo

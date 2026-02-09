@@ -111,7 +111,7 @@ impl ChallengerClient {
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
 
         // Wait for finalization and extract challenge ID from events
-        let events = tx_progress
+        let _events = tx_progress
             .wait_for_finalized_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
