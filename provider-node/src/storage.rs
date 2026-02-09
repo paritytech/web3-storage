@@ -328,7 +328,7 @@ impl Storage {
         data_root: H256,
         chunk_index: u64,
     ) -> Result<(Vec<u8>, Vec<H256>), Error> {
-        let node = self.nodes.get(&data_root).ok_or_else(|| {
+        let _node = self.nodes.get(&data_root).ok_or_else(|| {
             Error::RootNotFound(format!("0x{}", hex::encode(data_root.as_bytes())))
         })?;
 

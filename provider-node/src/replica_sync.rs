@@ -185,7 +185,7 @@ impl ReplicaSync {
         &self,
         bucket_id: BucketId,
         primary_urls: Vec<String>,
-        min_sync_interval_blocks: u32,
+        _min_sync_interval_blocks: u32,
     ) -> Result<(), Error> {
         loop {
             // Try syncing from each primary
@@ -227,6 +227,7 @@ impl ReplicaSync {
 // Helper types matching the API responses
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct MmrPeaksResponse {
     bucket_id: u64,
     mmr_root: String,
@@ -234,6 +235,7 @@ struct MmrPeaksResponse {
 }
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct DownloadNodeResponse {
     hash: String,
     data: String,
