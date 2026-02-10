@@ -216,7 +216,7 @@ Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
 6. Click **Submit Transaction**
 7. Sign with Alice
 
-**Step 4b: Update Provider Settings (Configure Pricing & Availability)**
+**Step 4b: Update Provider Settings (Configure Pricing, Availability & Capacity)**
 
 1. Same account: **ALICE**
 2. Select extrinsic: **updateProviderSettings**
@@ -228,7 +228,14 @@ Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
      - `acceptingPrimary`: `true` (accepting new primary agreements)
      - `replicaSyncPrice`: `Some(5000000)` (5 microtokens per sync) or `None`
      - `acceptingExtensions`: `true` (accepting agreement extensions)
+     - `maxCapacity`: `10737418240` (10 GB) or `0` (unlimited)
 4. Submit transaction
+
+**Capacity Notes:**
+- `maxCapacity` declares maximum storage capacity provider will accept
+- Provider's stake must cover capacity: `stake >= maxCapacity × MinStakePerByte`
+- With `MinStakePerByte = 1,000,000`, a 1000-token stake can back ~1 GB capacity
+- `maxCapacity = 0` means unlimited (backward compatible default)
 
 **Note:** The default settings after registration have:
 - `minDuration`: 0
@@ -237,6 +244,7 @@ Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
 - `acceptingPrimary`: false
 - `replicaSyncPrice`: None
 - `acceptingExtensions`: false
+- `maxCapacity`: 0 (unlimited)
 
 So you **must** update settings to actually accept agreements!
 
@@ -262,7 +270,8 @@ So you **must** update settings to actually accept agreements!
     "pricePerByte": "1,000,000",
     "acceptingPrimary": true,
     "replicaSyncPrice": "5,000,000",
-    "acceptingExtensions": true
+    "acceptingExtensions": true,
+    "maxCapacity": "10,737,418,240"
   },
   "stats": {
     "registeredAt": 42,
@@ -600,6 +609,47 @@ Query: **storageProvider.buckets(0)**
   "totalSnapshots": 1
 }
 ```
+
+### Programmatic Checkpoint with CheckpointManager
+
+For automated checkpoint management, use the `CheckpointManager`:
+
+```rust
+use storage_client::{CheckpointManager, CheckpointConfig, CheckpointResult};
+
+// Create manager
+let manager = CheckpointManager::new(
+    "ws://localhost:9944",
+    CheckpointConfig::default()
+).await?;
+
+// Add providers
+let manager = manager.with_providers(vec![
+    "http://localhost:3000".to_string(),
+    "http://localhost:3001".to_string(),
+]);
+
+// Submit checkpoint
+let result = manager.submit_checkpoint(0).await; // bucket_id = 0
+
+match result {
+    CheckpointResult::Success { mmr_root, providers_agreed } => {
+        println!("Checkpoint submitted: {} ({} providers)", mmr_root, providers_agreed);
+    }
+    CheckpointResult::InsufficientConsensus { agreed, total } => {
+        println!("Only {}/{} providers agreed", agreed, total);
+    }
+    CheckpointResult::Conflict { conflicts } => {
+        println!("Provider conflict detected!");
+        for c in conflicts {
+            println!("  {} disagrees", c.provider);
+        }
+    }
+    _ => {}
+}
+```
+
+See [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md) for details.
 
 ---
 

@@ -31,6 +31,7 @@ stake: 1000000000000000  (1000 tokens, minimum required)
 - `acceptingPrimary`: false ⚠️
 - `replicaSyncPrice`: None
 - `acceptingExtensions`: false
+- `maxCapacity`: 0 (unlimited)
 
 ⚠️ **Important:** After registration, you must call `updateProviderSettings` to accept agreements!
 
@@ -38,7 +39,7 @@ stake: 1000000000000000  (1000 tokens, minimum required)
 
 ### `updateProviderSettings`
 
-Update provider pricing and availability settings.
+Update provider pricing, availability, and capacity settings.
 
 **Parameters:**
 - `settings`: `ProviderSettings`
@@ -48,6 +49,7 @@ Update provider pricing and availability settings.
   - `acceptingPrimary`: `bool` - Accept new primary agreements
   - `replicaSyncPrice`: `Option<Balance>` - Price for replica sync, or None
   - `acceptingExtensions`: `bool` - Accept agreement extensions
+  - `maxCapacity`: `u64` - Maximum storage capacity in bytes (0 = unlimited)
 
 **Example:**
 ```
@@ -57,9 +59,15 @@ settings: {
   pricePerByte: 1000000,
   acceptingPrimary: true,
   replicaSyncPrice: Some(5000000),
-  acceptingExtensions: true
+  acceptingExtensions: true,
+  maxCapacity: 1099511627776  (1 TB)
 }
 ```
+
+**Capacity Validation:**
+- `maxCapacity` cannot be set below current `committed_bytes`
+- Provider's stake must be sufficient: `stake >= maxCapacity * MinStakePerByte`
+- `maxCapacity = 0` means unlimited capacity (backward compatible)
 
 ---
 
@@ -416,6 +424,9 @@ Common errors you might encounter:
 | `PaymentExceedsMax` | Calculated payment > maxPayment | Calculate: price × bytes × duration, then add 10-20% buffer |
 | `DurationTooShort` | Duration < provider's minDuration | Check provider settings, increase duration |
 | `DurationTooLong` | Duration > provider's maxDuration | Check provider settings, decrease duration |
+| `CapacityBelowCommitted` | Setting maxCapacity below committed_bytes | Wait for agreements to expire or increase capacity |
+| `CapacityExceeded` | Agreement would exceed provider's maxCapacity | Find provider with more available capacity |
+| `InsufficientStakeForCapacity` | Stake doesn't cover declared capacity | Increase stake or reduce maxCapacity |
 
 ---
 
@@ -433,9 +444,27 @@ MaxChunkSize = 256 * 1024        // 256 KiB
 ChallengeTimeout = 48 * HOURS    // 48 hours to respond
 SettlementTimeout = 24 * HOURS   // 24 hours
 RequestTimeout = 6 * HOURS       // 6 hours
-MinStakePerByte = 1_000          // 1 token per 1 GB capacity
+MinStakePerByte = 1_000_000      // 1 unit per byte (1 token per MB)
 ```
 
 **Note:** The runtime uses **12 decimal places** (like Polkadot), so:
 - Entering `1000000000000000` in Polkadot.js = 1000 tokens
 - Minimum stake to register = 1000 tokens
+
+### Capacity & Stake Calculations
+
+Providers must stake enough to back their declared capacity:
+
+```
+required_stake = max_capacity × MinStakePerByte
+
+Example:
+  max_capacity = 1 TB = 1,099,511,627,776 bytes
+  MinStakePerByte = 1,000,000
+  required_stake = 1,099,511,627,776 × 1,000,000 = ~1.1 × 10^18 units
+```
+
+**Capacity Rules:**
+- `max_capacity = 0` means unlimited (no stake requirement for capacity)
+- Provider's `committed_bytes` cannot exceed `max_capacity`
+- When accepting agreements, provider's capacity is checked

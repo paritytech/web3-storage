@@ -9,8 +9,10 @@
 5. [Directory Operations](#directory-operations)
 6. [Drive Management](#drive-management)
 7. [Advanced Configuration](#advanced-configuration)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+8. [How Provider Selection Works](#how-provider-selection-works)
+9. [How Checkpoints Work](#how-checkpoints-work)
+10. [Best Practices](#best-practices)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -460,6 +462,170 @@ let drive_id = fs_client.create_drive(
     Some(CommitStrategy::Batched { interval: 500 }),
 ).await?;
 ```
+
+---
+
+## How Provider Selection Works
+
+When you create a drive, the system automatically selects storage providers based on your requirements. Understanding this process helps you optimize your storage setup.
+
+### Automatic Provider Discovery
+
+The system uses the **marketplace matching algorithm** to find suitable providers:
+
+```rust
+// Behind the scenes, create_drive does this:
+// 1. Query available providers via runtime API
+let requirements = StorageRequirements {
+    bytes_needed: max_capacity,
+    min_duration: storage_period,
+    max_price_per_byte: calculated_max_price,
+    primary_only: true,
+};
+
+// 2. Get providers sorted by match score (0-100)
+let matched_providers = find_matching_providers(requirements, limit);
+
+// 3. Select best matches for your drive
+let selected = matched_providers.iter().take(min_providers);
+```
+
+### Provider Match Scoring
+
+Providers are scored based on how well they meet your requirements:
+
+| Criterion | Score Impact | Description |
+|-----------|--------------|-------------|
+| Accepting agreements | Required (score=0 if not) | Provider must be accepting new agreements |
+| Available capacity | -50 if insufficient | Provider needs `available >= your max_capacity` |
+| Price within budget | -30 if too high | Price must be ≤ your `max_price_per_byte` |
+| Duration range | -20 if outside range | Your duration must fit provider's min/max |
+
+**Score Interpretation:**
+- 100: Perfect match
+- 70-99: Good match with minor issues
+- 50-69: Partial match (may have limitations)
+- <50: Poor match (not recommended)
+
+### Capacity-Aware Selection
+
+Providers declare their maximum storage capacity:
+
+```rust
+// Provider's settings include:
+ProviderSettings {
+    max_capacity: 1_099_511_627_776,  // 1 TB
+    // ...
+}
+
+// Available capacity = max_capacity - committed_bytes
+// The system only selects providers with enough available capacity
+```
+
+**Benefits:**
+- No failed agreements due to capacity issues
+- Better resource allocation across providers
+- Predictable storage availability
+
+### Manual Provider Selection
+
+For advanced use cases, you can specify providers manually:
+
+```rust
+// Create drive with specific providers
+let drive_id = fs_client.create_drive_with_providers(
+    Some("Custom Setup"),
+    10_000_000_000,
+    500,
+    1_000_000_000_000,
+    vec![provider_1, provider_2, provider_3],  // Your chosen providers
+    None,
+).await?;
+```
+
+**Use cases:**
+- Geographically distributed providers for latency optimization
+- Known reliable providers from past experience
+- Testing with specific provider configurations
+
+For more details, see [Storage Marketplace Design](../design/marketplace.md).
+
+---
+
+## How Checkpoints Work
+
+Checkpoints ensure your data is permanently committed to the blockchain. Layer 1 handles this automatically, but understanding the process helps you choose the right commit strategy.
+
+### Automatic Checkpoint Management
+
+When you create a drive with `CommitStrategy::Batched`:
+
+```rust
+// The client automatically:
+// 1. Tracks file changes (uploads, deletes, directory updates)
+// 2. Periodically collects commitments from all providers
+// 3. Verifies consensus (majority agreement on data state)
+// 4. Submits checkpoint to blockchain
+// 5. Handles provider failures gracefully
+```
+
+### Checkpoint Flow
+
+```
+Your File Operation → Layer 1 Client → Provider Storage
+        ↓
+   Change Queued
+        ↓
+   Interval Reached (e.g., 100 blocks)
+        ↓
+   Collect Provider Commitments
+        ↓
+   Verify Consensus (≥51% agree)
+        ↓
+   Submit Checkpoint On-Chain
+        ↓
+   Data Now Permanently Recorded
+```
+
+### Commit Strategy Details
+
+| Strategy | How It Works | Best For |
+|----------|--------------|----------|
+| **Immediate** | Checkpoints after every file operation | Real-time collaboration, critical updates |
+| **Batched** | Checkpoints every N blocks | Normal usage, cost-efficient |
+| **Manual** | You call `commit_drive_changes()` | Bulk uploads, controlled snapshots |
+
+### Checkpoint Metrics
+
+The system tracks checkpoint health automatically:
+
+```rust
+// Access checkpoint metrics (advanced users)
+let metrics = fs_client.get_checkpoint_metrics(drive_id).await?;
+
+println!("Total checkpoints: {}", metrics.total_attempts);
+println!("Successful: {}", metrics.successful_submissions);
+println!("Consensus rate: {}%", metrics.average_consensus_rate);
+println!("Provider health:");
+for (provider, health) in &metrics.provider_health {
+    println!("  {}: {} successes, {} failures",
+        provider, health.successes, health.failures);
+}
+```
+
+### Provider Conflict Detection
+
+If providers disagree on the data state, the system detects and handles it:
+
+```rust
+// The CheckpointManager (Layer 0) automatically:
+// 1. Detects when providers report different MMR roots
+// 2. Identifies conflicting providers
+// 3. Logs conflict evidence for potential challenges
+// 4. Continues with majority consensus
+```
+
+For more details, see [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md).
 
 ---
 

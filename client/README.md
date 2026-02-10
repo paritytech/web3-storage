@@ -10,6 +10,13 @@ This SDK provides specialized client types for different user roles in the stora
 - **`ProviderClient`** - For storage providers managing their operations
 - **`AdminClient`** - For bucket administrators managing buckets and agreements
 - **`ChallengerClient`** - For third parties verifying data integrity
+- **`DiscoveryClient`** - For finding and matching providers based on requirements
+
+And advanced management tools:
+
+- **`CheckpointManager`** - Multi-provider checkpoint coordination and consensus
+- **`EventSubscriber`** - Real-time blockchain event monitoring
+- **`CheckpointPersistence`** - State persistence with backup rotation
 
 ## Installation
 
@@ -181,6 +188,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### For Provider Discovery
+
+Find providers that match your storage requirements:
+
+```rust
+use storage_client::{DiscoveryClient, StorageRequirements};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = DiscoveryClient::with_defaults()?;
+    client.connect().await?;
+
+    // Define requirements
+    let requirements = StorageRequirements {
+        bytes_needed: 10 * 1024 * 1024 * 1024, // 10 GB
+        min_duration: 100_000,                  // blocks
+        max_price_per_byte: 1_000_000,          // budget
+        primary_only: true,
+    };
+
+    // Find matching providers (sorted by score 0-100)
+    let providers = client.find_providers(requirements.clone(), 10).await?;
+
+    for provider in &providers {
+        println!("Provider {}: score={}, available={:?} bytes",
+            provider.account,
+            provider.match_score,
+            provider.available_capacity
+        );
+    }
+
+    // Or get the best match directly
+    if let Some(best) = client.find_best_provider(requirements).await? {
+        println!("Best provider: {} (score={})", best.account, best.match_score);
+    }
+
+    // Or get recommendations with cost estimates
+    let recommendations = client.suggest_providers(
+        10 * 1024 * 1024 * 1024, // bytes
+        100_000,                  // duration
+        1_000_000_000_000,        // budget
+    ).await?;
+
+    for rec in recommendations {
+        println!("{}: {} (cost estimate: {})",
+            rec.provider.account,
+            rec.reason,
+            rec.estimated_cost
+        );
+    }
+
+    Ok(())
+}
+```
+
 ## Architecture
 
 ### Client Configuration
@@ -252,6 +314,31 @@ match client.upload(1, data, Default::default()).await {
 - ✅ Earnings tracking and analytics
 - ✅ Find profitable challenge targets
 
+### DiscoveryClient
+
+- ✅ Find providers matching storage requirements
+- ✅ Capacity-aware provider search
+- ✅ Match scoring (0-100 based on requirements fit)
+- ✅ Provider recommendations with cost estimates
+- ✅ Paginated provider listing
+
+### CheckpointManager
+
+- ✅ Multi-provider checkpoint coordination
+- ✅ Consensus verification (configurable threshold)
+- ✅ Conflict detection and resolution
+- ✅ Automatic background checkpointing
+- ✅ Provider health tracking and metrics
+- ✅ Auto-challenge recommendations
+
+### EventSubscriber
+
+- ✅ Real-time blockchain event streaming
+- ✅ Event filtering (by bucket, provider, type)
+- ✅ Checkpoint and challenge event monitoring
+- ✅ Callback-based subscription
+- ✅ Automatic reconnection
+
 ## Examples
 
 See the [`examples/`](examples/) directory for complete workflows:
@@ -314,6 +401,136 @@ if utilization > 80.0 {
 }
 ```
 
+### Checkpoint Management
+
+Coordinate checkpoints across multiple providers with consensus verification:
+
+```rust
+use storage_client::{
+    CheckpointManager, CheckpointConfig, BatchedCheckpointConfig,
+    BatchedInterval, CheckpointResult,
+};
+
+// Create checkpoint manager
+let manager = CheckpointManager::new(
+    "ws://localhost:9944",
+    CheckpointConfig::default()
+).await?;
+
+// Add provider endpoints
+let manager = manager.with_providers(vec![
+    "http://provider1:3000".to_string(),
+    "http://provider2:3000".to_string(),
+]);
+
+// Manual checkpoint submission
+let result = manager.submit_checkpoint(bucket_id).await;
+match result {
+    CheckpointResult::Success { mmr_root, providers_agreed } => {
+        println!("Checkpoint submitted: {} ({} providers agreed)",
+            mmr_root, providers_agreed);
+    }
+    CheckpointResult::InsufficientConsensus { agreed, total } => {
+        println!("Failed: only {}/{} providers agreed", agreed, total);
+    }
+    CheckpointResult::Conflict { conflicts } => {
+        println!("Conflict detected! {} providers disagree", conflicts.len());
+    }
+    _ => {}
+}
+
+// Enable automatic checkpoints
+let config = BatchedCheckpointConfig {
+    interval: BatchedInterval::Blocks(100), // Every 100 blocks
+    retry_on_failure: true,
+    max_retries: 3,
+    ..Default::default()
+};
+
+let handle = manager.start_checkpoint_loop(
+    bucket_id,
+    config,
+    |result| println!("Checkpoint result: {:?}", result),
+).await?;
+
+// Control the background loop
+handle.mark_dirty(bucket_id);     // Signal data changed
+handle.submit_now().await?;       // Force immediate checkpoint
+handle.stop().await?;             // Stop the loop
+```
+
+### Checkpoint State Persistence
+
+Persist checkpoint state across restarts:
+
+```rust
+use storage_client::{CheckpointPersistence, PersistenceConfig, StateBuilder};
+
+// Configure persistence
+let config = PersistenceConfig {
+    state_file: PathBuf::from("/var/lib/storage/checkpoint_state.json"),
+    backup_count: 3,
+    auto_save: true,
+    auto_save_interval: Duration::from_secs(60),
+};
+
+let persistence = CheckpointPersistence::new(config)?;
+
+// Load existing state or create new
+let state = persistence.load_or_create()?;
+
+// Build state programmatically
+let state = StateBuilder::new()
+    .with_bucket(1, BucketStatus::default())
+    .with_metrics(CheckpointMetrics::default())
+    .build();
+
+// Save state (creates backup of previous)
+persistence.save(&state)?;
+```
+
+### Real-Time Event Subscription
+
+Monitor blockchain events in real-time:
+
+```rust
+use storage_client::{
+    EventSubscriber, EventFilter, StorageEvent,
+    subscribe_checkpoints, subscribe_challenges,
+};
+
+// Create subscriber
+let subscriber = EventSubscriber::new("ws://localhost:9944").await?;
+
+// Subscribe to bucket events
+let filter = EventFilter::bucket(bucket_id);
+let mut stream = subscriber.subscribe(filter).await?;
+
+while let Some(event) = stream.next().await {
+    match event {
+        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, block } => {
+            println!("Bucket {} checkpointed at block {}", bucket_id, block);
+        }
+        StorageEvent::ChallengeCreated { challenge_id, provider, .. } => {
+            println!("Challenge {} against {}", challenge_id, provider);
+        }
+        StorageEvent::ProviderSlashed { provider, amount, .. } => {
+            println!("Provider {} slashed {} tokens", provider, amount);
+        }
+        _ => {}
+    }
+}
+
+// Or use convenience functions
+let mut checkpoint_stream = subscribe_checkpoints("ws://localhost:9944", bucket_id).await?;
+let mut challenge_stream = subscribe_challenges("ws://localhost:9944", bucket_id).await?;
+
+// Subscribe with callback
+subscribe_with_callback("ws://localhost:9944", filter, |event| {
+    println!("Event: {:?}", event);
+}).await?;
+```
+
 ## Layer 1 File System Interface
 
 For most users, consider using the **Layer 1 File System Client** instead, which provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
@@ -341,26 +558,31 @@ This SDK is under active development.
 ### ✅ Implemented
 
 - Substrate API integration with subxt
-- Four specialized client types (user, provider, admin, challenger)
+- Five specialized client types (user, provider, admin, challenger, discovery)
 - Core extrinsic submission (register, agreements, challenges)
 - Off-chain provider communication (HTTP)
 - Client-side verification and monitoring
 - Comprehensive error handling
+- Provider discovery and matching with scoring
+- Provider capacity declaration and enforcement
+- Multi-provider checkpoint coordination
+- Checkpoint state persistence with backups
+- Real-time event subscription and filtering
+- Provider health tracking and metrics
 
 ### 🚧 In Progress
 
-- Event parsing for extracting IDs from transaction results
-- Storage queries for reading on-chain state
-- Runtime API call integration
+- Runtime API call integration for discovery
+- Geographic provider matching (multiaddr parsing)
 
 ### 📋 Planned
 
-- Multi-provider selection strategies
 - Automatic retry and failover
 - Batch operations for efficiency
 - Streaming upload/download
 - Content-defined chunking
 - Local caching
+- Reputation-based provider scoring
 
 ## License
 

@@ -327,7 +327,22 @@ pub struct ProviderSettings {
     accepting_primary: bool,          // Accepting new agreements
     replica_sync_price: Option<Balance>, // Price for replica sync
     accepting_extensions: bool,       // Accepting agreement extensions
+    max_capacity: u64,                // Maximum storage capacity (0 = unlimited)
 }
+```
+
+### Capacity & Stake Requirements
+
+Providers must stake tokens proportional to their declared capacity:
+
+```rust
+// Minimum stake per byte of declared capacity
+pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+
+// Required stake calculation
+required_stake = max_capacity * MinStakePerByte
+
+// Example: 1 TB capacity requires 1,000,000,000,000 units stake
 ```
 
 ## Key Concepts
@@ -379,6 +394,98 @@ payment = 536,870,912,000,000,000
 ```
 
 Set `maxPayment` with 10-20% buffer to account for price changes.
+
+## Advanced Features
+
+### Provider Discovery & Marketplace
+
+The SDK provides automatic provider discovery based on storage requirements:
+
+```rust
+use storage_client::{DiscoveryClient, StorageRequirements};
+
+let mut client = DiscoveryClient::with_defaults()?;
+client.connect().await?;
+
+// Define requirements
+let requirements = StorageRequirements {
+    bytes_needed: 10 * 1024 * 1024 * 1024, // 10 GB
+    min_duration: 100_000,
+    max_price_per_byte: 1_000_000,
+    primary_only: true,
+};
+
+// Find matching providers (sorted by score)
+let providers = client.find_providers(requirements, 10).await?;
+
+// Or get recommendations with cost estimates
+let recommendations = client.suggest_providers(bytes, duration, budget).await?;
+```
+
+**Matching Algorithm**: Providers are scored 0-100 based on:
+- Accepting status (not accepting = 0)
+- Capacity (insufficient = -50 points)
+- Price (too high = -30 points)
+- Duration (mismatch = -20 points)
+
+See [Storage Marketplace Design](docs/design/marketplace.md) for details.
+
+### Checkpoint Management
+
+The client SDK provides comprehensive checkpoint management:
+
+```rust
+use storage_client::{CheckpointManager, CheckpointConfig, BatchedCheckpointConfig};
+
+// Create checkpoint manager
+let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default()).await?;
+let manager = manager.with_providers(provider_endpoints);
+
+// Manual checkpoint submission
+let result = manager.submit_checkpoint(bucket_id).await;
+
+// Or enable automatic checkpoints
+let config = BatchedCheckpointConfig {
+    interval: BatchedInterval::Blocks(100),
+    ..Default::default()
+};
+let handle = manager.start_checkpoint_loop(bucket_id, config, callback).await?;
+
+// Control the loop
+handle.submit_now().await?;  // Force immediate checkpoint
+handle.stop().await?;         // Stop background loop
+```
+
+**Key Components**:
+- `CheckpointManager`: Coordinates multi-provider checkpoint collection and consensus
+- `CheckpointPersistence`: Persists checkpoint state to disk with backup rotation
+- `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
+- `ProviderHealthHistory`: Tracks provider reliability and response times
+
+See [Checkpoint Protocol Design](docs/design/CHECKPOINT_PROTOCOL.md) for details.
+
+### Event Subscription
+
+Subscribe to real-time blockchain events:
+
+```rust
+use storage_client::{EventSubscriber, EventFilter, StorageEvent};
+
+let subscriber = EventSubscriber::new(chain_endpoint).await?;
+
+// Subscribe to specific events
+let filter = EventFilter::bucket(bucket_id);
+let mut stream = subscriber.subscribe(filter).await?;
+
+while let Some(event) = stream.next().await {
+    match event {
+        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => { /* ... */ }
+        StorageEvent::ChallengeCreated { challenge_id, .. } => { /* ... */ }
+        StorageEvent::ProviderSlashed { provider, amount, .. } => { /* ... */ }
+        _ => {}
+    }
+}
+```
 
 ## Code Review Guidelines (Parity Standards)
 
@@ -442,7 +549,8 @@ These guidelines are used by the Claude Code review bot and should be followed b
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 | [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
-| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management in Layer 1 |
+| [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
+| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
 | [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
@@ -463,6 +571,12 @@ These guidelines are used by the Claude Code review bot and should be followed b
 ### Provider Not Accepting Agreements
 - Call `updateProviderSettings` after registration
 - Set `acceptingPrimary: true`
+
+### "CapacityExceeded" or "InsufficientStakeForCapacity" Error
+- Provider's `max_capacity` is too low for the agreement
+- Or provider's stake doesn't cover their declared capacity
+- Required: `stake >= max_capacity * MinStakePerByte`
+- Use `DiscoveryClient.find_providers()` to find providers with sufficient capacity
 
 ## Feature Flags
 
