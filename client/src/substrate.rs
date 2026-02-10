@@ -127,6 +127,48 @@ pub mod extrinsics {
         )
     }
 
+    /// Create an update_provider_settings extrinsic payload.
+    ///
+    /// # Parameters
+    /// - `min_duration`: Minimum agreement duration
+    /// - `max_duration`: Maximum agreement duration
+    /// - `price_per_byte`: Price per byte per block
+    /// - `accepting_primary`: Whether accepting primary agreements
+    /// - `replica_sync_price`: Price for replica sync (None = not accepting replicas)
+    /// - `accepting_extensions`: Whether accepting extensions
+    /// - `max_capacity`: Maximum storage capacity in bytes (0 = unlimited)
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_provider_settings(
+        min_duration: u32,
+        max_duration: u32,
+        price_per_byte: u128,
+        accepting_primary: bool,
+        replica_sync_price: Option<u128>,
+        accepting_extensions: bool,
+        max_capacity: u64,
+    ) -> impl Payload {
+        let replica_price_value = match replica_sync_price {
+            Some(price) => subxt::dynamic::Value::unnamed_variant("Some", vec![
+                subxt::dynamic::Value::u128(price),
+            ]),
+            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
+        };
+
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "update_provider_settings",
+            vec![subxt::dynamic::Value::named_composite([
+                ("min_duration", subxt::dynamic::Value::u128(min_duration as u128)),
+                ("max_duration", subxt::dynamic::Value::u128(max_duration as u128)),
+                ("price_per_byte", subxt::dynamic::Value::u128(price_per_byte)),
+                ("accepting_primary", subxt::dynamic::Value::bool(accepting_primary)),
+                ("replica_sync_price", replica_price_value),
+                ("accepting_extensions", subxt::dynamic::Value::bool(accepting_extensions)),
+                ("max_capacity", subxt::dynamic::Value::u128(max_capacity as u128)),
+            ])],
+        )
+    }
+
     /// Create an accept_agreement extrinsic payload.
     pub fn accept_agreement(bucket_id: u64) -> impl Payload {
         subxt::dynamic::tx(

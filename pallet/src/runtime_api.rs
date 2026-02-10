@@ -32,6 +32,54 @@ pub struct ProviderInfoResponse {
     pub agreements_burned: u32,
     pub challenges_received: u32,
     pub challenges_failed: u32,
+    /// Maximum storage capacity in bytes (0 = unlimited).
+    pub max_capacity: u64,
+    /// Available capacity in bytes (None if unlimited).
+    pub available_capacity: Option<u64>,
+}
+
+/// Storage requirements for provider matching.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct StorageRequirements {
+    /// Bytes needed for storage.
+    pub bytes_needed: u64,
+    /// Minimum agreement duration in blocks.
+    pub min_duration: u32,
+    /// Maximum acceptable price per byte.
+    pub max_price_per_byte: u128,
+    /// If true, only match providers accepting primary agreements.
+    pub primary_only: bool,
+}
+
+/// Reason for partial match when provider doesn't fully meet requirements.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub enum PartialMatchReason {
+    /// Provider's price exceeds max_price_per_byte.
+    PriceTooHigh,
+    /// Provider doesn't have enough available capacity.
+    InsufficientCapacity,
+    /// Provider's duration constraints don't match.
+    DurationMismatch,
+    /// Provider is not accepting agreements.
+    NotAccepting,
+}
+
+/// Provider matching result.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+pub struct MatchedProvider {
+    /// Provider account ID (encoded).
+    pub account: Vec<u8>,
+    /// Provider information.
+    pub info: ProviderInfoResponse,
+    /// Match score (0-100, 100 = perfect match).
+    pub match_score: u8,
+    /// Available capacity in bytes (None if unlimited).
+    pub available_capacity: Option<u64>,
+    /// If not a perfect match, why.
+    pub partial_reason: Option<PartialMatchReason>,
 }
 
 /// Bucket member information.
@@ -122,5 +170,12 @@ sp_api::decl_runtime_apis! {
 
         /// Check if a provider has sufficient stake for additional bytes.
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool;
+
+        /// Find providers matching the given storage requirements.
+        /// Returns up to `limit` providers, sorted by match score (best first).
+        fn find_matching_providers(requirements: StorageRequirements, limit: u32) -> Vec<MatchedProvider>;
+
+        /// Get providers with sufficient capacity for the given bytes (paginated).
+        fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
     }
 }

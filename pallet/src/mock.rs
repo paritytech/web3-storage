@@ -3,7 +3,7 @@
 use crate as pallet_storage_provider;
 use frame_support::{
     derive_impl,
-    traits::{ConstU32, ConstU64},
+    traits::{ConstU32, ConstU64, Hooks},
 };
 use sp_core::H256;
 use sp_runtime::{
@@ -62,11 +62,22 @@ impl pallet_balances::Config for Test {
     type MaxFreezes = ();
     type RuntimeHoldReason = ();
     type RuntimeFreezeReason = ();
+    type DoneSlashHandler = ();
+}
+
+// Treasury account for testing
+pub struct TestTreasury;
+impl frame_support::traits::Get<u64> for TestTreasury {
+    fn get() -> u64 {
+        999 // Treasury is account 999 in tests
+    }
 }
 
 impl pallet_storage_provider::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
+    type Treasury = TestTreasury;
+    type MinStakePerByte = ConstU64<1>; // 1 unit per byte
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
@@ -90,7 +101,11 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
             (3, 10_000),
             (4, 10_000),
             (5, 10_000),
+            (6, 10_000),
+            (7, 10_000),
+            (8, 10_000),
         ],
+        dev_accounts: None,
     }
     .assimilate_storage(&mut t)
     .unwrap();
@@ -104,9 +119,12 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
         .build_storage()
         .unwrap();
 
-    pallet_balances::GenesisConfig::<Test> { balances }
-        .assimilate_storage(&mut t)
-        .unwrap();
+    pallet_balances::GenesisConfig::<Test> {
+        balances,
+        dev_accounts: None,
+    }
+    .assimilate_storage(&mut t)
+    .unwrap();
 
     t.into()
 }
@@ -114,8 +132,8 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
 /// Run to a specific block number.
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
-        System::on_finalize(System::block_number());
+        <System as Hooks<u64>>::on_finalize(System::block_number());
         System::set_block_number(System::block_number() + 1);
-        System::on_initialize(System::block_number());
+        <System as Hooks<u64>>::on_initialize(System::block_number());
     }
 }

@@ -22,8 +22,8 @@ serde = { workspace = true, optional = true }
 log = { workspace = true }
 
 [dev-dependencies]
-sp-keyring = { workspace = true }
-pallet-balances = { workspace = true }
+sp-keyring = { workspace = true, features = ["std"] }
+pallet-balances = { workspace = true, features = ["std"] }
 
 [features]
 default = ["std"]
@@ -40,6 +40,8 @@ std = [
     "sp-io/std",
     "serde/std",
     "log/std",
+    "pallet-balances/std",
+    "sp-keyring/std",
 ]
 runtime-benchmarks = [
     "frame-support/runtime-benchmarks",

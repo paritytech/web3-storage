@@ -126,6 +126,19 @@ High-level design documents and implementation details.
 
 **Read this for implementation details.**
 
+### [Storage Marketplace](./design/marketplace.md)
+**Provider discovery and matching system**
+
+- Provider capacity declaration
+- Capacity enforcement rules
+- Storage requirements specification
+- Matching algorithm and scoring
+- Discovery client SDK
+- Economic model and incentives
+- Security considerations
+
+**Read this to understand provider discovery and matching.**
+
 ---
 
 ## 🎯 Quick Navigation
@@ -248,6 +261,7 @@ just health
 | Payment Calculator | ✅ Ready | Current | Complete |
 | Design Document | ✅ Ready | Current | Complete |
 | Implementation Details | ✅ Ready | Current | Complete |
+| Storage Marketplace | ✅ Ready | Current | Complete |
 
 ---
 

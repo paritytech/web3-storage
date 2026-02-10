@@ -707,6 +707,63 @@ impl_runtime_apis! {
         }
     }
 
+    impl pallet_storage_provider::runtime_api::StorageProviderApi<Block, AccountId, BlockNumber, Balance> for Runtime {
+        fn provider_info(provider: AccountId) -> Option<pallet_storage_provider::runtime_api::ProviderInfoResponse> {
+            StorageProvider::query_provider_info(&provider)
+        }
+
+        fn providers(offset: u32, limit: u32) -> Vec<(AccountId, pallet_storage_provider::runtime_api::ProviderInfoResponse)> {
+            StorageProvider::query_providers(offset, limit)
+        }
+
+        fn bucket_info(bucket_id: storage_primitives::BucketId) -> Option<pallet_storage_provider::runtime_api::BucketResponse> {
+            StorageProvider::query_bucket_info(bucket_id)
+        }
+
+        fn bucket_ids(offset: u32, limit: u32) -> Vec<storage_primitives::BucketId> {
+            StorageProvider::query_bucket_ids(offset, limit)
+        }
+
+        fn bucket_providers(bucket_id: storage_primitives::BucketId) -> Vec<AccountId> {
+            StorageProvider::query_bucket_providers(bucket_id)
+        }
+
+        fn agreement_info(bucket_id: storage_primitives::BucketId, provider: AccountId) -> Option<pallet_storage_provider::runtime_api::AgreementResponse> {
+            StorageProvider::query_agreement_info(bucket_id, &provider)
+        }
+
+        fn bucket_agreements(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
+            StorageProvider::query_bucket_agreements(bucket_id)
+        }
+
+        fn provider_agreements(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
+            StorageProvider::query_provider_agreements(&provider)
+        }
+
+        fn challenges_at(block: BlockNumber) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_challenges_at(block)
+        }
+
+        fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool {
+            StorageProvider::query_can_accept_bytes(&provider, additional_bytes)
+        }
+
+        fn find_matching_providers(
+            requirements: pallet_storage_provider::runtime_api::StorageRequirements,
+            limit: u32,
+        ) -> Vec<pallet_storage_provider::runtime_api::MatchedProvider> {
+            StorageProvider::query_find_matching_providers(requirements, limit)
+        }
+
+        fn providers_with_capacity(
+            bytes_needed: u64,
+            offset: u32,
+            limit: u32,
+        ) -> Vec<(AccountId, pallet_storage_provider::runtime_api::ProviderInfoResponse)> {
+            StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
+        }
+    }
+
     #[cfg(feature = "try-runtime")]
     impl frame_try_runtime::TryRuntime<Block> for Runtime {
         fn on_runtime_upgrade(checks: frame_try_runtime::UpgradeCheckSelect) -> (Weight, Weight) {

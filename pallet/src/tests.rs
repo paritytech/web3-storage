@@ -2,7 +2,12 @@
 
 use crate::{mock::*, *};
 use frame_support::{assert_noop, assert_ok};
-use sp_runtime::traits::BadOrigin;
+use storage_primitives::{ProviderRole, Role};
+
+/// Helper function to create a test public key (32 bytes).
+fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> {
+    vec![1u8; 32].try_into().unwrap()
+}
 
 mod provider_tests {
     use super::*;
@@ -15,6 +20,7 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(1),
                 multiaddr.clone().try_into().unwrap(),
+                test_public_key(),
                 200
             ));
 
@@ -34,6 +40,7 @@ mod provider_tests {
                 StorageProvider::register_provider(
                     RuntimeOrigin::signed(1),
                     multiaddr.try_into().unwrap(),
+                    test_public_key(),
                     50 // Below minimum of 100
                 ),
                 Error::<Test>::InsufficientStake
@@ -49,6 +56,7 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(1),
                 multiaddr.clone().try_into().unwrap(),
+                test_public_key(),
                 200
             ));
 
@@ -56,6 +64,7 @@ mod provider_tests {
                 StorageProvider::register_provider(
                     RuntimeOrigin::signed(1),
                     multiaddr.try_into().unwrap(),
+                    test_public_key(),
                     200
                 ),
                 Error::<Test>::ProviderAlreadyRegistered
@@ -71,6 +80,7 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(1),
                 multiaddr.try_into().unwrap(),
+                test_public_key(),
                 200
             ));
 
@@ -99,6 +109,7 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(1),
                 multiaddr.try_into().unwrap(),
+                test_public_key(),
                 200
             ));
 
@@ -124,16 +135,18 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(2),
                 multiaddr.try_into().unwrap(),
+                test_public_key(),
                 200
             ));
             assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
 
-            // Create agreement
+            // Create agreement (max_bytes = 100 fits within stake of 200)
+            // payment = price_per_byte(0) * max_bytes * duration = 0
             assert_ok!(StorageProvider::request_primary_agreement(
                 RuntimeOrigin::signed(1),
                 0,
                 2,
-                1000,
+                100,
                 100,
                 1000
             ));
@@ -158,6 +171,7 @@ mod provider_tests {
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(1),
                 multiaddr.try_into().unwrap(),
+                test_public_key(),
                 200
             ));
 
@@ -168,6 +182,7 @@ mod provider_tests {
                 accepting_primary: true,
                 replica_sync_price: Some(10u64),
                 accepting_extensions: true,
+                max_capacity: 0, // Unlimited
             };
 
             assert_ok!(StorageProvider::update_provider_settings(
@@ -178,6 +193,251 @@ mod provider_tests {
             let provider = Providers::<Test>::get(1).unwrap();
             assert_eq!(provider.settings.price_per_byte, 5);
             assert_eq!(provider.settings.replica_sync_price, Some(10));
+            assert_eq!(provider.settings.max_capacity, 0);
+        });
+    }
+
+    #[test]
+    fn update_provider_settings_with_max_capacity_works() {
+        new_test_ext().execute_with(|| {
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+
+            // Register with enough stake for 10000 bytes (stake >= bytes * MinStakePerByte)
+            // MinStakePerByte = 1 in mock, so stake of 200 covers 200 bytes
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(1),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            let new_settings = ProviderSettings {
+                min_duration: 10u64,
+                max_duration: 1000u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 200, // Up to 200 bytes (within stake limit)
+            };
+
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(1),
+                new_settings.clone()
+            ));
+
+            let provider = Providers::<Test>::get(1).unwrap();
+            assert_eq!(provider.settings.max_capacity, 200);
+        });
+    }
+
+    #[test]
+    fn update_provider_settings_fails_with_capacity_below_committed() {
+        new_test_ext().execute_with(|| {
+            // Setup provider and bucket
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            // Create agreement for 100 bytes
+            assert_ok!(StorageProvider::request_primary_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                100, // max_bytes
+                100,
+                1000
+            ));
+            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+
+            // Try to set max_capacity below committed_bytes
+            let new_settings = ProviderSettings {
+                min_duration: 10u64,
+                max_duration: 1000u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 50, // Below committed 100 bytes
+            };
+
+            assert_noop!(
+                StorageProvider::update_provider_settings(RuntimeOrigin::signed(2), new_settings),
+                Error::<Test>::CapacityBelowCommitted
+            );
+        });
+    }
+
+    #[test]
+    fn update_provider_settings_fails_with_insufficient_stake_for_capacity() {
+        new_test_ext().execute_with(|| {
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+
+            // Register with stake of 200
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(1),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            // Try to set capacity that requires more stake than available
+            // MinStakePerByte = 1 in mock, so 200 stake only covers 200 bytes
+            let new_settings = ProviderSettings {
+                min_duration: 10u64,
+                max_duration: 1000u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 1000, // Requires 1000 stake, but only have 200
+            };
+
+            assert_noop!(
+                StorageProvider::update_provider_settings(RuntimeOrigin::signed(1), new_settings),
+                Error::<Test>::InsufficientStakeForCapacity
+            );
+        });
+    }
+
+    #[test]
+    fn accept_agreement_fails_when_capacity_exceeded() {
+        new_test_ext().execute_with(|| {
+            // Setup provider with limited capacity
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            // Set max_capacity to 50 bytes (stake of 200 can back this)
+            let settings = ProviderSettings {
+                min_duration: 0u64,
+                max_duration: 1000u64,
+                price_per_byte: 1u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 50,
+            };
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(2),
+                settings
+            ));
+
+            // Create bucket
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            // Request agreement for 60 bytes (exceeds max_capacity of 50)
+            // payment = price_per_byte * max_bytes * duration = 1 * 60 * 10 = 600
+            assert_ok!(StorageProvider::request_primary_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                60, // Exceeds max_capacity of 50
+                10,
+                600
+            ));
+
+            // Accept should fail due to capacity exceeded
+            assert_noop!(
+                StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0),
+                Error::<Test>::CapacityExceeded
+            );
+        });
+    }
+
+    #[test]
+    fn accept_agreement_works_with_unlimited_capacity() {
+        new_test_ext().execute_with(|| {
+            // Setup provider with unlimited capacity (max_capacity = 0)
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            // Settings with unlimited capacity (default)
+            // Default max_capacity is 0 which means unlimited
+
+            // Create bucket
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            // Request agreement for 100 bytes
+            // payment = 1 * 100 * 10 = 1000
+            assert_ok!(StorageProvider::request_primary_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                100,
+                10,
+                1000
+            ));
+
+            // Accept should succeed (capacity is unlimited, stake of 200 covers 100 bytes)
+            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.committed_bytes, 100);
+        });
+    }
+
+    #[test]
+    fn accept_agreement_works_within_capacity() {
+        new_test_ext().execute_with(|| {
+            // Setup provider with limited capacity
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            // Set max_capacity to 150 bytes (stake of 200 covers this)
+            let settings = ProviderSettings {
+                min_duration: 0u64,
+                max_duration: 1000u64,
+                price_per_byte: 1u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 150,
+            };
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(2),
+                settings
+            ));
+
+            // Create bucket
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            // Request agreement for 100 bytes (within capacity)
+            // payment = 1 * 100 * 10 = 1000
+            assert_ok!(StorageProvider::request_primary_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                100,
+                10,
+                1000
+            ));
+
+            // Accept should succeed
+            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.committed_bytes, 100);
+            assert_eq!(provider.settings.max_capacity, 150);
         });
     }
 }
@@ -399,6 +659,7 @@ mod agreement_tests {
         assert_ok!(StorageProvider::register_provider(
             RuntimeOrigin::signed(2),
             multiaddr.try_into().unwrap(),
+            test_public_key(),
             200
         ));
         assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
@@ -450,11 +711,13 @@ mod agreement_tests {
         new_test_ext().execute_with(|| {
             setup_provider_and_bucket();
 
+            // max_bytes = 100 fits within stake of 200 (MinStakePerByte = 1)
+            // payment = price_per_byte(0) * max_bytes * duration = 0
             assert_ok!(StorageProvider::request_primary_agreement(
                 RuntimeOrigin::signed(1),
                 0,
                 2,
-                1000,
+                100,
                 100,
                 1000
             ));
@@ -467,7 +730,7 @@ mod agreement_tests {
             // Check agreement created
             let agreement = StorageAgreements::<Test>::get(0, 2).unwrap();
             assert_eq!(agreement.owner, 1);
-            assert_eq!(agreement.max_bytes, 1000);
+            assert_eq!(agreement.max_bytes, 100);
             assert!(matches!(agreement.role, ProviderRole::Primary));
 
             // Check provider added to bucket
@@ -476,7 +739,7 @@ mod agreement_tests {
 
             // Check provider stats updated
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.committed_bytes, 1000);
+            assert_eq!(provider.committed_bytes, 100);
             assert_eq!(provider.stats.agreements_total, 1);
 
             // Check request removed
@@ -487,21 +750,47 @@ mod agreement_tests {
     #[test]
     fn reject_agreement_returns_funds() {
         new_test_ext().execute_with(|| {
-            setup_provider_and_bucket();
+            // Setup provider with non-zero price so funds are actually reserved
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            let settings = ProviderSettings {
+                min_duration: 0u64,
+                max_duration: 1000u64,
+                price_per_byte: 1u64, // Non-zero price
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            };
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(2),
+                settings
+            ));
+
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
 
             let balance_before = Balances::free_balance(1);
 
+            // Request agreement for 100 bytes at price 1, duration 10
+            // payment = 1 * 100 * 10 = 1000
             assert_ok!(StorageProvider::request_primary_agreement(
                 RuntimeOrigin::signed(1),
                 0,
                 2,
-                1000,
                 100,
+                10,
                 1000
             ));
 
-            // Some funds should be reserved
+            // Some funds should be reserved (1000)
             assert!(Balances::free_balance(1) < balance_before);
+            assert_eq!(Balances::free_balance(1), balance_before - 1000);
 
             assert_ok!(StorageProvider::reject_agreement(
                 RuntimeOrigin::signed(2),
@@ -582,6 +871,7 @@ mod agreement_tests {
                 assert_ok!(StorageProvider::register_provider(
                     RuntimeOrigin::signed(i),
                     multiaddr.as_bytes().to_vec().try_into().unwrap(),
+                    test_public_key(),
                     200
                 ));
             }

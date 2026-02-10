@@ -217,6 +217,9 @@ pub mod pallet {
         pub replica_sync_price: Option<BalanceOf<T>>,
         /// Whether accepting extensions on existing agreements.
         pub accepting_extensions: bool,
+        /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
+        /// When set, provider cannot accept agreements that would exceed this capacity.
+        pub max_capacity: u64,
     }
 
     impl<T: Config> Default for ProviderSettings<T> {
@@ -228,6 +231,7 @@ pub mod pallet {
                 accepting_primary: true,
                 replica_sync_price: None,
                 accepting_extensions: true,
+                max_capacity: 0, // 0 = unlimited (backward compatible)
             }
         }
     }
@@ -568,6 +572,12 @@ pub mod pallet {
         ProviderNotAcceptingReplicas,
         ProviderNotAcceptingExtensions,
         ProviderNotSlashed,
+        /// Cannot set max_capacity below current committed_bytes.
+        CapacityBelowCommitted,
+        /// Provider capacity exceeded on accept (committed + request > max_capacity).
+        CapacityExceeded,
+        /// Stake insufficient to back declared capacity.
+        InsufficientStakeForCapacity,
 
         // Bucket errors
         BucketNotFound,
@@ -763,6 +773,27 @@ pub mod pallet {
                 let provider = maybe_provider
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
+
+                // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
+                if settings.max_capacity > 0 {
+                    ensure!(
+                        settings.max_capacity >= provider.committed_bytes,
+                        Error::<T>::CapacityBelowCommitted
+                    );
+
+                    // Validate stake backs declared capacity
+                    use sp_runtime::traits::SaturatedConversion;
+                    let capacity_as_balance: BalanceOf<T> =
+                        settings.max_capacity.saturated_into();
+                    let required_stake = T::MinStakePerByte::get()
+                        .checked_mul(&capacity_as_balance)
+                        .ok_or(Error::<T>::ArithmeticOverflow)?;
+                    ensure!(
+                        provider.stake >= required_stake,
+                        Error::<T>::InsufficientStakeForCapacity
+                    );
+                }
+
                 provider.settings = settings;
                 Ok(())
             })?;
@@ -1262,6 +1293,14 @@ pub mod pallet {
                 .committed_bytes
                 .checked_add(request.max_bytes)
                 .ok_or(Error::<T>::ArithmeticOverflow)?;
+
+            // Check capacity constraint (if max_capacity > 0)
+            if provider_info.settings.max_capacity > 0 {
+                ensure!(
+                    new_committed_bytes <= provider_info.settings.max_capacity,
+                    Error::<T>::CapacityExceeded
+                );
+            }
 
             // Required stake = committed_bytes * min_stake_per_byte
             // Using saturated multiplication to avoid overflow
@@ -2666,27 +2705,38 @@ pub mod pallet {
         ) -> Option<crate::runtime_api::ProviderInfoResponse> {
             use sp_runtime::traits::SaturatedConversion;
 
-            Providers::<T>::get(provider).map(|info| crate::runtime_api::ProviderInfoResponse {
-                multiaddr: info.multiaddr.to_vec(),
-                public_key: info.public_key.to_vec(),
-                stake: info.stake.saturated_into::<u128>(),
-                committed_bytes: info.committed_bytes,
-                min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                accepting_primary: info.settings.accepting_primary,
-                replica_sync_price: info
-                    .settings
-                    .replica_sync_price
-                    .map(|p| p.saturated_into::<u128>()),
-                accepting_extensions: info.settings.accepting_extensions,
-                registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                agreements_total: info.stats.agreements_total,
-                agreements_extended: info.stats.agreements_extended,
-                agreements_not_extended: info.stats.agreements_not_extended,
-                agreements_burned: info.stats.agreements_burned,
-                challenges_received: info.stats.challenges_received,
-                challenges_failed: info.stats.challenges_failed,
+            Providers::<T>::get(provider).map(|info| {
+                let max_capacity = info.settings.max_capacity;
+                let available_capacity = if max_capacity > 0 {
+                    Some(max_capacity.saturating_sub(info.committed_bytes))
+                } else {
+                    None // Unlimited
+                };
+
+                crate::runtime_api::ProviderInfoResponse {
+                    multiaddr: info.multiaddr.to_vec(),
+                    public_key: info.public_key.to_vec(),
+                    stake: info.stake.saturated_into::<u128>(),
+                    committed_bytes: info.committed_bytes,
+                    min_duration: info.settings.min_duration.saturated_into::<u32>(),
+                    max_duration: info.settings.max_duration.saturated_into::<u32>(),
+                    price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
+                    accepting_primary: info.settings.accepting_primary,
+                    replica_sync_price: info
+                        .settings
+                        .replica_sync_price
+                        .map(|p| p.saturated_into::<u128>()),
+                    accepting_extensions: info.settings.accepting_extensions,
+                    registered_at: info.stats.registered_at.saturated_into::<u32>(),
+                    agreements_total: info.stats.agreements_total,
+                    agreements_extended: info.stats.agreements_extended,
+                    agreements_not_extended: info.stats.agreements_not_extended,
+                    agreements_burned: info.stats.agreements_burned,
+                    challenges_received: info.stats.challenges_received,
+                    challenges_failed: info.stats.challenges_failed,
+                    max_capacity,
+                    available_capacity,
+                }
             })
         }
 
@@ -2701,6 +2751,13 @@ pub mod pallet {
                 .skip(offset as usize)
                 .take(limit as usize)
                 .filter_map(|(account, info)| {
+                    let max_capacity = info.settings.max_capacity;
+                    let available_capacity = if max_capacity > 0 {
+                        Some(max_capacity.saturating_sub(info.committed_bytes))
+                    } else {
+                        None // Unlimited
+                    };
+
                     Some((
                         account,
                         crate::runtime_api::ProviderInfoResponse {
@@ -2724,6 +2781,8 @@ pub mod pallet {
                             agreements_burned: info.stats.agreements_burned,
                             challenges_received: info.stats.challenges_received,
                             challenges_failed: info.stats.challenges_failed,
+                            max_capacity,
+                            available_capacity,
                         },
                     ))
                 })
@@ -2844,6 +2903,75 @@ pub mod pallet {
                 .collect()
         }
 
+        /// Query all bucket IDs (paginated).
+        pub fn query_bucket_ids(offset: u32, limit: u32) -> Vec<BucketId> {
+            Buckets::<T>::iter_keys()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect()
+        }
+
+        /// Query all agreements for a provider.
+        pub fn query_provider_agreements(
+            provider: &T::AccountId,
+        ) -> Vec<crate::runtime_api::AgreementResponse> {
+            use sp_runtime::traits::SaturatedConversion;
+
+            StorageAgreements::<T>::iter()
+                .filter(|(_, p, _)| p == provider)
+                .map(|(bucket_id, _, agreement)| {
+                    crate::runtime_api::AgreementResponse {
+                        owner: agreement.owner.encode(),
+                        provider: provider.encode(),
+                        max_bytes: agreement.max_bytes,
+                        payment_locked: agreement.payment_locked.saturated_into::<u128>(),
+                        price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
+                        expires_at: agreement.expires_at.saturated_into::<u32>(),
+                        extensions_blocked: agreement.extensions_blocked,
+                        role: match agreement.role {
+                            ProviderRole::Primary => ProviderRole::Primary,
+                            ProviderRole::Replica {
+                                sync_balance,
+                                sync_price,
+                                min_sync_interval,
+                                last_sync,
+                            } => ProviderRole::Replica {
+                                sync_balance: sync_balance.saturated_into::<u128>(),
+                                sync_price: sync_price.saturated_into::<u128>(),
+                                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
+                                last_sync: last_sync
+                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                            },
+                        },
+                        started_at: agreement.started_at.saturated_into::<u32>(),
+                    }
+                })
+                .collect()
+        }
+
+        /// Query challenges expiring at a specific block.
+        pub fn query_challenges_at(
+            block: BlockNumberFor<T>,
+        ) -> Vec<crate::runtime_api::ChallengeResponse> {
+            use sp_runtime::traits::SaturatedConversion;
+
+            Challenges::<T>::get(block)
+                .unwrap_or_default()
+                .iter()
+                .map(|challenge| crate::runtime_api::ChallengeResponse {
+                    bucket_id: challenge.bucket_id,
+                    provider: challenge.provider.encode(),
+                    challenger: challenge.challenger.encode(),
+                    mmr_root: challenge.mmr_root,
+                    start_seq: challenge.start_seq,
+                    leaf_index: challenge.leaf_index,
+                    chunk_index: challenge.chunk_index,
+                    deadline: block.saturated_into::<u32>(),
+                    deposit: challenge.deposit.saturated_into::<u128>(),
+                })
+                .collect()
+        }
+
         /// Check if provider can accept additional bytes.
         pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
             use sp_runtime::traits::SaturatedConversion;
@@ -2852,6 +2980,14 @@ pub mod pallet {
                 let new_committed_bytes = provider_info
                     .committed_bytes
                     .saturating_add(additional_bytes);
+
+                // Check capacity constraint
+                if provider_info.settings.max_capacity > 0
+                    && new_committed_bytes > provider_info.settings.max_capacity
+                {
+                    return false;
+                }
+
                 let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
 
                 if let Some(required_stake) =
@@ -2861,6 +2997,200 @@ pub mod pallet {
                 }
             }
             false
+        }
+
+        /// Find providers matching the given storage requirements.
+        pub fn query_find_matching_providers(
+            requirements: crate::runtime_api::StorageRequirements,
+            limit: u32,
+        ) -> Vec<crate::runtime_api::MatchedProvider> {
+            use crate::runtime_api::{MatchedProvider, PartialMatchReason};
+            use sp_runtime::traits::SaturatedConversion;
+
+            let mut results: Vec<MatchedProvider> = Vec::new();
+
+            for (account, info) in Providers::<T>::iter() {
+                let max_capacity = info.settings.max_capacity;
+                let available = if max_capacity > 0 {
+                    max_capacity.saturating_sub(info.committed_bytes)
+                } else {
+                    u64::MAX // Unlimited
+                };
+
+                let price: u128 = info.settings.price_per_byte.saturated_into();
+                let min_dur: u32 = info.settings.min_duration.saturated_into();
+                let max_dur: u32 = info.settings.max_duration.saturated_into();
+
+                // Determine match score and partial reason
+                let mut score: u8 = 100;
+                let mut partial_reason: Option<PartialMatchReason> = None;
+
+                // Check accepting status
+                if requirements.primary_only && !info.settings.accepting_primary {
+                    score = 0;
+                    partial_reason = Some(PartialMatchReason::NotAccepting);
+                } else if !requirements.primary_only
+                    && !info.settings.accepting_primary
+                    && info.settings.replica_sync_price.is_none()
+                {
+                    score = 0;
+                    partial_reason = Some(PartialMatchReason::NotAccepting);
+                }
+
+                // Check capacity
+                if score > 0 && available < requirements.bytes_needed {
+                    score = score.saturating_sub(50);
+                    if partial_reason.is_none() {
+                        partial_reason = Some(PartialMatchReason::InsufficientCapacity);
+                    }
+                }
+
+                // Check price
+                if score > 0 && price > requirements.max_price_per_byte {
+                    score = score.saturating_sub(30);
+                    if partial_reason.is_none() {
+                        partial_reason = Some(PartialMatchReason::PriceTooHigh);
+                    }
+                }
+
+                // Check duration
+                if score > 0
+                    && (requirements.min_duration < min_dur
+                        || requirements.min_duration > max_dur)
+                {
+                    score = score.saturating_sub(20);
+                    if partial_reason.is_none() {
+                        partial_reason = Some(PartialMatchReason::DurationMismatch);
+                    }
+                }
+
+                // Build the available_capacity field
+                let available_capacity = if max_capacity > 0 {
+                    Some(available)
+                } else {
+                    None
+                };
+
+                let provider_response = crate::runtime_api::ProviderInfoResponse {
+                    multiaddr: info.multiaddr.to_vec(),
+                    public_key: info.public_key.to_vec(),
+                    stake: info.stake.saturated_into::<u128>(),
+                    committed_bytes: info.committed_bytes,
+                    min_duration: min_dur,
+                    max_duration: max_dur,
+                    price_per_byte: price,
+                    accepting_primary: info.settings.accepting_primary,
+                    replica_sync_price: info
+                        .settings
+                        .replica_sync_price
+                        .map(|p| p.saturated_into::<u128>()),
+                    accepting_extensions: info.settings.accepting_extensions,
+                    registered_at: info.stats.registered_at.saturated_into::<u32>(),
+                    agreements_total: info.stats.agreements_total,
+                    agreements_extended: info.stats.agreements_extended,
+                    agreements_not_extended: info.stats.agreements_not_extended,
+                    agreements_burned: info.stats.agreements_burned,
+                    challenges_received: info.stats.challenges_received,
+                    challenges_failed: info.stats.challenges_failed,
+                    max_capacity,
+                    available_capacity,
+                };
+
+                results.push(MatchedProvider {
+                    account: account.encode(),
+                    info: provider_response,
+                    match_score: score,
+                    available_capacity,
+                    partial_reason,
+                });
+            }
+
+            // Sort by score descending, then by price ascending for ties
+            results.sort_by(|a, b| {
+                b.match_score
+                    .cmp(&a.match_score)
+                    .then(a.info.price_per_byte.cmp(&b.info.price_per_byte))
+            });
+
+            results.truncate(limit as usize);
+            results
+        }
+
+        /// Get providers with sufficient capacity for the given bytes (paginated).
+        pub fn query_providers_with_capacity(
+            bytes_needed: u64,
+            offset: u32,
+            limit: u32,
+        ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
+            use sp_runtime::traits::SaturatedConversion;
+
+            Providers::<T>::iter()
+                .filter(|(_, info)| {
+                    // Check accepting status
+                    if !info.settings.accepting_primary
+                        && info.settings.replica_sync_price.is_none()
+                    {
+                        return false;
+                    }
+
+                    // Check capacity
+                    let max_capacity = info.settings.max_capacity;
+                    if max_capacity > 0 {
+                        let available = max_capacity.saturating_sub(info.committed_bytes);
+                        if available < bytes_needed {
+                            return false;
+                        }
+                    }
+
+                    // Check stake (can they back the additional bytes?)
+                    let new_committed = info.committed_bytes.saturating_add(bytes_needed);
+                    let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                    if let Some(required_stake) =
+                        T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
+                    {
+                        return info.stake >= required_stake;
+                    }
+                    false
+                })
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(account, info)| {
+                    let max_capacity = info.settings.max_capacity;
+                    let available_capacity = if max_capacity > 0 {
+                        Some(max_capacity.saturating_sub(info.committed_bytes))
+                    } else {
+                        None
+                    };
+
+                    (
+                        account,
+                        crate::runtime_api::ProviderInfoResponse {
+                            multiaddr: info.multiaddr.to_vec(),
+                            public_key: info.public_key.to_vec(),
+                            stake: info.stake.saturated_into::<u128>(),
+                            committed_bytes: info.committed_bytes,
+                            min_duration: info.settings.min_duration.saturated_into::<u32>(),
+                            max_duration: info.settings.max_duration.saturated_into::<u32>(),
+                            price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
+                            accepting_primary: info.settings.accepting_primary,
+                            replica_sync_price: info
+                                .settings
+                                .replica_sync_price
+                                .map(|p| p.saturated_into::<u128>()),
+                            accepting_extensions: info.settings.accepting_extensions,
+                            registered_at: info.stats.registered_at.saturated_into::<u32>(),
+                            agreements_total: info.stats.agreements_total,
+                            agreements_extended: info.stats.agreements_extended,
+                            agreements_not_extended: info.stats.agreements_not_extended,
+                            agreements_burned: info.stats.agreements_burned,
+                            challenges_received: info.stats.challenges_received,
+                            challenges_failed: info.stats.challenges_failed,
+                            max_capacity,
+                            available_capacity,
+                        },
+                    )
+                })
+                .collect()
         }
     }
 }

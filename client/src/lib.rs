@@ -96,6 +96,7 @@
 pub mod admin;
 pub mod base;
 pub mod challenger;
+pub mod discovery;
 pub mod provider;
 pub mod storage_user;
 pub mod substrate;
@@ -105,6 +106,7 @@ pub mod verification;
 pub use admin::AdminClient;
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
+pub use discovery::{DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements};
 pub use provider::ProviderClient;
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
