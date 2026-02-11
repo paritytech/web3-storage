@@ -363,20 +363,46 @@ impl AdminClient {
 
     /// Submit a checkpoint with provider signatures.
     ///
-    /// This creates a canonical snapshot of the bucket state.
+    /// This creates a canonical on-chain snapshot of the bucket state,
+    /// enabling `challenge_checkpoint` to work against it.
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
-        signatures: Vec<(String, Vec<u8>)>, // (provider, signature)
+        signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        // Parse provider accounts
+        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+            .into_iter()
+            .map(|(account_str, sig)| {
+                let account = SubstrateClient::parse_account(&account_str)?;
+                Ok((account, sig))
+            })
+            .collect::<ClientResult<Vec<_>>>()?;
+
+        let tx = extrinsics::checkpoint(bucket_id, mmr_root, start_seq, leaf_count, parsed_sigs);
+
+        let tx_progress = chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {}", e)))?;
+
+        tx_progress
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Checkpoint transaction failed: {}", e)))?;
+
         tracing::info!(
-            "Would submit checkpoint for bucket {} with {} signatures",
+            "Checkpoint submitted for bucket {} with MMR root 0x{}",
             bucket_id,
-            signatures.len()
+            hex::encode(mmr_root.as_bytes())
         );
         Ok(())
     }

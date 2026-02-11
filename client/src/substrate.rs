@@ -237,6 +237,39 @@ pub mod extrinsics {
         )
     }
 
+    /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
+    pub fn checkpoint(
+        bucket_id: u64,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        signatures: Vec<(AccountId32, Vec<u8>)>,
+    ) -> impl Payload {
+        let sigs: Vec<subxt::dynamic::Value> = signatures
+            .into_iter()
+            .map(|(account, sig)| {
+                subxt::dynamic::Value::unnamed_composite(vec![
+                    subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),
+                    subxt::dynamic::Value::unnamed_variant("Sr25519", vec![
+                        subxt::dynamic::Value::from_bytes(&sig),
+                    ]),
+                ])
+            })
+            .collect();
+
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "checkpoint",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
+                subxt::dynamic::Value::u128(start_seq as u128),
+                subxt::dynamic::Value::u128(leaf_count as u128),
+                subxt::dynamic::Value::unnamed_composite(sigs),
+            ],
+        )
+    }
+
     /// Create a challenge_checkpoint extrinsic payload.
     pub fn challenge_checkpoint(
         bucket_id: u64,

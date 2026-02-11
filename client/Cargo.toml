@@ -34,6 +34,10 @@ path = "src/bin/demo_setup.rs"
 name = "demo_upload"
 path = "src/bin/demo_upload.rs"
 
+[[bin]]
+name = "demo_checkpoint"
+path = "src/bin/demo_checkpoint.rs"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 storage-provider-node = { workspace = true }

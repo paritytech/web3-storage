@@ -197,7 +197,8 @@ High-level design documents and implementation details.
 just setup
 
 # Start blockchain + provider
-just start-services
+just start-chain     # Terminal 1
+just start-provider  # Terminal 2
 
 # Verify setup
 bash scripts/verify-setup.sh
@@ -221,7 +222,7 @@ See: [Payment Calculator](./reference/PAYMENT_CALCULATOR.md) for payment math
 ### Running Tests
 ```bash
 # Basic automated tests
-bash scripts/quick-test.sh
+just demo
 
 # Verify on-chain setup
 bash scripts/verify-setup.sh

@@ -2,37 +2,9 @@
 //!
 //! Usage: cargo run --release -p storage-client --bin demo_upload -- <provider_url> <bucket_id> <chain_ws_url> [data]
 
-use sp_core::H256;
-use storage_primitives::blake2_256;
+use storage_client::{ChunkingStrategy, ClientConfig, StorageUserClient};
 
-#[derive(serde::Serialize)]
-struct UploadNodeRequest {
-    bucket_id: u64,
-    hash: String,
-    data: String,
-    children: Option<Vec<String>>,
-}
-
-#[derive(serde::Deserialize)]
-struct UploadNodeResponse {
-    stored: bool,
-}
-
-#[derive(serde::Serialize)]
-struct CommitRequest {
-    bucket_id: u64,
-    data_roots: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct CommitResponse {
-    mmr_root: String,
-    start_seq: u64,
-    leaf_indices: Vec<u64>,
-    provider_signature: String,
-}
-
-/// Output struct containing all upload results and challenge information.
+/// Output struct containing all upload results.
 #[derive(serde::Serialize)]
 struct UploadResult {
     // Upload info
@@ -48,21 +20,8 @@ struct UploadResult {
     leaf_indices: Vec<u64>,
     provider_signature: String,
 
-    // Challenge info
-    challenge: ChallengeInfo,
-
     // Verification
     verified: bool,
-}
-
-#[derive(serde::Serialize)]
-struct ChallengeInfo {
-    provider_account: String,
-    bucket_id: u64,
-    leaf_index: u64,
-    chunk_count: usize,
-    max_chunk_index: usize,
-    command: String,
 }
 
 #[tokio::main]
@@ -95,80 +54,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Uploading {} bytes...", data.len());
     println!("Data: {:?}", String::from_utf8_lossy(&data));
 
-    // Compute content hash (blake2_256)
-    let content_hash: H256 = blake2_256(&data);
-    let hash_hex = format!("0x{}", hex::encode(content_hash.as_bytes()));
-    println!("Content Hash: {}", hash_hex);
-
-    // Encode data as base64
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-    let data_b64 = BASE64.encode(&data);
-
-    // Upload node
-    let client = reqwest::Client::new();
-    let upload_req = UploadNodeRequest {
-        bucket_id: bucket_id,
-        hash: hash_hex.clone(),
-        data: data_b64,
-        children: None,
-    };
-
-    let resp = client
-        .put(format!("{}/node", provider_url))
-        .json(&upload_req)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await?;
-        eprintln!("Upload failed: {} - {}", status, body);
-        return Err(format!("Upload failed: {}", status).into());
-    }
-
-    let upload_resp: UploadNodeResponse = resp.json().await?;
-    println!("Stored: {}", upload_resp.stored);
-
-    // Commit to MMR
-    println!("\nCommitting to MMR...");
-    let commit_req = CommitRequest {
-        bucket_id: bucket_id,
-        data_roots: vec![hash_hex.clone()],
-    };
-
-    let resp = client
-        .post(format!("{}/commit", provider_url))
-        .json(&commit_req)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await?;
-        eprintln!("Commit failed: {} - {}", status, body);
-        return Err(format!("Commit failed: {}", status).into());
-    }
-
-    let commit_resp: CommitResponse = resp.json().await?;
-    println!("MMR Root: {}", commit_resp.mmr_root);
-    println!("Start Seq: {}", commit_resp.start_seq);
-    println!("Leaf Indices: {:?}", commit_resp.leaf_indices);
-
-    // Verify we can read it back using the client library
-    println!("\nVerifying data using StorageUserClient...");
-
-    use storage_client::{StorageUserClient, ClientConfig};
-
+    // Create StorageUserClient
     let config = ClientConfig {
         chain_ws_url: chain_ws_url.to_string(),
         provider_urls: vec![provider_url.to_string()],
         timeout_secs: 30,
         enable_retries: true,
     };
+    let client = StorageUserClient::new(config)?;
 
-    let storage_client = StorageUserClient::new(config)?;
+    // Upload via StorageUserClient
+    let data_root = client.upload(bucket_id, &data, ChunkingStrategy::default()).await?;
+    let hash_hex = format!("0x{}", hex::encode(data_root.as_bytes()));
+    println!("Data Root: {}", hash_hex);
 
-    let verified = match storage_client.read_node_verified(&content_hash).await {
+    // Commit to MMR
+    println!("\nCommitting to MMR...");
+    let commit_resp = client.commit(bucket_id, vec![data_root]).await?;
+    println!("MMR Root: {}", commit_resp.mmr_root);
+    println!("Start Seq: {}", commit_resp.start_seq);
+    println!("Leaf Indices: {:?}", commit_resp.leaf_indices);
+
+    // Verify we can read it back
+    println!("\nVerifying data using StorageUserClient...");
+    let verified = match client.download(&data_root, 0, data.len() as u64).await {
         Ok(downloaded_data) => {
             println!("Data verified successfully!");
             println!("Downloaded: {:?}", String::from_utf8_lossy(&downloaded_data));
@@ -187,21 +96,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Build challenge information
-    // Provider account (Alice is the default provider from demo-setup)
-    let provider_account = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string();
-
-    // Calculate chunk count (256 KiB chunks)
-    let chunk_size = 256 * 1024;
-    let num_chunks = (data.len() + chunk_size - 1) / chunk_size;
-    let leaf_index = *commit_resp.leaf_indices.first().unwrap_or(&0);
-
-    let challenge_command = format!(
-        "just demo-challenge CHAIN_WS=\"{}\" BUCKET_ID=\"{}\" PROVIDER=\"{}\" LEAF=\"{}\" CHUNK=\"0\" MMR_ROOT=\"{}\" START_SEQ=\"{}\" SIGNATURE=\"{}\"",
-        chain_ws_url, bucket_id, provider_account, leaf_index,
-        commit_resp.mmr_root, commit_resp.start_seq, commit_resp.provider_signature
-    );
-
     let result = UploadResult {
         provider_url: provider_url.to_string(),
         chain_ws_url: chain_ws_url.to_string(),
@@ -212,14 +106,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         start_seq: commit_resp.start_seq,
         leaf_indices: commit_resp.leaf_indices,
         provider_signature: commit_resp.provider_signature,
-        challenge: ChallengeInfo {
-            provider_account,
-            bucket_id,
-            leaf_index,
-            chunk_count: num_chunks,
-            max_chunk_index: num_chunks.saturating_sub(1),
-            command: challenge_command,
-        },
         verified,
     };
 

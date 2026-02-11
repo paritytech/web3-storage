@@ -45,8 +45,9 @@ cargo test -p storage-provider-node
 cargo test -p storage-client
 
 # Run integration tests (requires running services)
-just start-services  # Terminal 1
-bash scripts/quick-test.sh  # Terminal 2
+just start-chain     # Terminal 1
+just start-provider  # Terminal 2
+just demo  # Terminal 3
 
 # Clippy linting
 cargo clippy --all-targets --all-features --workspace -- -D warnings
@@ -61,10 +62,7 @@ cargo fmt --all -- --check
 # One-time setup (downloads binaries, builds project)
 just setup
 
-# Start blockchain + provider (easiest)
-just start-services
-
-# Start blockchain only
+# Start blockchain
 just start-chain
 
 # Start provider node manually
@@ -80,7 +78,7 @@ curl http://localhost:3000/health
 bash scripts/verify-setup.sh
 
 # Run automated tests
-bash scripts/quick-test.sh
+just demo
 ```
 
 ## Architecture
@@ -148,9 +146,9 @@ web3-storage/
 
 ### Quick Start
 1. **Setup**: `just setup` (one-time, downloads binaries and builds)
-2. **Start**: `just start-services` (starts blockchain + provider)
+2. **Start**: `just start-chain` then `just start-provider` (in separate terminals)
 3. **Configure**: Follow [Quick Start Guide](docs/getting-started/QUICKSTART.md) for on-chain setup
-4. **Test**: `bash scripts/quick-test.sh`
+4. **Test**: `just demo`
 
 ### Development Cycle
 1. **Format code**: `cargo fmt --all`

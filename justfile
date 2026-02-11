@@ -208,9 +208,9 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
         exit 1
     fi
 
-    # Extract challenge parameters
-    LEAF_INDEX=$(echo "$JSON" | jq -r '.challenge.leaf_index')
-    PROVIDER=$(echo "$JSON" | jq -r '.challenge.provider_account')
+    # Extract challenge parameters from upload JSON
+    LEAF_INDEX=$(echo "$JSON" | jq -r '.leaf_indices[0]')
+    PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
     MMR_ROOT=$(echo "$JSON" | jq -r '.mmr_root')
     START_SEQ=$(echo "$JSON" | jq -r '.start_seq')
     SIGNATURE=$(echo "$JSON" | jq -r '.provider_signature')
@@ -228,6 +228,14 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
 
     cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
 
+    echo ""
+    echo "=== Step 4: Submit on-chain checkpoint ==="
+    cargo run --release -p storage-client --bin demo_checkpoint -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
+
+    echo ""
+    echo "=== Step 5: Challenge provider (on-chain checkpoint) ==="
+    cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
+
 # Generate chain spec
 generate-chain-spec: build
     ./scripts/build-chain-spec.sh > chain-spec.json
@@ -236,4 +244,4 @@ generate-chain-spec: build
 # Setup development environment (download binaries + build)
 setup: download-binaries build
     @echo ""
-    @echo "Setup complete! Run 'just start-services' to start the local network."
+    @echo "Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network."

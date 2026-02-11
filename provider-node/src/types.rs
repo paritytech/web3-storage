@@ -122,6 +122,16 @@ pub struct CommitmentResponse {
     pub provider_signature: String,
 }
 
+/// Response with checkpoint-compatible signature (signs with real leaf_count).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointSignatureResponse {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────

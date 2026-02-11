@@ -8,11 +8,9 @@ This guide provides step-by-step commands to manually test the entire system fro
 # One-time setup (downloads binaries + builds)
 just setup
 
-# Start everything (zombienet + provider)
-just start-services
-
-# Or start services separately
+# Start services
 just start-chain              # Terminal 1
+just start-provider           # Terminal 2
 just health                   # Check provider health
 
 # Check prerequisites
@@ -62,7 +60,7 @@ polkadot downloaded to .bin/polkadot
 All binaries downloaded to .bin/
 Building project...
 Finished `release` profile [optimized] target(s)
-Setup complete! Run 'just start-services' to start the local network.
+Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network.
 ```
 
 ### 3. Verify Prerequisites
@@ -112,15 +110,7 @@ ls -lh target/release/storage-provider-node
 
 ## Step 2: Start the Blockchain Network
 
-### Option A: Start Everything Together (Easiest)
-
-```bash
-just start-services
-```
-
-This starts both zombienet and a provider node! Keep this running and skip to Step 7.
-
-### Option B: Start Services Separately
+### Start Services
 
 **Terminal 1 - Start Zombienet**
 

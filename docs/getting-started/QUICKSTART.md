@@ -36,40 +36,12 @@ Downloading binaries...
 All binaries downloaded to .bin/
 Building project...
 Finished `release` profile [optimized]
-Setup complete! Run 'just start-services' to start the local network.
+Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network.
 ```
 
 ## Testing Steps
 
-### Option A: Start Everything Together (Easiest)
-
-```bash
-just start-services
-```
-
-This starts both the blockchain network (zombienet) and a provider node automatically!
-
-**Expected output:**
-```
-=== Starting Local Development Environment ===
-
-Web UIs (once ready):
-  Relay chain:    https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900
-  Parachain:      https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
-  Provider health: http://127.0.0.1:3000/health
-
-Waiting for parachain to be ready...
-Parachain is ready!
-
-Starting provider node...
-Storage Provider Node starting...
-Provider ID: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-HTTP API listening on: http://0.0.0.0:3000
-```
-
-**⚠️ Keep this terminal running!**
-
-### Option B: Start Services Separately
+### Start Services
 
 **Terminal 1: Start Blockchain Network**
 
@@ -118,7 +90,7 @@ curl http://localhost:3000/health
 ### Run Quick Tests
 
 ```bash
-bash scripts/quick-test.sh
+just demo
 ```
 
 ---
@@ -208,7 +180,7 @@ The `maxPayment` must be ≥ calculated payment. Using `600000000000000000` give
 ### 5. Now Run Quick Tests Again
 
 ```bash
-bash scripts/quick-test.sh
+just demo
 ```
 
 This time all tests should pass! ✅

@@ -9,8 +9,10 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{extrinsics, SubstrateClient};
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
+use subxt::blocks::ExtrinsicEvents;
+use subxt::dynamic::At;
+use subxt::PolkadotConfig;
 
 /// Client for challengers (third parties who verify data integrity).
 pub struct ChallengerClient {
@@ -113,13 +115,14 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
 
-        tracing::info!("Challenge created successfully");
+        let challenge_id = Self::extract_challenge_id(&events)?;
+        tracing::info!(
+            "Challenge created: deadline={}, index={}",
+            challenge_id.deadline,
+            challenge_id.index
+        );
 
-        // TODO: Extract actual challenge ID from events
-        Ok(ChallengeId {
-            deadline: 1000,
-            index: 0,
-        })
+        Ok(challenge_id)
     }
 
     /// Challenge a provider using their off-chain commitment signature.
@@ -173,19 +176,20 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
 
-        // Wait for finalization
-        let _events = tx_progress
+        // Wait for finalization and extract challenge ID from events
+        let events = tx_progress
             .wait_for_finalized_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
 
-        tracing::info!("Off-chain challenge created successfully");
+        let challenge_id = Self::extract_challenge_id(&events)?;
+        tracing::info!(
+            "Off-chain challenge created: deadline={}, index={}",
+            challenge_id.deadline,
+            challenge_id.index
+        );
 
-        // TODO: Extract actual challenge ID from events
-        Ok(ChallengeId {
-            deadline: 1000,
-            index: 0,
-        })
+        Ok(challenge_id)
     }
 
     /// Challenge a replica provider based on their sync confirmation.
@@ -309,6 +313,63 @@ impl ChallengerClient {
         // - Providers in buckets with valuable data
 
         Ok(vec![])
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Internal Helpers
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Extract ChallengeId from ChallengeCreated event in finalized transaction events.
+    fn extract_challenge_id(
+        events: &ExtrinsicEvents<PolkadotConfig>,
+    ) -> ClientResult<ChallengeId> {
+        for event in events.iter() {
+            let event = event.map_err(|e| {
+                ClientError::Chain(format!("Failed to decode event: {}", e))
+            })?;
+
+            if event.pallet_name() == "StorageProvider"
+                && event.variant_name() == "ChallengeCreated"
+            {
+                let fields = event.field_values().map_err(|e| {
+                    ClientError::Chain(format!("Failed to decode event fields: {}", e))
+                })?;
+
+                // fields is a scale_value::Value — navigate the composite
+                // ChallengeCreated { challenge_id: { deadline, index }, ... }
+                let challenge_id_val = fields
+                    .at("challenge_id")
+                    .ok_or_else(|| {
+                        ClientError::Chain(
+                            "ChallengeCreated event missing challenge_id field".to_string(),
+                        )
+                    })?;
+
+                let deadline = challenge_id_val
+                    .at("deadline")
+                    .and_then(|v| v.as_u128())
+                    .ok_or_else(|| {
+                        ClientError::Chain(
+                            "ChallengeCreated: cannot parse deadline".to_string(),
+                        )
+                    })? as u32;
+
+                let index = challenge_id_val
+                    .at("index")
+                    .and_then(|v| v.as_u128())
+                    .ok_or_else(|| {
+                        ClientError::Chain(
+                            "ChallengeCreated: cannot parse index".to_string(),
+                        )
+                    })? as u16;
+
+                return Ok(ChallengeId { deadline, index });
+            }
+        }
+
+        Err(ClientError::Chain(
+            "ChallengeCreated event not found in transaction events".to_string(),
+        ))
     }
 }
 

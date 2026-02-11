@@ -32,6 +32,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/read", get(read_chunks))
         // Commitment and proofs
         .route("/commitment", get(get_commitment))
+        .route("/checkpoint-signature", get(get_checkpoint_signature))
         .route("/mmr_proof", get(get_mmr_proof))
         .route("/chunk_proof", get(get_chunk_proof))
         // Bucket operations
@@ -283,6 +284,36 @@ async fn get_commitment(
         mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count(),
+        provider_signature: signature,
+    }))
+}
+
+/// Return a checkpoint-compatible signature (signs with real leaf_count).
+///
+/// Unlike `/commitment` which signs with leaf_count=0 for challenge_offchain,
+/// this endpoint signs with the actual leaf_count so the signature can be used
+/// in the on-chain `checkpoint` extrinsic.
+async fn get_checkpoint_signature(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<CommitmentQuery>,
+) -> Result<Json<CheckpointSignatureResponse>, Error> {
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    let leaf_count = bucket.leaf_count();
+
+    // Sign with real leaf_count for on-chain checkpoint verification
+    let payload =
+        CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, leaf_count);
+    let signature = state.sign(&payload.encode());
+
+    Ok(Json(CheckpointSignatureResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        start_seq: bucket.start_seq,
+        leaf_count,
         provider_signature: signature,
     }))
 }

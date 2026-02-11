@@ -324,6 +324,38 @@ impl StorageUserClient {
             .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 
+    /// Get a checkpoint-compatible signature from the provider.
+    ///
+    /// Unlike `commit` which signs with `leaf_count=0` (for `challenge_offchain`),
+    /// this returns a signature over the real `leaf_count`, suitable for submitting
+    /// an on-chain checkpoint via the `checkpoint` extrinsic.
+    pub async fn get_checkpoint_signature(
+        &self,
+        bucket_id: BucketId,
+    ) -> ClientResult<CheckpointSignatureResponse> {
+        let provider_url = self.base.get_provider_url()?;
+
+        let response = self
+            .base
+            .http
+            .get(format!("{}/checkpoint-signature", provider_url))
+            .query(&[("bucket_id", bucket_id.to_string())])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Api(format!(
+                "Checkpoint signature request failed: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Verification & Monitoring
     // ═════════════════════════════════════════════════════════════════════════
@@ -549,4 +581,13 @@ struct NodeResponse {
     hash: String,
     data: String,
     children: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CheckpointSignatureResponse {
+    pub bucket_id: u64,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
 }

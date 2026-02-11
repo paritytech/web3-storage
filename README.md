@@ -23,10 +23,8 @@ cargo install just
 just setup
 
 # Start blockchain network + provider node
-just start-services
-# Alternatively:
-# just start-chain
-# just start-provider
+just start-chain     # Terminal 1
+just start-provider  # Terminal 2
 
 # Terminal 2:
 # Setup (register provider, create bucket, establish agreement)
@@ -69,7 +67,8 @@ just --list                  # Show all available commands
 just check                   # Verify prerequisites
 just build                   # Build the project
 just start-chain             # Start blockchain only
-just start-services          # Start blockchain + provider
+just start-chain             # Start blockchain
+just start-provider          # Start provider node
 just health                  # Check provider health
 ```
 
@@ -160,8 +159,9 @@ just build
 cargo test
 
 # Integration tests with running system
-just start-services      # Terminal 1
-bash scripts/quick-test.sh  # Terminal 2
+just start-chain            # Terminal 1
+just start-provider         # Terminal 2
+just demo  # Terminal 3
 ```
 
 ### Provider Node Configuration
