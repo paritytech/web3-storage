@@ -8,11 +8,9 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::extrinsics;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use subxt::tx::TxProgress;
 
 /// Client for storage providers.
 pub struct ProviderClient {
@@ -198,7 +196,7 @@ impl ProviderClient {
         &self,
         bucket_id: BucketId,
         mmr_roots: [Option<H256>; 7],
-        signature: Vec<u8>,
+        _signature: Vec<u8>,
     ) -> ClientResult<()> {
         // TODO: Submit extrinsic
         tracing::info!(

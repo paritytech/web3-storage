@@ -1,7 +1,10 @@
 //! HTTP API handlers for the provider node.
 
+use crate::checkpoint_coordinator::{
+    CheckpointDutyQuery, CheckpointDutyResponse, SignProposalRequest, SignProposalResponse,
+};
 use crate::error::Error;
-use crate::storage::{hex_decode, hex_encode, Storage};
+use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
@@ -11,9 +14,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use sp_core::H256;
+use sp_core::{Pair, H256};
 use std::sync::Arc;
-use storage_primitives::CommitmentPayload;
+use storage_primitives::{CheckpointProposal, CommitmentPayload};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -42,6 +45,12 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
+        // Checkpoint coordination
+        .route("/checkpoint/sign", post(sign_checkpoint_proposal))
+        .route("/checkpoint/duty", get(get_checkpoint_duty))
+        // Replica sync status
+        .route("/replica/historical_roots", get(get_historical_roots))
+        .route("/replica/sync_status", get(get_replica_sync_status))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -469,4 +478,152 @@ async fn fetch_nodes(
     }
 
     Ok(Json(FetchNodesResponse { nodes }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Checkpoint Coordination
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sign a checkpoint proposal from another provider.
+///
+/// Verifies that the proposal matches our local state and returns a signature
+/// if agreed, or disagreement info if our state differs.
+async fn sign_checkpoint_proposal(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<SignProposalRequest>,
+) -> Result<Json<SignProposalResponse>, Error> {
+    // Get our local bucket state
+    let bucket = state
+        .storage
+        .get_bucket(request.bucket_id)
+        .ok_or(Error::BucketNotFound(request.bucket_id))?;
+
+    let local_mmr_root = format!("0x{}", hex_encode(bucket.mmr_root.as_bytes()));
+
+    // Check if we agree with the proposal
+    let proposed_root_bytes = hex_decode(&request.mmr_root).map_err(|_| Error::InvalidHash {
+        expected: request.mmr_root.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let proposed_root = H256::from_slice(&proposed_root_bytes);
+
+    // We agree if MMR roots match and sequence numbers are compatible
+    let agreed = bucket.mmr_root == proposed_root
+        && bucket.start_seq == request.start_seq
+        && bucket.leaf_count() == request.leaf_count;
+
+    if !agreed {
+        return Ok(Json(SignProposalResponse {
+            signer: state.provider_id.clone(),
+            signature: String::new(),
+            agreed: false,
+            local_mmr_root: Some(local_mmr_root),
+        }));
+    }
+
+    // Sign the proposal
+    let proposal = CheckpointProposal::new(
+        request.bucket_id,
+        proposed_root,
+        request.start_seq,
+        request.leaf_count,
+        request.window,
+    );
+    let encoded = proposal.encode();
+
+    let signature = match &state.keypair {
+        Some(kp) => {
+            let sig = kp.sign(&encoded);
+            format!("0x{}", hex::encode(sig.0))
+        }
+        None => {
+            // No keypair configured - return placeholder
+            format!("0x{}", hex::encode([0u8; 64]))
+        }
+    };
+
+    Ok(Json(SignProposalResponse {
+        signer: state.provider_id.clone(),
+        signature,
+        agreed: true,
+        local_mmr_root: Some(local_mmr_root),
+    }))
+}
+
+/// Get checkpoint duty information for a bucket.
+///
+/// Returns the current state that would be used for a checkpoint.
+async fn get_checkpoint_duty(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<CheckpointDutyQuery>,
+) -> Result<Json<CheckpointDutyResponse>, Error> {
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    // We're ready if we have data committed
+    let ready = bucket.leaf_count() > 0;
+
+    Ok(Json(CheckpointDutyResponse {
+        bucket_id: query.bucket_id,
+        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        start_seq: bucket.start_seq,
+        leaf_count: bucket.leaf_count(),
+        ready,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync Endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Get historical roots for a bucket.
+///
+/// Returns the current root (position 0) and historical roots (positions 1-6).
+/// Note: Provider nodes don't track historical roots; only the chain does.
+async fn get_historical_roots(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<HistoricalRootsQuery>,
+) -> Result<Json<HistoricalRootsResponse>, Error> {
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    Ok(Json(HistoricalRootsResponse {
+        bucket_id: query.bucket_id,
+        current_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        // Provider node doesn't track historical roots - chain does
+        historical_roots: [
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ],
+        snapshot_block: 0, // Would need chain query for actual block
+    }))
+}
+
+/// Get replica sync status for a bucket.
+///
+/// Returns the local MMR state and sync status.
+async fn get_replica_sync_status(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<BucketSyncStatusQuery>,
+) -> Result<Json<BucketSyncStatusResponse>, Error> {
+    let bucket = state
+        .storage
+        .get_bucket(query.bucket_id)
+        .ok_or(Error::BucketNotFound(query.bucket_id))?;
+
+    Ok(Json(BucketSyncStatusResponse {
+        bucket_id: query.bucket_id,
+        local_mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        local_leaf_count: bucket.leaf_count(),
+        last_sync_block: None, // Would be tracked by coordinator
+        syncing: false,        // Would check coordinator state
+    }))
 }

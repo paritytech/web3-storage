@@ -96,7 +96,10 @@
 pub mod admin;
 pub mod base;
 pub mod challenger;
+pub mod checkpoint;
+pub mod checkpoint_persistence;
 pub mod discovery;
+pub mod event_subscription;
 pub mod provider;
 pub mod storage_user;
 pub mod substrate;
@@ -106,7 +109,23 @@ pub mod verification;
 pub use admin::AdminClient;
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
+pub use checkpoint::{
+    AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
+    BucketCheckpointStatus, ChallengeEvidence, ChallengeRecommendation, ChallengeReason,
+    CheckpointCallback, CheckpointConfig, CheckpointLoopCommand, CheckpointLoopHandle,
+    CheckpointManager, CheckpointMetrics, CheckpointResult, CommitmentCollection,
+    ConflictResolution, ConflictType, ConflictingProvider, FailedChallenge, ProviderConflict,
+    ProviderHealthHistory, ProviderInfo, ProviderStatus, SubmittedChallenge,
+};
+pub use checkpoint_persistence::{
+    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
+    PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
+};
 pub use discovery::{DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements};
+pub use event_subscription::{
+    subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
+    EventCallback, EventFilter, EventStream, EventSubscriber, StorageEvent, SubscriptionHandle,
+};
 pub use provider::ProviderClient;
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
@@ -436,13 +455,14 @@ struct ReadResponse {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ChunkData {
     hash: String,
     data: String,
     proof: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CommitmentResponse {
     pub bucket_id: BucketId,
     pub mmr_root: String,

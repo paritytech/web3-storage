@@ -86,6 +86,11 @@ impl pallet_storage_provider::Config for Test {
     type ChallengeTimeout = ConstU64<100>;
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<100>;
+    // Provider-initiated checkpoint config
+    type DefaultCheckpointInterval = ConstU64<10>; // 10 blocks for testing
+    type DefaultCheckpointGrace = ConstU64<5>;     // 5 blocks grace
+    type CheckpointReward = ConstU64<10>;          // 10 units reward
+    type CheckpointMissPenalty = ConstU64<50>;     // 50 units penalty
 }
 
 /// Build test externalities with default balances.

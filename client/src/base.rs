@@ -9,7 +9,6 @@
 use crate::substrate::SubstrateClient;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -36,6 +35,9 @@ pub enum ClientError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("Storage error: {0}")]
+    Storage(String),
 }
 
 /// Configuration for connecting to the storage system.
