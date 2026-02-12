@@ -467,7 +467,6 @@ impl cumulus_pallet_weight_reclaim::Config for Runtime {
 }
 
 impl pallet_storage_provider::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
