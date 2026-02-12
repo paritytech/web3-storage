@@ -115,6 +115,22 @@ pub mod pallet {
         /// Maximum duration for agreement requests before expiry.
         #[pallet::constant]
         type RequestTimeout: Get<BlockNumberFor<Self>>;
+
+        /// Default interval between provider-initiated checkpoints (e.g., 100 blocks).
+        #[pallet::constant]
+        type DefaultCheckpointInterval: Get<BlockNumberFor<Self>>;
+
+        /// Default grace period for checkpoint leader (e.g., 20 blocks).
+        #[pallet::constant]
+        type DefaultCheckpointGrace: Get<BlockNumberFor<Self>>;
+
+        /// Reward paid to provider for submitting a checkpoint.
+        #[pallet::constant]
+        type CheckpointReward: Get<BalanceOf<Self>>;
+
+        /// Penalty for missing a checkpoint window (slashed from provider stake).
+        #[pallet::constant]
+        type CheckpointMissPenalty: Get<BalanceOf<Self>>;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -167,6 +183,45 @@ pub mod pallet {
     #[pallet::getter(fn challenges)]
     pub type Challenges<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Provider-Initiated Checkpoint Storage
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Checkpoint window configuration per bucket.
+    /// When None, bucket uses runtime defaults.
+    #[pallet::storage]
+    pub type CheckpointConfigs<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        BucketId,
+        storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>>,
+    >;
+
+    /// Last successful checkpoint window per bucket.
+    /// Starts at 0 and increments with each successful provider checkpoint.
+    #[pallet::storage]
+    pub type LastCheckpointWindow<T: Config> =
+        StorageMap<_, Blake2_128Concat, BucketId, u64, ValueQuery>;
+
+    /// Pending checkpoint rewards per (bucket, provider).
+    /// Accumulates rewards for providers who submit or sign checkpoints.
+    #[pallet::storage]
+    pub type CheckpointRewards<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BucketId,
+        Blake2_128Concat,
+        T::AccountId,
+        BalanceOf<T>,
+        ValueQuery,
+    >;
+
+    /// Checkpoint pool balance per bucket.
+    /// Funded by clients to pay for provider-initiated checkpoints.
+    #[pallet::storage]
+    pub type CheckpointPool<T: Config> =
+        StorageMap<_, Blake2_128Concat, BucketId, BalanceOf<T>, ValueQuery>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Types
@@ -427,6 +482,9 @@ pub mod pallet {
             bucket_id: BucketId,
             frozen_start_seq: u64,
         },
+        BucketDeleted {
+            bucket_id: BucketId,
+        },
         MemberSet {
             bucket_id: BucketId,
             member: T::AccountId,
@@ -554,6 +612,38 @@ pub mod pallet {
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
         },
+
+        // Provider-initiated checkpoint events
+        ProviderCheckpointSubmitted {
+            bucket_id: BucketId,
+            mmr_root: H256,
+            window: u64,
+            leader: T::AccountId,
+            signers: Vec<T::AccountId>,
+            reward: BalanceOf<T>,
+        },
+        CheckpointConfigUpdated {
+            bucket_id: BucketId,
+            interval: BlockNumberFor<T>,
+            grace_period: BlockNumberFor<T>,
+            enabled: bool,
+        },
+        CheckpointMissPenalized {
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            window: u64,
+            penalty: BalanceOf<T>,
+        },
+        CheckpointRewardClaimed {
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            amount: BalanceOf<T>,
+        },
+        CheckpointPoolFunded {
+            bucket_id: BucketId,
+            funder: T::AccountId,
+            amount: BalanceOf<T>,
+        },
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -635,6 +725,26 @@ pub mod pallet {
         ArithmeticOverflow,
         InvalidMultiaddr,
         InvalidPublicKey,
+
+        // Provider-initiated checkpoint errors
+        /// Provider-initiated checkpoints are disabled for this bucket.
+        ProviderCheckpointsDisabled,
+        /// Caller is not the designated checkpoint leader for this window.
+        NotCheckpointLeader,
+        /// Checkpoint window has not started yet.
+        CheckpointWindowNotStarted,
+        /// Checkpoint has already been submitted for this window.
+        CheckpointAlreadySubmitted,
+        /// Invalid checkpoint window number.
+        InvalidCheckpointWindow,
+        /// Insufficient funds in checkpoint pool to pay reward.
+        InsufficientCheckpointPool,
+        /// No missed checkpoint to report.
+        NoMissedCheckpoint,
+        /// Cannot report miss while still within grace period.
+        WithinGracePeriod,
+        /// No rewards to claim.
+        NoRewardsToClaim,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1919,6 +2029,351 @@ pub mod pallet {
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // Provider-Initiated Checkpoints
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// Submit a provider-initiated checkpoint.
+        ///
+        /// Providers autonomously coordinate checkpoints without requiring
+        /// clients to be online. Uses deterministic leader election with
+        /// fallback to any primary provider after grace period.
+        ///
+        /// Parameters:
+        /// - `bucket_id`: The bucket to checkpoint
+        /// - `mmr_root`: MMR root that providers agreed on
+        /// - `start_seq`: Starting sequence number
+        /// - `leaf_count`: Number of leaves in the MMR
+        /// - `window`: Checkpoint window number (prevents replay)
+        /// - `signatures`: Provider signatures over the checkpoint proposal
+        #[pallet::call_index(32)]
+        #[pallet::weight(Weight::from_parts(50_000, 0))]
+        pub fn provider_checkpoint(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            mmr_root: H256,
+            start_seq: u64,
+            leaf_count: u64,
+            window: u64,
+            signatures: BoundedVec<
+                (T::AccountId, sp_runtime::MultiSignature),
+                T::MaxPrimaryProviders,
+            >,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Get checkpoint config
+            let config = Self::get_checkpoint_config(bucket_id);
+            ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
+
+            // Get current block and calculate current window
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let current_window = Self::calculate_window(current_block, config.interval);
+
+            // Validate window
+            ensure!(window == current_window, Error::<T>::InvalidCheckpointWindow);
+
+            // Check if already submitted for this window
+            let last_window = LastCheckpointWindow::<T>::get(bucket_id);
+            ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+
+            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+
+                let num_providers = bucket.primary_providers.len() as u32;
+                ensure!(num_providers > 0, Error::<T>::MinProvidersNotMet);
+
+                // Calculate expected leader
+                let leader_idx = Self::calculate_leader_index(bucket_id, window, num_providers);
+                let expected_leader = bucket
+                    .primary_providers
+                    .get(leader_idx as usize)
+                    .ok_or(Error::<T>::ProviderNotInSnapshot)?;
+
+                // Check caller authorization
+                let within_grace = Self::is_within_grace_period(current_block, window, &config);
+                if within_grace {
+                    // Only leader can submit during grace period
+                    ensure!(&who == expected_leader, Error::<T>::NotCheckpointLeader);
+                } else {
+                    // After grace period, any primary provider can submit (fallback)
+                    ensure!(
+                        bucket.primary_providers.contains(&who),
+                        Error::<T>::ProviderNotInSnapshot
+                    );
+                }
+
+                // Check frozen constraint
+                if let Some(frozen_start) = bucket.frozen_start_seq {
+                    ensure!(
+                        start_seq >= frozen_start,
+                        Error::<T>::SnapshotViolatesFrozen
+                    );
+                }
+
+                // Verify signatures using CheckpointProposal
+                let proposal = storage_primitives::CheckpointProposal::new(
+                    bucket_id,
+                    mmr_root,
+                    start_seq,
+                    leaf_count,
+                    window,
+                );
+                let encoded_proposal = proposal.encode();
+
+                // Create bitfield using Vec<u8>
+                let num_bytes = (num_providers as usize + 7) / 8;
+                let mut primary_signers = vec![0u8; num_bytes];
+                let mut signing_count = 0usize;
+                let mut signing_providers = Vec::new();
+
+                for (signer, signature) in signatures.iter() {
+                    // Find signer in primary_providers
+                    let idx = bucket
+                        .primary_providers
+                        .iter()
+                        .position(|p| p == signer)
+                        .ok_or(Error::<T>::ProviderNotInSnapshot)?;
+
+                    // Verify the signature
+                    Self::verify_signature(signature, &encoded_proposal, signer)?;
+
+                    // Set bit at position idx
+                    let byte_idx = idx / 8;
+                    let bit_idx = idx % 8;
+                    primary_signers[byte_idx] |= 1 << bit_idx;
+                    signing_count += 1;
+                    signing_providers.push(signer.clone());
+                }
+
+                // Check min_providers threshold
+                ensure!(
+                    signing_count >= bucket.min_providers as usize,
+                    Error::<T>::InsufficientSignatures
+                );
+
+                // Update historical roots
+                Self::update_historical_roots(bucket, current_block, mmr_root);
+
+                // Update bucket snapshot
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root,
+                    start_seq,
+                    leaf_count,
+                    checkpoint_block: current_block,
+                    primary_signers,
+                });
+                bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
+
+                // Update last checkpoint window
+                LastCheckpointWindow::<T>::insert(bucket_id, window);
+
+                // Pay reward from pool to submitter
+                let reward = T::CheckpointReward::get();
+                let pool_balance = CheckpointPool::<T>::get(bucket_id);
+
+                let actual_reward = if pool_balance >= reward {
+                    CheckpointPool::<T>::mutate(bucket_id, |balance| {
+                        *balance = balance.saturating_sub(reward);
+                    });
+                    // Unreserve from pool and transfer to submitter
+                    // Note: Pool funds are reserved by funder, we pay submitter directly
+                    CheckpointRewards::<T>::mutate(bucket_id, &who, |pending| {
+                        *pending = pending.saturating_add(reward);
+                    });
+                    reward
+                } else {
+                    // Pool empty - checkpoint still valid but no reward
+                    Zero::zero()
+                };
+
+                Self::deposit_event(Event::ProviderCheckpointSubmitted {
+                    bucket_id,
+                    mmr_root,
+                    window,
+                    leader: who.clone(),
+                    signers: signing_providers,
+                    reward: actual_reward,
+                });
+
+                Ok(())
+            })
+        }
+
+        /// Configure checkpoint window settings for a bucket.
+        ///
+        /// Only bucket admin can configure. Setting enabled=false disables
+        /// provider-initiated checkpoints (client-initiated still work).
+        #[pallet::call_index(33)]
+        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        pub fn configure_checkpoint_window(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            interval: BlockNumberFor<T>,
+            grace_period: BlockNumberFor<T>,
+            enabled: bool,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            Self::ensure_admin(&who, &bucket)?;
+
+            let config = storage_primitives::CheckpointWindowConfig {
+                interval,
+                grace_period,
+                enabled,
+            };
+
+            CheckpointConfigs::<T>::insert(bucket_id, config);
+
+            Self::deposit_event(Event::CheckpointConfigUpdated {
+                bucket_id,
+                interval,
+                grace_period,
+                enabled,
+            });
+
+            Ok(())
+        }
+
+        /// Report a missed checkpoint window and penalize the leader.
+        ///
+        /// Can only be called after the checkpoint window has fully passed
+        /// (beyond grace period) and no checkpoint was submitted.
+        /// Reporter receives a portion of the penalty.
+        #[pallet::call_index(34)]
+        #[pallet::weight(Weight::from_parts(20_000, 0))]
+        pub fn report_missed_checkpoint(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            window: u64,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            let config = Self::get_checkpoint_config(bucket_id);
+
+            ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
+
+            // Get current window
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let current_window = Self::calculate_window(current_block, config.interval);
+
+            // Can only report past windows
+            ensure!(window < current_window, Error::<T>::InvalidCheckpointWindow);
+
+            // Check that window wasn't submitted
+            let last_window = LastCheckpointWindow::<T>::get(bucket_id);
+            ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+
+            // Ensure we're past the grace period of the reported window
+            let window_end = Self::window_start_block(window.saturating_add(1), config.interval);
+            ensure!(current_block > window_end, Error::<T>::WithinGracePeriod);
+
+            // Calculate leader for the missed window
+            let num_providers = bucket.primary_providers.len() as u32;
+            ensure!(num_providers > 0, Error::<T>::MinProvidersNotMet);
+
+            let leader_idx = Self::calculate_leader_index(bucket_id, window, num_providers);
+            let leader = bucket
+                .primary_providers
+                .get(leader_idx as usize)
+                .ok_or(Error::<T>::ProviderNotInSnapshot)?
+                .clone();
+
+            // Apply penalty to leader's stake
+            let penalty = T::CheckpointMissPenalty::get();
+            let (_, remaining) = T::Currency::slash_reserved(&leader, penalty);
+            let actual_penalty = penalty.saturating_sub(remaining);
+
+            // Give reporter 10% of penalty
+            let reporter_reward = actual_penalty / 10u32.into();
+            if !reporter_reward.is_zero() {
+                let _ = T::Currency::deposit_creating(&who, reporter_reward);
+            }
+
+            // Update provider stats
+            Providers::<T>::mutate(&leader, |maybe_provider| {
+                if let Some(provider) = maybe_provider {
+                    provider.stake = provider.stake.saturating_sub(actual_penalty);
+                }
+            });
+
+            // Update last checkpoint window to prevent re-reporting
+            LastCheckpointWindow::<T>::insert(bucket_id, window);
+
+            Self::deposit_event(Event::CheckpointMissPenalized {
+                bucket_id,
+                provider: leader,
+                window,
+                penalty: actual_penalty,
+            });
+
+            Ok(())
+        }
+
+        /// Claim accumulated checkpoint rewards.
+        ///
+        /// Providers accumulate rewards for submitting checkpoints.
+        /// This transfers accumulated rewards to the provider.
+        #[pallet::call_index(35)]
+        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        pub fn claim_checkpoint_rewards(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            let rewards = CheckpointRewards::<T>::take(bucket_id, &who);
+            ensure!(!rewards.is_zero(), Error::<T>::NoRewardsToClaim);
+
+            // Transfer rewards to provider
+            let _ = T::Currency::deposit_creating(&who, rewards);
+
+            Self::deposit_event(Event::CheckpointRewardClaimed {
+                bucket_id,
+                provider: who,
+                amount: rewards,
+            });
+
+            Ok(())
+        }
+
+        /// Fund the checkpoint reward pool for a bucket.
+        ///
+        /// Anyone can fund the pool. Funds are used to reward providers
+        /// for submitting checkpoints.
+        #[pallet::call_index(36)]
+        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        pub fn fund_checkpoint_pool(
+            origin: OriginFor<T>,
+            bucket_id: BucketId,
+            amount: BalanceOf<T>,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            ensure!(
+                Buckets::<T>::contains_key(bucket_id),
+                Error::<T>::BucketNotFound
+            );
+
+            // Reserve funds from funder
+            T::Currency::reserve(&who, amount)?;
+
+            // Add to pool
+            CheckpointPool::<T>::mutate(bucket_id, |balance| {
+                *balance = balance.saturating_add(amount);
+            });
+
+            Self::deposit_event(Event::CheckpointPoolFunded {
+                bucket_id,
+                funder: who,
+                amount,
+            });
+
+            Ok(())
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // Challenges
         // ─────────────────────────────────────────────────────────────────────
 
@@ -2548,6 +3003,102 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Internal function to cleanup a bucket and all its agreements.
+        /// This is called by Layer 1 (drive-registry) when deleting a drive.
+        ///
+        /// Returns the total amount refunded to the owner.
+        pub fn cleanup_bucket_internal(
+            bucket_id: BucketId,
+            owner: &T::AccountId,
+        ) -> Result<BalanceOf<T>, DispatchError> {
+            // Verify bucket exists
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+
+            // Verify caller is an admin of the bucket
+            Self::ensure_admin(owner, &bucket)?;
+
+            let mut total_refunded: BalanceOf<T> = Zero::zero();
+
+            // End all agreements for this bucket (pay providers fairly)
+            let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
+
+            for (provider, agreement) in agreements {
+                // Calculate prorated refund based on remaining time
+                let current_block = frame_system::Pallet::<T>::block_number();
+                let remaining_blocks = agreement.expires_at.saturating_sub(current_block);
+
+                // If there's remaining time, calculate prorated refund
+                let refund_to_owner = if remaining_blocks > Zero::zero() {
+                    let total_duration = agreement.expires_at.saturating_sub(agreement.started_at);
+                    if total_duration > Zero::zero() {
+                        use sp_runtime::traits::SaturatedConversion;
+                        let remaining_u128: u128 = remaining_blocks.saturated_into();
+                        let total_u128: u128 = total_duration.saturated_into();
+                        let payment_u128: u128 = agreement.payment_locked.saturated_into();
+
+                        // refund = payment * (remaining / total)
+                        let refund_u128 = payment_u128
+                            .saturating_mul(remaining_u128)
+                            .saturating_div(total_u128);
+                        refund_u128.saturated_into()
+                    } else {
+                        Zero::zero()
+                    }
+                } else {
+                    Zero::zero()
+                };
+
+                // Payment to provider = total locked - refund to owner
+                let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
+
+                // Unreserve from owner
+                T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
+
+                // Pay provider their earned portion
+                if !payment_to_provider.is_zero() {
+                    T::Currency::transfer(
+                        &agreement.owner,
+                        &provider,
+                        payment_to_provider,
+                        ExistenceRequirement::KeepAlive,
+                    )?;
+                }
+
+                // Track total refunded (owner keeps the unspent portion)
+                total_refunded = total_refunded.saturating_add(refund_to_owner);
+
+                // Update provider stats
+                Providers::<T>::mutate(&provider, |maybe_provider| {
+                    if let Some(provider_info) = maybe_provider {
+                        provider_info.committed_bytes = provider_info
+                            .committed_bytes
+                            .saturating_sub(agreement.max_bytes);
+                        provider_info.stats.agreements_not_extended = provider_info
+                            .stats
+                            .agreements_not_extended
+                            .saturating_add(1);
+                    }
+                });
+
+                // Remove agreement
+                StorageAgreements::<T>::remove(bucket_id, &provider);
+
+                Self::deposit_event(Event::AgreementEnded {
+                    bucket_id,
+                    provider: provider.clone(),
+                    payment_to_provider,
+                    burned: Zero::zero(),
+                });
+            }
+
+            // Remove the bucket itself
+            Buckets::<T>::remove(bucket_id);
+
+            Self::deposit_event(Event::BucketDeleted { bucket_id });
+
+            Ok(total_refunded)
+        }
+
         fn create_challenge(
             challenger: T::AccountId,
             bucket_id: BucketId,
@@ -2693,6 +3244,73 @@ pub mod pallet {
                     challenger_reward,
                 });
             }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Provider-Initiated Checkpoint Helpers
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// Calculate the checkpoint window number for a given block.
+        ///
+        /// Window 0 starts at block 0, window 1 at block `interval`, etc.
+        fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
+            use sp_runtime::traits::SaturatedConversion;
+            if interval.is_zero() {
+                return 0;
+            }
+            let block_num: u64 = block.saturated_into();
+            let interval_num: u64 = interval.saturated_into();
+            block_num / interval_num
+        }
+
+        /// Calculate the start block for a given checkpoint window.
+        fn window_start_block(window: u64, interval: BlockNumberFor<T>) -> BlockNumberFor<T> {
+            use sp_runtime::traits::SaturatedConversion;
+            let interval_num: u64 = interval.saturated_into();
+            let start: u64 = window.saturating_mul(interval_num);
+            start.saturated_into()
+        }
+
+        /// Calculate the leader index for a given bucket and window.
+        ///
+        /// Uses deterministic selection: blake2_256(bucket_id || window) % num_providers.
+        /// This ensures all providers can independently calculate who the leader is.
+        fn calculate_leader_index(bucket_id: BucketId, window: u64, num_providers: u32) -> u32 {
+            if num_providers == 0 {
+                return 0;
+            }
+            // Create deterministic seed from bucket_id and window
+            let mut data = [0u8; 16];
+            data[..8].copy_from_slice(&bucket_id.to_le_bytes());
+            data[8..].copy_from_slice(&window.to_le_bytes());
+            let hash = sp_io::hashing::blake2_256(&data);
+            // Take first 4 bytes as u32 and mod by num_providers
+            let seed = u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+            seed % num_providers
+        }
+
+        /// Get the checkpoint config for a bucket, falling back to defaults.
+        fn get_checkpoint_config(
+            bucket_id: BucketId,
+        ) -> storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>> {
+            CheckpointConfigs::<T>::get(bucket_id).unwrap_or_else(|| {
+                storage_primitives::CheckpointWindowConfig {
+                    interval: T::DefaultCheckpointInterval::get(),
+                    grace_period: T::DefaultCheckpointGrace::get(),
+                    enabled: true, // Enabled by default
+                }
+            })
+        }
+
+        /// Check if the current block is within the grace period for a window.
+        fn is_within_grace_period(
+            current_block: BlockNumberFor<T>,
+            window: u64,
+            config: &storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>>,
+        ) -> bool {
+            let window_start = Self::window_start_block(window, config.interval);
+            let grace_end = window_start.saturating_add(config.grace_period);
+            current_block <= grace_end
         }
 
         // ─────────────────────────────────────────────────────────────────────────
@@ -2998,6 +3616,262 @@ pub mod pallet {
             }
             false
         }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Internal Functions for Inter-Pallet Communication (Layer 1 File System)
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// Create a bucket internally (for use by other pallets like Layer 1 File System).
+        ///
+        /// This bypasses the normal extrinsic flow and creates a bucket directly,
+        /// with the specified account as admin.
+        ///
+        /// Parameters:
+        /// - `admin`: Account that will be the bucket admin
+        /// - `min_providers`: Minimum number of providers required
+        ///
+        /// Returns: bucket_id
+        pub fn create_bucket_internal(
+            admin: &T::AccountId,
+            min_providers: u32,
+        ) -> Result<BucketId, DispatchError> {
+            let bucket_id = NextBucketId::<T>::get();
+            NextBucketId::<T>::put(bucket_id.saturating_add(1));
+
+            let admin_member = Member {
+                account: admin.clone(),
+                role: Role::Admin,
+            };
+
+            let mut members = BoundedVec::new();
+            members
+                .try_push(admin_member)
+                .map_err(|_| Error::<T>::MaxMembersReached)?;
+
+            let bucket = Bucket {
+                members,
+                frozen_start_seq: None,
+                min_providers,
+                primary_providers: BoundedVec::new(),
+                snapshot: None,
+                historical_roots: [(0, H256::zero()); 6],
+                total_snapshots: 0,
+            };
+
+            Buckets::<T>::insert(bucket_id, bucket);
+
+            Self::deposit_event(Event::BucketCreated {
+                bucket_id,
+                admin: admin.clone(),
+            });
+
+            Ok(bucket_id)
+        }
+
+        /// Request a primary storage agreement internally (for use by other pallets).
+        ///
+        /// This creates a primary storage agreement without requiring admin origin check.
+        ///
+        /// Parameters:
+        /// - `owner`: Account that owns the agreement and will pay for it
+        /// - `bucket_id`: Target bucket
+        /// - `provider`: Provider to store data
+        /// - `max_bytes`: Maximum storage size
+        /// - `duration`: Storage duration in blocks
+        /// - `max_payment`: Maximum payment willing to pay
+        pub fn request_primary_agreement_internal(
+            owner: &T::AccountId,
+            bucket_id: BucketId,
+            provider: &T::AccountId,
+            max_bytes: u64,
+            duration: BlockNumberFor<T>,
+            max_payment: BalanceOf<T>,
+        ) -> DispatchResult {
+            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+
+            // Check primary provider limit
+            ensure!(
+                bucket.primary_providers.len() < T::MaxPrimaryProviders::get() as usize,
+                Error::<T>::MaxPrimaryProvidersReached
+            );
+
+            let provider_info =
+                Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+
+            ensure!(
+                provider_info.settings.accepting_primary,
+                Error::<T>::ProviderNotAcceptingPrimary
+            );
+
+            Self::validate_duration(&provider_info.settings, duration)?;
+
+            let payment = Self::calculate_payment(
+                provider_info.settings.price_per_byte,
+                max_bytes,
+                duration,
+            )?;
+            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
+
+            T::Currency::reserve(owner, payment)?;
+
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
+
+            let request = AgreementRequest {
+                requester: owner.clone(),
+                max_bytes,
+                payment_locked: payment,
+                duration,
+                expires_at,
+                replica_params: None, // Primary agreement
+            };
+
+            ensure!(
+                !AgreementRequests::<T>::contains_key(provider, bucket_id),
+                Error::<T>::AgreementRequestAlreadyExists
+            );
+
+            AgreementRequests::<T>::insert(provider, bucket_id, request);
+
+            Self::deposit_event(Event::AgreementRequested {
+                bucket_id,
+                provider: provider.clone(),
+                requester: owner.clone(),
+                max_bytes,
+                payment_locked: payment,
+                duration,
+            });
+
+            Ok(())
+        }
+
+        /// Request a replica storage agreement internally (for use by other pallets).
+        ///
+        /// This creates a replica storage agreement without requiring origin check.
+        ///
+        /// Parameters:
+        /// - `owner`: Account that owns the agreement and will pay for it
+        /// - `bucket_id`: Target bucket
+        /// - `provider`: Provider to store replica
+        /// - `max_bytes`: Maximum storage size
+        /// - `duration`: Storage duration in blocks
+        /// - `max_payment`: Maximum payment willing to pay
+        /// - `sync_balance`: Balance reserved for sync operations
+        pub fn request_replica_agreement_internal(
+            owner: &T::AccountId,
+            bucket_id: BucketId,
+            provider: &T::AccountId,
+            max_bytes: u64,
+            duration: BlockNumberFor<T>,
+            max_payment: BalanceOf<T>,
+            sync_balance: BalanceOf<T>,
+        ) -> DispatchResult {
+            ensure!(
+                Buckets::<T>::contains_key(bucket_id),
+                Error::<T>::BucketNotFound
+            );
+
+            let provider_info =
+                Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+
+            ensure!(
+                provider_info.settings.replica_sync_price.is_some(),
+                Error::<T>::ProviderNotAcceptingReplicas
+            );
+
+            Self::validate_duration(&provider_info.settings, duration)?;
+
+            // Calculate payment
+            let payment = Self::calculate_payment(
+                provider_info.settings.price_per_byte,
+                max_bytes,
+                duration,
+            )?;
+            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
+
+            // Total to lock = storage payment + sync balance
+            let total_lock = payment
+                .checked_add(&sync_balance)
+                .ok_or(Error::<T>::ArithmeticOverflow)?;
+
+            // Reserve funds
+            T::Currency::reserve(owner, total_lock)?;
+
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
+
+            let replica_params = ReplicaRequestParams {
+                sync_balance,
+                min_sync_interval: duration / 10u32.into(), // Sync every 10% of duration
+            };
+
+            let request = AgreementRequest {
+                requester: owner.clone(),
+                max_bytes,
+                payment_locked: payment,
+                duration,
+                expires_at,
+                replica_params: Some(replica_params),
+            };
+
+            ensure!(
+                !AgreementRequests::<T>::contains_key(provider, bucket_id),
+                Error::<T>::AgreementRequestAlreadyExists
+            );
+
+            AgreementRequests::<T>::insert(provider, bucket_id, request);
+
+            Self::deposit_event(Event::AgreementRequested {
+                bucket_id,
+                provider: provider.clone(),
+                requester: owner.clone(),
+                max_bytes,
+                payment_locked: total_lock,
+                duration,
+            });
+
+            Ok(())
+        }
+
+        /// Query available providers that can accept storage of given size
+        ///
+        /// This is a helper for Layer 1 to find suitable providers automatically.
+        ///
+        /// Parameters:
+        /// - `max_bytes`: Storage size needed
+        /// - `accepting_primary`: True to filter for primary providers, false for replica providers
+        ///
+        /// Returns: Vec of provider account IDs that can accept the storage
+        pub fn query_available_providers(
+            max_bytes: u64,
+            accepting_primary: bool,
+        ) -> Vec<T::AccountId> {
+            Providers::<T>::iter()
+                .filter_map(|(account, info)| {
+                    // Check if provider is accepting the right type of agreements
+                    let accepts_type = if accepting_primary {
+                        info.settings.accepting_primary
+                    } else {
+                        info.settings.replica_sync_price.is_some()
+                    };
+
+                    if !accepts_type {
+                        return None;
+                    }
+
+                    // Check if provider has capacity
+                    if Self::query_can_accept_bytes(&account, max_bytes) {
+                        Some(account)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Marketplace Query Functions (Provider Discovery)
+        // ─────────────────────────────────────────────────────────────────────────
 
         /// Find providers matching the given storage requirements.
         pub fn query_find_matching_providers(

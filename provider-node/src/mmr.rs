@@ -1,10 +1,13 @@
 //! Merkle Mountain Range implementation.
 //!
-//! This is a simplified MMR implementation for the provider node.
-//! Production would use a more optimized implementation.
+//! An MMR is an append-only data structure consisting of multiple perfect
+//! binary trees (peaks). When a new leaf is added, peaks of the same height
+//! are merged until no two peaks have the same height.
+//!
+//! The root is computed by "bagging" the peaks from right to left.
 
 use sp_core::H256;
-use storage_primitives::{blake2_256, hash_children};
+use storage_primitives::hash_children;
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]
@@ -13,6 +16,8 @@ pub struct Mmr {
     nodes: Vec<H256>,
     /// Number of leaves
     leaf_count: u64,
+    /// Current peaks (one per set bit in leaf_count), stored as (height, position, hash)
+    peaks: Vec<(u32, u64, H256)>,
 }
 
 impl Mmr {
@@ -21,25 +26,22 @@ impl Mmr {
         Self {
             nodes: Vec::new(),
             leaf_count: 0,
+            peaks: Vec::new(),
         }
     }
 
     /// Get the current root hash.
     pub fn root(&self) -> H256 {
-        if self.nodes.is_empty() {
+        if self.peaks.is_empty() {
             return H256::zero();
         }
 
-        // Bag the peaks
-        let peaks = self.peaks();
-        if peaks.is_empty() {
-            return H256::zero();
-        }
-
-        peaks
+        // Bag the peaks from right to left
+        self.peaks
             .iter()
             .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
+            .map(|(_, _, hash)| *hash)
+            .fold(None, |acc: Option<H256>, peak| {
                 Some(match acc {
                     None => peak,
                     Some(right) => hash_children(peak, right),
@@ -48,33 +50,14 @@ impl Mmr {
             .unwrap_or(H256::zero())
     }
 
-    /// Get the peaks of the MMR.
+    /// Get the peak hashes of the MMR.
+    pub fn peak_hashes(&self) -> Vec<H256> {
+        self.peaks.iter().map(|(_, _, hash)| *hash).collect()
+    }
+
+    /// Get the peak hashes of the MMR (alias for peak_hashes).
     pub fn peaks(&self) -> Vec<H256> {
-        if self.nodes.is_empty() {
-            return vec![];
-        }
-
-        let mut peaks = Vec::new();
-        let mut pos = 0u64;
-        let mut height = 0u32;
-
-        while pos < self.nodes.len() as u64 {
-            let peak_height = Self::peak_height_at(self.leaf_count, height);
-            if peak_height > 0 {
-                let peak_size = (1u64 << peak_height) - 1;
-                let peak_pos = pos + peak_size - 1;
-                if peak_pos < self.nodes.len() as u64 {
-                    peaks.push(self.nodes[peak_pos as usize]);
-                }
-                pos += peak_size;
-            }
-            height += 1;
-            if height > 64 {
-                break;
-            }
-        }
-
-        peaks
+        self.peak_hashes()
     }
 
     /// Append a leaf to the MMR.
@@ -83,27 +66,33 @@ impl Mmr {
         self.nodes.push(leaf_hash);
         self.leaf_count += 1;
 
-        // Merge with sibling peaks if needed
-        let mut pos = leaf_pos;
+        // Add new peak at height 0
+        let mut current_height = 0u32;
+        let mut current_pos = leaf_pos;
         let mut current_hash = leaf_hash;
-        let mut height = 0u32;
 
-        while Self::has_sibling(pos, height, self.nodes.len() as u64) {
-            let sibling_pos = Self::sibling_pos(pos, height);
-            let sibling_hash = self.nodes[sibling_pos as usize];
+        // Merge with existing peaks of the same height
+        while !self.peaks.is_empty() {
+            let (top_height, _top_pos, top_hash) = self.peaks.last().unwrap();
 
-            // Parent is always to the right of the rightmost child
-            let parent_hash = if sibling_pos < pos {
-                hash_children(sibling_hash, current_hash)
-            } else {
-                hash_children(current_hash, sibling_hash)
-            };
+            if *top_height != current_height {
+                break;
+            }
 
+            // Merge: left sibling is the existing peak, right is current
+            let parent_hash = hash_children(*top_hash, current_hash);
+            let parent_pos = self.nodes.len() as u64;
             self.nodes.push(parent_hash);
+
+            // Remove the merged peak and continue with parent
+            self.peaks.pop();
+            current_height += 1;
+            current_pos = parent_pos;
             current_hash = parent_hash;
-            pos = self.nodes.len() as u64 - 1;
-            height += 1;
         }
+
+        // Add the new/merged peak
+        self.peaks.push((current_height, current_pos, current_hash));
 
         leaf_pos
     }
@@ -124,48 +113,109 @@ impl Mmr {
             return None;
         }
 
-        let leaf_pos = Self::leaf_index_to_pos(leaf_index);
+        // Find which peak contains this leaf and build the proof path
         let mut siblings = Vec::new();
-        let mut pos = leaf_pos;
-        let mut height = 0u32;
+        let mut current_leaf_index = leaf_index;
+        let mut _leaves_before = 0u64;
 
-        while Self::has_sibling(pos, height, self.nodes.len() as u64) {
-            let sibling_pos = Self::sibling_pos(pos, height);
-            if let Some(sibling) = self.nodes.get(sibling_pos as usize) {
-                siblings.push(*sibling);
+        // Find the peak containing this leaf
+        for &(height, peak_pos, _) in &self.peaks {
+            let peak_leaf_count = 1u64 << height;
+
+            if current_leaf_index < peak_leaf_count {
+                // This peak contains our leaf
+                // Build proof within this perfect binary tree
+                self.build_tree_proof(
+                    peak_pos,
+                    height,
+                    current_leaf_index,
+                    &mut siblings,
+                );
+                break;
             }
-            pos = Self::parent_pos(pos, height);
-            height += 1;
+
+            _leaves_before += peak_leaf_count;
+            current_leaf_index -= peak_leaf_count;
         }
 
         Some(MmrProof {
             leaf_index,
             siblings,
-            peaks: self.peaks(),
+            peaks: self.peak_hashes(),
         })
     }
 
+    /// Build a proof path within a perfect binary tree.
+    /// Returns siblings from leaf up to the root of the subtree.
+    fn build_tree_proof(
+        &self,
+        tree_root_pos: u64,
+        tree_height: u32,
+        leaf_index_in_tree: u64,
+        siblings: &mut Vec<H256>,
+    ) {
+        if tree_height == 0 {
+            // Single leaf tree, no siblings needed
+            return;
+        }
+
+        // Calculate positions in the perfect binary tree
+        // The tree is stored in post-order: left subtree, right subtree, root
+        let left_subtree_size = (1u64 << tree_height) - 1;
+        let right_subtree_size = left_subtree_size;
+
+        let left_subtree_root = tree_root_pos - 1 - right_subtree_size;
+        let right_subtree_root = tree_root_pos - 1;
+
+        let left_leaf_count = 1u64 << (tree_height - 1);
+
+        if leaf_index_in_tree < left_leaf_count {
+            // Leaf is in left subtree
+            // Sibling is the right subtree root
+            if let Some(sibling) = self.nodes.get(right_subtree_root as usize) {
+                siblings.push(*sibling);
+            }
+            // Recurse into left subtree
+            self.build_tree_proof(
+                left_subtree_root,
+                tree_height - 1,
+                leaf_index_in_tree,
+                siblings,
+            );
+        } else {
+            // Leaf is in right subtree
+            // Sibling is the left subtree root
+            if let Some(sibling) = self.nodes.get(left_subtree_root as usize) {
+                siblings.push(*sibling);
+            }
+            // Recurse into right subtree
+            self.build_tree_proof(
+                right_subtree_root,
+                tree_height - 1,
+                leaf_index_in_tree - left_leaf_count,
+                siblings,
+            );
+        }
+    }
+
     /// Verify a proof against an MMR root.
-    ///
-    /// This verifies that:
-    /// 1. The leaf hashes up through siblings to reach a peak
-    /// 2. The peaks bag to the expected root
     pub fn verify_proof(root: H256, leaf_hash: H256, proof: &MmrProof) -> bool {
         // Hash up from leaf through siblings to reach a peak
         let mut current = leaf_hash;
-        let mut pos = Self::leaf_index_to_pos(proof.leaf_index);
-        let mut height = 0u32;
+        let mut pos_in_tree = proof.leaf_index;
 
-        for sibling in &proof.siblings {
-            // Determine if sibling is on left or right based on position
-            let sibling_pos = Self::sibling_pos(pos, height);
-            current = if sibling_pos < pos {
-                hash_children(*sibling, current)
-            } else {
+        // The siblings are from leaf level up, but we need to process them
+        // in reverse order (from closest to leaf to farthest)
+        // Actually they're already in the right order: closest sibling first
+        for sibling in proof.siblings.iter().rev() {
+            // Determine if we're the left or right child
+            let is_left = pos_in_tree % 2 == 0;
+            current = if is_left {
                 hash_children(current, *sibling)
+            } else {
+                hash_children(*sibling, current)
             };
-            pos = Self::parent_pos(pos, height);
-            height += 1;
+            pos_in_tree /= 2;
         }
 
         // Current should now be one of the peaks
@@ -188,57 +238,6 @@ impl Mmr {
 
         bagged_root == root
     }
-
-    // Helper functions
-
-    fn peak_height_at(leaf_count: u64, index: u32) -> u32 {
-        let bits = leaf_count;
-        if index >= 64 {
-            return 0;
-        }
-        if bits & (1u64 << index) != 0 {
-            index + 1
-        } else {
-            0
-        }
-    }
-
-    fn has_sibling(pos: u64, height: u32, total_nodes: u64) -> bool {
-        let sibling = Self::sibling_pos(pos, height);
-        sibling < total_nodes && sibling != pos
-    }
-
-    fn sibling_pos(pos: u64, height: u32) -> u64 {
-        let offset = 1u64 << height;
-        if (pos / offset) % 2 == 0 {
-            pos + offset
-        } else {
-            pos.saturating_sub(offset)
-        }
-    }
-
-    fn parent_pos(pos: u64, height: u32) -> u64 {
-        let offset = 1u64 << height;
-        let sibling = Self::sibling_pos(pos, height);
-        core::cmp::max(pos, sibling) + 1
-    }
-
-    fn leaf_index_to_pos(leaf_index: u64) -> u64 {
-        // Simplified: each leaf adds 1 position plus parents
-        // This is a rough approximation
-        let mut pos = 0u64;
-        for i in 0..leaf_index {
-            pos += 1;
-            let mut height = 0u32;
-            let mut idx = i + 1;
-            while idx % 2 == 0 {
-                pos += 1;
-                idx /= 2;
-                height += 1;
-            }
-        }
-        pos
-    }
 }
 
 impl Default for Mmr {
@@ -252,7 +251,7 @@ impl Default for Mmr {
 pub struct MmrProof {
     /// Index of the leaf in the MMR
     pub leaf_index: u64,
-    /// Sibling hashes on the path to the peak
+    /// Sibling hashes on the path to the peak (from root down to leaf level)
     pub siblings: Vec<H256>,
     /// Peaks of the MMR
     pub peaks: Vec<H256>,
@@ -261,12 +260,12 @@ pub struct MmrProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::blake2_256;
 
     #[test]
     fn test_mmr_basic() {
         let mut mmr = Mmr::new();
 
-        // Add some leaves
         let leaf1 = blake2_256(b"leaf1");
         let leaf2 = blake2_256(b"leaf2");
         let leaf3 = blake2_256(b"leaf3");
@@ -285,7 +284,115 @@ mod tests {
     }
 
     #[test]
-    fn test_mmr_proof() {
+    fn test_mmr_peaks_count() {
+        let mut mmr = Mmr::new();
+
+        // Number of peaks equals number of 1s in binary representation of leaf_count
+        mmr.push(blake2_256(b"leaf0"));
+        assert_eq!(mmr.peak_hashes().len(), 1); // 1 = 0b1
+
+        mmr.push(blake2_256(b"leaf1"));
+        assert_eq!(mmr.peak_hashes().len(), 1); // 2 = 0b10
+
+        mmr.push(blake2_256(b"leaf2"));
+        assert_eq!(mmr.peak_hashes().len(), 2); // 3 = 0b11
+
+        mmr.push(blake2_256(b"leaf3"));
+        assert_eq!(mmr.peak_hashes().len(), 1); // 4 = 0b100
+
+        mmr.push(blake2_256(b"leaf4"));
+        assert_eq!(mmr.peak_hashes().len(), 2); // 5 = 0b101
+
+        mmr.push(blake2_256(b"leaf5"));
+        assert_eq!(mmr.peak_hashes().len(), 2); // 6 = 0b110
+
+        mmr.push(blake2_256(b"leaf6"));
+        assert_eq!(mmr.peak_hashes().len(), 3); // 7 = 0b111
+
+        mmr.push(blake2_256(b"leaf7"));
+        assert_eq!(mmr.peak_hashes().len(), 1); // 8 = 0b1000
+    }
+
+    #[test]
+    fn test_mmr_root_consistency() {
+        let mut mmr = Mmr::new();
+
+        let leaves: Vec<H256> = (0..8)
+            .map(|i| blake2_256(format!("leaf{}", i).as_bytes()))
+            .collect();
+
+        for leaf in &leaves {
+            mmr.push(*leaf);
+        }
+
+        // With 8 leaves (power of 2), we should have 1 peak
+        assert_eq!(mmr.peak_hashes().len(), 1);
+
+        // The root should equal the single peak
+        let peaks = mmr.peak_hashes();
+        assert_eq!(mmr.root(), peaks[0]);
+    }
+
+    #[test]
+    fn test_mmr_proof_single_leaf() {
+        let mut mmr = Mmr::new();
+        let leaf = blake2_256(b"only_leaf");
+        mmr.push(leaf);
+
+        let root = mmr.root();
+        let proof = mmr.proof(0).expect("proof should exist");
+
+        // Single leaf: no siblings needed, leaf is the peak
+        assert!(proof.siblings.is_empty());
+        assert!(Mmr::verify_proof(root, leaf, &proof));
+    }
+
+    #[test]
+    fn test_mmr_proof_two_leaves() {
+        let mut mmr = Mmr::new();
+        let leaf0 = blake2_256(b"leaf0");
+        let leaf1 = blake2_256(b"leaf1");
+
+        mmr.push(leaf0);
+        mmr.push(leaf1);
+
+        let root = mmr.root();
+
+        // Proof for leaf 0
+        let proof0 = mmr.proof(0).expect("proof should exist");
+        assert!(Mmr::verify_proof(root, leaf0, &proof0), "leaf 0 should verify");
+
+        // Proof for leaf 1
+        let proof1 = mmr.proof(1).expect("proof should exist");
+        assert!(Mmr::verify_proof(root, leaf1, &proof1), "leaf 1 should verify");
+    }
+
+    #[test]
+    fn test_mmr_proof_power_of_two() {
+        let mut mmr = Mmr::new();
+
+        let leaves: Vec<H256> = (0..4)
+            .map(|i| blake2_256(format!("leaf{}", i).as_bytes()))
+            .collect();
+
+        for leaf in &leaves {
+            mmr.push(*leaf);
+        }
+
+        let root = mmr.root();
+
+        for (i, leaf) in leaves.iter().enumerate() {
+            let proof = mmr.proof(i as u64).expect("proof should exist");
+            assert!(
+                Mmr::verify_proof(root, *leaf, &proof),
+                "proof should verify for leaf {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mmr_proof_five_leaves() {
         let mut mmr = Mmr::new();
 
         let leaves: Vec<H256> = (0..5)
@@ -298,7 +405,6 @@ mod tests {
 
         let root = mmr.root();
 
-        // Generate and verify proof for each leaf
         for (i, leaf) in leaves.iter().enumerate() {
             let proof = mmr.proof(i as u64).expect("proof should exist");
             assert!(
@@ -307,5 +413,25 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_mmr_invalid_proof() {
+        let mut mmr = Mmr::new();
+
+        let leaves: Vec<H256> = (0..4)
+            .map(|i| blake2_256(format!("leaf{}", i).as_bytes()))
+            .collect();
+
+        for leaf in &leaves {
+            mmr.push(*leaf);
+        }
+
+        let root = mmr.root();
+        let proof = mmr.proof(0).expect("proof should exist");
+
+        // Using wrong leaf should fail
+        let wrong_leaf = blake2_256(b"wrong");
+        assert!(!Mmr::verify_proof(root, wrong_leaf, &proof));
     }
 }

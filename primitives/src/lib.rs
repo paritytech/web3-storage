@@ -318,6 +318,74 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Provider-Initiated Checkpoint Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Configuration for provider-initiated checkpoints.
+///
+/// Providers can autonomously coordinate checkpoints without requiring
+/// the client to be online. Uses deterministic leader election and
+/// checkpoint windows with grace periods.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CheckpointWindowConfig<BlockNumber> {
+    /// Blocks between checkpoints (e.g., 100 blocks = ~10 minutes)
+    pub interval: BlockNumber,
+    /// Grace period for leader before fallback (e.g., 20 blocks = ~2 minutes)
+    pub grace_period: BlockNumber,
+    /// Whether provider-initiated checkpoints are enabled for this bucket
+    pub enabled: bool,
+}
+
+/// Proposal for provider-initiated checkpoint (signed by providers).
+///
+/// This is the payload that providers sign to agree on a checkpoint.
+/// The window number prevents cross-window replay attacks.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CheckpointProposal {
+    /// Protocol version for future compatibility
+    pub version: u8,
+    /// Reference to on-chain bucket
+    pub bucket_id: BucketId,
+    /// Root of MMR containing all data_roots
+    pub mmr_root: H256,
+    /// Sequence number of first leaf in this MMR
+    pub start_seq: u64,
+    /// Number of leaves in this MMR
+    pub leaf_count: u64,
+    /// Window number this proposal is for (prevents replay)
+    pub window: u64,
+}
+
+impl CheckpointProposal {
+    /// Current protocol version
+    pub const CURRENT_VERSION: u8 = 1;
+
+    /// Create a new checkpoint proposal
+    pub fn new(bucket_id: BucketId, mmr_root: H256, start_seq: u64, leaf_count: u64, window: u64) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            bucket_id,
+            mmr_root,
+            start_seq,
+            leaf_count,
+            window,
+        }
+    }
+
+    /// Get the canonical range end (exclusive)
+    pub fn range_end(&self) -> u64 {
+        self.start_seq.saturating_add(self.leaf_count)
+    }
+
+    /// Check if a sequence number is within this proposal's range
+    pub fn contains_seq(&self, seq: u64) -> bool {
+        seq >= self.start_seq && seq < self.range_end()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Hashing Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -17,7 +17,8 @@ use subxt::PolkadotConfig;
 /// Client for challengers (third parties who verify data integrity).
 pub struct ChallengerClient {
     base: BaseClient,
-    challenger_account: String, // Substrate account ID
+    #[allow(dead_code)]
+    challenger_account: String, // Substrate account ID (for future use)
 }
 
 impl ChallengerClient {
@@ -200,8 +201,8 @@ impl ChallengerClient {
         &self,
         bucket_id: BucketId,
         provider: String,
-        leaf_index: u64,
-        chunk_index: u64,
+        _leaf_index: u64,
+        _chunk_index: u64,
     ) -> ClientResult<ChallengeId> {
         // TODO: Submit extrinsic
         tracing::info!(
@@ -231,7 +232,7 @@ impl ChallengerClient {
     /// Returns recommendations on whether to challenge.
     pub async fn analyze_provider(
         &self,
-        bucket_id: BucketId,
+        _bucket_id: BucketId,
         provider: String,
     ) -> ClientResult<ProviderAnalysis> {
         // TODO: Fetch provider stats, commitment freshness, etc.
@@ -271,7 +272,7 @@ impl ChallengerClient {
     /// Check if a challenge has been resolved and claim rewards if successful.
     pub async fn check_and_claim_reward(
         &self,
-        challenge_id: ChallengeId,
+        _challenge_id: ChallengeId,
     ) -> ClientResult<Option<u128>> {
         // TODO: Query challenge status
         // If provider failed to respond, rewards were already distributed in on_finalize
@@ -305,7 +306,7 @@ impl ChallengerClient {
     /// Find the most profitable providers to challenge.
     ///
     /// Returns providers ranked by potential reward vs risk.
-    pub async fn find_challenge_targets(&self, limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
+    pub async fn find_challenge_targets(&self, _limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
         // TODO: Analyze on-chain data
         // - Providers with low reputation
         // - Providers with high stakes (higher rewards if they fail)

@@ -42,3 +42,4 @@ path = "src/bin/demo_checkpoint.rs"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
+tempfile = "3.10"
