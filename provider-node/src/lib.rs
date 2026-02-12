@@ -22,7 +22,7 @@ pub mod types;
 pub use api::create_router;
 pub use challenge_responder::{
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
-    ChallengeResponseResult, DetectedChallenge, MmrProof, ResponderCommand,
+    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use checkpoint_coordinator::{
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,

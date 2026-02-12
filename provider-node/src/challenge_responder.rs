@@ -309,13 +309,27 @@ impl ChallengeResponder {
             challenge.bucket_id
         );
 
-        // Step 1: Get the chunk data
-        let chunk_result = self.state.storage.get_chunk_at_index(
-            challenge.mmr_root, // Use as data root for now
-            challenge.chunk_index,
-        );
+        // Step 1: Generate MMR proof (includes the leaf with data_root)
+        let mmr_proof = match self.state.storage.get_mmr_proof(
+            challenge.bucket_id,
+            challenge.leaf_index,
+        ) {
+            Ok(proof) => proof,
+            Err(e) => {
+                tracing::error!("Failed to generate MMR proof: {}", e);
+                return ChallengeResponseResult::ProofGenerationFailed {
+                    challenge_id,
+                    error: e.to_string(),
+                };
+            }
+        };
 
-        let (chunk_data, _chunk_proof) = match chunk_result {
+        // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
+        let data_root = mmr_proof.leaf.data_root;
+        let (chunk_data, chunk_proof) = match self.state.storage.get_chunk_at_index(
+            data_root,
+            challenge.chunk_index,
+        ) {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!("Failed to get chunk data: {}", e);
@@ -327,49 +341,9 @@ impl ChallengeResponder {
             }
         };
 
-        // Step 2: Generate MMR proof
-        let mmr_proof = match self.state.storage.get_mmr_proof(
-            challenge.bucket_id,
-            challenge.leaf_index,
-        ) {
-            Ok((_leaf, peaks)) => MmrProof {
-                peaks,
-                siblings: vec![], // Simplified - would compute full proof
-            },
-            Err(e) => {
-                tracing::error!("Failed to generate MMR proof: {}", e);
-                return ChallengeResponseResult::ProofGenerationFailed {
-                    challenge_id,
-                    error: e.to_string(),
-                };
-            }
-        };
-
-        // Step 3: Generate chunk proof (Merkle proof within the leaf)
-        let chunk_proof = match self.generate_chunk_proof(
-            challenge.bucket_id,
-            challenge.leaf_index,
-            challenge.chunk_index,
-        ) {
-            Ok(proof) => proof,
-            Err(e) => {
-                tracing::error!("Failed to generate chunk proof: {}", e);
-                return ChallengeResponseResult::ProofGenerationFailed {
-                    challenge_id,
-                    error: e.to_string(),
-                };
-            }
-        };
-
-        // Step 4: Submit response transaction
+        // Step 3: Submit response transaction
         match self
-            .submit_response(
-                challenge.bucket_id,
-                challenge_id,
-                chunk_data,
-                chunk_proof,
-                mmr_proof,
-            )
+            .submit_response(challenge_id, &chunk_data, &mmr_proof, &chunk_proof)
             .await
         {
             Ok(block_hash) => {
@@ -393,26 +367,13 @@ impl ChallengeResponder {
         }
     }
 
-    /// Generate a Merkle proof for a chunk within a leaf's data.
-    fn generate_chunk_proof(
-        &self,
-        _bucket_id: BucketId,
-        _leaf_index: u64,
-        _chunk_index: u64,
-    ) -> Result<Vec<H256>, Error> {
-        // TODO: Implement proper Merkle proof generation
-        // For now, return empty proof (works for single-chunk leaves)
-        Ok(vec![])
-    }
-
     /// Submit the challenge response transaction.
     async fn submit_response(
         &self,
-        bucket_id: BucketId,
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        chunk_proof: Vec<H256>,
-        mmr_proof: MmrProof,
+        chunk_data: &[u8],
+        mmr_proof: &storage_primitives::MmrProof,
+        chunk_proof: &storage_primitives::MerkleProof,
     ) -> Result<H256, Error> {
         let api = self.api.as_ref().ok_or_else(|| {
             Error::Internal("Not connected to chain".to_string())
@@ -422,75 +383,108 @@ impl ChallengeResponder {
             Error::Internal("No signer configured".to_string())
         })?;
 
-        // Build the response extrinsic using dynamic dispatch
+        // Build ChallengeId
+        let challenge_id_val = subxt::dynamic::Value::named_composite(vec![
+            ("deadline", subxt::dynamic::Value::u128(challenge_id.0 as u128)),
+            ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
+        ]);
+
+        // Build MmrProof value
+        let mmr_proof_val = subxt::dynamic::Value::named_composite(vec![
+            (
+                "peaks",
+                subxt::dynamic::Value::unnamed_composite(
+                    mmr_proof
+                        .peaks
+                        .iter()
+                        .map(|p| subxt::dynamic::Value::from_bytes(p.as_bytes()))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "leaf",
+                subxt::dynamic::Value::named_composite(vec![
+                    (
+                        "data_root",
+                        subxt::dynamic::Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
+                    ),
+                    (
+                        "data_size",
+                        subxt::dynamic::Value::u128(mmr_proof.leaf.data_size as u128),
+                    ),
+                    (
+                        "total_size",
+                        subxt::dynamic::Value::u128(mmr_proof.leaf.total_size as u128),
+                    ),
+                ]),
+            ),
+            (
+                "leaf_proof",
+                subxt::dynamic::Value::named_composite(vec![
+                    (
+                        "siblings",
+                        subxt::dynamic::Value::unnamed_composite(
+                            mmr_proof
+                                .leaf_proof
+                                .siblings
+                                .iter()
+                                .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
+                                .collect::<Vec<_>>(),
+                        ),
+                    ),
+                    (
+                        "path",
+                        subxt::dynamic::Value::unnamed_composite(
+                            mmr_proof
+                                .leaf_proof
+                                .path
+                                .iter()
+                                .map(|b| subxt::dynamic::Value::bool(*b))
+                                .collect::<Vec<_>>(),
+                        ),
+                    ),
+                ]),
+            ),
+        ]);
+
+        // Build chunk proof value
+        let chunk_proof_val = subxt::dynamic::Value::named_composite(vec![
+            (
+                "siblings",
+                subxt::dynamic::Value::unnamed_composite(
+                    chunk_proof
+                        .siblings
+                        .iter()
+                        .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "path",
+                subxt::dynamic::Value::unnamed_composite(
+                    chunk_proof
+                        .path
+                        .iter()
+                        .map(|b| subxt::dynamic::Value::bool(*b))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        ]);
+
+        // Build ChallengeResponse::Proof variant
+        let response_val = subxt::dynamic::Value::named_variant(
+            "Proof",
+            vec![
+                ("chunk_data", subxt::dynamic::Value::from_bytes(chunk_data)),
+                ("mmr_proof", mmr_proof_val),
+                ("chunk_proof", chunk_proof_val),
+            ],
+        );
+
         let tx = subxt::dynamic::tx(
             "StorageProvider",
             "respond_to_challenge",
-            vec![
-                // bucket_id
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                // challenge_id: (deadline, index)
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    subxt::dynamic::Value::u128(challenge_id.0 as u128),
-                    subxt::dynamic::Value::u128(challenge_id.1 as u128),
-                ]),
-                // response: ChallengeResponse::Proof { ... }
-                subxt::dynamic::Value::unnamed_variant(
-                    "Proof",
-                    vec![subxt::dynamic::Value::named_composite(vec![
-                        ("chunk_data", subxt::dynamic::Value::from_bytes(&chunk_data)),
-                        (
-                            "mmr_proof",
-                            subxt::dynamic::Value::named_composite(vec![
-                                (
-                                    "peaks",
-                                    subxt::dynamic::Value::unnamed_composite(
-                                        mmr_proof
-                                            .peaks
-                                            .iter()
-                                            .map(|p| {
-                                                subxt::dynamic::Value::from_bytes(p.as_bytes())
-                                            })
-                                            .collect::<Vec<_>>(),
-                                    ),
-                                ),
-                                (
-                                    "siblings",
-                                    subxt::dynamic::Value::unnamed_composite(
-                                        mmr_proof
-                                            .siblings
-                                            .iter()
-                                            .map(|s| {
-                                                subxt::dynamic::Value::from_bytes(s.as_bytes())
-                                            })
-                                            .collect::<Vec<_>>(),
-                                    ),
-                                ),
-                            ]),
-                        ),
-                        (
-                            "chunk_proof",
-                            subxt::dynamic::Value::named_composite(vec![
-                                (
-                                    "siblings",
-                                    subxt::dynamic::Value::unnamed_composite(
-                                        chunk_proof
-                                            .iter()
-                                            .map(|s| {
-                                                subxt::dynamic::Value::from_bytes(s.as_bytes())
-                                            })
-                                            .collect::<Vec<_>>(),
-                                    ),
-                                ),
-                                (
-                                    "path",
-                                    subxt::dynamic::Value::unnamed_composite(vec![]),
-                                ),
-                            ]),
-                        ),
-                    ])],
-                ),
-            ],
+            vec![challenge_id_val, response_val],
         );
 
         // Submit and wait for finalization
@@ -505,19 +499,8 @@ impl ChallengeResponder {
             .await
             .map_err(|e| Error::Internal(format!("Transaction failed: {}", e)))?;
 
-        // Return a zero hash since we don't have easy access to the block hash
-        // The important thing is that the transaction was finalized successfully
         Ok(H256::zero())
     }
-}
-
-/// MMR proof data structure.
-#[derive(Clone, Debug, Default)]
-pub struct MmrProof {
-    /// MMR peaks.
-    pub peaks: Vec<H256>,
-    /// Sibling hashes for the proof path.
-    pub siblings: Vec<H256>,
 }
 
 #[cfg(test)]
@@ -580,9 +563,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mmr_proof_default() {
-        let proof = MmrProof::default();
-        assert!(proof.peaks.is_empty());
-        assert!(proof.siblings.is_empty());
+    fn test_responder_command_variants() {
+        // Verify commands can be constructed
+        let _stop = ResponderCommand::Stop;
+        let _pause = ResponderCommand::Pause;
+        let _resume = ResponderCommand::Resume;
     }
 }
