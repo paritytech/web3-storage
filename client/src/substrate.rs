@@ -5,7 +5,6 @@
 
 use crate::base::ClientError;
 use futures::StreamExt;
-use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;

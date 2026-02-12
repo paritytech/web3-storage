@@ -5,7 +5,7 @@
 //! - Querying provider capacity and availability
 //! - Getting recommendations for provider selection
 
-use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
+use crate::base::{BaseClient, ClientConfig, ClientResult};
 
 /// Storage requirements for provider matching.
 #[derive(Debug, Clone)]
