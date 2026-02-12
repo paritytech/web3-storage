@@ -213,33 +213,17 @@ impl ProviderClient {
 
     /// Respond to a challenge by providing the requested data and proofs.
     ///
-    /// # Example
-    /// ```no_run
-    /// # use storage_client::ProviderClient;
-    /// # async fn example(challenge_id: (u32, u16)) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
-    ///
-    /// // Fetch data and generate proofs from local storage
-    /// let chunk_data = vec![0u8; 256 * 1024];
-    /// let chunk_proof = vec![]; // Merkle proof
-    /// let mmr_proof = todo!(); // MMR proof
-    ///
-    /// client.respond_to_challenge(
-    ///     challenge_id,
-    ///     chunk_data,
-    ///     chunk_proof,
-    ///     mmr_proof
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// # Parameters
+    /// - `challenge_id`: (deadline_block, index) identifying the challenge
+    /// - `chunk_data`: The actual chunk data being proven
+    /// - `mmr_proof`: MMR proof showing the leaf is in the committed MMR
+    /// - `chunk_proof`: Merkle proof showing the chunk is in the leaf's data tree
     pub async fn respond_to_challenge(
         &self,
-        bucket_id: BucketId,
-        challenge_id: (u32, u16), // (deadline, index)
+        challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
-        chunk_proof: Vec<H256>,
-        mmr_proof: MmrProofData,
+        mmr_proof: &storage_primitives::MmrProof,
+        chunk_proof: &storage_primitives::MerkleProof,
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -250,13 +234,11 @@ impl ProviderClient {
             chunk_data.len()
         );
 
-        // Create and submit the extrinsic
-        let tx = extrinsics::respond_challenge(
-            bucket_id,
+        let tx = extrinsics::respond_to_challenge_proof(
             challenge_id,
-            chunk_data,
+            &chunk_data,
+            mmr_proof,
             chunk_proof,
-            (mmr_proof.peaks, mmr_proof.siblings),
         );
 
         let tx_progress = chain
@@ -353,12 +335,6 @@ pub struct ChallengeInfo {
     pub deadline: u32,
     pub leaf_index: u64,
     pub chunk_index: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct MmrProofData {
-    pub peaks: Vec<H256>,
-    pub siblings: Vec<H256>,
 }
 
 #[derive(Debug, Clone, Default)]

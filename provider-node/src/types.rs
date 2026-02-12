@@ -162,6 +162,7 @@ pub struct MmrProofResponse {
 pub struct MmrProofData {
     pub peaks: Vec<String>,
     pub siblings: Vec<String>,
+    pub path: Vec<bool>,
 }
 
 /// Query for chunk proof.
@@ -175,6 +176,9 @@ pub struct ChunkProofQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkProofResponse {
     pub chunk_hash: String,
+    /// Base64-encoded chunk data (included for challenge responses)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_data: Option<String>,
     pub proof: MerkleProofData,
 }
 

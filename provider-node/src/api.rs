@@ -258,6 +258,7 @@ async fn read_chunks(
                     ),
                     data: BASE64.encode(&data),
                     proof: proof
+                        .siblings
                         .iter()
                         .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
                         .collect(),
@@ -331,22 +332,29 @@ async fn get_mmr_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<MmrProofQuery>,
 ) -> Result<Json<MmrProofResponse>, Error> {
-    let (leaf, peaks) = state
+    let mmr_proof = state
         .storage
         .get_mmr_proof(query.bucket_id, query.leaf_index)?;
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
-            data_root: format!("0x{}", hex_encode(leaf.data_root.as_bytes())),
-            data_size: leaf.data_size,
-            total_size: leaf.total_size,
+            data_root: format!("0x{}", hex_encode(mmr_proof.leaf.data_root.as_bytes())),
+            data_size: mmr_proof.leaf.data_size,
+            total_size: mmr_proof.leaf.total_size,
         },
         proof: MmrProofData {
-            peaks: peaks
+            peaks: mmr_proof
+                .peaks
                 .iter()
                 .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
                 .collect(),
-            siblings: vec![],
+            siblings: mmr_proof
+                .leaf_proof
+                .siblings
+                .iter()
+                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .collect(),
+            path: mmr_proof.leaf_proof.path,
         },
     }))
 }
@@ -368,12 +376,14 @@ async fn get_chunk_proof(
 
     Ok(Json(ChunkProofResponse {
         chunk_hash: format!("0x{}", hex_encode(chunk_hash.as_bytes())),
+        chunk_data: Some(BASE64.encode(&chunk_data)),
         proof: MerkleProofData {
             siblings: proof
+                .siblings
                 .iter()
                 .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
                 .collect(),
-            path: vec![],
+            path: proof.path,
         },
     }))
 }
