@@ -442,6 +442,11 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
+    // Provider-initiated checkpoint parameters
+    pub const DefaultCheckpointInterval: BlockNumber = 100;  // ~10 minutes at 6s blocks
+    pub const DefaultCheckpointGrace: BlockNumber = 20;      // ~2 minutes grace for leader
+    pub const CheckpointReward: Balance = 1 * UNIT;          // 1 token per checkpoint
+    pub const CheckpointMissPenalty: Balance = 10 * UNIT;    // 10 tokens penalty for missing
 }
 
 // Treasury account for slashed funds
@@ -469,6 +474,11 @@ impl pallet_storage_provider::Config for Runtime {
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
+    // Provider-initiated checkpoint config
+    type DefaultCheckpointInterval = DefaultCheckpointInterval;
+    type DefaultCheckpointGrace = DefaultCheckpointGrace;
+    type CheckpointReward = CheckpointReward;
+    type CheckpointMissPenalty = CheckpointMissPenalty;
 }
 
 // --------------------------------
