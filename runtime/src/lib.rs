@@ -442,6 +442,10 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
+    pub const DefaultCheckpointInterval: BlockNumber = 100;
+    pub const DefaultCheckpointGrace: BlockNumber = 20;
+    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
+    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
 }
 
 // Treasury account for slashed funds
@@ -469,6 +473,10 @@ impl pallet_storage_provider::Config for Runtime {
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
+    type DefaultCheckpointInterval = DefaultCheckpointInterval;
+    type DefaultCheckpointGrace = DefaultCheckpointGrace;
+    type CheckpointReward = CheckpointReward;
+    type CheckpointMissPenalty = CheckpointMissPenalty;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
