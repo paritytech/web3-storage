@@ -6,7 +6,7 @@
 //! `n.trailing_zeros()`.
 
 use sp_core::H256;
-use storage_primitives::{blake2_256, hash_children};
+use storage_primitives::hash_children;
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]
@@ -242,6 +242,7 @@ pub struct MmrProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use storage_primitives::blake2_256;
 
     #[test]
     fn test_mmr_basic() {
