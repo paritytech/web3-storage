@@ -320,47 +320,124 @@ pub mod extrinsics {
         )
     }
 
-    /// Create a respond_challenge extrinsic payload.
-    pub fn respond_challenge(
-        bucket_id: u64,
+    /// Create a respond_to_challenge extrinsic payload with a Proof response.
+    ///
+    /// Builds the `ChallengeResponse::Proof` variant with proper nested types
+    /// matching the pallet's expected format.
+    pub fn respond_to_challenge_proof(
         challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        chunk_proof: Vec<H256>,
-        mmr_proof: (Vec<H256>, Vec<H256>),
+        chunk_data: &[u8],
+        mmr_proof: &storage_primitives::MmrProof,
+        chunk_proof: &storage_primitives::MerkleProof,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            "StorageProvider",
-            "respond_challenge",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    subxt::dynamic::Value::u128(challenge_id.0 as u128),
-                    subxt::dynamic::Value::u128(challenge_id.1 as u128),
-                ]),
-                subxt::dynamic::Value::from_bytes(&chunk_data),
+        // Build ChallengeId named composite
+        let challenge_id_value = subxt::dynamic::Value::named_composite([
+            (
+                "deadline",
+                subxt::dynamic::Value::u128(challenge_id.0 as u128),
+            ),
+            (
+                "index",
+                subxt::dynamic::Value::u128(challenge_id.1 as u128),
+            ),
+        ]);
+
+        // Build MerkleProof for leaf_proof (MMR leaf to peak)
+        let leaf_proof_value = subxt::dynamic::Value::named_composite([
+            (
+                "siblings",
                 subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
+                    mmr_proof
+                        .leaf_proof
+                        .siblings
                         .iter()
                         .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
                         .collect::<Vec<_>>(),
                 ),
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    subxt::dynamic::Value::unnamed_composite(
-                        mmr_proof
-                            .0
-                            .iter()
-                            .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                            .collect::<Vec<_>>(),
-                    ),
-                    subxt::dynamic::Value::unnamed_composite(
-                        mmr_proof
-                            .1
-                            .iter()
-                            .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                            .collect::<Vec<_>>(),
-                    ),
-                ]),
+            ),
+            (
+                "path",
+                subxt::dynamic::Value::unnamed_composite(
+                    mmr_proof
+                        .leaf_proof
+                        .path
+                        .iter()
+                        .map(|b| subxt::dynamic::Value::bool(*b))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        ]);
+
+        // Build MmrLeaf
+        let leaf_value = subxt::dynamic::Value::named_composite([
+            (
+                "data_root",
+                subxt::dynamic::Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
+            ),
+            (
+                "data_size",
+                subxt::dynamic::Value::u128(mmr_proof.leaf.data_size as u128),
+            ),
+            (
+                "total_size",
+                subxt::dynamic::Value::u128(mmr_proof.leaf.total_size as u128),
+            ),
+        ]);
+
+        // Build MmrProof
+        let mmr_proof_value = subxt::dynamic::Value::named_composite([
+            (
+                "peaks",
+                subxt::dynamic::Value::unnamed_composite(
+                    mmr_proof
+                        .peaks
+                        .iter()
+                        .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            ("leaf", leaf_value),
+            ("leaf_proof", leaf_proof_value),
+        ]);
+
+        // Build MerkleProof for chunk proof (chunk to data_root)
+        let chunk_proof_value = subxt::dynamic::Value::named_composite([
+            (
+                "siblings",
+                subxt::dynamic::Value::unnamed_composite(
+                    chunk_proof
+                        .siblings
+                        .iter()
+                        .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "path",
+                subxt::dynamic::Value::unnamed_composite(
+                    chunk_proof
+                        .path
+                        .iter()
+                        .map(|b| subxt::dynamic::Value::bool(*b))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        ]);
+
+        // Build ChallengeResponse::Proof variant
+        let response = subxt::dynamic::Value::named_variant(
+            "Proof",
+            [
+                ("chunk_data", subxt::dynamic::Value::from_bytes(chunk_data)),
+                ("mmr_proof", mmr_proof_value),
+                ("chunk_proof", chunk_proof_value),
             ],
+        );
+
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "respond_to_challenge",
+            vec![challenge_id_value, response],
         )
     }
 }
@@ -421,6 +498,23 @@ pub mod storage {
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
             ],
+        )
+    }
+
+    /// Query challenges at a deadline block.
+    pub fn challenges(
+        deadline_block: u32,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage(
+            "StorageProvider",
+            "Challenges",
+            vec![subxt::dynamic::Value::u128(deadline_block as u128)],
         )
     }
 }
