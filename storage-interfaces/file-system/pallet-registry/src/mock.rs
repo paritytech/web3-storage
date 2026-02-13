@@ -82,10 +82,13 @@ parameter_types! {
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 50;
     pub TreasuryAccount: u64 = 999; // Treasury account
+    pub const DefaultCheckpointInterval: u64 = 100;
+    pub const DefaultCheckpointGrace: u64 = 20;
+    pub const CheckpointReward: u64 = 1_000_000_000_000;
+    pub const CheckpointMissPenalty: u64 = 500_000_000_000;
 }
 
 impl pallet_storage_provider::Config for Test {
-    type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
@@ -97,6 +100,10 @@ impl pallet_storage_provider::Config for Test {
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
+    type DefaultCheckpointInterval = DefaultCheckpointInterval;
+    type DefaultCheckpointGrace = DefaultCheckpointGrace;
+    type CheckpointReward = CheckpointReward;
+    type CheckpointMissPenalty = CheckpointMissPenalty;
 }
 
 parameter_types! {
