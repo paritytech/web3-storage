@@ -48,3 +48,4 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
 tempfile = "3.10"
+tracing-subscriber = "0.3"
