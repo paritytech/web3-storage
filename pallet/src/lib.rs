@@ -33,9 +33,9 @@ mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
+    use crate::weights::WeightInfo;
     use alloc::vec;
     use alloc::vec::Vec;
-    use crate::weights::WeightInfo;
     use frame_support::{
         pallet_prelude::*,
         traits::{Currency, ExistenceRequirement, ReservableCurrency},

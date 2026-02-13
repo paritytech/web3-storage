@@ -86,10 +86,7 @@ fn setup_primary_agreement<T: Config>(
     );
 
     // Accept agreement
-    let _ = Pallet::<T>::accept_agreement(
-        RawOrigin::Signed(provider.clone()).into(),
-        bucket_id,
-    );
+    let _ = Pallet::<T>::accept_agreement(RawOrigin::Signed(provider.clone()).into(), bucket_id);
 }
 
 #[benchmarks]
@@ -201,8 +198,10 @@ mod benchmarks {
 
         // Need to create a checkpoint first
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<(T::AccountId, sp_runtime::MultiSignature), T::MaxPrimaryProviders> =
-            BoundedVec::new();
+        let signatures: BoundedVec<
+            (T::AccountId, sp_runtime::MultiSignature),
+            T::MaxPrimaryProviders,
+        > = BoundedVec::new();
 
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
@@ -214,11 +213,8 @@ mod benchmarks {
         );
 
         // Set min_providers to 0 so freeze succeeds
-        let _ = Pallet::<T>::set_min_providers(
-            RawOrigin::Signed(admin.clone()).into(),
-            bucket_id,
-            0,
-        );
+        let _ =
+            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, 0);
 
         #[extrinsic_call]
         freeze_bucket(RawOrigin::Signed(admin), bucket_id);
@@ -582,7 +578,13 @@ mod benchmarks {
         let grace_period: BlockNumberFor<T> = 50u32.into();
 
         #[extrinsic_call]
-        configure_checkpoint_window(RawOrigin::Signed(admin), bucket_id, interval, grace_period, true);
+        configure_checkpoint_window(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            interval,
+            grace_period,
+            true,
+        );
     }
 
     #[benchmark]
@@ -651,9 +653,8 @@ mod benchmarks {
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
         let mmr_root = H256::repeat_byte(0xAB);
-        let signature = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(
-            [0u8; 64],
-        ));
+        let signature =
+            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
 
         #[extrinsic_call]
         challenge_offchain(
@@ -767,12 +768,16 @@ mod benchmarks {
             None,
             None,
         ];
-        let signature = sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(
-            [0u8; 64],
-        ));
+        let signature =
+            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
 
         #[extrinsic_call]
-        confirm_replica_sync(RawOrigin::Signed(replica_provider), bucket_id, roots, signature);
+        confirm_replica_sync(
+            RawOrigin::Signed(replica_provider),
+            bucket_id,
+            roots,
+            signature,
+        );
     }
 
     #[benchmark]
@@ -818,9 +823,5 @@ mod benchmarks {
         );
     }
 
-    impl_benchmark_test_suite!(
-        Pallet,
-        crate::mock::new_test_ext(),
-        crate::mock::Test
-    );
+    impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
 }
