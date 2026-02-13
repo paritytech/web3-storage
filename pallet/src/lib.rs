@@ -20,6 +20,10 @@ extern crate alloc;
 pub use pallet::*;
 
 pub mod runtime_api;
+pub mod weights;
+
+#[cfg(feature = "runtime-benchmarks")]
+pub mod benchmarking;
 
 #[cfg(test)]
 mod mock;
@@ -29,6 +33,7 @@ mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
+    use crate::weights::WeightInfo;
     use alloc::vec;
     use alloc::vec::Vec;
     use frame_support::{
@@ -128,6 +133,9 @@ pub mod pallet {
         /// Penalty for missing a checkpoint window (slashed from provider stake).
         #[pallet::constant]
         type CheckpointMissPenalty: Get<BalanceOf<Self>>;
+
+        /// Weight information for extrinsics in this pallet.
+        type WeightInfo: crate::weights::WeightInfo;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -761,7 +769,7 @@ pub mod pallet {
         /// - `public_key`: Public key for signature verification (raw bytes, 32-64 bytes)
         /// - `stake`: Initial stake to lock
         #[pallet::call_index(0)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::register_provider())]
         pub fn register_provider(
             origin: OriginFor<T>,
             multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
@@ -815,7 +823,7 @@ pub mod pallet {
 
         /// Add stake to an existing provider registration.
         #[pallet::call_index(1)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::add_stake())]
         pub fn add_stake(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -843,7 +851,7 @@ pub mod pallet {
 
         /// Deregister provider and withdraw stake.
         #[pallet::call_index(2)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::deregister_provider())]
         pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -869,7 +877,7 @@ pub mod pallet {
 
         /// Update provider settings.
         #[pallet::call_index(3)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
             origin: OriginFor<T>,
             settings: ProviderSettings<T>,
@@ -911,7 +919,7 @@ pub mod pallet {
 
         /// Block or unblock extensions for a specific bucket.
         #[pallet::call_index(4)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::block_extensions())]
         pub fn set_extensions_blocked(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -951,7 +959,7 @@ pub mod pallet {
 
         /// Create a new bucket.
         #[pallet::call_index(10)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::create_bucket())]
         pub fn create_bucket(origin: OriginFor<T>, min_providers: u32) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -990,7 +998,7 @@ pub mod pallet {
 
         /// Set minimum providers required for checkpoint.
         #[pallet::call_index(11)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::set_bucket_min_providers())]
         pub fn set_min_providers(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1016,7 +1024,7 @@ pub mod pallet {
 
         /// Freeze bucket - make append-only (irreversible).
         #[pallet::call_index(12)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::freeze_bucket())]
         pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -1050,7 +1058,7 @@ pub mod pallet {
 
         /// Add or update a member's role.
         #[pallet::call_index(13)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::set_bucket_member())]
         pub fn set_member(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1095,7 +1103,7 @@ pub mod pallet {
 
         /// Remove member from bucket.
         #[pallet::call_index(14)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::remove_bucket_member())]
         pub fn remove_member(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1133,7 +1141,7 @@ pub mod pallet {
         /// The provider must have zero stake (indicating they were slashed).
         /// Returns payment to agreement owner and removes the provider from the bucket.
         #[pallet::call_index(15)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::remove_slashed())]
         pub fn remove_slashed(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1193,7 +1201,7 @@ pub mod pallet {
 
         /// Request a replica storage agreement.
         #[pallet::call_index(20)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::request_agreement())]
         pub fn request_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1269,7 +1277,7 @@ pub mod pallet {
 
         /// Request a primary storage agreement (admin only).
         #[pallet::call_index(21)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::request_primary_agreement())]
         pub fn request_primary_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1342,7 +1350,7 @@ pub mod pallet {
 
         /// Accept a pending agreement request.
         #[pallet::call_index(22)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::accept_agreement())]
         pub fn accept_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -1464,7 +1472,7 @@ pub mod pallet {
 
         /// Reject a pending agreement request.
         #[pallet::call_index(23)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::reject_agreement())]
         pub fn reject_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -1495,7 +1503,7 @@ pub mod pallet {
 
         /// Withdraw a pending agreement request.
         #[pallet::call_index(24)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::withdraw_agreement_request())]
         pub fn withdraw_agreement_request(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1533,7 +1541,7 @@ pub mod pallet {
 
         /// End agreement with pay/burn decision.
         #[pallet::call_index(25)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::end_agreement())]
         pub fn end_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1582,7 +1590,7 @@ pub mod pallet {
 
         /// Claim payment for expired agreement (provider only).
         #[pallet::call_index(26)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::claim_expired_agreement())]
         pub fn claim_expired_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1616,7 +1624,7 @@ pub mod pallet {
         /// Increases max_bytes, does not change duration.
         /// Actual payment = provider.price_per_byte * additional_bytes * remaining_duration.
         #[pallet::call_index(28)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::top_up_agreement())]
         pub fn top_up_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1706,7 +1714,7 @@ pub mod pallet {
         /// This enables permissionless persistence for frozen buckets while protecting
         /// owners from unwanted price increases.
         #[pallet::call_index(27)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::extend_agreement())]
         pub fn extend_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1854,7 +1862,7 @@ pub mod pallet {
 
         /// Submit a new checkpoint with provider signatures.
         #[pallet::call_index(30)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::checkpoint())]
         pub fn checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -1950,7 +1958,7 @@ pub mod pallet {
         /// Allows late-signing providers to add their signatures to the current
         /// snapshot. Useful when a provider signs off-chain commitments later.
         #[pallet::call_index(31)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::extend_checkpoint())]
         pub fn extend_checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2042,7 +2050,7 @@ pub mod pallet {
         /// - `window`: Checkpoint window number (prevents replay)
         /// - `signatures`: Provider signatures over the checkpoint proposal
         #[pallet::call_index(32)]
-        #[pallet::weight(Weight::from_parts(50_000, 0))]
+        #[pallet::weight(T::WeightInfo::provider_checkpoint(signatures.len() as u32))]
         pub fn provider_checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2199,7 +2207,7 @@ pub mod pallet {
         /// Only bucket admin can configure. Setting enabled=false disables
         /// provider-initiated checkpoints (client-initiated still work).
         #[pallet::call_index(33)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::configure_checkpoint_window())]
         pub fn configure_checkpoint_window(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2236,7 +2244,7 @@ pub mod pallet {
         /// (beyond grace period) and no checkpoint was submitted.
         /// Reporter receives a portion of the penalty.
         #[pallet::call_index(34)]
-        #[pallet::weight(Weight::from_parts(20_000, 0))]
+        #[pallet::weight(T::WeightInfo::report_missed_checkpoint())]
         pub fn report_missed_checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2311,7 +2319,7 @@ pub mod pallet {
         /// Providers accumulate rewards for submitting checkpoints.
         /// This transfers accumulated rewards to the provider.
         #[pallet::call_index(35)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::claim_checkpoint_rewards())]
         pub fn claim_checkpoint_rewards(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2338,7 +2346,7 @@ pub mod pallet {
         /// Anyone can fund the pool. Funds are used to reward providers
         /// for submitting checkpoints.
         #[pallet::call_index(36)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::fund_checkpoint_pool())]
         pub fn fund_checkpoint_pool(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2380,7 +2388,7 @@ pub mod pallet {
         /// no longer in the snapshot when the transaction executes, this fails.
         /// For hot buckets, prefer challenge_offchain with the signature you have.
         #[pallet::call_index(40)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::challenge_checkpoint())]
         pub fn challenge_checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2422,7 +2430,7 @@ pub mod pallet {
         ///
         /// Preferred for hot buckets where snapshots change frequently.
         #[pallet::call_index(42)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::challenge_off_chain())]
         pub fn challenge_offchain(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2473,7 +2481,7 @@ pub mod pallet {
         /// Uses the replica's last_synced_root stored in their agreement.
         /// No signature needed - the chain already has their commitment.
         #[pallet::call_index(43)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::challenge_replica())]
         pub fn challenge_replica(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2510,7 +2518,7 @@ pub mod pallet {
 
         /// Respond to a challenge.
         #[pallet::call_index(41)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::respond_to_challenge())]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
@@ -2676,7 +2684,7 @@ pub mod pallet {
 
         /// Replica confirms sync to MMR roots.
         #[pallet::call_index(50)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::confirm_replica_sync())]
         pub fn confirm_replica_sync(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2757,7 +2765,7 @@ pub mod pallet {
 
         /// Top up a replica's sync balance.
         #[pallet::call_index(51)]
-        #[pallet::weight(Weight::from_parts(10_000, 0))]
+        #[pallet::weight(T::WeightInfo::top_up_replica_sync_balance())]
         pub fn top_up_replica_sync_balance(
             origin: OriginFor<T>,
             bucket_id: BucketId,

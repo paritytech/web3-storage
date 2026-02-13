@@ -90,6 +90,7 @@ impl pallet_storage_provider::Config for Test {
     type DefaultCheckpointGrace = ConstU64<5>; // 5 blocks grace
     type CheckpointReward = ConstU64<10>; // 10 units reward
     type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
+    type WeightInfo = ();
 }
 
 /// Build test externalities with default balances.

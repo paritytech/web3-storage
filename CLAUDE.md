@@ -340,6 +340,7 @@ These guidelines are used by the Claude Code review bot and should be followed b
 | [Manual Testing Guide](docs/testing/MANUAL_TESTING_GUIDE.md) | Complete testing workflow |
 | [Extrinsics Reference](docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
+| [Benchmarking Guide](docs/reference/BENCHMARKING.md) | Generate weights for extrinsics |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 

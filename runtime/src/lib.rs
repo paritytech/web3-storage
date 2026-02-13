@@ -482,6 +482,7 @@ impl pallet_storage_provider::Config for Runtime {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
