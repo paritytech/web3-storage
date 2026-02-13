@@ -17,7 +17,7 @@ pub mod xcm_config;
 extern crate alloc;
 
 use alloc::borrow::Cow;
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
 use frame_support::{
@@ -94,17 +94,19 @@ pub type SignedBlock = generic::SignedBlock<Block>;
 pub type BlockId = generic::BlockId<Block>;
 
 /// The SignedExtension to the basic transaction logic.
-pub type TxExtension = (
-    frame_system::CheckNonZeroSender<Runtime>,
-    frame_system::CheckSpecVersion<Runtime>,
-    frame_system::CheckTxVersion<Runtime>,
-    frame_system::CheckGenesis<Runtime>,
-    frame_system::CheckEra<Runtime>,
-    frame_system::CheckNonce<Runtime>,
-    frame_system::CheckWeight<Runtime>,
-    pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
-    cumulus_primitives_storage_weight_reclaim::StorageWeightReclaim<Runtime>,
-);
+pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
+    Runtime,
+    (
+        frame_system::CheckNonZeroSender<Runtime>,
+        frame_system::CheckSpecVersion<Runtime>,
+        frame_system::CheckTxVersion<Runtime>,
+        frame_system::CheckGenesis<Runtime>,
+        frame_system::CheckEra<Runtime>,
+        frame_system::CheckNonce<Runtime>,
+        frame_system::CheckWeight<Runtime>,
+        pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+    ),
+>;
 
 /// Unchecked extrinsic type as expected by this runtime.
 pub type UncheckedExtrinsic =
@@ -442,6 +444,10 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
+    pub const DefaultCheckpointInterval: BlockNumber = 100;
+    pub const DefaultCheckpointGrace: BlockNumber = 20;
+    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
+    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
 }
 
 // Treasury account for slashed funds
@@ -456,8 +462,11 @@ impl frame_support::traits::Get<AccountId> for TreasuryAccount {
     }
 }
 
+impl cumulus_pallet_weight_reclaim::Config for Runtime {
+    type WeightInfo = ();
+}
+
 impl pallet_storage_provider::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type Treasury = TreasuryAccount;
     type MinStakePerByte = MinStakePerByte;
@@ -469,6 +478,10 @@ impl pallet_storage_provider::Config for Runtime {
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
+    type DefaultCheckpointInterval = DefaultCheckpointInterval;
+    type DefaultCheckpointGrace = DefaultCheckpointGrace;
+    type CheckpointReward = CheckpointReward;
+    type CheckpointMissPenalty = CheckpointMissPenalty;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
@@ -539,6 +552,10 @@ mod runtime {
 
     #[runtime::pallet_index(33)]
     pub type MessageQueue = pallet_message_queue;
+
+    // Weight reclaim
+    #[runtime::pallet_index(40)]
+    pub type WeightReclaim = cumulus_pallet_weight_reclaim;
 
     // Storage Provider
     #[runtime::pallet_index(50)]
@@ -772,7 +789,7 @@ impl_runtime_apis! {
         }
 
         fn execute_block(
-            block: Block,
+            block: sp_runtime::generic::LazyBlock<Header, UncheckedExtrinsic>,
             state_root_check: bool,
             signature_check: bool,
             select: frame_try_runtime::TryStateSelect,

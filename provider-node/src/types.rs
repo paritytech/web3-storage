@@ -1,7 +1,6 @@
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use storage_primitives::BucketId;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,6 +162,7 @@ pub struct MmrProofResponse {
 pub struct MmrProofData {
     pub peaks: Vec<String>,
     pub siblings: Vec<String>,
+    pub path: Vec<bool>,
 }
 
 /// Query for chunk proof.
@@ -176,6 +176,9 @@ pub struct ChunkProofQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkProofResponse {
     pub chunk_hash: String,
+    /// Base64-encoded chunk data (included for challenge responses)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_data: Option<String>,
     pub proof: MerkleProofData,
 }
 
@@ -323,4 +326,73 @@ pub struct FetchedNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNodesResponse {
     pub nodes: Vec<FetchedNode>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Replica Sync Coordinator Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Query for historical roots.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HistoricalRootsQuery {
+    pub bucket_id: BucketId,
+}
+
+/// Response with current and historical roots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalRootsResponse {
+    pub bucket_id: BucketId,
+    /// Current MMR root (position 0).
+    pub current_root: String,
+    /// Historical roots (positions 1-6).
+    pub historical_roots: [String; 6],
+    /// Block number of the snapshot.
+    pub snapshot_block: u64,
+}
+
+/// Query for bucket sync status.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BucketSyncStatusQuery {
+    pub bucket_id: BucketId,
+}
+
+/// Response with bucket sync status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketSyncStatusResponse {
+    pub bucket_id: BucketId,
+    /// Local MMR root.
+    pub local_mmr_root: String,
+    /// Local leaf count.
+    pub local_leaf_count: u64,
+    /// Block number of last sync (if any).
+    pub last_sync_block: Option<u64>,
+    /// Whether sync is in progress.
+    pub syncing: bool,
+}
+
+/// Request to force sync a bucket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceSyncRequest {
+    pub bucket_id: BucketId,
+}
+
+/// Response from force sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceSyncResponse {
+    pub bucket_id: BucketId,
+    pub queued: bool,
+    pub message: String,
+}
+
+/// Response with overall replica sync coordinator status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicaSyncCoordinatorStatusResponse {
+    /// Whether coordinator is running.
+    pub running: bool,
+    /// Whether coordinator is paused.
+    pub paused: bool,
+    /// Number of active sync operations.
+    pub active_syncs: usize,
+    /// Buckets being tracked as replica.
+    pub tracked_buckets: Vec<BucketId>,
 }

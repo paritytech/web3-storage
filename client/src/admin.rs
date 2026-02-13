@@ -11,7 +11,6 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{extrinsics, SubstrateClient};
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, EndAction, Role};
 
 /// Client for bucket administrators.
@@ -88,7 +87,7 @@ impl AdminClient {
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
 
         // Wait for finalization and extract bucket ID from events
-        let events = tx_progress
+        let _events = tx_progress
             .wait_for_finalized_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
@@ -272,7 +271,7 @@ impl AdminClient {
         bucket_id: BucketId,
         provider: String,
         additional_duration: u32,
-        max_payment: u128,
+        _max_payment: u128,
     ) -> ClientResult<()> {
         // TODO: Submit extrinsic
         tracing::info!(
@@ -290,7 +289,7 @@ impl AdminClient {
         bucket_id: BucketId,
         provider: String,
         additional_bytes: u64,
-        max_payment: u128,
+        _max_payment: u128,
     ) -> ClientResult<()> {
         // TODO: Submit extrinsic
         tracing::info!(
@@ -350,7 +349,7 @@ impl AdminClient {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-        signature: Vec<u8>,
+        _signature: Vec<u8>,
     ) -> ClientResult<()> {
         // TODO: Submit extrinsic
         tracing::info!(
@@ -426,7 +425,7 @@ impl AdminClient {
     /// List all agreements for a bucket.
     pub async fn list_bucket_agreements(
         &self,
-        bucket_id: BucketId,
+        _bucket_id: BucketId,
     ) -> ClientResult<Vec<AgreementInfo>> {
         // TODO: Query via Runtime API
         Ok(vec![])

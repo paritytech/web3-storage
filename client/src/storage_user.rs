@@ -570,6 +570,7 @@ struct ReadResponse {
 }
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct ChunkWithProof {
     hash: String,
     data: String,
@@ -577,6 +578,7 @@ struct ChunkWithProof {
 }
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct NodeResponse {
     hash: String,
     data: String,

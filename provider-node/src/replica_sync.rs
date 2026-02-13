@@ -185,7 +185,7 @@ impl ReplicaSync {
         &self,
         bucket_id: BucketId,
         primary_urls: Vec<String>,
-        min_sync_interval_blocks: u32,
+        _min_sync_interval_blocks: u32,
     ) -> Result<(), Error> {
         loop {
             // Try syncing from each primary

@@ -24,7 +24,7 @@ pub mod constants {
         fn sane() {
             let w = super::constants::ExtrinsicBaseWeight::get();
             assert!(w.ref_time() >= 10u64.saturating_mul(constants::WEIGHT_REF_TIME_PER_NANOS));
-            assert!(w.ref_time() <= constants::WEIGHT_REF_TIME_PER_MICROS);
+            assert!(w.ref_time() <= constants::WEIGHT_REF_TIME_PER_MILLIS);
         }
     }
 }

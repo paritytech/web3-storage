@@ -64,7 +64,9 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                     Sr25519Keyring::Bob.public().into(),
                 ),
             ],
-            Sr25519Keyring::well_known().map(|k| k.to_account_id()).collect(),
+            Sr25519Keyring::well_known()
+                .map(|k| k.to_account_id())
+                .collect(),
             UNIT * 10_000_000_000_000,
             PARA_ID,
             // Sudo

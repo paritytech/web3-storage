@@ -29,22 +29,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     // Get provider URL from first argument
-    let provider_url = args.get(1)
+    let provider_url = args
+        .get(1)
         .map(|s| s.as_str())
         .unwrap_or("http://127.0.0.1:3000");
 
     // Get bucket ID from second argument
-    let bucket_id: u64 = args.get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
+    let bucket_id: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
 
     // Get chain WebSocket URL from third argument
-    let chain_ws_url = args.get(3)
+    let chain_ws_url = args
+        .get(3)
         .map(|s| s.as_str())
         .unwrap_or("ws://127.0.0.1:9944");
 
     // Get data from fourth argument or use default
-    let data: Vec<u8> = args.get(4)
+    let data: Vec<u8> = args
+        .get(4)
         .map(|s| s.clone().into_bytes())
         .unwrap_or_else(|| b"Hello, Web3 Storage!".to_vec());
 
@@ -64,7 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = StorageUserClient::new(config)?;
 
     // Upload via StorageUserClient
-    let data_root = client.upload(bucket_id, &data, ChunkingStrategy::default()).await?;
+    let data_root = client
+        .upload(bucket_id, &data, ChunkingStrategy::default())
+        .await?;
     let hash_hex = format!("0x{}", hex::encode(data_root.as_bytes()));
     println!("Data Root: {}", hash_hex);
 
@@ -80,7 +83,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let verified = match client.download(&data_root, 0, data.len() as u64).await {
         Ok(downloaded_data) => {
             println!("Data verified successfully!");
-            println!("Downloaded: {:?}", String::from_utf8_lossy(&downloaded_data));
+            println!(
+                "Downloaded: {:?}",
+                String::from_utf8_lossy(&downloaded_data)
+            );
 
             if downloaded_data == data {
                 println!("Data integrity check: PASSED");

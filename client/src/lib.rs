@@ -96,7 +96,10 @@
 pub mod admin;
 pub mod base;
 pub mod challenger;
+pub mod checkpoint;
+pub mod checkpoint_persistence;
 pub mod discovery;
+pub mod event_subscription;
 pub mod provider;
 pub mod storage_user;
 pub mod substrate;
@@ -106,7 +109,25 @@ pub mod verification;
 pub use admin::AdminClient;
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
-pub use discovery::{DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements};
+pub use checkpoint::{
+    AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
+    BucketCheckpointStatus, ChallengeEvidence, ChallengeReason, ChallengeRecommendation,
+    CheckpointCallback, CheckpointConfig, CheckpointLoopCommand, CheckpointLoopHandle,
+    CheckpointManager, CheckpointMetrics, CheckpointResult, CommitmentCollection,
+    ConflictResolution, ConflictType, ConflictingProvider, FailedChallenge, ProviderConflict,
+    ProviderHealthHistory, ProviderInfo, ProviderStatus, SubmittedChallenge,
+};
+pub use checkpoint_persistence::{
+    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
+    PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
+};
+pub use discovery::{
+    DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
+};
+pub use event_subscription::{
+    subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
+    EventCallback, EventFilter, EventStream, EventSubscriber, StorageEvent, SubscriptionHandle,
+};
 pub use provider::ProviderClient;
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
@@ -362,29 +383,27 @@ impl StorageClient {
             return Ok(leaves[0]);
         }
 
+        // Pad to next power of 2 for a balanced tree (required for index-based Merkle proofs)
+        let padded_len = leaves.len().next_power_of_two();
         let mut current_level = leaves.to_vec();
+        current_level.resize(padded_len, H256::zero());
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
 
-            for chunk in current_level.chunks(2) {
-                if chunk.len() == 2 {
-                    let parent = storage_primitives::hash_children(chunk[0], chunk[1]);
+            for pair in current_level.chunks(2) {
+                let parent = storage_primitives::hash_children(pair[0], pair[1]);
 
-                    // Create internal node data (concatenated child hashes)
-                    let mut node_data = Vec::new();
-                    node_data.extend_from_slice(chunk[0].as_bytes());
-                    node_data.extend_from_slice(chunk[1].as_bytes());
+                // Create internal node data (concatenated child hashes)
+                let mut node_data = Vec::new();
+                node_data.extend_from_slice(pair[0].as_bytes());
+                node_data.extend_from_slice(pair[1].as_bytes());
 
-                    // Upload internal node
-                    self.upload_node(bucket_id, parent, node_data, Some(vec![chunk[0], chunk[1]]))
-                        .await?;
+                // Upload internal node (provider allows H256::zero() children)
+                self.upload_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]))
+                    .await?;
 
-                    next_level.push(parent);
-                } else {
-                    // Odd node - promote to next level
-                    next_level.push(chunk[0]);
-                }
+                next_level.push(parent);
             }
 
             current_level = next_level;
@@ -436,13 +455,14 @@ struct ReadResponse {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ChunkData {
     hash: String,
     data: String,
     proof: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct CommitmentResponse {
     pub bucket_id: BucketId,
     pub mmr_root: String,

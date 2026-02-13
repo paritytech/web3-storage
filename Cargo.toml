@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "primitives",
-    "pallet",
-    "provider-node",
-    "client",
-    "runtime",
+	"client",
+	"pallet",
+	"primitives",
+	"provider-node",
+	"runtime",
 ]
 
 [workspace.package]
@@ -16,11 +16,11 @@ repository = "https://github.com/parity/scalable-web3-storage"
 
 [workspace.dependencies]
 # Internal crates
-storage-primitives = { path = "primitives", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
-storage-provider-node = { path = "provider-node" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtime" }
+storage-primitives = { path = "primitives", default-features = false }
+storage-provider-node = { path = "provider-node" }
 
 # Substrate frame
 frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
@@ -52,7 +52,6 @@ sp-io = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-st
 sp-offchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 sp-session = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
-sp-std = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 sp-transaction-pool = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 sp-version = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 
@@ -68,14 +67,15 @@ xcm-executor = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polk
 cumulus-pallet-aura-ext = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-pallet-parachain-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-pallet-session-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
+cumulus-pallet-weight-reclaim = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-pallet-xcm = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-pallet-xcmp-queue = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-primitives-aura = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-primitives-core = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-primitives-storage-weight-reclaim = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 cumulus-primitives-utility = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
-parachains-common = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 parachain-info = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false, package = "staging-parachain-info" }
+parachains-common = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 
 # Build dependencies
 substrate-wasm-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512" }
@@ -90,11 +90,11 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
 
 # Async/HTTP (for provider node)
-tokio = { version = "1.0", features = ["full"] }
 axum = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1.0", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
-reqwest = { version = "0.12", features = ["json"] }
 
 # Crypto
 blake2 = { version = "0.10", default-features = false }

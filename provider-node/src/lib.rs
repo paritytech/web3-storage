@@ -6,23 +6,39 @@
 //! - Uploading and downloading content-addressed chunks
 //! - Committing data to the bucket's MMR
 //! - Syncing data between providers (for replicas)
+//! - Coordinating provider-initiated checkpoints
 
 pub mod api;
+pub mod challenge_responder;
+pub mod checkpoint_coordinator;
 pub mod disk_storage;
 pub mod error;
 pub mod mmr;
 pub mod replica_sync;
+pub mod replica_sync_coordinator;
 pub mod storage;
 pub mod types;
 
 pub use api::create_router;
+pub use challenge_responder::{
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeResponseResult, DetectedChallenge, ResponderCommand,
+};
+pub use checkpoint_coordinator::{
+    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
+    CheckpointDuty, CheckpointResult, CoordinatorCommand,
+};
 pub use disk_storage::DiskStorage;
 pub use error::Error;
 pub use replica_sync::ReplicaSync;
+pub use replica_sync_coordinator::{
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
+    SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+};
 pub use storage::Storage;
 pub use types::*;
 
-use sp_core::{sr25519, Pair, crypto::Ss58Codec};
+use sp_core::{crypto::Ss58Codec, sr25519, Pair};
 use std::sync::Arc;
 
 /// Provider node state shared across handlers.

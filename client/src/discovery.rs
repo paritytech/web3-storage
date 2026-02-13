@@ -5,7 +5,7 @@
 //! - Querying provider capacity and availability
 //! - Getting recommendations for provider selection
 
-use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
+use crate::base::{BaseClient, ClientConfig, ClientResult};
 
 /// Storage requirements for provider matching.
 #[derive(Debug, Clone)]
@@ -255,9 +255,8 @@ impl DiscoveryClient {
             .into_iter()
             .map(|provider| {
                 // Calculate estimated cost
-                let estimated_cost = provider.info.price_per_byte
-                    * bytes as u128
-                    * duration as u128;
+                let estimated_cost =
+                    provider.info.price_per_byte * bytes as u128 * duration as u128;
 
                 // Calculate reliability score based on challenge history
                 let reliability_score = if provider.info.agreements_total > 0 {
@@ -306,7 +305,11 @@ impl DiscoveryClient {
     }
 
     /// Check if a provider can accept additional bytes.
-    pub async fn can_provider_accept(&self, account: &str, additional_bytes: u64) -> ClientResult<bool> {
+    pub async fn can_provider_accept(
+        &self,
+        account: &str,
+        additional_bytes: u64,
+    ) -> ClientResult<bool> {
         let _chain = self.base.chain()?;
 
         tracing::info!(
