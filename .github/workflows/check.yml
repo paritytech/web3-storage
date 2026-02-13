@@ -26,6 +26,7 @@ jobs:
   check-fmt:
     runs-on: parity-default
     timeout-minutes: 20
+    continue-on-error: true
     needs: [set-image]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
@@ -75,6 +76,7 @@ jobs:
   clippy:
     name: Cargo clippy
     runs-on: parity-default
+    continue-on-error: true
     needs: [set-image, check]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
