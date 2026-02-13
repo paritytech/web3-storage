@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -64,7 +64,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "web3-storage-cache-check"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Cargo check
         run: |
@@ -89,7 +89,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "web3-storage-cache-clippy"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Cargo clippy
         run: |
@@ -113,7 +113,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "web3-storage-cache-tests"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Run tests
         run: |
