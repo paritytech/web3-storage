@@ -688,7 +688,7 @@ mod benchmarks {
 
         // Generate real sr25519 keypair and update provider's public key
         use sp_core::Pair;
-        let (pair, _) = sp_core::sr25519::Pair::generate();
+        let pair = sp_core::sr25519::Pair::from_seed(&[1u8; 32]);
         let public_key = pair.public();
         Providers::<T>::mutate(&provider, |maybe_provider| {
             if let Some(p) = maybe_provider {
@@ -812,7 +812,7 @@ mod benchmarks {
             chunk_index: 0,
             deposit: 100u32.into(),
         };
-        Challenges::<T>::insert(deadline, vec![challenge]);
+        Challenges::<T>::insert(deadline, alloc::vec![challenge]);
 
         let challenge_id = storage_primitives::ChallengeId { deadline, index: 0 };
 
