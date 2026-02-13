@@ -51,9 +51,19 @@ just demo  # Terminal 3
 
 # Clippy linting
 cargo clippy --all-targets --all-features --workspace -- -D warnings
+```
 
-# Format check
-cargo fmt --all -- --check
+## Formatting
+
+```bash
+# Rust formatting (requires nightly)
+cargo +nightly fmt --all
+
+# TOML formatting
+taplo format --check --config .config/taplo.toml
+
+# Feature propagation lint (checks Cargo.toml feature gates)
+zepter run --config .config/zepter.yaml
 ```
 
 ## Run Commands
@@ -66,13 +76,10 @@ just setup
 just start-chain
 
 # Start provider node manually
-export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
-cargo run --release -p storage-provider-node
+just start-provider
 
 # Check provider health
 just health
-curl http://localhost:3000/health
 
 # Verify on-chain setup
 bash scripts/verify-setup.sh

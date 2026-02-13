@@ -41,6 +41,7 @@ std = [
 	"sp-core/std",
 	"sp-io/std",
 	"sp-keyring/std",
+	"sp-keystore/std",
 	"sp-runtime/std",
 	"storage-primitives/std",
 ]
