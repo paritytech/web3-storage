@@ -38,7 +38,7 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Verify, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
         ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
@@ -69,9 +69,7 @@ pub mod pallet {
     }
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
-        /// The overarching event type.
-        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+    pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 
         /// Currency type for payments and staking.
         type Currency: ReservableCurrency<Self::AccountId>;

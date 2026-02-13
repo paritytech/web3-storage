@@ -381,29 +381,32 @@ impl StorageClient {
             return Ok(leaves[0]);
         }
 
+        // Pad to next power of 2 for a balanced tree (required for index-based Merkle proofs)
+        let padded_len = leaves.len().next_power_of_two();
         let mut current_level = leaves.to_vec();
+        current_level.resize(padded_len, H256::zero());
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
 
-            for chunk in current_level.chunks(2) {
-                if chunk.len() == 2 {
-                    let parent = storage_primitives::hash_children(chunk[0], chunk[1]);
+            for pair in current_level.chunks(2) {
+                let parent = storage_primitives::hash_children(pair[0], pair[1]);
 
-                    // Create internal node data (concatenated child hashes)
-                    let mut node_data = Vec::new();
-                    node_data.extend_from_slice(chunk[0].as_bytes());
-                    node_data.extend_from_slice(chunk[1].as_bytes());
+                // Create internal node data (concatenated child hashes)
+                let mut node_data = Vec::new();
+                node_data.extend_from_slice(pair[0].as_bytes());
+                node_data.extend_from_slice(pair[1].as_bytes());
 
-                    // Upload internal node
-                    self.upload_node(bucket_id, parent, node_data, Some(vec![chunk[0], chunk[1]]))
-                        .await?;
+                // Upload internal node (provider allows H256::zero() children)
+                self.upload_node(
+                    bucket_id,
+                    parent,
+                    node_data,
+                    Some(vec![pair[0], pair[1]]),
+                )
+                .await?;
 
-                    next_level.push(parent);
-                } else {
-                    // Odd node - promote to next level
-                    next_level.push(chunk[0]);
-                }
+                next_level.push(parent);
             }
 
             current_level = next_level;

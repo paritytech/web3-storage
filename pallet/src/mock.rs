@@ -74,7 +74,6 @@ impl frame_support::traits::Get<u64> for TestTreasury {
 }
 
 impl pallet_storage_provider::Config for Test {
-    type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type Treasury = TestTreasury;
     type MinStakePerByte = ConstU64<1>; // 1 unit per byte

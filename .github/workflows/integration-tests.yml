@@ -1,0 +1,141 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Load environment variables
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Cache binaries
+        uses: actions/cache@v4
+        id: bin-cache
+        with:
+          path: .bin
+          key: binaries-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download binaries
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install just --locked || true
+          just download-binaries
+
+  integration-tests:
+    name: Integration Tests
+    needs: [setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Load environment variables
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libclang-dev jq
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "integration-tests"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Restore binaries cache
+        uses: actions/cache@v4
+        with:
+          path: .bin
+          key: binaries-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Build
+        run: just build
+
+      - name: Start chain (background)
+        run: just start-chain &> /tmp/zombienet.log &
+
+      - name: Wait for chain to produce blocks
+        run: |
+          echo "Waiting for parachain RPC to be ready..."
+          for i in $(seq 1 120); do
+            if curl -s -H "Content-Type: application/json" \
+              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1]}' \
+              http://127.0.0.1:9944 2>/dev/null | jq -e '.result' > /dev/null 2>&1; then
+              echo "Parachain is producing blocks (attempt $i)"
+              break
+            fi
+            if [ "$i" -eq 120 ]; then
+              echo "Timeout: parachain did not start producing blocks"
+              cat /tmp/zombienet.log || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Start provider (background)
+        run: just start-provider &> /tmp/provider.log &
+
+      - name: Wait for provider to be ready
+        run: |
+          echo "Waiting for provider HTTP server..."
+          for i in $(seq 1 60); do
+            if curl -s http://127.0.0.1:3000/health | jq -e '.status' > /dev/null 2>&1; then
+              echo "Provider is healthy (attempt $i)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout: provider did not become healthy"
+              cat /tmp/provider.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run demo
+        run: just demo
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: |
+            /tmp/zombienet.log
+            /tmp/provider.log

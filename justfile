@@ -187,17 +187,31 @@ demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5z
         cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
     fi
 
-# Demo: full workflow - setup, upload, and challenge
+# Start the challenge watcher (auto-responds to challenges)
+start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+    #!/usr/bin/env bash
+    echo ""
+    echo "=== Starting Challenge Watcher ==="
+    echo ""
+    echo "Provider:  {{PROVIDER_URL}}"
+    echo "Chain:     {{CHAIN_WS}}"
+    echo ""
+    SEED="{{SEED}}" \
+    CHAIN_WS="{{CHAIN_WS}}" \
+    PROVIDER_URL="{{PROVIDER_URL}}" \
+    cargo run --release -q -p storage-client --bin challenge_watcher
+
+# Demo: full workflow - setup, upload, checkpoint, challenge with watcher auto-response
 demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
     #!/usr/bin/env bash
     set -euo pipefail
 
     echo "=== Step 1: Setup bucket and agreement ==="
-    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    cargo run --release -q -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
     echo ""
     echo "=== Step 2: Upload data ==="
-    OUTPUT=$(cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
+    OUTPUT=$(cargo run --release -q -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
     echo "$OUTPUT"
 
     # Extract JSON from output (from line starting with '{' to the end)
@@ -226,15 +240,33 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
     echo "  signature=${SIGNATURE:0:20}..."
     echo ""
 
-    cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
+    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
 
     echo ""
-    echo "=== Step 4: Submit on-chain checkpoint ==="
-    cargo run --release -p storage-client --bin demo_checkpoint -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
+    echo "=== Step 4: Start challenge watcher (background) ==="
+    SEED="//Alice" CHAIN_WS="{{CHAIN_WS}}" PROVIDER_URL="{{PROVIDER_URL}}" \
+        cargo run --release -q -p storage-client --bin challenge_watcher &
+    WATCHER_PID=$!
+    echo "Watcher PID: $WATCHER_PID"
+    sleep 3
 
     echo ""
-    echo "=== Step 5: Challenge provider (on-chain checkpoint) ==="
-    cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
+    echo "=== Step 5: Submit on-chain checkpoint ==="
+    cargo run --release -q -p storage-client --bin demo_checkpoint -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
+
+    echo ""
+    echo "=== Step 6: Challenge provider (on-chain checkpoint) ==="
+    echo "The watcher should auto-respond to this challenge..."
+    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
+
+    echo ""
+    echo "=== Waiting for watcher to respond (30s) ==="
+    sleep 30
+
+    # Stop watcher
+    kill $WATCHER_PID 2>/dev/null || true
+    echo ""
+    echo "=== Demo complete! ==="
 
 # Generate chain spec
 generate-chain-spec: build
