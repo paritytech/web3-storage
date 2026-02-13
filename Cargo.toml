@@ -102,6 +102,7 @@ blake2 = { version = "0.10", default-features = false }
 
 # Testing
 sp-keyring = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
+sp-keystore = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512", default-features = false }
 
 [profile.release]
 panic = "unwind"

@@ -686,21 +686,22 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Generate real sr25519 keypair and update provider's public key
-        use sp_core::Pair;
-        let pair = sp_core::sr25519::Pair::from_seed(&[1u8; 32]);
-        let public_key = pair.public();
+        // Generate sr25519 keypair via host functions (works in no_std benchmarks)
+        let key_type = sp_core::crypto::KeyTypeId(*b"bnch");
+        let public_key =
+            sp_io::crypto::sr25519_generate(key_type, Some(b"//Benchmark".to_vec()));
         Providers::<T>::mutate(&provider, |maybe_provider| {
             if let Some(p) = maybe_provider {
                 p.public_key = public_key.0.to_vec().try_into().unwrap();
             }
         });
 
-        // Sign the commitment payload
+        // Sign the commitment payload via host function
         let mmr_root = H256::repeat_byte(0xAB);
         let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 0);
         let encoded = codec::Encode::encode(&payload);
-        let sig = pair.sign(&encoded);
+        let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
+            .expect("signing should work");
         let signature = sp_runtime::MultiSignature::Sr25519(sig.into());
 
         #[extrinsic_call]

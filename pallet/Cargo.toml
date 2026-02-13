@@ -23,6 +23,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 sp-keyring = { workspace = true, features = ["std"] }
+sp-keystore = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 
 [features]
