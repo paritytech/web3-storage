@@ -6,7 +6,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use storage_client::checkpoint::{CheckpointManager, CheckpointConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

@@ -4417,7 +4417,6 @@ dependencies = [
  "sp-io",
  "sp-keyring",
  "sp-runtime",
- "sp-std",
  "storage-primitives",
 ]
 
@@ -7158,7 +7157,6 @@ dependencies = [
  "serde",
  "sp-core",
  "sp-runtime",
- "sp-std",
 ]
 
 [[package]]
@@ -7168,7 +7166,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bincode",
- "blake2",
  "dashmap",
  "hex",
  "parity-scale-codec",
@@ -7183,7 +7180,6 @@ dependencies = [
  "subxt-signer",
  "thiserror 2.0.18",
  "tokio",
- "tower 0.5.3",
  "tower-http",
  "tracing",
  "tracing-subscriber",
