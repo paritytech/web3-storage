@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   setup:
-    name: Setup & Build
+    name: Setup
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -22,28 +22,6 @@ jobs:
 
       - name: Load environment variables
         run: cat .github/env >> $GITHUB_ENV
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
-        with:
-          tool-cache: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-          components: rust-src
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libclang-dev
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "integration-tests"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
         run: cargo install just --locked || true
@@ -58,9 +36,6 @@ jobs:
       - name: Download binaries
         if: steps.bin-cache.outputs.cache-hit != 'true'
         run: just download-binaries
-
-      - name: Build
-        run: cargo build --release
 
   integration-tests:
     name: Integration Tests
@@ -101,7 +76,9 @@ jobs:
           key: binaries-${{ env.POLKADOT_SDK_VERSION }}
 
       - name: Build
-        run: cargo build --release
+        run: |
+          cargo build --release
+          cargo build --release -p storage-provider-node
 
       - name: Start chain (background)
         run: just start-chain &> /tmp/zombienet.log &
