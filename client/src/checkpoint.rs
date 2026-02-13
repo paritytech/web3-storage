@@ -20,6 +20,7 @@
 //! let manager = manager.with_provider("http://localhost:3000");
 //!
 //! // Submit checkpoint for a bucket
+//! let bucket_id = 1u64;
 //! let result = manager.submit_checkpoint(bucket_id).await;
 //! # Ok(())
 //! # }

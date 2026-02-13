@@ -746,38 +746,343 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Query replica agreements for our account.
+    ///
+    /// This queries the on-chain `StorageAgreements` double map for all buckets
+    /// where we have a replica agreement.
     async fn query_replica_agreements(
         &self,
-        _api: &OnlineClient<PolkadotConfig>,
-        _our_account: &str,
+        api: &OnlineClient<PolkadotConfig>,
+        our_account: &str,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        // In a full implementation, this would query on-chain storage:
-        // StorageProvider::Agreements double map where our account is the provider
-        // and agreement.role == Replica
-        //
-        // For now, return empty - this would need runtime metadata to properly decode
-        Ok(vec![])
+        let mut agreements = Vec::new();
+
+        // Get our account bytes
+        let account_bytes = hex::decode(our_account.trim_start_matches("0x"))
+            .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
+
+        // Query local buckets to find which ones we might have agreements for
+        // This is an optimization - in a full implementation we'd iterate the chain storage
+        let local_buckets: Vec<u64> = self
+            .state
+            .storage
+            .list_buckets()
+            .into_iter()
+            .map(|b| b.bucket_id)
+            .collect();
+
+        for bucket_id in local_buckets {
+            // Query the specific agreement for this bucket
+            if let Some(agreement) = self
+                .query_agreement_raw(api, bucket_id, &account_bytes)
+                .await?
+            {
+                agreements.push(agreement);
+            }
+        }
+
+        // Also try to iterate chain storage for agreements we might not have locally
+        // This uses subxt's dynamic storage iteration
+        if let Ok(chain_agreements) = self.iterate_all_agreements(api, &account_bytes).await {
+            for agreement in chain_agreements {
+                // Avoid duplicates
+                if !agreements.iter().any(|a| a.bucket_id == agreement.bucket_id) {
+                    agreements.push(agreement);
+                }
+            }
+        }
+
+        Ok(agreements)
+    }
+
+    /// Iterate all storage agreements from chain to find replica agreements for our account.
+    async fn iterate_all_agreements(
+        &self,
+        api: &OnlineClient<PolkadotConfig>,
+        our_account_bytes: &[u8],
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+        let mut agreements = Vec::new();
+
+        // Build the storage key prefix for StorageAgreements
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "StorageAgreements",
+            (),
+        );
+
+        // Iterate all entries in the double map
+        let mut iter = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?
+            .iter(storage_address)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to iterate storage: {e}")))?;
+
+        while let Some(result) = iter.next().await {
+            let kv = match result {
+                Ok(kv) => kv,
+                Err(e) => {
+                    tracing::debug!("Error iterating storage: {e}");
+                    continue;
+                }
+            };
+
+            // Extract bucket_id and provider from the key
+            // Key format: twox128(pallet) + twox128(storage) + blake2_128_concat(bucket_id) + blake2_128_concat(provider)
+            let key_bytes = kv.key_bytes;
+            if key_bytes.len() < 32 + 16 + 8 + 16 + 32 {
+                continue;
+            }
+
+            // Skip pallet+storage prefix (32 bytes) + blake2_128 hash (16 bytes)
+            let bucket_id_start = 32 + 16;
+            let bucket_id_bytes = &key_bytes[bucket_id_start..bucket_id_start + 8];
+            let bucket_id = u64::from_le_bytes(bucket_id_bytes.try_into().unwrap_or([0; 8]));
+
+            // Skip to provider part: after bucket_id (8 bytes) + blake2_128 hash (16 bytes)
+            let provider_start = bucket_id_start + 8 + 16;
+            let provider_bytes = &key_bytes[provider_start..];
+
+            // Check if this is our provider
+            if provider_bytes.len() < 32 || provider_bytes[..32] != our_account_bytes[..32] {
+                continue;
+            }
+
+            // Parse the agreement value from the encoded bytes
+            if let Ok(agreement) = self.decode_storage_agreement_from_thunk(bucket_id, &kv.value) {
+                agreements.push(agreement);
+            }
+        }
+
+        Ok(agreements)
+    }
+
+    /// Decode a storage agreement from a DecodedValueThunk using raw encoding.
+    fn decode_storage_agreement_from_thunk(
+        &self,
+        bucket_id: BucketId,
+        value: &subxt::dynamic::DecodedValueThunk,
+    ) -> Result<ReplicaAgreementInfo, Error> {
+        // Get the encoded bytes from the thunk
+        let encoded = value.encoded();
+        self.decode_storage_agreement_bytes(bucket_id, encoded)
+    }
+
+    /// Decode a storage agreement from raw SCALE-encoded bytes.
+    fn decode_storage_agreement_bytes(
+        &self,
+        bucket_id: BucketId,
+        bytes: &[u8],
+    ) -> Result<ReplicaAgreementInfo, Error> {
+        // StorageAgreement layout:
+        // - owner: AccountId (32 bytes)
+        // - max_bytes: u64 (8 bytes)
+        // - payment_locked: Balance (16 bytes)
+        // - price_per_byte: Balance (16 bytes)
+        // - expires_at: BlockNumber (4 bytes)
+        // - extensions_blocked: bool (1 byte)
+        // - role: ProviderRole (variable, enum)
+        // - started_at: BlockNumber (4 bytes)
+
+        let min_size = 32 + 8 + 16 + 16 + 4 + 1; // up to role enum
+        if bytes.len() < min_size {
+            return Err(Error::Internal("Agreement data too short".to_string()));
+        }
+
+        let role_start = 32 + 8 + 16 + 16 + 4 + 1; // Skip to role enum
+        let role_variant = bytes.get(role_start).copied().unwrap_or(0);
+
+        // Role enum: 0 = Primary, 1 = Replica
+        if role_variant != 1 {
+            return Err(Error::Internal("Not a replica agreement".to_string()));
+        }
+
+        // Parse Replica fields: sync_balance, sync_price, min_sync_interval, last_sync
+        let replica_start = role_start + 1;
+        let remaining = &bytes[replica_start..];
+
+        if remaining.len() < 16 + 16 + 4 {
+            return Err(Error::Internal("Replica data too short".to_string()));
+        }
+
+        // sync_balance: Balance (u128 = 16 bytes)
+        let sync_balance =
+            u128::from_le_bytes(remaining[0..16].try_into().map_err(|_| {
+                Error::Internal("Failed to parse sync_balance".to_string())
+            })?);
+
+        // sync_price: Balance (u128 = 16 bytes)
+        let sync_price =
+            u128::from_le_bytes(remaining[16..32].try_into().map_err(|_| {
+                Error::Internal("Failed to parse sync_price".to_string())
+            })?);
+
+        // min_sync_interval: BlockNumber (u32 = 4 bytes)
+        let min_sync_interval =
+            u32::from_le_bytes(remaining[32..36].try_into().map_err(|_| {
+                Error::Internal("Failed to parse min_sync_interval".to_string())
+            })?) as u64;
+
+        // last_sync: Option<(H256, BlockNumber)>
+        let last_sync_option = remaining.get(36).copied().unwrap_or(0);
+        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
+            let root_bytes: [u8; 32] = remaining[37..69]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
+            let block = u32::from_le_bytes(remaining[69..73].try_into().map_err(|_| {
+                Error::Internal("Failed to parse last_sync block".to_string())
+            })?) as u64;
+            Some((H256::from(root_bytes), block))
+        } else {
+            None
+        };
+
+        Ok(ReplicaAgreementInfo {
+            bucket_id,
+            sync_balance,
+            sync_price,
+            min_sync_interval,
+            last_sync,
+        })
+    }
+
+    /// Query a specific agreement from chain using raw bytes.
+    async fn query_agreement_raw(
+        &self,
+        api: &OnlineClient<PolkadotConfig>,
+        bucket_id: BucketId,
+        provider_bytes: &[u8],
+    ) -> Result<Option<ReplicaAgreementInfo>, Error> {
+        // Build the storage key for this specific agreement
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "StorageAgreements",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(provider_bytes),
+            ],
+        );
+
+        let storage = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        match storage.fetch(&storage_address).await {
+            Ok(Some(value)) => {
+                self.decode_storage_agreement_from_thunk(bucket_id, &value).ok()
+                    .map(|a| Ok(Some(a)))
+                    .unwrap_or(Ok(None))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                tracing::debug!("Failed to fetch agreement {bucket_id}: {e}");
+                Ok(None)
+            }
+        }
     }
 
     /// Query a specific agreement.
     async fn query_agreement(
         &self,
-        _api: &OnlineClient<PolkadotConfig>,
-        _bucket_id: BucketId,
-        _provider: &str,
+        api: &OnlineClient<PolkadotConfig>,
+        bucket_id: BucketId,
+        provider: &str,
     ) -> Result<Option<ReplicaAgreementInfo>, Error> {
-        // Would query StorageProvider::Agreements(bucket_id, provider)
-        Ok(None)
+        let provider_bytes = hex::decode(provider.trim_start_matches("0x"))
+            .map_err(|e| Error::Internal(format!("Invalid provider hex: {e}")))?;
+
+        self.query_agreement_raw(api, bucket_id, &provider_bytes)
+            .await
     }
 
-    /// Query bucket snapshot (latest checkpoint state).
+    /// Query bucket snapshot (latest checkpoint state) from chain.
+    ///
+    /// This queries the on-chain `Buckets` storage to get the authoritative snapshot.
     async fn query_bucket_snapshot(
         &self,
-        _api: &OnlineClient<PolkadotConfig>,
+        api: &OnlineClient<PolkadotConfig>,
         bucket_id: BucketId,
     ) -> Result<BucketSnapshot, Error> {
-        // Would query StorageProvider::BucketSnapshots(bucket_id)
-        // For now, return from local state if available
+        // Build the storage address for the bucket
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "Buckets",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
+
+        let storage = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        match storage.fetch(&storage_address).await {
+            Ok(Some(value)) => {
+                // Decode the bucket to extract the snapshot using raw bytes
+                self.decode_bucket_snapshot_from_thunk(bucket_id, &value)
+            }
+            Ok(None) => {
+                // Bucket not found on chain, check local state
+                if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
+                    return Ok(BucketSnapshot {
+                        mmr_root: bucket.mmr_root,
+                        leaf_count: bucket.leaf_count(),
+                    });
+                }
+                Ok(BucketSnapshot {
+                    mmr_root: H256::zero(),
+                    leaf_count: 0,
+                })
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch bucket {bucket_id} from chain: {e}");
+                // Fallback to local state
+                if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
+                    return Ok(BucketSnapshot {
+                        mmr_root: bucket.mmr_root,
+                        leaf_count: bucket.leaf_count(),
+                    });
+                }
+                Ok(BucketSnapshot {
+                    mmr_root: H256::zero(),
+                    leaf_count: 0,
+                })
+            }
+        }
+    }
+
+    /// Decode a bucket's snapshot from the DecodedValueThunk.
+    fn decode_bucket_snapshot_from_thunk(
+        &self,
+        bucket_id: BucketId,
+        value: &subxt::dynamic::DecodedValueThunk,
+    ) -> Result<BucketSnapshot, Error> {
+        use subxt::ext::scale_value::{At, ValueDef};
+
+        let decoded = value
+            .to_value()
+            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+
+        // Navigate to snapshot field using scale_value's At trait
+        // Bucket fields: members, frozen_start_seq, min_providers, primary_providers, snapshot, historical_roots, total_snapshots
+        // snapshot is at index 4
+        if let Some(snapshot_opt) = decoded.at(4) {
+            // snapshot is Option<BucketSnapshot>
+            // Access the ValueDef through .value field
+            if let ValueDef::Variant(variant) = &snapshot_opt.value {
+                if variant.name == "Some" {
+                    // Get the inner snapshot value
+                    if let Some(snapshot_val) = variant.values.values().next() {
+                        return self.parse_bucket_snapshot_value(snapshot_val);
+                    }
+                }
+            }
+        }
+
+        // Fallback to local state
         if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
             return Ok(BucketSnapshot {
                 mmr_root: bucket.mmr_root,
@@ -791,17 +1096,252 @@ impl ReplicaSyncCoordinator {
         })
     }
 
+    /// Parse a BucketSnapshot value from scale_value.
+    fn parse_bucket_snapshot_value<T>(
+        &self,
+        value: &subxt::ext::scale_value::Value<T>,
+    ) -> Result<BucketSnapshot, Error> {
+        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+
+        // BucketSnapshot: { mmr_root: H256, start_seq: u64, leaf_count: u64, block_number: BlockNumber }
+        let mmr_root = if let Some(field0) = value.at(0) {
+            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
+                // H256 is a composite of 32 bytes
+                let bytes: Vec<u8> = bytes_vec
+                    .iter()
+                    .filter_map(|v| {
+                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                            Some(*n as u8)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if bytes.len() == 32 {
+                    H256::from_slice(&bytes)
+                } else {
+                    H256::zero()
+                }
+            } else {
+                H256::zero()
+            }
+        } else {
+            H256::zero()
+        };
+
+        let leaf_count = if let Some(field2) = value.at(2) {
+            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
+                *n as u64
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        Ok(BucketSnapshot {
+            mmr_root,
+            leaf_count,
+        })
+    }
+
     /// Query primary provider endpoints for a bucket.
+    ///
+    /// This queries the bucket's primary_providers list, then looks up each
+    /// provider's multiaddr from the Providers storage.
     async fn query_primary_endpoints(
         &self,
-        _api: &OnlineClient<PolkadotConfig>,
-        _bucket_id: BucketId,
+        api: &OnlineClient<PolkadotConfig>,
+        bucket_id: BucketId,
     ) -> Result<Vec<String>, Error> {
-        // Would query StorageProvider::Buckets(bucket_id).primary_providers
-        // Then look up each provider's endpoint from ProviderInfo
-        //
-        // For now, return empty or could be configured externally
-        Ok(vec![])
+        // First, get the bucket to find its primary providers
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "Buckets",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
+
+        let storage = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let bucket_value = match storage.fetch(&storage_address).await {
+            Ok(Some(v)) => v,
+            Ok(None) => return Ok(vec![]),
+            Err(e) => {
+                tracing::warn!("Failed to fetch bucket {bucket_id}: {e}");
+                return Ok(vec![]);
+            }
+        };
+
+        // Extract primary_providers from the bucket
+        let primary_providers = self.extract_primary_providers(&bucket_value)?;
+
+        // Now look up each provider's multiaddr
+        let mut endpoints = Vec::new();
+        for provider_bytes in primary_providers {
+            if let Ok(Some(endpoint)) = self.query_provider_endpoint(api, &provider_bytes).await {
+                endpoints.push(endpoint);
+            }
+        }
+
+        Ok(endpoints)
+    }
+
+    /// Extract primary provider account IDs from a bucket value.
+    fn extract_primary_providers(
+        &self,
+        bucket_value: &subxt::dynamic::DecodedValueThunk,
+    ) -> Result<Vec<Vec<u8>>, Error> {
+        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+
+        let decoded = bucket_value
+            .to_value()
+            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+
+        let mut providers = Vec::new();
+
+        // Bucket fields: members, frozen_start_seq, min_providers, primary_providers, snapshot, historical_roots, total_snapshots
+        // primary_providers is at index 3
+        if let Some(field3) = decoded.at(3) {
+            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
+                for provider_value in providers_vec {
+                    // Each provider is an AccountId (32 bytes composite)
+                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) = &provider_value.value {
+                        let bytes: Vec<u8> = account_bytes
+                            .iter()
+                            .filter_map(|v| {
+                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                                    Some(*n as u8)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if bytes.len() == 32 {
+                            providers.push(bytes);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(providers)
+    }
+
+    /// Query a provider's endpoint (multiaddr) from chain.
+    async fn query_provider_endpoint(
+        &self,
+        api: &OnlineClient<PolkadotConfig>,
+        provider_bytes: &[u8],
+    ) -> Result<Option<String>, Error> {
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "Providers",
+            vec![subxt::dynamic::Value::from_bytes(provider_bytes)],
+        );
+
+        let storage = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        match storage.fetch(&storage_address).await {
+            Ok(Some(value)) => {
+                // Extract multiaddr from ProviderInfo
+                let endpoint = self.extract_provider_multiaddr(&value)?;
+                Ok(Some(endpoint))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                tracing::debug!("Failed to fetch provider info: {e}");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Extract multiaddr from a ProviderInfo value.
+    fn extract_provider_multiaddr(
+        &self,
+        provider_value: &subxt::dynamic::DecodedValueThunk,
+    ) -> Result<String, Error> {
+        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+
+        let decoded = provider_value
+            .to_value()
+            .map_err(|e| Error::Internal(format!("Failed to decode provider: {e}")))?;
+
+        // ProviderInfo fields: multiaddr, public_key, stake, committed_bytes, settings, stats
+        // multiaddr is at index 0
+        if let Some(field0) = decoded.at(0) {
+            if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) = &field0.value {
+                let bytes: Vec<u8> = multiaddr_bytes
+                    .iter()
+                    .filter_map(|v| {
+                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                            Some(*n as u8)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if !bytes.is_empty() {
+                    // Convert multiaddr bytes to HTTP endpoint
+                    let multiaddr_str = String::from_utf8_lossy(&bytes);
+                    return Ok(self.multiaddr_to_http_endpoint(&multiaddr_str));
+                }
+            }
+        }
+
+        Err(Error::Internal("Failed to extract multiaddr".to_string()))
+    }
+
+    /// Convert a multiaddr string to an HTTP endpoint.
+    fn multiaddr_to_http_endpoint(&self, multiaddr: &str) -> String {
+        // Parse multiaddr format: /ip4/127.0.0.1/tcp/3000 or /dns4/hostname/tcp/3000
+        let parts: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
+
+        let mut host = "127.0.0.1".to_string();
+        let mut port = "3000".to_string();
+
+        let mut i = 0;
+        while i < parts.len() {
+            match parts[i] {
+                "ip4" | "ip6" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "dns4" | "dns6" | "dns" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "tcp" => {
+                    if i + 1 < parts.len() {
+                        port = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        format!("http://{}:{}", host, port)
     }
 }
 
