@@ -8,6 +8,15 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512"
 
+# Detect OS and architecture
+os := `uname -s | tr '[:upper:]' '[:lower:]'`
+arch := `uname -m`
+
+# URL components
+polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
+darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
+zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
+
 # Default recipe
 default:
     @just --list
@@ -16,125 +25,42 @@ default:
 build:
     cargo build --release
 
-# Build demo/example binaries
+[private]
 build-examples:
     cargo build --release -p storage-examples
 
-# Detect OS and architecture
-os := `uname -s | tr '[:upper:]' '[:lower:]'`
-arch := `uname -m`
+[private]
+_download BIN URL:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .bin
+    if [[ -x .bin/{{BIN}} ]]; then
+        echo "{{BIN}} already exists in .bin/"
+        exit 0
+    fi
+    echo "Downloading {{BIN}}..."
+    curl -L -o .bin/{{BIN}} "{{URL}}"
+    chmod +x .bin/{{BIN}}
+    echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
+[private]
 download-binaries: download-polkadot download-polkadot-omni-node download-chain-spec-builder download-zombienet
     @echo "All binaries downloaded to .bin/"
 
-# Download polkadot binaries (polkadot + workers)
-download-polkadot:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p .bin
+[private]
+download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
 
-    # Download polkadot
-    if [[ -x .bin/polkadot ]]; then
-        echo "polkadot already exists in .bin/"
-    else
-        echo "Downloading polkadot for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot"
-        fi
-        chmod +x .bin/polkadot
-        echo "polkadot downloaded to .bin/polkadot"
-    fi
+[private]
+download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
 
-    # Download polkadot-execute-worker
-    if [[ -x .bin/polkadot-execute-worker ]]; then
-        echo "polkadot-execute-worker already exists in .bin/"
-    else
-        echo "Downloading polkadot-execute-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker"
-        fi
-        chmod +x .bin/polkadot-execute-worker
-        echo "polkadot-execute-worker downloaded to .bin/polkadot-execute-worker"
-    fi
+[private]
+download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
 
-    # Download polkadot-prepare-worker
-    if [[ -x .bin/polkadot-prepare-worker ]]; then
-        echo "polkadot-prepare-worker already exists in .bin/"
-    else
-        echo "Downloading polkadot-prepare-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker"
-        fi
-        chmod +x .bin/polkadot-prepare-worker
-        echo "polkadot-prepare-worker downloaded to .bin/polkadot-prepare-worker"
-    fi
+[private]
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/latest/download/" + zombienet_asset)
 
-# Download polkadot-omni-node binary
-download-polkadot-omni-node:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/polkadot-omni-node ]]; then
-        echo "polkadot-omni-node already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading polkadot-omni-node for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node-aarch64-apple-darwin"
-    else
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node"
-    fi
-    chmod +x .bin/polkadot-omni-node
-    echo "polkadot-omni-node downloaded to .bin/polkadot-omni-node"
-
-# Download chain-spec-builder binary
-download-chain-spec-builder:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/chain-spec-builder ]]; then
-        echo "chain-spec-builder already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading chain-spec-builder for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder-aarch64-apple-darwin"
-    else
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder"
-    fi
-    chmod +x .bin/chain-spec-builder
-    echo "chain-spec-builder downloaded to .bin/chain-spec-builder"
-
-# Download zombienet binary
-download-zombienet:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/zombienet ]]; then
-        echo "zombienet already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading zombienet for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        if [[ "{{arch}}" == "arm64" ]]; then
-            curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-macos-arm64"
-        else
-            curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-macos-x64"
-        fi
-    else
-        curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-linux-x64"
-    fi
-    chmod +x .bin/zombienet
-    echo "zombienet downloaded to .bin/zombienet"
-
-# Check prerequisites for local environment (downloads binaries if missing)
+[private]
 check: download-binaries
     @echo "Checking prerequisites..."
     @command -v cargo >/dev/null 2>&1 || { echo "Error: cargo not found"; exit 1; }
