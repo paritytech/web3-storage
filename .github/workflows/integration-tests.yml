@@ -83,10 +83,11 @@ jobs:
       - name: Build
         run: |
           cargo build --release
-          cargo build --release -p storage-provider-node
 
       - name: Start chain (background)
         run: just start-chain &> /tmp/zombienet.log &
+      - name: Start provider (background)
+        run: just start-provider &> /tmp/provider.log &
 
       - name: Wait for chain to produce blocks
         run: |
@@ -105,9 +106,6 @@ jobs:
             fi
             sleep 5
           done
-
-      - name: Start provider (background)
-        run: just start-provider &> /tmp/provider.log &
 
       - name: Wait for provider to be ready
         run: |

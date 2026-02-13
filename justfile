@@ -158,7 +158,7 @@ start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
     echo ""
     SEED="{{SEED}}" \
     CHAIN_RPC="{{CHAIN_WS}}" \
-    cargo run --release -p storage-provider-node
+    ./target/release/storage-provider-node
 
 # Health check for provider node
 health:

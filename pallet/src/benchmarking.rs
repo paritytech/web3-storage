@@ -688,8 +688,7 @@ mod benchmarks {
 
         // Generate sr25519 keypair via host functions (works in no_std benchmarks)
         let key_type = sp_core::crypto::KeyTypeId(*b"bnch");
-        let public_key =
-            sp_io::crypto::sr25519_generate(key_type, Some(b"//Benchmark".to_vec()));
+        let public_key = sp_io::crypto::sr25519_generate(key_type, Some(b"//Benchmark".to_vec()));
         Providers::<T>::mutate(&provider, |maybe_provider| {
             if let Some(p) = maybe_provider {
                 p.public_key = public_key.0.to_vec().try_into().unwrap();
