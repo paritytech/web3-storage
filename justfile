@@ -16,6 +16,10 @@ default:
 build:
     cargo build --release
 
+# Build demo/example binaries
+build-examples:
+    cargo build --release -p storage-examples
+
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
 arch := `uname -m`
@@ -169,26 +173,26 @@ stats:
     curl -s http://localhost:3000/stats | jq .
 
 # Demo: setup bucket and storage agreement (run once before demo-upload)
-demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
-    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": build-examples
+    ./target/release/demo_setup "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Demo: upload test data to provider (includes timestamp by default)
-demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
     #!/usr/bin/env bash
-    cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
+    ./target/release/demo_upload "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
 
 # Demo: challenge a storage provider (verify they have the data)
 # For off-chain challenge, provide MMR_ROOT, START_SEQ, and SIGNATURE
-demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" LEAF="0" CHUNK="0" MMR_ROOT="" START_SEQ="0" SIGNATURE="":
+demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" LEAF="0" CHUNK="0" MMR_ROOT="" START_SEQ="0" SIGNATURE="": build-examples
     #!/usr/bin/env bash
     if [ -n "{{MMR_ROOT}}" ] && [ -n "{{SIGNATURE}}" ]; then
-        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}" "{{MMR_ROOT}}" "{{START_SEQ}}" "{{SIGNATURE}}"
+        ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}" "{{MMR_ROOT}}" "{{START_SEQ}}" "{{SIGNATURE}}"
     else
-        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
+        ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
     fi
 
 # Start the challenge watcher (auto-responds to challenges)
-start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": build-examples
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Challenge Watcher ==="
@@ -199,19 +203,19 @@ start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http:/
     SEED="{{SEED}}" \
     CHAIN_WS="{{CHAIN_WS}}" \
     PROVIDER_URL="{{PROVIDER_URL}}" \
-    cargo run --release -q -p storage-client --bin challenge_watcher
+    ./target/release/challenge_watcher
 
 # Demo: full workflow - setup, upload, checkpoint, challenge with watcher auto-response
-demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
     #!/usr/bin/env bash
     set -euo pipefail
 
     echo "=== Step 1: Setup bucket and agreement ==="
-    cargo run --release -q -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    ./target/release/demo_setup "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
     echo ""
     echo "=== Step 2: Upload data ==="
-    OUTPUT=$(cargo run --release -q -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
+    OUTPUT=$(./target/release/demo_upload "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
     echo "$OUTPUT"
 
     # Extract JSON from output (from line starting with '{' to the end)
@@ -240,24 +244,24 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
     echo "  signature=${SIGNATURE:0:20}..."
     echo ""
 
-    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
+    ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
 
     echo ""
     echo "=== Step 4: Start challenge watcher (background) ==="
     SEED="//Alice" CHAIN_WS="{{CHAIN_WS}}" PROVIDER_URL="{{PROVIDER_URL}}" \
-        cargo run --release -q -p storage-client --bin challenge_watcher &
+        ./target/release/challenge_watcher &
     WATCHER_PID=$!
     echo "Watcher PID: $WATCHER_PID"
     sleep 3
 
     echo ""
     echo "=== Step 5: Submit on-chain checkpoint ==="
-    cargo run --release -q -p storage-client --bin demo_checkpoint -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
+    ./target/release/demo_checkpoint "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
 
     echo ""
     echo "=== Step 6: Challenge provider (on-chain checkpoint) ==="
     echo "The watcher should auto-respond to this challenge..."
-    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
+    ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
 
     echo ""
     echo "=== Waiting for watcher to respond (30s) ==="

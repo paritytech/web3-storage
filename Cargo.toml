@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
 	"client",
+	"examples",
 	"pallet",
 	"primitives",
 	"provider-node",
@@ -18,6 +19,7 @@ repository = "https://github.com/parity/scalable-web3-storage"
 # Internal crates
 pallet-storage-provider = { path = "pallet", default-features = false }
 storage-client = { path = "client" }
+storage-examples = { path = "examples" }
 storage-parachain-runtime = { path = "runtime" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
