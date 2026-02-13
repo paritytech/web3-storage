@@ -764,15 +764,7 @@ mod benchmarks {
         );
 
         // Confirm replica sync so replica has a last_sync root
-        let roots: [Option<H256>; 7] = [
-            Some(mmr_root),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ];
+        let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
         let sig =
             sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
         let _ = Pallet::<T>::confirm_replica_sync(
@@ -822,10 +814,7 @@ mod benchmarks {
         };
         Challenges::<T>::insert(deadline, vec![challenge]);
 
-        let challenge_id = storage_primitives::ChallengeId {
-            deadline,
-            index: 0,
-        };
+        let challenge_id = storage_primitives::ChallengeId { deadline, index: 0 };
 
         // Superseded: challenged_seq (0+0=0) < canonical_end (0+10=10) ✓
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
@@ -886,15 +875,7 @@ mod benchmarks {
         );
 
         // roots[0] matches current snapshot mmr_root
-        let roots: [Option<H256>; 7] = [
-            Some(mmr_root),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ];
+        let roots: [Option<H256>; 7] = [Some(mmr_root), None, None, None, None, None, None];
         let signature =
             sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
 
