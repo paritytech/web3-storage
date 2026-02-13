@@ -19,7 +19,7 @@ use frame_benchmarking::v2::*;
 use frame_support::{pallet_prelude::*, traits::Currency};
 use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
 use sp_core::H256;
-use sp_runtime::traits::Bounded;
+use sp_runtime::traits::{Bounded, SaturatedConversion};
 use storage_primitives::{BucketId, ReplicaRequestParams};
 
 const SEED: u32 = 0;
@@ -35,7 +35,10 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     let provider = funded_account::<T>("provider", index);
     let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
     let public_key = [0u8; 32].to_vec();
-    let stake = T::MinProviderStake::get();
+    // Stake must cover max_capacity (1_000_000_000) * MinStakePerByte, not just MinProviderStake
+    let capacity_stake: BalanceOf<T> = (1_000_000_000u64).saturated_into();
+    let required_for_capacity = T::MinStakePerByte::get() * capacity_stake;
+    let stake = T::MinProviderStake::get().max(required_for_capacity);
 
     let _ = Pallet::<T>::register_provider(
         RawOrigin::Signed(provider.clone()).into(),
@@ -62,7 +65,8 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
 }
 
 fn setup_bucket<T: Config>(admin: &T::AccountId) -> BucketId {
-    let _ = Pallet::<T>::create_bucket(RawOrigin::Signed(admin.clone()).into(), 1);
+    // Use min_providers=0 so benchmarks can create checkpoints with empty signatures
+    let _ = Pallet::<T>::create_bucket(RawOrigin::Signed(admin.clone()).into(), 0);
     NextBucketId::<T>::get() - 1
 }
 
@@ -255,15 +259,18 @@ mod benchmarks {
 
     #[benchmark]
     fn remove_slashed() {
-        // This benchmark is complex to set up (requires slashing a provider)
-        // Using a simplified version
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // We'd need to slash the provider first, which requires a challenge
-        // For now, this will fail but measures the weight of the checks
+        // Simulate slashing: set provider stake to zero
+        Providers::<T>::mutate(&provider, |maybe_provider| {
+            if let Some(p) = maybe_provider {
+                p.stake = 0u32.into();
+            }
+        });
+
         #[extrinsic_call]
         remove_slashed(RawOrigin::Signed(admin), bucket_id, provider);
     }
@@ -450,9 +457,11 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Fast forward to after agreement expiry + settlement window
-        // In benchmarks, we'd need to advance the block number
-        // This will likely fail but measures weight
+        // Advance block past agreement expiry + settlement timeout
+        // Agreement duration=100, starts at block 1, so expires_at=101
+        // settlement_timeout=50, so need block > 151
+        let target_block: BlockNumberFor<T> = 200u32.into();
+        frame_system::Pallet::<T>::set_block_number(target_block);
 
         #[extrinsic_call]
         claim_expired_agreement(RawOrigin::Signed(provider), bucket_id);
@@ -548,6 +557,12 @@ mod benchmarks {
             pool_amount,
         );
 
+        // Default checkpoint config: interval=10, grace_period=5
+        // Window 1 = blocks [10, 20), grace period = blocks [10, 15]
+        // Advance past grace period so any primary provider can submit
+        let target_block: BlockNumberFor<T> = 16u32.into();
+        frame_system::Pallet::<T>::set_block_number(target_block);
+
         let mmr_root = H256::repeat_byte(0xCD);
         let window = 1u64;
 
@@ -594,9 +609,13 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // This requires advancing blocks past window + grace
-        // Will fail in benchmark but measures checks
-        let window = 0u64;
+        // Default config: interval=10, grace_period=5
+        // Report window 1 (blocks 10-19)
+        // Check: current_block > window_start_block(window+1, interval) = (1+1)*10 = 20
+        // So need block > 20
+        let target_block: BlockNumberFor<T> = 21u32.into();
+        frame_system::Pallet::<T>::set_block_number(target_block);
+        let window = 1u64;
 
         #[extrinsic_call]
         report_missed_checkpoint(RawOrigin::Signed(admin), bucket_id, window);
@@ -609,7 +628,10 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Would need rewards accumulated first
+        // Directly write rewards to storage
+        let reward: BalanceOf<T> = 1000u32.into();
+        CheckpointRewards::<T>::insert(bucket_id, &provider, reward);
+
         #[extrinsic_call]
         claim_checkpoint_rewards(RawOrigin::Signed(provider), bucket_id);
     }
@@ -641,6 +663,18 @@ mod benchmarks {
             signatures,
         );
 
+        // Set provider's bit in snapshot bitfield (provider is at index 0)
+        Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
+            if let Some(bucket) = maybe_bucket {
+                if let Some(snapshot) = bucket.snapshot.as_mut() {
+                    if snapshot.primary_signers.is_empty() {
+                        snapshot.primary_signers.push(0);
+                    }
+                    snapshot.primary_signers[0] |= 1; // Set bit 0
+                }
+            }
+        });
+
         #[extrinsic_call]
         challenge_checkpoint(RawOrigin::Signed(admin), bucket_id, provider, 0, 0);
     }
@@ -652,9 +686,22 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
+        // Generate real sr25519 keypair and update provider's public key
+        use sp_core::Pair;
+        let (pair, _) = sp_core::sr25519::Pair::generate();
+        let public_key = pair.public();
+        Providers::<T>::mutate(&provider, |maybe_provider| {
+            if let Some(p) = maybe_provider {
+                p.public_key = public_key.0.to_vec().try_into().unwrap();
+            }
+        });
+
+        // Sign the commitment payload
         let mmr_root = H256::repeat_byte(0xAB);
-        let signature =
-            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 0);
+        let encoded = codec::Encode::encode(&payload);
+        let sig = pair.sign(&encoded);
+        let signature = sp_runtime::MultiSignature::Sr25519(sig.into());
 
         #[extrinsic_call]
         challenge_offchain(
@@ -676,6 +723,21 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+
+        // Create checkpoint so bucket has a snapshot
+        let mmr_root = H256::repeat_byte(0xAB);
+        let signatures: BoundedVec<
+            (T::AccountId, sp_runtime::MultiSignature),
+            T::MaxPrimaryProviders,
+        > = BoundedVec::new();
+        let _ = Pallet::<T>::checkpoint(
+            RawOrigin::Signed(admin.clone()).into(),
+            bucket_id,
+            mmr_root,
+            0,
+            10,
+            signatures,
+        );
 
         // Create replica agreement
         let max_bytes = 1_000_000u64;
@@ -701,22 +763,71 @@ mod benchmarks {
             bucket_id,
         );
 
-        // Challenge will fail without sync, but measures weight
+        // Confirm replica sync so replica has a last_sync root
+        let roots: [Option<H256>; 7] = [
+            Some(mmr_root),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ];
+        let sig =
+            sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]));
+        let _ = Pallet::<T>::confirm_replica_sync(
+            RawOrigin::Signed(replica_provider.clone()).into(),
+            bucket_id,
+            roots,
+            sig,
+        );
+
         #[extrinsic_call]
         challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
     }
 
     #[benchmark]
     fn respond_to_challenge() {
-        // This requires an active challenge which is complex to set up
-        // Will measure the error checking weight
+        let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+
+        // Create checkpoint so bucket has a snapshot (needed for Superseded response)
+        let mmr_root = H256::repeat_byte(0xAB);
+        let signatures: BoundedVec<
+            (T::AccountId, sp_runtime::MultiSignature),
+            T::MaxPrimaryProviders,
+        > = BoundedVec::new();
+        let _ = Pallet::<T>::checkpoint(
+            RawOrigin::Signed(admin.clone()).into(),
+            bucket_id,
+            mmr_root,
+            0,
+            10,
+            signatures,
+        );
+
+        // Create challenge directly in storage
+        let deadline: BlockNumberFor<T> = 200u32.into();
+        let challenge = pallet::Challenge::<T> {
+            bucket_id,
+            provider: provider.clone(),
+            challenger: admin.clone(),
+            mmr_root,
+            start_seq: 0,
+            leaf_index: 0,
+            chunk_index: 0,
+            deposit: 100u32.into(),
+        };
+        Challenges::<T>::insert(deadline, vec![challenge]);
+
         let challenge_id = storage_primitives::ChallengeId {
-            deadline: 100u32.into(),
+            deadline,
             index: 0,
         };
 
-        // Create dummy response
+        // Superseded: challenged_seq (0+0=0) < canonical_end (0+10=10) ✓
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
 
         #[extrinsic_call]
@@ -734,6 +845,21 @@ mod benchmarks {
         let replica_provider = create_provider::<T>(1);
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+
+        // Create checkpoint so bucket has a snapshot with known mmr_root
+        let mmr_root = H256::repeat_byte(0xAB);
+        let signatures: BoundedVec<
+            (T::AccountId, sp_runtime::MultiSignature),
+            T::MaxPrimaryProviders,
+        > = BoundedVec::new();
+        let _ = Pallet::<T>::checkpoint(
+            RawOrigin::Signed(admin.clone()).into(),
+            bucket_id,
+            mmr_root,
+            0,
+            10,
+            signatures,
+        );
 
         // Create replica agreement
         let max_bytes = 1_000_000u64;
@@ -759,8 +885,9 @@ mod benchmarks {
             bucket_id,
         );
 
+        // roots[0] matches current snapshot mmr_root
         let roots: [Option<H256>; 7] = [
-            Some(H256::repeat_byte(0xAB)),
+            Some(mmr_root),
             None,
             None,
             None,
