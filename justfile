@@ -174,10 +174,11 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
 
     echo ""
     echo "=== Step 4: Start challenge watcher (background) ==="
+    WATCHER_LOG=$(mktemp)
     SEED="//Alice" CHAIN_WS="{{CHAIN_WS}}" PROVIDER_URL="{{PROVIDER_URL}}" \
-        ./target/release/challenge_watcher &
+        ./target/release/challenge_watcher 2>"$WATCHER_LOG" &
     WATCHER_PID=$!
-    echo "Watcher PID: $WATCHER_PID"
+    echo "Watcher PID: $WATCHER_PID (log: $WATCHER_LOG)"
     sleep 3
 
     echo ""
@@ -195,6 +196,21 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
 
     # Stop watcher
     kill $WATCHER_PID 2>/dev/null || true
+
+    echo ""
+    echo "=== Watcher log ==="
+    cat "$WATCHER_LOG"
+
+    echo ""
+    echo "=== Verifying challenge responses ==="
+    DEFENDED_COUNT=$(grep -c "defended successfully" "$WATCHER_LOG" || true)
+    echo "ChallengeDefended events: $DEFENDED_COUNT (expected: 2)"
+    rm -f "$WATCHER_LOG"
+    if [ "$DEFENDED_COUNT" -ne 2 ]; then
+        echo "FAILED: Expected 2 ChallengeDefended events, got $DEFENDED_COUNT"
+        exit 1
+    fi
+    echo "PASSED: Both challenges were defended!"
     echo ""
     echo "=== Demo complete! ==="
 
