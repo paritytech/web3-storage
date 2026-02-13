@@ -776,7 +776,10 @@ impl ReplicaSyncCoordinator {
         if let Ok(chain_agreements) = self.iterate_all_agreements(api, &account_bytes).await {
             for agreement in chain_agreements {
                 // Avoid duplicates
-                if !agreements.iter().any(|a| a.bucket_id == agreement.bucket_id) {
+                if !agreements
+                    .iter()
+                    .any(|a| a.bucket_id == agreement.bucket_id)
+                {
                     agreements.push(agreement);
                 }
             }
@@ -794,11 +797,7 @@ impl ReplicaSyncCoordinator {
         let mut agreements = Vec::new();
 
         // Build the storage key prefix for StorageAgreements
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "StorageAgreements",
-            (),
-        );
+        let storage_address = subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
 
         // Iterate all entries in the double map
         let mut iter = api
@@ -898,22 +897,25 @@ impl ReplicaSyncCoordinator {
         }
 
         // sync_balance: Balance (u128 = 16 bytes)
-        let sync_balance =
-            u128::from_le_bytes(remaining[0..16].try_into().map_err(|_| {
-                Error::Internal("Failed to parse sync_balance".to_string())
-            })?);
+        let sync_balance = u128::from_le_bytes(
+            remaining[0..16]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse sync_balance".to_string()))?,
+        );
 
         // sync_price: Balance (u128 = 16 bytes)
-        let sync_price =
-            u128::from_le_bytes(remaining[16..32].try_into().map_err(|_| {
-                Error::Internal("Failed to parse sync_price".to_string())
-            })?);
+        let sync_price = u128::from_le_bytes(
+            remaining[16..32]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse sync_price".to_string()))?,
+        );
 
         // min_sync_interval: BlockNumber (u32 = 4 bytes)
-        let min_sync_interval =
-            u32::from_le_bytes(remaining[32..36].try_into().map_err(|_| {
-                Error::Internal("Failed to parse min_sync_interval".to_string())
-            })?) as u64;
+        let min_sync_interval = u32::from_le_bytes(
+            remaining[32..36]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
+        ) as u64;
 
         // last_sync: Option<(H256, BlockNumber)>
         let last_sync_option = remaining.get(36).copied().unwrap_or(0);
@@ -921,9 +923,11 @@ impl ReplicaSyncCoordinator {
             let root_bytes: [u8; 32] = remaining[37..69]
                 .try_into()
                 .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
-            let block = u32::from_le_bytes(remaining[69..73].try_into().map_err(|_| {
-                Error::Internal("Failed to parse last_sync block".to_string())
-            })?) as u64;
+            let block = u32::from_le_bytes(
+                remaining[69..73]
+                    .try_into()
+                    .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
+            ) as u64;
             Some((H256::from(root_bytes), block))
         } else {
             None
@@ -962,11 +966,11 @@ impl ReplicaSyncCoordinator {
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
         match storage.fetch(&storage_address).await {
-            Ok(Some(value)) => {
-                self.decode_storage_agreement_from_thunk(bucket_id, &value).ok()
-                    .map(|a| Ok(Some(a)))
-                    .unwrap_or(Ok(None))
-            }
+            Ok(Some(value)) => self
+                .decode_storage_agreement_from_thunk(bucket_id, &value)
+                .ok()
+                .map(|a| Ok(Some(a)))
+                .unwrap_or(Ok(None)),
             Ok(None) => Ok(None),
             Err(e) => {
                 tracing::debug!("Failed to fetch agreement {bucket_id}: {e}");
@@ -1200,7 +1204,9 @@ impl ReplicaSyncCoordinator {
             if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
                 for provider_value in providers_vec {
                     // Each provider is an AccountId (32 bytes composite)
-                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) = &provider_value.value {
+                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
+                        &provider_value.value
+                    {
                         let bytes: Vec<u8> = account_bytes
                             .iter()
                             .filter_map(|v| {
