@@ -253,7 +253,10 @@ mod provider_tests {
                 100,
                 1000
             ));
-            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             // Try to set max_capacity below committed_bytes
             let new_settings = ProviderSettings {
@@ -384,7 +387,10 @@ mod provider_tests {
             ));
 
             // Accept should succeed (capacity is unlimited, stake of 200 covers 100 bytes)
-            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.committed_bytes, 100);
@@ -433,7 +439,10 @@ mod provider_tests {
             ));
 
             // Accept should succeed
-            assert_ok!(StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
 
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.committed_bytes, 100);

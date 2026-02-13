@@ -9,7 +9,7 @@
 
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use sp_core::{H256, Pair};
+use sp_core::{Pair, H256};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -94,24 +94,13 @@ pub enum SyncResult {
         tried: Vec<String>,
     },
     /// Local state doesn't match expected root after sync.
-    VerificationFailed {
-        bucket_id: BucketId,
-        reason: String,
-    },
+    VerificationFailed { bucket_id: BucketId, reason: String },
     /// Failed to submit confirm_replica_sync transaction.
-    SubmissionFailed {
-        bucket_id: BucketId,
-        error: String,
-    },
+    SubmissionFailed { bucket_id: BucketId, error: String },
     /// Already synced to this root.
-    AlreadySynced {
-        bucket_id: BucketId,
-        mmr_root: H256,
-    },
+    AlreadySynced { bucket_id: BucketId, mmr_root: H256 },
     /// No data to sync yet.
-    NoDataToSync {
-        bucket_id: BucketId,
-    },
+    NoDataToSync { bucket_id: BucketId },
 }
 
 /// Commands for controlling the coordinator.
@@ -282,7 +271,10 @@ impl ReplicaSyncCoordinator {
                 .await;
         });
 
-        Ok(ReplicaSyncCoordinatorHandle { command_tx, running })
+        Ok(ReplicaSyncCoordinatorHandle {
+            command_tx,
+            running,
+        })
     }
 
     /// Main coordinator loop.
@@ -379,8 +371,7 @@ impl ReplicaSyncCoordinator {
 
     /// Clean up completed sync tasks.
     fn cleanup_completed_syncs(&mut self) {
-        self.active_syncs
-            .retain(|_, handle| !handle.is_finished());
+        self.active_syncs.retain(|_, handle| !handle.is_finished());
     }
 
     /// Get list of bucket IDs we're tracking as replica.
@@ -1394,13 +1385,19 @@ mod tests {
             required: 1000,
             available: 500,
         };
-        assert!(matches!(insufficient, SyncResult::InsufficientBalance { .. }));
+        assert!(matches!(
+            insufficient,
+            SyncResult::InsufficientBalance { .. }
+        ));
 
         let interval = SyncResult::SyncIntervalNotElapsed {
             bucket_id: 1,
             blocks_remaining: 50,
         };
-        assert!(matches!(interval, SyncResult::SyncIntervalNotElapsed { .. }));
+        assert!(matches!(
+            interval,
+            SyncResult::SyncIntervalNotElapsed { .. }
+        ));
     }
 
     #[test]

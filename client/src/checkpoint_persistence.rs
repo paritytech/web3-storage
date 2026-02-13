@@ -359,8 +359,9 @@ impl CheckpointPersistence {
             .map_err(|e| ClientError::Storage(format!("Failed to read persistence file: {}", e)))?;
 
         // Parse JSON
-        let state: PersistedCheckpointState = serde_json::from_str(&contents)
-            .map_err(|e| ClientError::Storage(format!("Failed to parse persistence file: {}", e)))?;
+        let state: PersistedCheckpointState = serde_json::from_str(&contents).map_err(|e| {
+            ClientError::Storage(format!("Failed to parse persistence file: {}", e))
+        })?;
 
         // Validate version
         if state.version > 1 {
@@ -409,9 +410,9 @@ impl CheckpointPersistence {
 
         // Write atomically (write to temp file, then rename)
         let temp_path = self.config.file_path.with_extension("json.tmp");
-        fs::write(&temp_path, &contents)
-            .await
-            .map_err(|e| ClientError::Storage(format!("Failed to write persistence file: {}", e)))?;
+        fs::write(&temp_path, &contents).await.map_err(|e| {
+            ClientError::Storage(format!("Failed to write persistence file: {}", e))
+        })?;
 
         fs::rename(&temp_path, &self.config.file_path)
             .await
@@ -704,14 +705,15 @@ mod tests {
         // Create test state
         let mut state = PersistedCheckpointState::new();
         state.metrics.total_attempts = 42;
-        state
-            .bucket_statuses
-            .insert(1, PersistedBucketStatus {
+        state.bucket_statuses.insert(
+            1,
+            PersistedBucketStatus {
                 dirty: true,
                 last_checkpoint_timestamp: Some(1234567890),
                 last_result: Some("Submitted".to_string()),
                 consecutive_failures: 0,
-            });
+            },
+        );
 
         // Save
         persistence.save(&state).await.unwrap();

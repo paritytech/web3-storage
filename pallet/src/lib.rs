@@ -70,7 +70,6 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
-
         /// Currency type for payments and staking.
         type Currency: ReservableCurrency<Self::AccountId>;
 
@@ -891,8 +890,7 @@ pub mod pallet {
 
                     // Validate stake backs declared capacity
                     use sp_runtime::traits::SaturatedConversion;
-                    let capacity_as_balance: BalanceOf<T> =
-                        settings.max_capacity.saturated_into();
+                    let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
                     let required_stake = T::MinStakePerByte::get()
                         .checked_mul(&capacity_as_balance)
                         .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -2068,7 +2066,10 @@ pub mod pallet {
             let current_window = Self::calculate_window(current_block, config.interval);
 
             // Validate window
-            ensure!(window == current_window, Error::<T>::InvalidCheckpointWindow);
+            ensure!(
+                window == current_window,
+                Error::<T>::InvalidCheckpointWindow
+            );
 
             // Check if already submitted for this window
             let last_window = LastCheckpointWindow::<T>::get(bucket_id);
@@ -2110,11 +2111,7 @@ pub mod pallet {
 
                 // Verify signatures using CheckpointProposal
                 let proposal = storage_primitives::CheckpointProposal::new(
-                    bucket_id,
-                    mmr_root,
-                    start_seq,
-                    leaf_count,
-                    window,
+                    bucket_id, mmr_root, start_seq, leaf_count, window,
                 );
                 let encoded_proposal = proposal.encode();
 
@@ -3535,8 +3532,8 @@ pub mod pallet {
 
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
-                .map(|(bucket_id, _, agreement)| {
-                    crate::runtime_api::AgreementResponse {
+                .map(
+                    |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -3560,8 +3557,8 @@ pub mod pallet {
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
-                    }
-                })
+                    },
+                )
                 .collect()
         }
 
@@ -3927,8 +3924,7 @@ pub mod pallet {
 
                 // Check duration
                 if score > 0
-                    && (requirements.min_duration < min_dur
-                        || requirements.min_duration > max_dur)
+                    && (requirements.min_duration < min_dur || requirements.min_duration > max_dur)
                 {
                     score = score.saturating_sub(20);
                     if partial_reason.is_none() {

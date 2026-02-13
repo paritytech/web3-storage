@@ -54,7 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if use_offchain {
         println!("MMR Root:        {}", mmr_root_hex.unwrap());
         println!("Start Seq:       {}", start_seq);
-        println!("Provider Sig:    {}...", &provider_signature_hex.unwrap()[..20.min(provider_signature_hex.unwrap().len())]);
+        println!(
+            "Provider Sig:    {}...",
+            &provider_signature_hex.unwrap()[..20.min(provider_signature_hex.unwrap().len())]
+        );
         println!("Challenge Mode:  Off-chain (using provider signature)");
     } else {
         println!("Challenge Mode:  On-chain checkpoint");

@@ -326,7 +326,9 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
 /// Providers can autonomously coordinate checkpoints without requiring
 /// the client to be online. Uses deterministic leader election and
 /// checkpoint windows with grace periods.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CheckpointWindowConfig<BlockNumber> {
     /// Blocks between checkpoints (e.g., 100 blocks = ~10 minutes)
@@ -341,7 +343,9 @@ pub struct CheckpointWindowConfig<BlockNumber> {
 ///
 /// This is the payload that providers sign to agree on a checkpoint.
 /// The window number prevents cross-window replay attacks.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug)]
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CheckpointProposal {
     /// Protocol version for future compatibility
@@ -363,7 +367,13 @@ impl CheckpointProposal {
     pub const CURRENT_VERSION: u8 = 1;
 
     /// Create a new checkpoint proposal
-    pub fn new(bucket_id: BucketId, mmr_root: H256, start_seq: u64, leaf_count: u64, window: u64) -> Self {
+    pub fn new(
+        bucket_id: BucketId,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        window: u64,
+    ) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,

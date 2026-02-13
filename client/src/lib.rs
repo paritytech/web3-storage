@@ -111,7 +111,7 @@ pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
 pub use checkpoint::{
     AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
-    BucketCheckpointStatus, ChallengeEvidence, ChallengeRecommendation, ChallengeReason,
+    BucketCheckpointStatus, ChallengeEvidence, ChallengeReason, ChallengeRecommendation,
     CheckpointCallback, CheckpointConfig, CheckpointLoopCommand, CheckpointLoopHandle,
     CheckpointManager, CheckpointMetrics, CheckpointResult, CommitmentCollection,
     ConflictResolution, ConflictType, ConflictingProvider, FailedChallenge, ProviderConflict,
@@ -121,7 +121,9 @@ pub use checkpoint_persistence::{
     CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
     PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
 };
-pub use discovery::{DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements};
+pub use discovery::{
+    DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
+};
 pub use event_subscription::{
     subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
     EventCallback, EventFilter, EventStream, EventSubscriber, StorageEvent, SubscriptionHandle,
@@ -398,13 +400,8 @@ impl StorageClient {
                 node_data.extend_from_slice(pair[1].as_bytes());
 
                 // Upload internal node (provider allows H256::zero() children)
-                self.upload_node(
-                    bucket_id,
-                    parent,
-                    node_data,
-                    Some(vec![pair[0], pair[1]]),
-                )
-                .await?;
+                self.upload_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]))
+                    .await?;
 
                 next_level.push(parent);
             }

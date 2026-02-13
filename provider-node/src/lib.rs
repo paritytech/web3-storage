@@ -28,17 +28,17 @@ pub use checkpoint_coordinator::{
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
     CheckpointDuty, CheckpointResult, CoordinatorCommand,
 };
-pub use replica_sync_coordinator::{
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
-    SyncCommand, SyncDuty, SyncResult, SyncCoordinatorStatus,
-};
 pub use disk_storage::DiskStorage;
 pub use error::Error;
 pub use replica_sync::ReplicaSync;
+pub use replica_sync_coordinator::{
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
+    SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+};
 pub use storage::Storage;
 pub use types::*;
 
-use sp_core::{sr25519, Pair, crypto::Ss58Codec};
+use sp_core::{crypto::Ss58Codec, sr25519, Pair};
 use std::sync::Arc;
 
 /// Provider node state shared across handlers.

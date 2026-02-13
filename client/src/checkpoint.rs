@@ -486,8 +486,9 @@ impl CheckpointMetrics {
 
         // Update rolling average submission time
         if self.successful_submissions > 0 {
-            self.avg_submission_time_ms = (self.avg_submission_time_ms * (self.successful_submissions - 1)
-                + duration_ms) / self.successful_submissions;
+            self.avg_submission_time_ms =
+                (self.avg_submission_time_ms * (self.successful_submissions - 1) + duration_ms)
+                    / self.successful_submissions;
         } else {
             self.avg_submission_time_ms = duration_ms;
         }
@@ -596,10 +597,7 @@ pub enum ChallengeReason {
         leaf_count: u64,
     },
     /// Provider persistently behind after sync wait.
-    PersistentlySyncing {
-        behind_by: u64,
-        duration: Duration,
-    },
+    PersistentlySyncing { behind_by: u64, duration: Duration },
     /// Provider claiming to be ahead of majority.
     ClaimingAhead {
         claimed_leaf_count: u64,
@@ -805,7 +803,10 @@ impl CheckpointManager {
     /// Get providers for a bucket.
     ///
     /// First checks cache, then manual endpoints, then discovers from chain state.
-    pub async fn get_providers(&self, bucket_id: BucketId) -> Result<Vec<ProviderInfo>, ClientError> {
+    pub async fn get_providers(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<ProviderInfo>, ClientError> {
         // Check cache first
         {
             let cache = self.provider_cache.read().await;
@@ -832,7 +833,8 @@ impl CheckpointManager {
                 .collect();
 
             // Update cache
-            self.update_provider_cache(bucket_id, providers.clone()).await;
+            self.update_provider_cache(bucket_id, providers.clone())
+                .await;
             return Ok(providers);
         }
 
@@ -840,7 +842,8 @@ impl CheckpointManager {
         let providers = self.discover_providers_from_chain(bucket_id).await?;
 
         // Update cache
-        self.update_provider_cache(bucket_id, providers.clone()).await;
+        self.update_provider_cache(bucket_id, providers.clone())
+            .await;
 
         Ok(providers)
     }
@@ -949,7 +952,8 @@ impl CheckpointManager {
             })?;
 
         // Extract multiaddr and public_key from provider raw bytes
-        let (multiaddr_bytes, public_key) = self.extract_provider_fields_from_raw(&provider_bytes)?;
+        let (multiaddr_bytes, public_key) =
+            self.extract_provider_fields_from_raw(&provider_bytes)?;
 
         // Parse multiaddr to HTTP endpoint
         let endpoint = self.parse_multiaddr_to_http(&multiaddr_bytes)?;
@@ -1054,7 +1058,11 @@ impl CheckpointManager {
     }
 
     /// Decode a compact-prefixed bounded vec from raw bytes.
-    fn decode_bounded_vec(&self, bytes: &[u8], start: usize) -> Result<(Vec<u8>, usize), ClientError> {
+    fn decode_bounded_vec(
+        &self,
+        bytes: &[u8],
+        start: usize,
+    ) -> Result<(Vec<u8>, usize), ClientError> {
         if start >= bytes.len() {
             return Ok((Vec::new(), start));
         }
@@ -1221,7 +1229,9 @@ impl CheckpointManager {
         let signatures: Vec<_> = agreeing
             .iter()
             .map(|(id, c)| {
-                let sig_bytes = self.decode_signature(&c.provider_signature).unwrap_or_default();
+                let sig_bytes = self
+                    .decode_signature(&c.provider_signature)
+                    .unwrap_or_default();
                 (id.clone(), sig_bytes)
             })
             .collect();
@@ -1269,8 +1279,11 @@ impl CheckpointManager {
                         match response.json::<CommitmentResponse>().await {
                             Ok(commitment) => {
                                 // Record success
-                                self.record_provider_success(&provider.account_id, response_time_ms)
-                                    .await;
+                                self.record_provider_success(
+                                    &provider.account_id,
+                                    response_time_ms,
+                                )
+                                .await;
                                 return Ok(commitment);
                             }
                             Err(e) => {
@@ -1354,8 +1367,7 @@ impl CheckpointManager {
             + collection.disagreeing_providers.len()
             + collection.unreachable_providers.len();
 
-        let required = (total_providers as f64
-            * self.config.consensus_threshold_percent as f64
+        let required = (total_providers as f64 * self.config.consensus_threshold_percent as f64
             / 100.0)
             .ceil() as usize;
 
@@ -1446,7 +1458,9 @@ impl CheckpointManager {
         let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
         let bytes = hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))?;
         if bytes.len() != 32 {
-            return Err(ClientError::Serialization("Invalid H256 length".to_string()));
+            return Err(ClientError::Serialization(
+                "Invalid H256 length".to_string(),
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
@@ -1578,7 +1592,10 @@ impl CheckpointManager {
 
         let resolution = if majority_percentage >= self.config.consensus_threshold_percent as f64 {
             ConflictResolution::ProceedWithMajority
-        } else if conflicts.iter().all(|c| matches!(c.conflict_type, ConflictType::SyncDelay { .. })) {
+        } else if conflicts
+            .iter()
+            .all(|c| matches!(c.conflict_type, ConflictType::SyncDelay { .. }))
+        {
             ConflictResolution::WaitForSync {
                 estimated_blocks: 10, // Estimate
             }
@@ -1654,7 +1671,10 @@ impl CheckpointManager {
     }
 
     /// Get providers sorted by health (healthiest first).
-    pub async fn get_providers_by_health(&self, bucket_id: BucketId) -> Result<Vec<ProviderInfo>, ClientError> {
+    pub async fn get_providers_by_health(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<ProviderInfo>, ClientError> {
         let providers = self.get_providers(bucket_id).await?;
         let history = self.health_history.read().await;
 
@@ -1676,7 +1696,10 @@ impl CheckpointManager {
     }
 
     /// Check if a bucket has enough healthy providers to meet consensus.
-    pub async fn has_enough_healthy_providers(&self, bucket_id: BucketId) -> Result<bool, ClientError> {
+    pub async fn has_enough_healthy_providers(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<bool, ClientError> {
         let providers = self.get_providers(bucket_id).await?;
         let history = self.health_history.read().await;
 
@@ -1691,7 +1714,8 @@ impl CheckpointManager {
             .count();
 
         let total = providers.len();
-        let required = (total as f64 * self.config.consensus_threshold_percent as f64 / 100.0).ceil() as usize;
+        let required =
+            (total as f64 * self.config.consensus_threshold_percent as f64 / 100.0).ceil() as usize;
 
         Ok(healthy_count >= required)
     }
@@ -1715,7 +1739,10 @@ impl CheckpointManager {
     /// Called automatically by submit_checkpoint, but can also be called
     /// manually if integrating with custom checkpoint logic.
     pub async fn record_checkpoint_metrics(&self, result: &CheckpointResult, duration_ms: u64) {
-        self.metrics.write().await.record_attempt(result, duration_ms);
+        self.metrics
+            .write()
+            .await
+            .record_attempt(result, duration_ms);
     }
 
     /// Record a conflict in metrics and history.
@@ -1826,9 +1853,13 @@ impl CheckpointManager {
                         .iter()
                         .find(|c| c.account_id == *provider)
                     {
-                        if let ConflictType::SyncDelay { behind_by } = provider_conflict.conflict_type
+                        if let ConflictType::SyncDelay { behind_by } =
+                            provider_conflict.conflict_type
                         {
-                            let first_seen = conflicts.first().map(|c| c.detected_at).unwrap_or_else(Instant::now);
+                            let first_seen = conflicts
+                                .first()
+                                .map(|c| c.detected_at)
+                                .unwrap_or_else(Instant::now);
                             let duration = first_seen.elapsed();
 
                             if duration >= self.auto_challenge_config.sync_wait_duration {
@@ -1867,7 +1898,11 @@ impl CheckpointManager {
         }
 
         // Sort by confidence (highest first)
-        recommendations.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        recommendations.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         recommendations
     }
@@ -1970,10 +2005,7 @@ impl CheckpointManager {
                 }
                 ChallengeReason::PersistentlySyncing { behind_by, .. } => {
                     // Challenge at the point where they fell behind
-                    let majority_count = recommendation
-                        .evidence
-                        .majority_commitment
-                        .2;
+                    let majority_count = recommendation.evidence.majority_commitment.2;
                     (majority_count.saturating_sub(*behind_by), 0u64)
                 }
                 ChallengeReason::ClaimingAhead {
@@ -2047,15 +2079,27 @@ impl CheckpointManager {
         // Get all bucket IDs with conflicts
         let bucket_ids: Vec<BucketId> = {
             let history = self.conflict_history.read().await;
-            history.keys().map(|(bid, _)| *bid).collect::<std::collections::HashSet<_>>().into_iter().collect()
+            history
+                .keys()
+                .map(|(bid, _)| *bid)
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect()
         };
 
         let mut results = Vec::new();
         for bucket_id in bucket_ids {
-            match self.execute_auto_challenges(bucket_id, challenger, min_confidence).await {
+            match self
+                .execute_auto_challenges(bucket_id, challenger, min_confidence)
+                .await
+            {
                 Ok(result) => results.push((bucket_id, result)),
                 Err(e) => {
-                    tracing::warn!("Failed to execute auto-challenges for bucket {}: {}", bucket_id, e);
+                    tracing::warn!(
+                        "Failed to execute auto-challenges for bucket {}: {}",
+                        bucket_id,
+                        e
+                    );
                 }
             }
         }
@@ -2113,7 +2157,13 @@ impl CheckpointManager {
 
         let task_handle = tokio::spawn(async move {
             manager
-                .run_checkpoint_loop(bucket_id, batched_config, command_rx, running_clone, callback)
+                .run_checkpoint_loop(
+                    bucket_id,
+                    batched_config,
+                    command_rx,
+                    running_clone,
+                    callback,
+                )
                 .await;
         });
 
@@ -2659,8 +2709,12 @@ mod tests {
         assert_eq!(ProviderStatus::Healthy, ProviderStatus::Healthy);
         assert_eq!(ProviderStatus::Unknown, ProviderStatus::Unknown);
 
-        let degraded1 = ProviderStatus::Degraded { last_error: "Error".to_string() };
-        let degraded2 = ProviderStatus::Degraded { last_error: "Error".to_string() };
+        let degraded1 = ProviderStatus::Degraded {
+            last_error: "Error".to_string(),
+        };
+        let degraded2 = ProviderStatus::Degraded {
+            last_error: "Error".to_string(),
+        };
         assert_eq!(degraded1, degraded2);
     }
 
@@ -2696,13 +2750,19 @@ mod tests {
             ConflictResolution::ProceedWithMajority
         );
         assert_eq!(
-            ConflictResolution::WaitForSync { estimated_blocks: 10 },
-            ConflictResolution::WaitForSync { estimated_blocks: 10 }
+            ConflictResolution::WaitForSync {
+                estimated_blocks: 10
+            },
+            ConflictResolution::WaitForSync {
+                estimated_blocks: 10
+            }
         );
 
         let account = AccountId32::new([1u8; 32]);
         assert_eq!(
-            ConflictResolution::ConsiderChallenge { provider: account.clone() },
+            ConflictResolution::ConsiderChallenge {
+                provider: account.clone()
+            },
             ConflictResolution::ConsiderChallenge { provider: account }
         );
     }
@@ -2767,9 +2827,7 @@ mod tests {
             disagreements: vec![],
         };
 
-        let unreachable = CheckpointResult::ProvidersUnreachable {
-            providers: vec![],
-        };
+        let unreachable = CheckpointResult::ProvidersUnreachable { providers: vec![] };
 
         let no_providers = CheckpointResult::NoProviders;
 
@@ -2925,7 +2983,10 @@ mod tests {
         };
 
         match reason {
-            ChallengeReason::PersistentlySyncing { behind_by, duration } => {
+            ChallengeReason::PersistentlySyncing {
+                behind_by,
+                duration,
+            } => {
                 assert_eq!(behind_by, 50);
                 assert_eq!(duration, Duration::from_secs(120));
             }

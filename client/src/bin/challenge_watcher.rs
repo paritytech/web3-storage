@@ -99,15 +99,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Seed:         {}", seed);
 
     // Create signing keypair using sp_core (for public key extraction)
-    let sp_keypair = sr25519::Pair::from_string(&seed, None)
-        .map_err(|e| format!("Invalid seed: {:?}", e))?;
+    let sp_keypair =
+        sr25519::Pair::from_string(&seed, None).map_err(|e| format!("Invalid seed: {:?}", e))?;
     let provider_account_bytes = sp_keypair.public().0;
-    let provider_account_ss58 =
-        sp_core::crypto::Ss58Codec::to_ss58check(&sp_keypair.public());
+    let provider_account_ss58 = sp_core::crypto::Ss58Codec::to_ss58check(&sp_keypair.public());
 
     // Create subxt-compatible keypair for signing transactions
     let keypair = subxt_signer::sr25519::Keypair::from_uri(
-        &seed.parse().map_err(|e| format!("Invalid seed URI: {:?}", e))?,
+        &seed
+            .parse()
+            .map_err(|e| format!("Invalid seed URI: {:?}", e))?,
     )
     .map_err(|e| format!("Failed to create keypair: {:?}", e))?;
 
@@ -187,12 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // Query on-chain storage for full challenge details
-            let challenge = match fetch_challenge_details(
-                &client,
-                &challenge_event,
-            )
-            .await
-            {
+            let challenge = match fetch_challenge_details(&client, &challenge_event).await {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!(
@@ -211,14 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             // Respond to the challenge
-            match respond_to_challenge(
-                &client,
-                &http,
-                &provider_url,
-                &challenge,
-            )
-            .await
-            {
+            match respond_to_challenge(&client, &http, &provider_url, &challenge).await {
                 Ok(()) => {
                     eprintln!(
                         "  Challenge ({},{}) defended successfully!",
@@ -263,9 +252,7 @@ fn parse_challenge_event(
         .and_then(|v| v.as_u128())
         .ok_or("missing/invalid 'bucket_id'")? as u64;
 
-    let provider_val = fields
-        .at("provider")
-        .ok_or("missing field 'provider'")?;
+    let provider_val = fields.at("provider").ok_or("missing field 'provider'")?;
     let provider =
         extract_account_bytes(provider_val).ok_or("failed to extract provider account bytes")?;
 
@@ -306,8 +293,8 @@ async fn fetch_challenge_details(
     let mmr_root_val = challenge_val
         .at("mmr_root")
         .ok_or("Missing mmr_root in challenge")?;
-    let mmr_root_bytes = extract_h256_bytes(mmr_root_val)
-        .ok_or("Failed to extract mmr_root bytes")?;
+    let mmr_root_bytes =
+        extract_h256_bytes(mmr_root_val).ok_or("Failed to extract mmr_root bytes")?;
     let mmr_root = H256::from_slice(&mmr_root_bytes);
 
     let leaf_index = challenge_val
