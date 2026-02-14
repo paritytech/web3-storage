@@ -25,7 +25,7 @@ fi
 # Generate chain spec using chain-spec-builder with patched genesis
 SCRIPT_DIR="$(dirname "$0")"
 .bin/chain-spec-builder create \
-  -n "Storage Local" \
+  -n "Web3 Storage Local" \
   -i "storage-local" \
   -t local \
   -p 4000 \

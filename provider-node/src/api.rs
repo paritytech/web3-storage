@@ -315,8 +315,12 @@ async fn get_checkpoint_signature(
     let leaf_count = bucket.leaf_count();
 
     // Sign with real leaf_count for on-chain checkpoint verification
-    let payload =
-        CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, leaf_count);
+    let payload = CommitmentPayload::new(
+        query.bucket_id,
+        bucket.mmr_root,
+        bucket.start_seq,
+        leaf_count,
+    );
     let signature = state.sign(&payload.encode());
 
     Ok(Json(CheckpointSignatureResponse {

@@ -92,8 +92,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunks: BoundedVec::default(),
         encryption_params: BoundedVec::default(),
     };
-    manifest.add_chunk(chunk1_cid, 0).expect("Failed to add chunk");
-    manifest.add_chunk(chunk2_cid, 1).expect("Failed to add chunk");
+    manifest
+        .add_chunk(chunk1_cid, 0)
+        .expect("Failed to add chunk");
+    manifest
+        .add_chunk(chunk2_cid, 1)
+        .expect("Failed to add chunk");
 
     println!(
         "   File size: {} bytes ({} chunks)",
@@ -102,7 +106,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for chunk in manifest.chunks.iter() {
         let cid_hex = hex::encode(chunk.cid.as_bytes());
-        println!("     - Chunk {}: CID 0x{}...", chunk.sequence, &cid_hex[..16]);
+        println!(
+            "     - Chunk {}: CID 0x{}...",
+            chunk.sequence,
+            &cid_hex[..16]
+        );
     }
 
     let manifest_bytes = manifest.to_scale_bytes();

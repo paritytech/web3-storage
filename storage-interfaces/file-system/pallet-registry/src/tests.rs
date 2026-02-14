@@ -517,7 +517,7 @@ fn create_drive_simplified_api_fails_without_providers() {
                 max_capacity,
                 storage_period,
                 payment,
-                None, // Use default providers
+                None,                                      // Use default providers
                 CommitStrategy::Batched { interval: 100 }, // Default strategy
             ),
             Error::<Test>::NoProvidersAvailable
@@ -580,7 +580,7 @@ fn create_drive_validates_inputs() {
                 10_000_000_000,
                 500,
                 1_000_000_000_000,
-                Some(0), // Invalid: zero providers
+                Some(0),                                   // Invalid: zero providers
                 CommitStrategy::Batched { interval: 100 }, // Default strategy
             ),
             Error::<Test>::InvalidProviderCount

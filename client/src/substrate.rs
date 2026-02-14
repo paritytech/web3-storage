@@ -147,9 +147,10 @@ pub mod extrinsics {
         max_capacity: u64,
     ) -> impl Payload {
         let replica_price_value = match replica_sync_price {
-            Some(price) => subxt::dynamic::Value::unnamed_variant("Some", vec![
-                subxt::dynamic::Value::u128(price),
-            ]),
+            Some(price) => subxt::dynamic::Value::unnamed_variant(
+                "Some",
+                vec![subxt::dynamic::Value::u128(price)],
+            ),
             None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
         };
 
@@ -157,13 +158,31 @@ pub mod extrinsics {
             "StorageProvider",
             "update_provider_settings",
             vec![subxt::dynamic::Value::named_composite([
-                ("min_duration", subxt::dynamic::Value::u128(min_duration as u128)),
-                ("max_duration", subxt::dynamic::Value::u128(max_duration as u128)),
-                ("price_per_byte", subxt::dynamic::Value::u128(price_per_byte)),
-                ("accepting_primary", subxt::dynamic::Value::bool(accepting_primary)),
+                (
+                    "min_duration",
+                    subxt::dynamic::Value::u128(min_duration as u128),
+                ),
+                (
+                    "max_duration",
+                    subxt::dynamic::Value::u128(max_duration as u128),
+                ),
+                (
+                    "price_per_byte",
+                    subxt::dynamic::Value::u128(price_per_byte),
+                ),
+                (
+                    "accepting_primary",
+                    subxt::dynamic::Value::bool(accepting_primary),
+                ),
                 ("replica_sync_price", replica_price_value),
-                ("accepting_extensions", subxt::dynamic::Value::bool(accepting_extensions)),
-                ("max_capacity", subxt::dynamic::Value::u128(max_capacity as u128)),
+                (
+                    "accepting_extensions",
+                    subxt::dynamic::Value::bool(accepting_extensions),
+                ),
+                (
+                    "max_capacity",
+                    subxt::dynamic::Value::u128(max_capacity as u128),
+                ),
             ])],
         )
     }
@@ -230,7 +249,10 @@ pub mod extrinsics {
                 // ReplicaRequestParams struct
                 subxt::dynamic::Value::named_composite([
                     ("sync_balance", subxt::dynamic::Value::u128(sync_balance)),
-                    ("min_sync_interval", subxt::dynamic::Value::u128(min_sync_interval as u128)),
+                    (
+                        "min_sync_interval",
+                        subxt::dynamic::Value::u128(min_sync_interval as u128),
+                    ),
                 ]),
             ],
         )
@@ -249,9 +271,10 @@ pub mod extrinsics {
             .map(|(account, sig)| {
                 subxt::dynamic::Value::unnamed_composite(vec![
                     subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),
-                    subxt::dynamic::Value::unnamed_variant("Sr25519", vec![
-                        subxt::dynamic::Value::from_bytes(&sig),
-                    ]),
+                    subxt::dynamic::Value::unnamed_variant(
+                        "Sr25519",
+                        vec![subxt::dynamic::Value::from_bytes(&sig)],
+                    ),
                 ])
             })
             .collect();
@@ -312,9 +335,10 @@ pub mod extrinsics {
                 subxt::dynamic::Value::u128(leaf_index as u128),
                 subxt::dynamic::Value::u128(chunk_index as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
-                subxt::dynamic::Value::unnamed_variant("Sr25519", vec![
-                    subxt::dynamic::Value::from_bytes(&provider_signature),
-                ]),
+                subxt::dynamic::Value::unnamed_variant(
+                    "Sr25519",
+                    vec![subxt::dynamic::Value::from_bytes(&provider_signature)],
+                ),
             ],
         )
     }
@@ -335,10 +359,7 @@ pub mod extrinsics {
                 "deadline",
                 subxt::dynamic::Value::u128(challenge_id.0 as u128),
             ),
-            (
-                "index",
-                subxt::dynamic::Value::u128(challenge_id.1 as u128),
-            ),
+            ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
         ]);
 
         // Build MerkleProof for leaf_proof (MMR leaf to peak)

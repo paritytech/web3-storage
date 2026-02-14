@@ -1,7 +1,7 @@
 use crate as pallet_drive_registry;
 use frame_support::{
     derive_impl, parameter_types,
-    traits::{ConstU32, ConstU64, ConstU128},
+    traits::{ConstU128, ConstU32, ConstU64},
 };
 use sp_core::H256;
 use sp_runtime::{
@@ -104,6 +104,7 @@ impl pallet_storage_provider::Config for Test {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type WeightInfo = ();
 }
 
 parameter_types! {

@@ -214,7 +214,14 @@ impl FileSystemClient {
         let strategy = commit_strategy.unwrap_or_default();
 
         let drive_id = self
-            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers, strategy)
+            .create_drive_on_chain(
+                name,
+                max_capacity,
+                storage_period,
+                payment,
+                min_providers,
+                strategy,
+            )
             .await?;
 
         // Get the bucket_id for this drive
@@ -242,7 +249,11 @@ impl FileSystemClient {
         self.update_drive_root_cid(drive_id, root_cid).await?;
 
         // Cache the root CID
-        log::debug!("create_drive: caching root_cid={:?} for drive {}", root_cid, drive_id);
+        log::debug!(
+            "create_drive: caching root_cid={:?} for drive {}",
+            root_cid,
+            drive_id
+        );
         self.root_cache.insert(drive_id, root_cid);
 
         Ok(drive_id)
@@ -395,13 +406,21 @@ impl FileSystemClient {
     pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
         // Check cache first
         if let Some(cid) = self.root_cache.get(&drive_id) {
-            log::debug!("get_root_cid: cache hit for drive {}, cid={:?}", drive_id, cid);
+            log::debug!(
+                "get_root_cid: cache hit for drive {}, cid={:?}",
+                drive_id,
+                cid
+            );
             return Ok(*cid);
         }
 
         // Query on-chain
         let cid = self.query_drive_root_cid(drive_id).await?;
-        log::debug!("get_root_cid: cache miss for drive {}, queried cid={:?}", drive_id, cid);
+        log::debug!(
+            "get_root_cid: cache miss for drive {}, queried cid={:?}",
+            drive_id,
+            cid
+        );
         self.root_cache.insert(drive_id, cid);
 
         Ok(cid)
@@ -609,7 +628,10 @@ impl FileSystemClient {
     pub async fn disable_auto_checkpoints(&mut self) -> Result<()> {
         if let Some(handle) = self.checkpoint_handle.take() {
             let mut guard = handle.lock().await;
-            guard.stop().await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+            guard
+                .stop()
+                .await
+                .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
         }
         Ok(())
     }
@@ -621,7 +643,10 @@ impl FileSystemClient {
     pub async fn request_immediate_checkpoint(&self) -> Result<()> {
         if let Some(handle) = &self.checkpoint_handle {
             let guard = handle.lock().await;
-            guard.submit_now().await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+            guard
+                .submit_now()
+                .await
+                .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
         }
         Ok(())
     }
@@ -639,7 +664,10 @@ impl FileSystemClient {
         if let Some(handle) = &self.checkpoint_handle {
             if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
                 let guard = handle.lock().await;
-                guard.mark_dirty(bucket_id).await.map_err(|e| FsClientError::StorageClient(e.to_string()))?;
+                guard
+                    .mark_dirty(bucket_id)
+                    .await
+                    .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
             }
         }
         Ok(())
@@ -837,7 +865,11 @@ impl FileSystemClient {
         }
 
         let last_slash = path.rfind('/').unwrap();
-        let parent = if last_slash == 0 { "/" } else { &path[..last_slash] };
+        let parent = if last_slash == 0 {
+            "/"
+        } else {
+            &path[..last_slash]
+        };
         let name = &path[last_slash + 1..];
 
         if name.is_empty() {
@@ -913,10 +945,9 @@ impl FileSystemClient {
 
             if let Some(finalized) = event.as_finalized() {
                 // Fetch events from the finalized block
-                let events = finalized
-                    .fetch_events()
-                    .await
-                    .map_err(|e| FsClientError::Blockchain(format!("Failed to fetch events: {}", e)))?;
+                let events = finalized.fetch_events().await.map_err(|e| {
+                    FsClientError::Blockchain(format!("Failed to fetch events: {}", e))
+                })?;
 
                 // Find DriveCreated or DriveCreatedOnBucket event
                 for ev in events.iter() {

@@ -115,18 +115,14 @@ pub mod extrinsics {
             CommitStrategy::Immediate => {
                 subxt::dynamic::Value::unnamed_variant("Immediate", vec![])
             }
-            CommitStrategy::Batched { interval } => {
-                subxt::dynamic::Value::unnamed_variant(
-                    "Batched",
-                    vec![subxt::dynamic::Value::named_composite(vec![(
-                        "interval",
-                        subxt::dynamic::Value::u128(interval as u128),
-                    )])],
-                )
-            }
-            CommitStrategy::Manual => {
-                subxt::dynamic::Value::unnamed_variant("Manual", vec![])
-            }
+            CommitStrategy::Batched { interval } => subxt::dynamic::Value::unnamed_variant(
+                "Batched",
+                vec![subxt::dynamic::Value::named_composite(vec![(
+                    "interval",
+                    subxt::dynamic::Value::u128(interval as u128),
+                )])],
+            ),
+            CommitStrategy::Manual => subxt::dynamic::Value::unnamed_variant("Manual", vec![]),
         };
 
         subxt::dynamic::tx(

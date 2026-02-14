@@ -87,9 +87,10 @@ impl pallet_storage_provider::Config for Test {
     type RequestTimeout = ConstU64<100>;
     // Provider-initiated checkpoint config
     type DefaultCheckpointInterval = ConstU64<10>; // 10 blocks for testing
-    type DefaultCheckpointGrace = ConstU64<5>;     // 5 blocks grace
-    type CheckpointReward = ConstU64<10>;          // 10 units reward
-    type CheckpointMissPenalty = ConstU64<50>;     // 50 units penalty
+    type DefaultCheckpointGrace = ConstU64<5>; // 5 blocks grace
+    type CheckpointReward = ConstU64<10>; // 10 units reward
+    type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
+    type WeightInfo = ();
 }
 
 /// Build test externalities with default balances.
@@ -114,7 +115,11 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     .assimilate_storage(&mut t)
     .unwrap();
 
-    t.into()
+    let mut ext: sp_io::TestExternalities = t.into();
+    ext.register_extension(sp_keystore::KeystoreExt::new(
+        sp_keystore::testing::MemoryKeystore::new(),
+    ));
+    ext
 }
 
 /// Build test externalities with custom balances.

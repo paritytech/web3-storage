@@ -50,7 +50,10 @@ async fn main() {
     } else {
         let provider_id = std::env::var("PROVIDER_ID")
             .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
-        tracing::warn!("No SEED set, using PROVIDER_ID without signing capability: {}", provider_id);
+        tracing::warn!(
+            "No SEED set, using PROVIDER_ID without signing capability: {}",
+            provider_id
+        );
         Arc::new(ProviderState::new(storage, provider_id))
     };
 

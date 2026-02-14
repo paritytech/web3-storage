@@ -6,7 +6,7 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::{H256, Pair};
+use sp_core::{Pair, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,15 +86,9 @@ pub enum CheckpointResult {
         error: String,
     },
     /// Not the leader and within grace period.
-    NotLeader {
-        bucket_id: BucketId,
-        window: u64,
-    },
+    NotLeader { bucket_id: BucketId, window: u64 },
     /// Checkpoint already submitted for this window.
-    AlreadySubmitted {
-        bucket_id: BucketId,
-        window: u64,
-    },
+    AlreadySubmitted { bucket_id: BucketId, window: u64 },
 }
 
 /// Commands for controlling the coordinator.
@@ -190,9 +184,9 @@ impl CheckpointCoordinator {
         // Set up signer from provider state if available
         if let Some(ref kp) = self.state.keypair {
             let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32].try_into().map_err(|_| {
-                Error::Internal("Invalid secret key length".to_string())
-            })?;
+            let secret_bytes: [u8; 32] = raw[..32]
+                .try_into()
+                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
             let signer = Keypair::from_secret_key(secret_bytes)
                 .map_err(|e| Error::Internal(format!("Failed to create signer: {}", e)))?;
             self.signer = Some(signer);
@@ -226,7 +220,10 @@ impl CheckpointCoordinator {
                 .await;
         });
 
-        Ok(CheckpointCoordinatorHandle { command_tx, running })
+        Ok(CheckpointCoordinatorHandle {
+            command_tx,
+            running,
+        })
     }
 
     /// Main coordinator loop.
@@ -467,13 +464,15 @@ impl CheckpointCoordinator {
         duty: &CheckpointDuty,
         signatures: Vec<(String, String)>,
     ) -> Result<H256, Error> {
-        let api = self.api.as_ref().ok_or_else(|| {
-            Error::Internal("Not connected to chain".to_string())
-        })?;
+        let api = self
+            .api
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
 
-        let signer = self.signer.as_ref().ok_or_else(|| {
-            Error::Internal("No signer configured".to_string())
-        })?;
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
 
         // Build signature tuples for the extrinsic
         let sig_values: Vec<_> = signatures

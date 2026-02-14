@@ -308,10 +308,7 @@ impl Storage {
         let (siblings, path, peaks) = bucket
             .mmr
             .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!(
-                "mmr_proof_{}",
-                leaf_index
-            )))?;
+            .ok_or(Error::NodeNotFound(format!("mmr_proof_{}", leaf_index)))?;
 
         Ok(storage_primitives::MmrProof {
             peaks,
@@ -377,10 +374,7 @@ impl Storage {
     ///
     /// Pads the leaf hashes to the next power of 2 with H256::zero() so that
     /// the standard index-based verification in `verify_merkle_proof` works.
-    fn build_merkle_proof(
-        leaf_hashes: &[H256],
-        index: usize,
-    ) -> storage_primitives::MerkleProof {
+    fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> storage_primitives::MerkleProof {
         if leaf_hashes.len() <= 1 {
             return storage_primitives::MerkleProof {
                 siblings: vec![],
@@ -510,9 +504,7 @@ mod tests {
     use storage_primitives::{verify_merkle_proof, verify_mmr_proof};
 
     /// Helper: create a storage, upload chunks, build a padded Merkle tree, and commit.
-    fn setup_bucket_with_chunks(
-        chunk_data: &[&[u8]],
-    ) -> (Storage, BucketId, H256, H256) {
+    fn setup_bucket_with_chunks(chunk_data: &[&[u8]]) -> (Storage, BucketId, H256, H256) {
         let storage = Storage::new();
         let bucket_id: BucketId = 1;
         storage.init_bucket(bucket_id, u64::MAX);
@@ -539,11 +531,7 @@ mod tests {
     }
 
     /// Build a balanced Merkle tree with power-of-2 padding (mirrors client logic).
-    fn build_padded_merkle_tree(
-        storage: &Storage,
-        bucket_id: BucketId,
-        leaves: &[H256],
-    ) -> H256 {
+    fn build_padded_merkle_tree(storage: &Storage, bucket_id: BucketId, leaves: &[H256]) -> H256 {
         if leaves.is_empty() {
             return H256::zero();
         }
@@ -563,12 +551,8 @@ mod tests {
                 node_data.extend_from_slice(pair[0].as_bytes());
                 node_data.extend_from_slice(pair[1].as_bytes());
                 // Ignore errors for nodes that may already exist
-                let _ = storage.store_node(
-                    bucket_id,
-                    parent,
-                    node_data,
-                    Some(vec![pair[0], pair[1]]),
-                );
+                let _ =
+                    storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
                 next_level.push(parent);
             }
             current_level = next_level;
@@ -692,8 +676,7 @@ mod tests {
     fn test_full_challenge_proof_flow() {
         // Simulate the full challenge flow: upload → commit → generate both proofs → verify
         let chunks: Vec<&[u8]> = vec![b"chunk_a", b"chunk_b", b"chunk_c"];
-        let (storage, bucket_id, data_root, mmr_root) =
-            setup_bucket_with_chunks(&chunks);
+        let (storage, bucket_id, data_root, mmr_root) = setup_bucket_with_chunks(&chunks);
 
         let leaf_index = 0u64;
         let chunk_index = 1u64; // Challenge chunk_b
@@ -703,20 +686,20 @@ mod tests {
         assert_eq!(mmr_proof.leaf.data_root, data_root);
 
         // Generate chunk proof
-        let (chunk_data, chunk_proof) = storage
-            .get_chunk_at_index(data_root, chunk_index)
-            .unwrap();
+        let (chunk_data, chunk_proof) = storage.get_chunk_at_index(data_root, chunk_index).unwrap();
         assert_eq!(chunk_data, b"chunk_b");
 
         // Verify both proofs (same checks as pallet)
         let chunk_hash = blake2_256(&chunk_data);
         assert!(
-            verify_merkle_proof(chunk_hash, chunk_index, &chunk_proof, &mmr_proof.leaf.data_root),
+            verify_merkle_proof(
+                chunk_hash,
+                chunk_index,
+                &chunk_proof,
+                &mmr_proof.leaf.data_root
+            ),
             "Chunk Merkle proof failed"
         );
-        assert!(
-            verify_mmr_proof(&mmr_proof, &mmr_root),
-            "MMR proof failed"
-        );
+        assert!(verify_mmr_proof(&mmr_proof, &mmr_root), "MMR proof failed");
     }
 }

@@ -120,3 +120,26 @@ jobs:
       - name: Run tests
         run: |
           cargo test --workspace
+
+  benchmarks:
+    name: Check Benchmarks
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, check]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      SKIP_WASM_BUILD: 1
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "web3-storage-cache-benchmarks"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Run tests
+        run: |
+          cargo test -p pallet-storage-provider --features runtime-benchmarks

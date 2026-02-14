@@ -98,6 +98,20 @@ Detailed API references and calculation tools.
 
 **Use this to avoid payment-related errors.**
 
+### [Benchmarking Guide](./reference/BENCHMARKING.md)
+**Generate accurate weights for pallet extrinsics**
+
+- FRAME benchmarking overview
+- Building with benchmarks feature
+- Running benchmarks (full and selective)
+- All 36 extrinsics covered with weight functions
+- Parameterized benchmarks (Linear parameters)
+- Adding benchmarks for new extrinsics
+- Understanding weight output
+- Troubleshooting guide
+
+**Essential for runtime weight configuration and fee calculation.**
+
 ---
 
 ## 🏗️ Design & Architecture
@@ -342,6 +356,7 @@ just health
 | Manual Testing Guide | ✅ Ready | Current | Complete |
 | Extrinsics Reference | ✅ Ready | Current | Complete |
 | Payment Calculator | ✅ Ready | Current | Complete |
+| Benchmarking Guide | ✅ Ready | Current | Complete |
 | Design Document | ✅ Ready | Current | Complete |
 | Implementation Details | ✅ Ready | Current | Complete |
 | Storage Marketplace | ✅ Ready | Current | Complete |

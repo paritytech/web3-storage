@@ -16,6 +16,7 @@ fn storage_parachain_genesis(
     endowment: Balance,
     id: ParaId,
     sudo_account: Option<AccountId>,
+    genesis_buckets: Vec<(AccountId, u32)>,
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
@@ -46,6 +47,9 @@ fn storage_parachain_genesis(
             safe_xcm_version: Some(xcm::latest::VERSION)
         },
         sudo: SudoConfig { key: sudo_account },
+        storage_provider: StorageProviderConfig {
+            buckets: genesis_buckets,
+        },
     })
 }
 
@@ -64,11 +68,18 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                     Sr25519Keyring::Bob.public().into(),
                 ),
             ],
-            Sr25519Keyring::well_known().map(|k| k.to_account_id()).collect(),
+            Sr25519Keyring::well_known()
+                .map(|k| k.to_account_id())
+                .collect(),
             UNIT * 10_000_000_000_000,
             PARA_ID,
             // Sudo
             Some(Sr25519Keyring::Alice.to_account_id()),
+            // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
+            vec![
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+            ],
         ),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
@@ -86,6 +97,11 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
             PARA_ID,
             // Sudo
             Some(Sr25519Keyring::Alice.to_account_id()),
+            // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
+            vec![
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+            ],
         ),
         _ => return None,
     };

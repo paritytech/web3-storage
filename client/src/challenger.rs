@@ -306,7 +306,10 @@ impl ChallengerClient {
     /// Find the most profitable providers to challenge.
     ///
     /// Returns providers ranked by potential reward vs risk.
-    pub async fn find_challenge_targets(&self, _limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
+    pub async fn find_challenge_targets(
+        &self,
+        _limit: usize,
+    ) -> ClientResult<Vec<ChallengeTarget>> {
         // TODO: Analyze on-chain data
         // - Providers with low reputation
         // - Providers with high stakes (higher rewards if they fail)
@@ -321,13 +324,10 @@ impl ChallengerClient {
     // ═════════════════════════════════════════════════════════════════════════
 
     /// Extract ChallengeId from ChallengeCreated event in finalized transaction events.
-    fn extract_challenge_id(
-        events: &ExtrinsicEvents<PolkadotConfig>,
-    ) -> ClientResult<ChallengeId> {
+    fn extract_challenge_id(events: &ExtrinsicEvents<PolkadotConfig>) -> ClientResult<ChallengeId> {
         for event in events.iter() {
-            let event = event.map_err(|e| {
-                ClientError::Chain(format!("Failed to decode event: {}", e))
-            })?;
+            let event =
+                event.map_err(|e| ClientError::Chain(format!("Failed to decode event: {}", e)))?;
 
             if event.pallet_name() == "StorageProvider"
                 && event.variant_name() == "ChallengeCreated"
@@ -338,30 +338,24 @@ impl ChallengerClient {
 
                 // fields is a scale_value::Value — navigate the composite
                 // ChallengeCreated { challenge_id: { deadline, index }, ... }
-                let challenge_id_val = fields
-                    .at("challenge_id")
-                    .ok_or_else(|| {
-                        ClientError::Chain(
-                            "ChallengeCreated event missing challenge_id field".to_string(),
-                        )
-                    })?;
+                let challenge_id_val = fields.at("challenge_id").ok_or_else(|| {
+                    ClientError::Chain(
+                        "ChallengeCreated event missing challenge_id field".to_string(),
+                    )
+                })?;
 
                 let deadline = challenge_id_val
                     .at("deadline")
                     .and_then(|v| v.as_u128())
                     .ok_or_else(|| {
-                        ClientError::Chain(
-                            "ChallengeCreated: cannot parse deadline".to_string(),
-                        )
+                        ClientError::Chain("ChallengeCreated: cannot parse deadline".to_string())
                     })? as u32;
 
                 let index = challenge_id_val
                     .at("index")
                     .and_then(|v| v.as_u128())
                     .ok_or_else(|| {
-                        ClientError::Chain(
-                            "ChallengeCreated: cannot parse index".to_string(),
-                        )
+                        ClientError::Chain("ChallengeCreated: cannot parse index".to_string())
                     })? as u16;
 
                 return Ok(ChallengeId { deadline, index });

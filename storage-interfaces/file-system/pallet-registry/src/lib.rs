@@ -31,6 +31,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
+
 pub use pallet::*;
 
 #[cfg(test)]
@@ -42,6 +44,7 @@ mod tests;
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
+    use alloc::vec::Vec;
     use file_system_primitives::{AgreementId, Cid, CommitStrategy, DriveId, DriveInfo};
     use frame_support::{pallet_prelude::*, traits::Get};
     use frame_system::pallet_prelude::*;
@@ -50,7 +53,6 @@ pub mod pallet {
         traits::{AtLeast32BitUnsigned, MaybeSerializeDeserialize, Member},
         BoundedVec,
     };
-    use sp_std::vec::Vec;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -71,7 +73,10 @@ pub mod pallet {
     }
 
     /// Balance type for this pallet (inherited from Currency)
-    pub type BalanceOf<T> = <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<<T as frame_system::Config>::AccountId>>::Balance;
+    pub type BalanceOf<T> =
+        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
+            <T as frame_system::Config>::AccountId,
+        >>::Balance;
 
     /// Maps bucket ID to drive ID (1-to-1 mapping)
     /// Ensures each bucket is used by at most one drive
@@ -275,7 +280,10 @@ pub mod pallet {
 
             // Validate inputs
             ensure!(max_capacity > 0, Error::<T>::InvalidStorageSize);
-            ensure!(storage_period > BlockNumberFor::<T>::from(0u32), Error::<T>::InvalidStoragePeriod);
+            ensure!(
+                storage_period > BlockNumberFor::<T>::from(0u32),
+                Error::<T>::InvalidStoragePeriod
+            );
             use sp_runtime::traits::Zero;
             ensure!(!payment.is_zero(), Error::<T>::InvalidPayment);
 
@@ -364,7 +372,9 @@ pub mod pallet {
         /// - `bucket_id`: Existing Layer 0 bucket ID
         /// - `root_cid`: Initial root CID (typically zero/empty for new drive)
         /// - `name`: Optional human-readable name for the drive
-        #[deprecated(note = "Use create_drive() instead - it handles bucket creation automatically")]
+        #[deprecated(
+            note = "Use create_drive() instead - it handles bucket creation automatically"
+        )]
         #[pallet::call_index(9)]
         #[pallet::weight(10_000)]
         pub fn create_drive_with_bucket(
@@ -405,10 +415,10 @@ pub mod pallet {
                 last_committed_at: current_block,
                 name: bounded_name,
                 // Legacy API: use default values for new fields
-                max_capacity: 0, // Unknown/untracked
+                max_capacity: 0,                                 // Unknown/untracked
                 storage_period: BlockNumberFor::<T>::from(0u32), // Indefinite
-                expires_at: current_block, // No expiry
-                payment: Zero::zero(), // Not tracked
+                expires_at: current_block,                       // No expiry
+                payment: Zero::zero(),                           // Not tracked
             };
 
             // Store drive
@@ -676,10 +686,10 @@ pub mod pallet {
                 last_committed_at: current_block,
                 name: bounded_name,
                 // Bucket-based API: use default values for new fields
-                max_capacity: 0, // Unknown/untracked
+                max_capacity: 0,                                 // Unknown/untracked
                 storage_period: BlockNumberFor::<T>::from(0u32), // Indefinite
-                expires_at: current_block, // No expiry
-                payment: Zero::zero(), // Not tracked
+                expires_at: current_block,                       // No expiry
+                payment: Zero::zero(),                           // Not tracked
             };
 
             // Store drive
@@ -753,7 +763,9 @@ pub mod pallet {
 
             // Construct commit strategy from parameters
             let commit_strategy = if batched_commits {
-                CommitStrategy::Batched { interval: batch_interval }
+                CommitStrategy::Batched {
+                    interval: batch_interval,
+                }
             } else {
                 CommitStrategy::Manual
             };
@@ -769,10 +781,10 @@ pub mod pallet {
                 last_committed_at: current_block,
                 name: bounded_name,
                 // Deprecated API: use default values for new fields
-                max_capacity: 0, // Unknown/untracked
+                max_capacity: 0,                                 // Unknown/untracked
                 storage_period: BlockNumberFor::<T>::from(0u32), // Indefinite
-                expires_at: current_block, // No expiry
-                payment: Zero::zero(), // Not tracked
+                expires_at: current_block,                       // No expiry
+                payment: Zero::zero(),                           // Not tracked
             };
 
             // Store drive
@@ -886,7 +898,9 @@ pub mod pallet {
         /// - `drive_id`: The drive to update
         /// - `failed_agreement_id`: The agreement to replace
         /// - `new_agreement_id`: The new agreement ID
-        #[deprecated(note = "Admin handles provider replacement at Layer 0. Users do not manage agreements.")]
+        #[deprecated(
+            note = "Admin handles provider replacement at Layer 0. Users do not manage agreements."
+        )]
         #[pallet::call_index(7)]
         #[pallet::weight(10_000)]
         pub fn replace_provider(
@@ -1052,10 +1066,10 @@ pub mod pallet {
         /// Helper: Get drive info
         pub fn get_drive(
             drive_id: DriveId,
-        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength, BalanceOf<T>>> {
+        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength, BalanceOf<T>>>
+        {
             Drives::<T>::get(drive_id)
         }
-
 
         /// Helper: List all drives for a user
         pub fn list_user_drives(account: &T::AccountId) -> Vec<DriveId> {

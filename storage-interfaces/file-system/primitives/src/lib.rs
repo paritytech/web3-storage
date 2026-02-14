@@ -63,7 +63,18 @@ pub type AgreementId = u64;
 pub type Cid = H256;
 
 /// Entry type enumeration (SCALE-encoded, no_std compatible)
-#[derive(Clone, Copy, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Copy,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum EntryType {
     /// A file entry
@@ -153,7 +164,17 @@ impl Get<u32> for MaxEncryptionParamsLength {
 }
 
 /// A single entry in a directory (SCALE-encoded, no_std compatible)
-#[derive(Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryEntry {
     /// Human-readable name
@@ -198,7 +219,17 @@ impl DirectoryEntry {
 }
 
 /// Metadata key-value pair
-#[derive(Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct MetadataEntry {
     pub key: BoundedVec<u8, MaxMetadataKeyLength>,
@@ -206,7 +237,17 @@ pub struct MetadataEntry {
 }
 
 /// Directory node containing child references (SCALE-encoded, no_std compatible)
-#[derive(Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
     /// Drive ID this directory belongs to
@@ -268,7 +309,17 @@ impl DirectoryNode {
 }
 
 /// A single chunk reference in a file (SCALE-encoded, no_std compatible)
-#[derive(Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
     /// Chunk CID (blake2-256 hash)
@@ -278,7 +329,17 @@ pub struct FileChunk {
 }
 
 /// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible)
-#[derive(Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
     /// Drive ID this file belongs to
@@ -395,7 +456,11 @@ impl From<&DirectoryNode> for proto::DirectoryNode {
     fn from(node: &DirectoryNode) -> Self {
         Self {
             drive_id: node.drive_id.to_string(),
-            children: node.children.iter().map(proto::DirectoryEntry::from).collect(),
+            children: node
+                .children
+                .iter()
+                .map(proto::DirectoryEntry::from)
+                .collect(),
             metadata: node
                 .metadata
                 .iter()
@@ -415,7 +480,10 @@ impl TryFrom<&proto::DirectoryNode> for DirectoryNode {
     type Error = FileSystemError;
 
     fn try_from(node: &proto::DirectoryNode) -> Result<Self, Self::Error> {
-        let drive_id: DriveId = node.drive_id.parse().map_err(|_| FileSystemError::InvalidPath)?;
+        let drive_id: DriveId = node
+            .drive_id
+            .parse()
+            .map_err(|_| FileSystemError::InvalidPath)?;
         let children: Result<Vec<DirectoryEntry>, _> =
             node.children.iter().map(DirectoryEntry::try_from).collect();
         let metadata: Result<Vec<MetadataEntry>, _> = node
@@ -485,8 +553,10 @@ impl TryFrom<&proto::FileManifest> for FileManifest {
                 .map_err(|_| FileSystemError::InvalidPath)?,
             total_size: manifest.total_size,
             chunks: BoundedVec::try_from(chunks?).map_err(|_| FileSystemError::InvalidPath)?,
-            encryption_params: BoundedVec::try_from(manifest.encryption_params.clone().into_bytes())
-                .map_err(|_| FileSystemError::InvalidPath)?,
+            encryption_params: BoundedVec::try_from(
+                manifest.encryption_params.clone().into_bytes(),
+            )
+            .map_err(|_| FileSystemError::InvalidPath)?,
         })
     }
 }
@@ -509,8 +579,8 @@ impl DirectoryNode {
 
     /// Deserialize from protobuf bytes
     pub fn from_proto_bytes(bytes: &[u8]) -> Result<Self, FileSystemError> {
-        let proto_node =
-            proto::DirectoryNode::decode(bytes).map_err(|_| FileSystemError::DeserializationError)?;
+        let proto_node = proto::DirectoryNode::decode(bytes)
+            .map_err(|_| FileSystemError::DeserializationError)?;
         Self::try_from(&proto_node)
     }
 }
@@ -529,8 +599,8 @@ impl FileManifest {
 
     /// Deserialize from protobuf bytes
     pub fn from_proto_bytes(bytes: &[u8]) -> Result<Self, FileSystemError> {
-        let proto_manifest =
-            proto::FileManifest::decode(bytes).map_err(|_| FileSystemError::DeserializationError)?;
+        let proto_manifest = proto::FileManifest::decode(bytes)
+            .map_err(|_| FileSystemError::DeserializationError)?;
         Self::try_from(&proto_manifest)
     }
 }
@@ -570,7 +640,18 @@ pub enum FileSystemError {
 // ============================================================================
 
 /// Strategy for committing changes to the on-chain root CID
-#[derive(Clone, Copy, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone,
+    Copy,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    Eq,
+    PartialEq,
+    RuntimeDebug,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommitStrategy {
     /// Commit every change immediately (expensive, real-time)
@@ -736,12 +817,8 @@ mod tests {
             chunks: BoundedVec::default(),
             encryption_params: BoundedVec::default(),
         };
-        manifest
-            .add_chunk(compute_cid(b"chunk1"), 0)
-            .unwrap();
-        manifest
-            .add_chunk(compute_cid(b"chunk2"), 1)
-            .unwrap();
+        manifest.add_chunk(compute_cid(b"chunk1"), 0).unwrap();
+        manifest.add_chunk(compute_cid(b"chunk2"), 1).unwrap();
 
         let bytes = manifest.to_scale_bytes();
         let decoded = FileManifest::from_scale_bytes(&bytes).unwrap();

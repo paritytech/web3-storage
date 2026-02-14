@@ -273,7 +273,8 @@ mod tests {
             mmr.push(blake2_256(format!("leaf{}", i).as_bytes()));
             let expected_nodes = 2 * i - i.count_ones() as u64;
             assert_eq!(
-                mmr.nodes.len() as u64, expected_nodes,
+                mmr.nodes.len() as u64,
+                expected_nodes,
                 "node count wrong after {} leaves",
                 i
             );

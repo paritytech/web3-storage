@@ -12,32 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  setup:
-    name: Setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Load environment variables
-        run: cat .github/env >> $GITHUB_ENV
-
-      - name: Cache binaries
-        uses: actions/cache@v4
-        id: bin-cache
-        with:
-          path: .bin
-          key: binaries-${{ env.POLKADOT_SDK_VERSION }}
-
-      - name: Download binaries
-        if: steps.bin-cache.outputs.cache-hit != 'true'
-        run: |
-          cargo install just --locked || true
-          just download-binaries
-
   integration-tests:
     name: Integration Tests
-    needs: [setup]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -67,22 +43,30 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "integration-tests"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+          save-if: "false"
 
       - name: Install just
         run: cargo install just --locked || true
 
-      - name: Restore binaries cache
+      - name: Cache binaries
         uses: actions/cache@v4
+        id: bin-cache
         with:
           path: .bin
           key: binaries-${{ env.POLKADOT_SDK_VERSION }}
 
+      - name: Download binaries
+        if: steps.bin-cache.outputs.cache-hit != 'true'
+        run: just download-binaries
+
       - name: Build
-        run: just build
+        run: cargo build --release
 
       - name: Start chain (background)
         run: just start-chain &> /tmp/zombienet.log &
+
+      - name: Start provider (background)
+        run: just start-provider &> /tmp/provider.log &
 
       - name: Wait for chain to produce blocks
         run: |
@@ -101,9 +85,6 @@ jobs:
             fi
             sleep 5
           done
-
-      - name: Start provider (background)
-        run: just start-provider &> /tmp/provider.log &
 
       - name: Wait for provider to be ready
         run: |

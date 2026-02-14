@@ -65,7 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = StorageUserClient::new(config)?;
 
     // Upload via StorageUserClient
-    let data_root = client.upload(bucket_id, &data, ChunkingStrategy::default()).await?;
+    let data_root = client
+        .upload(bucket_id, &data, ChunkingStrategy::default())
+        .await?;
     let hash_hex = format!("0x{}", hex::encode(data_root.as_bytes()));
     println!("Data Root: {}", hash_hex);
 

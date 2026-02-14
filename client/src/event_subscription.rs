@@ -508,7 +508,8 @@ impl EventSubscriber {
         let running = self.running.clone();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = Self::run_subscription_loop(api, filter, event_tx, running.clone()).await
+            if let Err(e) =
+                Self::run_subscription_loop(api, filter, event_tx, running.clone()).await
             {
                 tracing::error!("Event subscription loop error: {}", e);
             }
@@ -582,11 +583,9 @@ impl EventSubscriber {
                                     Ok(event) => {
                                         // Only process StorageProvider pallet events
                                         if event.pallet_name() == "StorageProvider" {
-                                            if let Some(storage_event) = Self::parse_event(
-                                                &event,
-                                                block_hash,
-                                                block_number,
-                                            ) {
+                                            if let Some(storage_event) =
+                                                Self::parse_event(&event, block_hash, block_number)
+                                            {
                                                 if filter.matches(&storage_event) {
                                                     if event_tx.send(storage_event).await.is_err() {
                                                         // Channel closed, stop

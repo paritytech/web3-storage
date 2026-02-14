@@ -140,8 +140,8 @@ impl_opaque_keys! {
 
 #[sp_version::runtime_version]
 pub const VERSION: RuntimeVersion = RuntimeVersion {
-    spec_name: Cow::Borrowed("storage-parachain"),
-    impl_name: Cow::Borrowed("storage-parachain"),
+    spec_name: Cow::Borrowed("web3-storage-parachain"),
+    impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
     spec_version: 1,
     impl_version: 0,
@@ -444,11 +444,10 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
-    // Provider-initiated checkpoint parameters
-    pub const DefaultCheckpointInterval: BlockNumber = 100;  // ~10 minutes at 6s blocks
-    pub const DefaultCheckpointGrace: BlockNumber = 20;      // ~2 minutes grace for leader
-    pub const CheckpointReward: Balance = 1 * UNIT;          // 1 token per checkpoint
-    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token penalty for missing
+    pub const DefaultCheckpointInterval: BlockNumber = 100;
+    pub const DefaultCheckpointGrace: BlockNumber = 20;
+    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
+    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
 }
 
 // Treasury account for slashed funds
@@ -479,11 +478,11 @@ impl pallet_storage_provider::Config for Runtime {
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
-    // Provider-initiated checkpoint config
     type DefaultCheckpointInterval = DefaultCheckpointInterval;
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
 // --------------------------------

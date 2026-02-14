@@ -2,11 +2,11 @@
 //!
 //! Usage: cargo run --release -p storage-client --bin demo_setup -- <chain_ws_url> <provider_url>
 
-use sp_core::{Pair, sr25519};
+use sp_core::{sr25519, Pair};
 use sp_runtime::AccountId32;
 use std::str::FromStr;
-use storage_client::{AdminClient, ClientConfig, ProviderClient};
 use storage_client::substrate::{storage, SubstrateClient};
+use storage_client::{AdminClient, ClientConfig, ProviderClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,8 +66,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         provider_client.set_dev_signer("alice")?;
 
         // Get Alice's actual sr25519 public key for signature verification
-        let alice_keypair = sr25519::Pair::from_string("//Alice", None)
-            .expect("Failed to create Alice keypair");
+        let alice_keypair =
+            sr25519::Pair::from_string("//Alice", None).expect("Failed to create Alice keypair");
         let alice_public_key = alice_keypair.public().0.to_vec();
 
         // MinProviderStake is 1000 tokens (1000 * 1e12 = 1e15)
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match provider_client
             .register(
                 format!("/ip4/127.0.0.1/tcp/3000"), // multiaddr
-                alice_public_key,                    // Alice's actual sr25519 public key
+                alice_public_key,                   // Alice's actual sr25519 public key
                 stake,
             )
             .await
@@ -146,11 +146,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match admin_client
             .request_agreement(
                 bucket_id,
-                alice.to_string(),        // provider is Alice
-                1024 * 1024 * 1024,       // 1 GB capacity
-                100_000,                  // ~1 week at 6 sec blocks
-                100_000_000_000,          // 0.1 token payment
-                None,                     // primary provider (not replica)
+                alice.to_string(),  // provider is Alice
+                1024 * 1024 * 1024, // 1 GB capacity
+                100_000,            // ~1 week at 6 sec blocks
+                100_000_000_000,    // 0.1 token payment
+                None,               // primary provider (not replica)
             )
             .await
         {

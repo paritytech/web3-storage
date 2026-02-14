@@ -62,9 +62,19 @@ just fs-integration-test
 
 # Clippy linting
 cargo clippy --all-targets --all-features --workspace -- -D warnings
+```
 
-# Format check
-cargo fmt --all -- --check
+## Formatting
+
+```bash
+# Rust formatting (requires nightly)
+cargo +nightly fmt --all
+
+# TOML formatting
+taplo format --check --config .config/taplo.toml
+
+# Feature propagation lint (checks Cargo.toml feature gates)
+zepter run --config .config/zepter.yaml
 ```
 
 ## Run Commands
@@ -77,13 +87,10 @@ just setup
 just start-chain
 
 # Start provider node manually
-export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
-cargo run --release -p storage-provider-node
+just start-provider
 
 # Check provider health
 just health
-curl http://localhost:3000/health
 
 # Verify on-chain setup
 bash scripts/verify-setup.sh
@@ -546,6 +553,7 @@ These guidelines are used by the Claude Code review bot and should be followed b
 | [Manual Testing Guide](docs/testing/MANUAL_TESTING_GUIDE.md) | Complete testing workflow |
 | [Extrinsics Reference](docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
+| [Benchmarking Guide](docs/reference/BENCHMARKING.md) | Generate weights for extrinsics |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 | [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |

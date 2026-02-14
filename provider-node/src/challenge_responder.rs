@@ -169,9 +169,9 @@ impl ChallengeResponder {
             // Convert sp_core keypair to subxt_signer keypair
             // sr25519 to_raw_vec returns 64 bytes (seed + nonce), we need just the first 32
             let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32].try_into().map_err(|_| {
-                Error::Internal("Invalid secret key length".to_string())
-            })?;
+            let secret_bytes: [u8; 32] = raw[..32]
+                .try_into()
+                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
             let signer = Keypair::from_secret_key(secret_bytes)
                 .map_err(|e| Error::Internal(format!("Failed to create signer: {}", e)))?;
             self.signer = Some(signer);
@@ -205,7 +205,10 @@ impl ChallengeResponder {
                 .await;
         });
 
-        Ok(ChallengeResponderHandle { command_tx, running })
+        Ok(ChallengeResponderHandle {
+            command_tx,
+            running,
+        })
     }
 
     /// Main responder loop.
@@ -278,9 +281,10 @@ impl ChallengeResponder {
 
     /// Poll for active challenges against this provider.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        let api = self.api.as_ref().ok_or_else(|| {
-            Error::Internal("Not connected to chain".to_string())
-        })?;
+        let api = self
+            .api
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
 
         // Query Challenges storage
         // This is a simplified version - in production, we'd use proper storage queries
@@ -297,10 +301,7 @@ impl ChallengeResponder {
     }
 
     /// Respond to a specific challenge.
-    async fn respond_to_challenge(
-        &self,
-        challenge: &DetectedChallenge,
-    ) -> ChallengeResponseResult {
+    async fn respond_to_challenge(&self, challenge: &DetectedChallenge) -> ChallengeResponseResult {
         let challenge_id = (challenge.deadline, challenge.index);
 
         tracing::info!(
@@ -310,10 +311,11 @@ impl ChallengeResponder {
         );
 
         // Step 1: Generate MMR proof (includes the leaf with data_root)
-        let mmr_proof = match self.state.storage.get_mmr_proof(
-            challenge.bucket_id,
-            challenge.leaf_index,
-        ) {
+        let mmr_proof = match self
+            .state
+            .storage
+            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
+        {
             Ok(proof) => proof,
             Err(e) => {
                 tracing::error!("Failed to generate MMR proof: {}", e);
@@ -326,10 +328,11 @@ impl ChallengeResponder {
 
         // Step 2: Get chunk data and Merkle proof using data_root from MMR leaf
         let data_root = mmr_proof.leaf.data_root;
-        let (chunk_data, chunk_proof) = match self.state.storage.get_chunk_at_index(
-            data_root,
-            challenge.chunk_index,
-        ) {
+        let (chunk_data, chunk_proof) = match self
+            .state
+            .storage
+            .get_chunk_at_index(data_root, challenge.chunk_index)
+        {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!("Failed to get chunk data: {}", e);
@@ -375,17 +378,22 @@ impl ChallengeResponder {
         mmr_proof: &storage_primitives::MmrProof,
         chunk_proof: &storage_primitives::MerkleProof,
     ) -> Result<H256, Error> {
-        let api = self.api.as_ref().ok_or_else(|| {
-            Error::Internal("Not connected to chain".to_string())
-        })?;
+        let api = self
+            .api
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
 
-        let signer = self.signer.as_ref().ok_or_else(|| {
-            Error::Internal("No signer configured".to_string())
-        })?;
+        let signer = self
+            .signer
+            .as_ref()
+            .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
 
         // Build ChallengeId
         let challenge_id_val = subxt::dynamic::Value::named_composite(vec![
-            ("deadline", subxt::dynamic::Value::u128(challenge_id.0 as u128)),
+            (
+                "deadline",
+                subxt::dynamic::Value::u128(challenge_id.0 as u128),
+            ),
             ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
         ]);
 

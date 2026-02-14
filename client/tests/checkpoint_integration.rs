@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_client::{
     AutoChallengeConfig, BatchedCheckpointConfig, BatchedInterval, CheckpointConfig,
-    CheckpointMetrics, CheckpointResult, ConflictType, ProviderConflict,
-    ProviderHealthHistory, ProviderStatus,
+    CheckpointMetrics, CheckpointResult, ConflictType, ProviderConflict, ProviderHealthHistory,
+    ProviderStatus,
 };
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
@@ -149,7 +149,10 @@ fn test_provider_becomes_unreachable() {
 #[test]
 fn test_conflict_type_sync_delay() {
     let conflict = ConflictType::SyncDelay { behind_by: 10 };
-    assert!(matches!(conflict, ConflictType::SyncDelay { behind_by: 10 }));
+    assert!(matches!(
+        conflict,
+        ConflictType::SyncDelay { behind_by: 10 }
+    ));
 }
 
 #[test]
@@ -346,10 +349,7 @@ async fn test_simulated_commitment_collection() {
             (AccountId32::new([1u8; 32]), vec![0u8; 64]),
             (AccountId32::new([2u8; 32]), vec![0u8; 64]),
         ],
-        agreeing_providers: vec![
-            AccountId32::new([1u8; 32]),
-            AccountId32::new([2u8; 32]),
-        ],
+        agreeing_providers: vec![AccountId32::new([1u8; 32]), AccountId32::new([2u8; 32])],
         disagreeing_providers: vec![(AccountId32::new([3u8; 32]), H256::repeat_byte(0xCD))],
         unreachable_providers: vec![AccountId32::new([4u8; 32])],
     };
@@ -358,8 +358,7 @@ async fn test_simulated_commitment_collection() {
     let total_providers = collection.agreeing_providers.len()
         + collection.disagreeing_providers.len()
         + collection.unreachable_providers.len();
-    let agreeing_percent =
-        (collection.agreeing_providers.len() * 100) / total_providers;
+    let agreeing_percent = (collection.agreeing_providers.len() * 100) / total_providers;
 
     assert_eq!(total_providers, 4);
     assert_eq!(agreeing_percent, 50); // 2 out of 4 = 50%

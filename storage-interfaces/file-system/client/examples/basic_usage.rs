@@ -32,11 +32,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
     let mut fs_client = FileSystemClient::new(
-        "ws://127.0.0.1:9944",      // Parachain WebSocket endpoint
-        "http://localhost:3000"      // Provider HTTP endpoint
+        "ws://127.0.0.1:9944",   // Parachain WebSocket endpoint
+        "http://localhost:3000", // Provider HTTP endpoint
     )
     .await?
-    .with_dev_signer("alice")       // Use Alice for testing
+    .with_dev_signer("alice") // Use Alice for testing
     .await?;
 
     println!("✅ Connected successfully!");
@@ -46,11 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let drive_id = fs_client
         .create_drive(
-            Some("My Documents"),              // Drive name
-            10_000_000_000,                     // 10 GB capacity
-            500,                                 // 500 blocks duration
-            1_000_000_000_000,                  // 1 token payment (12 decimals)
-            None,                                // Auto-determine providers
+            Some("My Documents"),                            // Drive name
+            10_000_000_000,                                  // 10 GB capacity
+            500,                                             // 500 blocks duration
+            1_000_000_000_000,                               // 1 token payment (12 decimals)
+            None,                                            // Auto-determine providers
             Some(CommitStrategy::Batched { interval: 100 }), // Batch commits every 100 blocks
         )
         .await?;
@@ -72,17 +72,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create /documents directory
     println!("   Creating /documents...");
-    fs_client.create_directory(drive_id, "/documents", bucket_id).await?;
+    fs_client
+        .create_directory(drive_id, "/documents", bucket_id)
+        .await?;
     println!("   ✅ Created /documents");
 
     // Create /documents/work subdirectory
     println!("   Creating /documents/work...");
-    fs_client.create_directory(drive_id, "/documents/work", bucket_id).await?;
+    fs_client
+        .create_directory(drive_id, "/documents/work", bucket_id)
+        .await?;
     println!("   ✅ Created /documents/work");
 
     // Create /photos directory
     println!("   Creating /photos...");
-    fs_client.create_directory(drive_id, "/photos", bucket_id).await?;
+    fs_client
+        .create_directory(drive_id, "/photos", bucket_id)
+        .await?;
     println!("   ✅ Created /photos");
 
     // === STEP 4: Upload files ===
@@ -90,20 +96,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Upload a text file
     let readme_content = b"# My Documents\n\nWelcome to my decentralized file system!\n\nThis is a demo of Layer 1 file system built on Scalable Web3 Storage.";
-    println!("   Uploading /README.md ({} bytes)...", readme_content.len());
-    fs_client.upload_file(drive_id, "/README.md", readme_content, bucket_id).await?;
+    println!(
+        "   Uploading /README.md ({} bytes)...",
+        readme_content.len()
+    );
+    fs_client
+        .upload_file(drive_id, "/README.md", readme_content, bucket_id)
+        .await?;
     println!("   ✅ Uploaded /README.md");
 
     // Upload a file in subdirectory
-    let report_content = b"Q4 2024 Report\n\n Revenue: $1M\nGrowth: 50%\nCustomers: 1000\n\nStrong quarter!";
-    println!("   Uploading /documents/work/report.txt ({} bytes)...", report_content.len());
-    fs_client.upload_file(drive_id, "/documents/work/report.txt", report_content, bucket_id).await?;
+    let report_content =
+        b"Q4 2024 Report\n\n Revenue: $1M\nGrowth: 50%\nCustomers: 1000\n\nStrong quarter!";
+    println!(
+        "   Uploading /documents/work/report.txt ({} bytes)...",
+        report_content.len()
+    );
+    fs_client
+        .upload_file(
+            drive_id,
+            "/documents/work/report.txt",
+            report_content,
+            bucket_id,
+        )
+        .await?;
     println!("   ✅ Uploaded /documents/work/report.txt");
 
     // Upload another file
     let notes_content = b"Meeting Notes - 2024-12-01\n\n1. Discussed Q4 results\n2. Planning for 2025\n3. New hires approved";
-    println!("   Uploading /documents/notes.txt ({} bytes)...", notes_content.len());
-    fs_client.upload_file(drive_id, "/documents/notes.txt", notes_content, bucket_id).await?;
+    println!(
+        "   Uploading /documents/notes.txt ({} bytes)...",
+        notes_content.len()
+    );
+    fs_client
+        .upload_file(drive_id, "/documents/notes.txt", notes_content, bucket_id)
+        .await?;
     println!("   ✅ Uploaded /documents/notes.txt");
 
     // === STEP 5: List directory contents ===
@@ -114,7 +141,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_entries = fs_client.list_directory(drive_id, "/").await?;
     for entry in root_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
+        println!(
+            "   {} {} ({} bytes)",
+            entry_type,
+            entry.name_str(),
+            entry.size
+        );
     }
 
     // List /documents directory
@@ -122,15 +154,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let docs_entries = fs_client.list_directory(drive_id, "/documents").await?;
     for entry in docs_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
+        println!(
+            "   {} {} ({} bytes)",
+            entry_type,
+            entry.name_str(),
+            entry.size
+        );
     }
 
     // List /documents/work directory
     println!("\n   Contents of /documents/work:");
-    let work_entries = fs_client.list_directory(drive_id, "/documents/work").await?;
+    let work_entries = fs_client
+        .list_directory(drive_id, "/documents/work")
+        .await?;
     for entry in work_entries {
         let entry_type = if entry.is_directory() { "📁" } else { "📄" };
-        println!("   {} {} ({} bytes)", entry_type, entry.name_str(), entry.size);
+        println!(
+            "   {} {} ({} bytes)",
+            entry_type,
+            entry.name_str(),
+            entry.size
+        );
     }
 
     // === STEP 6: Download and verify files ===
@@ -144,20 +188,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Verify content
     if downloaded_readme == readme_content {
         println!("   ✅ Content verified!");
-        println!("   Content preview: {}", String::from_utf8_lossy(&downloaded_readme[..50]));
+        println!(
+            "   Content preview: {}",
+            String::from_utf8_lossy(&downloaded_readme[..50])
+        );
     } else {
         println!("   ❌ Content mismatch!");
     }
 
     // Download report
     println!("\n   Downloading /documents/work/report.txt...");
-    let downloaded_report = fs_client.download_file(drive_id, "/documents/work/report.txt").await?;
+    let downloaded_report = fs_client
+        .download_file(drive_id, "/documents/work/report.txt")
+        .await?;
     println!("   ✅ Downloaded {} bytes", downloaded_report.len());
 
     if downloaded_report == report_content {
         println!("   ✅ Content verified!");
         let report_text = String::from_utf8_lossy(&downloaded_report);
-        println!("   Content:\n{}", report_text.lines().take(3).collect::<Vec<_>>().join("\n   "));
+        println!(
+            "   Content:\n{}",
+            report_text
+                .lines()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join("\n   ")
+        );
     } else {
         println!("   ❌ Content mismatch!");
     }
