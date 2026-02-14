@@ -197,8 +197,18 @@ demo-legacy PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://12
     ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
 
     echo ""
-    echo "=== Waiting for watcher to respond (30s) ==="
-    sleep 30
+    echo "=== Waiting for watcher to defend both challenges ==="
+    for i in $(seq 1 60); do
+        DEFENDED_COUNT=$(grep -c "defended successfully" "$WATCHER_LOG" || true)
+        if [ "$DEFENDED_COUNT" -ge 2 ]; then
+            echo "Both challenges defended (attempt $i)"
+            break
+        fi
+        if [ "$i" -eq 60 ]; then
+            echo "Timeout waiting for challenge responses"
+        fi
+        sleep 2
+    done
 
     # Stop watcher
     kill $WATCHER_PID 2>/dev/null || true
