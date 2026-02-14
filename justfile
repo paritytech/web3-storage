@@ -75,15 +75,16 @@ start-chain: check build
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
+start-provider PORT="3000" SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ==="
     echo ""
-    echo "Provider health: http://127.0.0.1:3000/health"
+    echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
     SEED="{{SEED}}" \
     CHAIN_RPC="{{CHAIN_WS}}" \
+    BIND_ADDR="0.0.0.0:{{PORT}}" \
     ./target/release/storage-provider-node
 
 # Health check for provider node
