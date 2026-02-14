@@ -131,8 +131,14 @@ start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http:/
     PROVIDER_URL="{{PROVIDER_URL}}" \
     ./target/release/challenge_watcher
 
-# Demo: full workflow - setup, upload, checkpoint, challenge with watcher auto-response
-demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
+# Demo: full integration test (PAPI-based)
+# Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
+# Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
+demo CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+    node examples/papi/demo.mjs "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
+# Demo: full workflow using Rust binaries (legacy, no assertions)
+demo-legacy PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -213,6 +219,14 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
     echo "PASSED: Both challenges were defended!"
     echo ""
     echo "=== Demo complete! ==="
+
+# Install PAPI dependencies and generate chain descriptors (requires running chain)
+papi-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd examples/papi
+    npm install
+    npm run papi:generate
 
 # Generate chain spec
 generate-chain-spec: build
