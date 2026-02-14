@@ -107,10 +107,13 @@ jobs:
             sleep 2
           done
 
+      - name: Run demo (legacy)
+        run: just demo-legacy
+
       - name: Generate PAPI descriptors
         run: just papi-setup
 
-      - name: Run demo
+      - name: Run demo (PAPI)
         run: just demo
 
       - name: Stop services
