@@ -229,6 +229,28 @@ pub mod pallet {
         StorageMap<_, Blake2_128Concat, BucketId, BalanceOf<T>, ValueQuery>;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Genesis Config
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Genesis configuration for the storage provider pallet.
+    #[pallet::genesis_config]
+    #[derive(DefaultNoBound)]
+    pub struct GenesisConfig<T: Config> {
+        /// Buckets to create at genesis: (admin_account, min_providers).
+        pub buckets: Vec<(T::AccountId, u32)>,
+    }
+
+    #[pallet::genesis_build]
+    impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+        fn build(&self) {
+            for (admin, min_providers) in &self.buckets {
+                Pallet::<T>::create_bucket_internal(admin, *min_providers)
+                    .expect("genesis bucket creation should not fail");
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Types
     // ─────────────────────────────────────────────────────────────────────────
 
