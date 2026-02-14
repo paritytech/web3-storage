@@ -8,6 +8,15 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512"
 
+# Detect OS and architecture
+os := `uname -s | tr '[:upper:]' '[:lower:]'`
+arch := `uname -m`
+
+# URL components
+polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
+darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
+zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
+
 # Default recipe
 default:
     @just --list
@@ -16,121 +25,42 @@ default:
 build:
     cargo build --release
 
-# Detect OS and architecture
-os := `uname -s | tr '[:upper:]' '[:lower:]'`
-arch := `uname -m`
+[private]
+build-examples:
+    cargo build --release -p storage-examples
+
+[private]
+_download BIN URL:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .bin
+    if [[ -x .bin/{{BIN}} ]]; then
+        echo "{{BIN}} already exists in .bin/"
+        exit 0
+    fi
+    echo "Downloading {{BIN}}..."
+    curl -L -o .bin/{{BIN}} "{{URL}}"
+    chmod +x .bin/{{BIN}}
+    echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
+[private]
 download-binaries: download-polkadot download-polkadot-omni-node download-chain-spec-builder download-zombienet
     @echo "All binaries downloaded to .bin/"
 
-# Download polkadot binaries (polkadot + workers)
-download-polkadot:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p .bin
+[private]
+download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
 
-    # Download polkadot
-    if [[ -x .bin/polkadot ]]; then
-        echo "polkadot already exists in .bin/"
-    else
-        echo "Downloading polkadot for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot"
-        fi
-        chmod +x .bin/polkadot
-        echo "polkadot downloaded to .bin/polkadot"
-    fi
+[private]
+download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
 
-    # Download polkadot-execute-worker
-    if [[ -x .bin/polkadot-execute-worker ]]; then
-        echo "polkadot-execute-worker already exists in .bin/"
-    else
-        echo "Downloading polkadot-execute-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot-execute-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-execute-worker"
-        fi
-        chmod +x .bin/polkadot-execute-worker
-        echo "polkadot-execute-worker downloaded to .bin/polkadot-execute-worker"
-    fi
+[private]
+download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
 
-    # Download polkadot-prepare-worker
-    if [[ -x .bin/polkadot-prepare-worker ]]; then
-        echo "polkadot-prepare-worker already exists in .bin/"
-    else
-        echo "Downloading polkadot-prepare-worker for {{os}}/{{arch}}..."
-        if [[ "{{os}}" == "darwin" ]]; then
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker-aarch64-apple-darwin"
-        else
-            curl -L -o .bin/polkadot-prepare-worker "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-prepare-worker"
-        fi
-        chmod +x .bin/polkadot-prepare-worker
-        echo "polkadot-prepare-worker downloaded to .bin/polkadot-prepare-worker"
-    fi
+[private]
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/latest/download/" + zombienet_asset)
 
-# Download polkadot-omni-node binary
-download-polkadot-omni-node:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/polkadot-omni-node ]]; then
-        echo "polkadot-omni-node already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading polkadot-omni-node for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node-aarch64-apple-darwin"
-    else
-        curl -L -o .bin/polkadot-omni-node "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/polkadot-omni-node"
-    fi
-    chmod +x .bin/polkadot-omni-node
-    echo "polkadot-omni-node downloaded to .bin/polkadot-omni-node"
-
-# Download chain-spec-builder binary
-download-chain-spec-builder:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/chain-spec-builder ]]; then
-        echo "chain-spec-builder already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading chain-spec-builder for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder-aarch64-apple-darwin"
-    else
-        curl -L -o .bin/chain-spec-builder "https://github.com/paritytech/polkadot-sdk/releases/download/{{polkadot_version}}/chain-spec-builder"
-    fi
-    chmod +x .bin/chain-spec-builder
-    echo "chain-spec-builder downloaded to .bin/chain-spec-builder"
-
-# Download zombienet binary
-download-zombienet:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -x .bin/zombienet ]]; then
-        echo "zombienet already exists in .bin/"
-        exit 0
-    fi
-    mkdir -p .bin
-    echo "Downloading zombienet for {{os}}/{{arch}}..."
-    if [[ "{{os}}" == "darwin" ]]; then
-        if [[ "{{arch}}" == "arm64" ]]; then
-            curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-macos-arm64"
-        else
-            curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-macos-x64"
-        fi
-    else
-        curl -L -o .bin/zombienet "https://github.com/paritytech/zombienet/releases/latest/download/zombienet-linux-x64"
-    fi
-    chmod +x .bin/zombienet
-    echo "zombienet downloaded to .bin/zombienet"
-
-# Check prerequisites for local environment (downloads binaries if missing)
+[private]
 check: download-binaries
     @echo "Checking prerequisites..."
     @command -v cargo >/dev/null 2>&1 || { echo "Error: cargo not found"; exit 1; }
@@ -158,7 +88,7 @@ start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
     echo ""
     SEED="{{SEED}}" \
     CHAIN_RPC="{{CHAIN_WS}}" \
-    cargo run --release -p storage-provider-node
+    ./target/release/storage-provider-node
 
 # Health check for provider node
 health:
@@ -169,26 +99,26 @@ stats:
     curl -s http://localhost:3000/stats | jq .
 
 # Demo: setup bucket and storage agreement (run once before demo-upload)
-demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
-    cargo run --release -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+demo-setup CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": build-examples
+    ./target/release/demo_setup "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Demo: upload test data to provider (includes timestamp by default)
-demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+demo-upload PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
     #!/usr/bin/env bash
-    cargo run --release -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
+    ./target/release/demo_upload "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]"
 
 # Demo: challenge a storage provider (verify they have the data)
 # For off-chain challenge, provide MMR_ROOT, START_SEQ, and SIGNATURE
-demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" LEAF="0" CHUNK="0" MMR_ROOT="" START_SEQ="0" SIGNATURE="":
+demo-challenge CHAIN_WS="ws://127.0.0.1:9944" BUCKET_ID="1" PROVIDER="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" LEAF="0" CHUNK="0" MMR_ROOT="" START_SEQ="0" SIGNATURE="": build-examples
     #!/usr/bin/env bash
     if [ -n "{{MMR_ROOT}}" ] && [ -n "{{SIGNATURE}}" ]; then
-        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}" "{{MMR_ROOT}}" "{{START_SEQ}}" "{{SIGNATURE}}"
+        ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}" "{{MMR_ROOT}}" "{{START_SEQ}}" "{{SIGNATURE}}"
     else
-        cargo run --release -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
+        ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER}}" "{{LEAF}}" "{{CHUNK}}"
     fi
 
 # Start the challenge watcher (auto-responds to challenges)
-start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": build-examples
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Challenge Watcher ==="
@@ -199,19 +129,19 @@ start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http:/
     SEED="{{SEED}}" \
     CHAIN_WS="{{CHAIN_WS}}" \
     PROVIDER_URL="{{PROVIDER_URL}}" \
-    cargo run --release -q -p storage-client --bin challenge_watcher
+    ./target/release/challenge_watcher
 
 # Demo: full workflow - setup, upload, checkpoint, challenge with watcher auto-response
-demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944":
+demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples
     #!/usr/bin/env bash
     set -euo pipefail
 
     echo "=== Step 1: Setup bucket and agreement ==="
-    cargo run --release -q -p storage-client --bin demo_setup -- "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    ./target/release/demo_setup "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
     echo ""
     echo "=== Step 2: Upload data ==="
-    OUTPUT=$(cargo run --release -q -p storage-client --bin demo_upload -- "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
+    OUTPUT=$(./target/release/demo_upload "{{PROVIDER_URL}}" "{{BUCKET_ID}}" "{{CHAIN_WS}}" "Hello, Web3 Storage! [$(date -Iseconds)]" 2>&1)
     echo "$OUTPUT"
 
     # Extract JSON from output (from line starting with '{' to the end)
@@ -240,24 +170,25 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
     echo "  signature=${SIGNATURE:0:20}..."
     echo ""
 
-    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
+    ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0" "$MMR_ROOT" "$START_SEQ" "$SIGNATURE"
 
     echo ""
     echo "=== Step 4: Start challenge watcher (background) ==="
+    WATCHER_LOG=$(mktemp)
     SEED="//Alice" CHAIN_WS="{{CHAIN_WS}}" PROVIDER_URL="{{PROVIDER_URL}}" \
-        cargo run --release -q -p storage-client --bin challenge_watcher &
+        ./target/release/challenge_watcher 2>"$WATCHER_LOG" &
     WATCHER_PID=$!
-    echo "Watcher PID: $WATCHER_PID"
+    echo "Watcher PID: $WATCHER_PID (log: $WATCHER_LOG)"
     sleep 3
 
     echo ""
     echo "=== Step 5: Submit on-chain checkpoint ==="
-    cargo run --release -q -p storage-client --bin demo_checkpoint -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
+    ./target/release/demo_checkpoint "{{CHAIN_WS}}" "{{BUCKET_ID}}" "{{PROVIDER_URL}}" "$PROVIDER"
 
     echo ""
     echo "=== Step 6: Challenge provider (on-chain checkpoint) ==="
     echo "The watcher should auto-respond to this challenge..."
-    cargo run --release -q -p storage-client --bin demo_challenge -- "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
+    ./target/release/demo_challenge "{{CHAIN_WS}}" "{{BUCKET_ID}}" "$PROVIDER" "$LEAF_INDEX" "0"
 
     echo ""
     echo "=== Waiting for watcher to respond (30s) ==="
@@ -265,6 +196,21 @@ demo PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1
 
     # Stop watcher
     kill $WATCHER_PID 2>/dev/null || true
+
+    echo ""
+    echo "=== Watcher log ==="
+    cat "$WATCHER_LOG"
+
+    echo ""
+    echo "=== Verifying challenge responses ==="
+    DEFENDED_COUNT=$(grep -c "defended successfully" "$WATCHER_LOG" || true)
+    echo "ChallengeDefended events: $DEFENDED_COUNT (expected: 2)"
+    rm -f "$WATCHER_LOG"
+    if [ "$DEFENDED_COUNT" -ne 2 ]; then
+        echo "FAILED: Expected 2 ChallengeDefended events, got $DEFENDED_COUNT"
+        exit 1
+    fi
+    echo "PASSED: Both challenges were defended!"
     echo ""
     echo "=== Demo complete! ==="
 

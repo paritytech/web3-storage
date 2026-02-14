@@ -5,7 +5,7 @@ provider = "native"
 [relaychain]
 default_command = ".bin/polkadot"
 chain = "westend-local"
-default_args = ["-lruntime=debug"]
+default_args = ["-lruntime=info"]
 
 [[relaychain.nodes]]
 name = "alice"
@@ -27,4 +27,4 @@ name = "alice"
 validator = true
 command = ".bin/polkadot-omni-node"
 rpc_port = 9944
-args = ["--collator", "-lruntime=debug"]
+args = ["--collator", "-lruntime=info"]

@@ -140,8 +140,8 @@ impl_opaque_keys! {
 
 #[sp_version::runtime_version]
 pub const VERSION: RuntimeVersion = RuntimeVersion {
-    spec_name: Cow::Borrowed("storage-parachain"),
-    impl_name: Cow::Borrowed("storage-parachain"),
+    spec_name: Cow::Borrowed("web3-storage-parachain"),
+    impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
     spec_version: 1,
     impl_version: 0,

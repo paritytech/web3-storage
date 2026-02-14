@@ -12,7 +12,7 @@ cargo build --release -p storage-parachain-runtime >&2
 
 # Generate chain spec using chain-spec-builder with local_testnet preset
 .bin/chain-spec-builder create \
-  -n "Storage Local" \
+  -n "Web3 Storage Local" \
   -i "storage-local" \
   -t local \
   -p 4000 \

@@ -4417,6 +4417,7 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-keyring",
+ "sp-keystore",
  "sp-runtime",
  "storage-primitives",
 ]
@@ -7073,7 +7074,6 @@ dependencies = [
  "hex",
  "rand",
  "reqwest",
- "scale-value",
  "serde",
  "serde_json",
  "sp-core",
@@ -7088,6 +7088,25 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "storage-examples"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "reqwest",
+ "scale-value",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "sp-runtime",
+ "storage-client",
+ "storage-primitives",
+ "subxt",
+ "subxt-signer",
+ "tokio",
 ]
 
 [[package]]

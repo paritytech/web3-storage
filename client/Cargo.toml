@@ -25,23 +25,6 @@ async-trait = "0.1"
 subxt = "0.37"
 subxt-signer = { version = "0.37", features = ["sr25519"] }
 futures = "0.3"
-scale-value = "0.16"
-
-[[bin]]
-name = "demo_setup"
-path = "src/bin/demo_setup.rs"
-
-[[bin]]
-name = "demo_upload"
-path = "src/bin/demo_upload.rs"
-
-[[bin]]
-name = "demo_checkpoint"
-path = "src/bin/demo_checkpoint.rs"
-
-[[bin]]
-name = "challenge_watcher"
-path = "src/bin/challenge_watcher.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
