@@ -39,6 +39,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler libclang-dev jq
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -101,6 +106,9 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Generate PAPI descriptors
+        run: just papi-setup
 
       - name: Run demo
         run: just demo

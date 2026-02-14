@@ -7091,25 +7091,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "storage-examples"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "hex",
- "reqwest",
- "scale-value",
- "serde",
- "serde_json",
- "sp-core",
- "sp-runtime",
- "storage-client",
- "storage-primitives",
- "subxt",
- "subxt-signer",
- "tokio",
-]
-
-[[package]]
 name = "storage-parachain-runtime"
 version = "0.1.0"
 dependencies = [

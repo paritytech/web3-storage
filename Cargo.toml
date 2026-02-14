@@ -1,18 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    # Layer 0: Scalable Web3 Storage
-    "client",
-    "examples",
-    "pallet",
-    "primitives",
-    "provider-node",
-    "runtime",
+	# Layer 0: Scalable Web3 Storage
+	"client",
+	"pallet",
+	"primitives",
+	"provider-node",
+	"runtime",
 
-    # Storage Interfaces: File System Interface
-    "storage-interfaces/file-system/primitives",
-    "storage-interfaces/file-system/pallet-registry",
-    "storage-interfaces/file-system/client",
+	# Storage Interfaces: File System Interface
+	"storage-interfaces/file-system/primitives",
+	"storage-interfaces/file-system/pallet-registry",
+	"storage-interfaces/file-system/client",
 ]
 
 [workspace.package]
@@ -25,7 +24,6 @@ repository = "https://github.com/parity/scalable-web3-storage"
 # Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-storage-provider = { path = "pallet", default-features = false }
 storage-client = { path = "client" }
-storage-examples = { path = "examples" }
 storage-parachain-runtime = { path = "runtime" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
