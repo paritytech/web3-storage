@@ -12,7 +12,7 @@
  *   - Provider node running at http://127.0.0.1:3000
  *   - Descriptors generated: npm run papi:generate
  *
- * Usage: node demo.js [chain_ws] [provider_url]
+ * Usage: node full-flow.js [chain_ws] [provider_url]
  */
 
 import { createClient } from "polkadot-api";
