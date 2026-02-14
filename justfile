@@ -135,7 +135,7 @@ start-watcher SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http:/
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
 demo CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
-    node examples/papi/demo.mjs "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    node examples/papi/demo.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Demo: full workflow using Rust binaries (legacy, no assertions)
 demo-legacy PROVIDER_URL="http://127.0.0.1:3000" BUCKET_ID="1" CHAIN_WS="ws://127.0.0.1:9944": build-examples

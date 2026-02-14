@@ -12,7 +12,7 @@
  *   - Provider node running at http://127.0.0.1:3000
  *   - Descriptors generated: npm run papi:generate
  *
- * Usage: node demo.mjs [chain_ws] [provider_url]
+ * Usage: node demo.js [chain_ws] [provider_url]
  */
 
 import { createClient } from "polkadot-api";
@@ -130,7 +130,7 @@ async function main() {
     // ========================================================================
     console.log("\n=== Step 1: Setup ===");
 
-    // 1a. Register provider (Alice) if not registered
+    // 1a. Register a provider (Alice) if not registered
     const providerInfo = await api.query.StorageProvider.Providers.getValue(
       alice.address
     );
@@ -221,6 +221,24 @@ async function main() {
     });
     console.log("  MMR root:", commitResp.mmr_root);
     console.log("  Leaf indices:", commitResp.leaf_indices);
+
+    // Verify upload by downloading the chunk back
+    console.log("  Verifying upload...");
+    const downloaded = await providerFetch("/node", {
+      params: { hash: chunkHashHex },
+    });
+    const downloadedData = Buffer.from(downloaded.data, "base64");
+    assert.strictEqual(
+      downloadedData.length,
+      data.length,
+      `Download size mismatch: got ${downloadedData.length}, expected ${data.length}`
+    );
+    assert.deepStrictEqual(
+      downloadedData,
+      Buffer.from(data),
+      "Downloaded data does not match uploaded data"
+    );
+    console.log("  Upload verified: data matches (%d bytes)", data.length);
 
     const leafIndex = commitResp.leaf_indices[0];
     const mmrRootBytes = hexToBytes(commitResp.mmr_root);
@@ -323,6 +341,10 @@ async function main() {
       `Expected 2 ChallengeDefended events, got ${defendedEvents.length}`
     );
     console.log("PASSED: Both challenges were defended!");
+  } catch (err) {
+    console.error("\nERROR:", err.message || err);
+    if (err.stack) console.error(err.stack);
+    process.exitCode = 1;
   } finally {
     eventSub.unsubscribe();
     client.destroy();
@@ -409,12 +431,6 @@ async function respondToChallenge(api, provider, challengeId) {
 // Run
 // ---------------------------------------------------------------------------
 
-main()
-  .then(() => {
-    console.log("\n=== Demo complete! ===");
-    process.exit(0);
-  })
-  .catch((err) => {
-    console.error("\nFAILED:", err.message || err);
-    process.exit(1);
-  });
+main().then(() => {
+  console.log("\n=== Demo complete! ===");
+});

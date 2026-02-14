@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "papi:generate": "papi add -w ws://localhost:9944 parachain && papi",
-    "demo": "node demo.mjs"
+    "demo": "node demo.js"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
