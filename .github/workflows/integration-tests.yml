@@ -107,9 +107,6 @@ jobs:
             sleep 2
           done
 
-      - name: Generate PAPI descriptors
-        run: just papi-setup
-
       - name: Run demo
         run: just demo
 
