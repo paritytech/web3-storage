@@ -17,6 +17,9 @@ polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/downlo
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
 
+# Provider port (override with: just PORT=3001 start-provider)
+PORT := "3000"
+
 # Default recipe
 default:
     @just --list
@@ -80,10 +83,11 @@ start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
     echo ""
     echo "=== Starting Storage Provider Node ==="
     echo ""
-    echo "Provider health: http://127.0.0.1:3000/health"
+    echo "Provider health: http://127.0.0.1:{{ PORT }}/health"
     echo ""
     SEED="{{SEED}}" \
     CHAIN_RPC="{{CHAIN_WS}}" \
+    BIND_ADDR="0.0.0.0:{{ PORT }}" \
     ./target/release/storage-provider-node
 
 # Health check for provider node
@@ -97,7 +101,7 @@ stats:
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000":
+demo CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": papi-setup
     node examples/papi/full-flow.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
