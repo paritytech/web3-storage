@@ -118,7 +118,6 @@ jobs:
           pkill -f "storage-provider-node" 2>/dev/null || true
 
       - name: Upload logs (on failure)
-        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: integration-test-logs
