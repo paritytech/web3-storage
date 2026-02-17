@@ -171,8 +171,8 @@ The provider node uses environment variables for configuration:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PROVIDER_ID` | Provider's on-chain account ID (SS58 format) | **Required** |
-| `CHAIN_RPC` | Parachain WebSocket RPC endpoint | `ws://127.0.0.1:9944` |
-| `BIND_ADDR` | HTTP server bind address | `0.0.0.0:3000` |
+| `CHAIN_RPC` | Parachain WebSocket RPC endpoint | `ws://127.0.0.1:2222` |
+| `BIND_ADDR` | HTTP server bind address | `0.0.0.0:3333` |
 | `DATA_DIR` | Directory for storing data | `./data` |
 | `RUST_LOG` | Log level configuration | `storage_provider_node=debug` |
 

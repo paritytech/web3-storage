@@ -43,7 +43,7 @@ pub enum ClientError {
 /// Configuration for connecting to the storage system.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
-    /// WebSocket URL for the substrate node (e.g., "ws://localhost:9944")
+    /// WebSocket URL for the substrate node (e.g., "ws://localhost:2222")
     pub chain_ws_url: String,
     /// Default provider node URLs
     pub provider_urls: Vec<String>,
@@ -56,8 +56,8 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://localhost:9944".to_string(),
-            provider_urls: vec!["http://localhost:3000".to_string()],
+            chain_ws_url: "ws://localhost:2222".to_string(),
+            provider_urls: vec!["http://localhost:3333".to_string()],
             timeout_secs: 30,
             enable_retries: true,
         }

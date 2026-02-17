@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-PARACHAIN_RPC="http://127.0.0.1:9944"
+PARACHAIN_RPC="http://127.0.0.1:2222"
 ALICE_ACCOUNT="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
 
 echo -e "${BLUE}=== Verifying On-Chain Setup ===${NC}"
@@ -39,7 +39,7 @@ fi
 echo ""
 echo -e "${YELLOW}Check 2: Does bucket 0 exist?${NC}"
 echo "Manual verification needed in Polkadot.js UI:"
-echo "  1. Go to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
+echo "  1. Go to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222"
 echo "  2. Developer > Chain State"
 echo "  3. Query: storageProvider.buckets(0)"
 echo "  4. Should return bucket info (not None)"
@@ -59,7 +59,7 @@ echo ""
 echo -e "${GREEN}Step 1: Register Provider${NC}"
 echo "  Extrinsic: storageProvider.registerProvider"
 echo "  Parameters:"
-echo "    - multiaddr: /ip4/127.0.0.1/tcp/3000"
+echo "    - multiaddr: /ip4/127.0.0.1/tcp/3333"
 echo "    - publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"
 echo "    - stake: 1000000000000000"
 echo ""

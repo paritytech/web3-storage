@@ -40,8 +40,8 @@ use storage_client::{AdminClient, ClientConfig};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create config
     let config = ClientConfig {
-        chain_ws_url: "ws://localhost:9944".to_string(),
-        provider_urls: vec!["http://localhost:3000".to_string()],
+        chain_ws_url: "ws://localhost:2222".to_string(),
+        provider_urls: vec!["http://localhost:3333".to_string()],
         timeout_secs: 30,
         enable_retries: true,
     };
@@ -217,7 +217,7 @@ mod tests {
     async fn test_register_provider() {
         // Use testnet or local dev chain
         let config = ClientConfig {
-            chain_ws_url: "ws://localhost:9944".to_string(),
+            chain_ws_url: "ws://localhost:2222".to_string(),
             // ...
         };
 
@@ -226,7 +226,7 @@ mod tests {
         client.base = client.base.with_dev_signer("bob")?;
 
         let result = client.register(
-            "/ip4/127.0.0.1/tcp/3000".to_string(),
+            "/ip4/127.0.0.1/tcp/3333".to_string(),
             vec![0u8; 32],
             1_000_000_000_000,
         ).await;

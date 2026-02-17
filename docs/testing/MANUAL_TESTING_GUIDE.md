@@ -145,7 +145,7 @@ curl -H "Content-Type: application/json" \
 # Check parachain
 curl -H "Content-Type: application/json" \
   -d '{"id":1, "jsonrpc":"2.0", "method":"system_health"}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:2222
 ```
 
 **Expected Output:**
@@ -157,7 +157,7 @@ curl -H "Content-Type: application/json" \
 
 Open in browser:
 - **Relay Chain**: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900
-- **Parachain**: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
+- **Parachain**: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
 
 **Verify in UI:**
 1. Connection indicator should be green
@@ -185,7 +185,7 @@ curl -H "Content-Type: application/json" \
     "method":"system_accountNextIndex",
     "params":["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"]
   }' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:2222
 ```
 
 **Or via Polkadot.js UI:**
@@ -198,7 +198,7 @@ curl -H "Content-Type: application/json" \
 
 ### Register Provider via Polkadot.js UI
 
-Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
+Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
 
 **Step 4a: Register Provider (Basic Registration)**
 
@@ -207,7 +207,7 @@ Navigate to: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
 3. Select pallet: **storageProvider**
 4. Select extrinsic: **registerProvider**
 5. Fill parameters:
-   - `multiaddr`: `/ip4/127.0.0.1/tcp/3000` (Polkadot.js handles encoding)
+   - `multiaddr`: `/ip4/127.0.0.1/tcp/3333` (Polkadot.js handles encoding)
    - `publicKey`: `0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d`
      - This is Alice's Sr25519 public key (32 bytes)
    - `stake`: `1000000000000000` (1000 tokens = minimum required stake)
@@ -252,7 +252,7 @@ So you **must** update settings to actually accept agreements!
 **Expected Output:**
 ```json
 {
-  "multiaddr": "0x2f6970342f3132372e302e302e312f7463702f33303030",
+  "multiaddr": "0x2f6970342f3132372e302e302e312f7463702f33333333",
   "publicKey": "0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d",
   "stake": "100,000,000,000",
   "committedBytes": 0,
@@ -299,9 +299,9 @@ cd /Users/naren/DevBox/scalable-web3-storage-dev/web3-storage
 
 # Set environment variables
 export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
+export CHAIN_RPC=ws://127.0.0.1:2222
 export STORAGE_PATH=/tmp/provider-alice
-export HTTP_PORT=3000
+export HTTP_PORT=3333
 
 # Start provider node
 cargo run --release -p storage-provider-node
@@ -311,8 +311,8 @@ cargo run --release -p storage-provider-node
 ```
 Storage Provider Node starting...
 Provider ID: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-Chain RPC: ws://127.0.0.1:9944
-HTTP API listening on: http://0.0.0.0:3000
+Chain RPC: ws://127.0.0.1:2222
+HTTP API listening on: http://0.0.0.0:3333
 Storage path: /tmp/provider-alice
 ```
 
@@ -320,7 +320,7 @@ Storage path: /tmp/provider-alice
 
 ```bash
 export PROVIDER_ID=5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty
-export CHAIN_RPC=ws://127.0.0.1:9944
+export CHAIN_RPC=ws://127.0.0.1:2222
 export STORAGE_PATH=/tmp/provider-bob
 export HTTP_PORT=3001
 
@@ -330,10 +330,10 @@ cargo run --release -p storage-provider-node
 ### Verify Provider Nodes
 
 ```bash
-# Check Alice's provider (port 3000)
+# Check Alice's provider (port 3333)
 just health
 # Or:
-curl http://localhost:3000/health | jq .
+curl http://localhost:3333/health | jq .
 
 # Check Bob's provider (port 3001)
 curl http://localhost:3001/health | jq .
@@ -367,10 +367,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize client
     let config = ClientConfig {
         provider_urls: vec![
-            "http://localhost:3000".to_string(),
+            "http://localhost:3333".to_string(),
             "http://localhost:3001".to_string(),
         ],
-        chain_ws_url: "ws://127.0.0.1:9944".to_string(),
+        chain_ws_url: "ws://127.0.0.1:2222".to_string(),
     };
 
     let mut client = StorageUserClient::new(config);
@@ -497,7 +497,7 @@ Query: **storageProvider.agreements(u64, AccountId): Option<Agreement>**
 echo "Hello, decentralized storage!" > /tmp/test-data.txt
 
 # Upload to Alice's provider
-curl -X POST http://localhost:3000/upload \
+curl -X POST http://localhost:3333/upload \
   -H "Content-Type: application/octet-stream" \
   -H "X-Bucket-Id: 0" \
   --data-binary @/tmp/test-data.txt
@@ -516,7 +516,7 @@ curl -X POST http://localhost:3000/upload \
 
 ```bash
 # List bucket contents
-curl http://localhost:3000/bucket/0/list
+curl http://localhost:3333/bucket/0/list
 ```
 
 **Expected Output:**
@@ -540,7 +540,7 @@ curl http://localhost:3000/bucket/0/list
 
 ```bash
 # Download by sequence number
-curl http://localhost:3000/bucket/0/download/0 -o /tmp/downloaded.txt
+curl http://localhost:3333/bucket/0/download/0 -o /tmp/downloaded.txt
 
 # Verify content matches
 diff /tmp/test-data.txt /tmp/downloaded.txt
@@ -557,7 +557,7 @@ diff /tmp/test-data.txt /tmp/downloaded.txt
 
 ```bash
 # Get current MMR state
-curl http://localhost:3000/bucket/0/mmr-root
+curl http://localhost:3333/bucket/0/mmr-root
 ```
 
 **Response:**
@@ -674,7 +674,7 @@ Check that challenge is marked as resolved.
 ```bash
 # Terminal 6
 export PROVIDER_ID=5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y
-export CHAIN_RPC=ws://127.0.0.1:9944
+export CHAIN_RPC=ws://127.0.0.1:2222
 export STORAGE_PATH=/tmp/provider-charlie
 export HTTP_PORT=3002
 
@@ -725,7 +725,7 @@ diff /tmp/test-data.txt /tmp/replica-data.txt
 # Create test script
 for i in {1..100}; do
   echo "Test data $i" > /tmp/test-$i.txt
-  curl -X POST http://localhost:3000/upload \
+  curl -X POST http://localhost:3333/upload \
     -H "Content-Type: application/octet-stream" \
     -H "X-Bucket-Id: 0" \
     --data-binary @/tmp/test-$i.txt \
@@ -738,7 +738,7 @@ done
 ```bash
 # Benchmark downloads
 for i in {1..100}; do
-  curl http://localhost:3000/bucket/0/download/$i \
+  curl http://localhost:3333/bucket/0/download/$i \
     -o /dev/null \
     -w "Download $i: %{time_total}s\n"
 done
@@ -766,9 +766,9 @@ export POLKADOT_BINARY_PATH=/full/path/to/polkadot
 # Verify chain is running
 curl -H "Content-Type: application/json" \
   -d '{"id":1, "jsonrpc":"2.0", "method":"system_health"}' \
-  http://127.0.0.1:9944
+  http://127.0.0.1:2222
 
-# Check firewall isn't blocking port 9944
+# Check firewall isn't blocking port 2222
 ```
 
 ### Issue: Upload fails with "no agreement"

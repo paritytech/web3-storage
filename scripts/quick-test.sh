@@ -11,8 +11,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-PARACHAIN_RPC="http://127.0.0.1:9944"
-PROVIDER_URL="http://localhost:3000"
+PARACHAIN_RPC="http://127.0.0.1:2222"
+PROVIDER_URL="http://localhost:3333"
 
 echo -e "${BLUE}=== Quick Test Suite ===${NC}"
 echo ""
@@ -37,7 +37,7 @@ if curl -s $PROVIDER_URL/health > /dev/null; then
     curl -s $PROVIDER_URL/health | jq .
 else
     echo -e "${RED}❌ Provider node is not responding${NC}"
-    echo "Make sure provider node is running on port 3000"
+    echo "Make sure provider node is running on port 3333"
     exit 1
 fi
 

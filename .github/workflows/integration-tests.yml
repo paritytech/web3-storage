@@ -79,7 +79,7 @@ jobs:
           for i in $(seq 1 120); do
             if curl -s -H "Content-Type: application/json" \
               -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1]}' \
-              http://127.0.0.1:9944 2>/dev/null | jq -e '.result' > /dev/null 2>&1; then
+              http://127.0.0.1:2222 2>/dev/null | jq -e '.result' > /dev/null 2>&1; then
               echo "Parachain is producing blocks (attempt $i)"
               break
             fi
@@ -95,7 +95,7 @@ jobs:
         run: |
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3000/health | jq -e '.status' > /dev/null 2>&1; then
+            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
               echo "Provider is healthy (attempt $i)"
               break
             fi

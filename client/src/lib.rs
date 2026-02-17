@@ -38,7 +38,7 @@
 //!
 //! // Register as provider
 //! client.register(
-//!     "/ip4/1.2.3.4/tcp/3000".to_string(),
+//!     "/ip4/1.2.3.4/tcp/3333".to_string(),
 //!     vec![0u8; 32], // public key
 //!     1_000_000_000_000, // stake
 //! ).await?;
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_chunking() {
-        let client = StorageClient::new("http://localhost:3000");
+        let client = StorageClient::new("http://localhost:3333");
 
         let data = vec![0u8; 1024 * 1024]; // 1 MiB
         let chunks = client.chunk_data(&data, ChunkingStrategy::Fixed(256 * 1024));
