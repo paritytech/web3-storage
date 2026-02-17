@@ -12,12 +12,12 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create manager with default config
 //! let manager = CheckpointManager::new(
-//!     "ws://localhost:9944",
+//!     "ws://localhost:2222",
 //!     CheckpointConfig::default(),
 //! ).await?;
 //!
 //! // Add provider endpoints
-//! let manager = manager.with_provider("http://localhost:3000");
+//! let manager = manager.with_provider("http://localhost:3333");
 //!
 //! // Submit checkpoint for a bucket
 //! let bucket_id = 1u64;
@@ -2320,7 +2320,7 @@ impl CheckpointManager {
     /// use storage_client::{CheckpointManager, CheckpointConfig, PersistenceConfig};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let manager = CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default()).await?;
+    /// let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default()).await?;
     ///
     /// // Save state to file
     /// manager.save_state("/var/lib/storage/checkpoint_state.json").await?;
@@ -2344,7 +2344,7 @@ impl CheckpointManager {
     /// use storage_client::{CheckpointManager, CheckpointConfig};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let manager = CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default()).await?;
+    /// let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default()).await?;
     ///
     /// // Restore state from file
     /// manager.restore_state("/var/lib/storage/checkpoint_state.json").await?;
@@ -2798,7 +2798,7 @@ mod tests {
         let account = AccountId32::new([1u8; 32]);
         let info = ProviderInfo {
             account_id: account.clone(),
-            endpoint: "http://localhost:3000".to_string(),
+            endpoint: "http://localhost:3333".to_string(),
             public_key: vec![1, 2, 3],
             last_seen: None,
             status: ProviderStatus::Healthy,
@@ -2806,7 +2806,7 @@ mod tests {
 
         let cloned = info.clone();
         assert_eq!(cloned.account_id, account);
-        assert_eq!(cloned.endpoint, "http://localhost:3000");
+        assert_eq!(cloned.endpoint, "http://localhost:3333");
         assert_eq!(cloned.public_key, vec![1, 2, 3]);
     }
 

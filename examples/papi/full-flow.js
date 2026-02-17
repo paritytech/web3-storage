@@ -8,8 +8,8 @@
  *  4. Asserts exactly 2 ChallengeDefended events
  *
  * Prerequisites:
- *   - Parachain running at ws://127.0.0.1:9944
- *   - Provider node running at http://127.0.0.1:3000
+ *   - Parachain running at ws://127.0.0.1:2222
+ *   - Provider node running at http://127.0.0.1:3333
  *   - Descriptors generated: npm run papi:generate
  *
  * Usage: node full-flow.js [chain_ws] [provider_url]
@@ -28,8 +28,8 @@ import assert from "node:assert";
 // Config
 // ---------------------------------------------------------------------------
 
-const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:9944";
-const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3000";
+const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
+const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const BUCKET_ID = 1n;
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ async function registerProvider(api, alice) {
     return;
   }
   console.log("  Registering provider (Alice)...");
-  const multiaddr = new TextEncoder().encode("/ip4/127.0.0.1/tcp/3000");
+  const multiaddr = new TextEncoder().encode("/ip4/127.0.0.1/tcp/3333");
   await api.tx.StorageProvider.register_provider({
     multiaddr: Binary.fromBytes(multiaddr),
     public_key: Binary.fromBytes(alice.publicKey),

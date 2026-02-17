@@ -177,12 +177,12 @@ just start-chain
 
 **Network URLs**:
 - Relay chain: `ws://127.0.0.1:9900`
-- Parachain: `ws://127.0.0.1:9944`
-- Provider HTTP: `http://localhost:3000`
+- Parachain: `ws://127.0.0.1:2222`
+- Provider HTTP: `http://localhost:3333`
 
 **Web UI**:
 - Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900
-- Parachain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
+- Parachain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
 
 ## Polkadot SDK (Upstream)
 

@@ -5,8 +5,8 @@
 //! Environment variables:
 //! - SEED: Seed phrase or derivation path for signing (e.g., "//Alice")
 //! - PROVIDER_ID: Provider account ID (only used if SEED is not set, no signing)
-//! - BIND_ADDR: Address to bind to (default: 0.0.0.0:3000)
-//! - CHAIN_RPC: WebSocket URL for the parachain (default: ws://127.0.0.1:9944)
+//! - BIND_ADDR: Address to bind to (default: 0.0.0.0:3333)
+//! - CHAIN_RPC: WebSocket URL for the parachain (default: ws://127.0.0.1:2222)
 //! - ENABLE_CHECKPOINT_COORDINATOR: Set to "true" to enable checkpoint coordination
 //! - ENABLE_REPLICA_SYNC: Set to "true" to enable autonomous replica sync
 //! - REPLICA_POLL_INTERVAL: Seconds between sync checks (default: 12)
@@ -66,7 +66,7 @@ async fn main() {
         .unwrap_or(false)
     {
         let chain_rpc =
-            std::env::var("CHAIN_RPC").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+            std::env::var("CHAIN_RPC").unwrap_or_else(|_| "ws://127.0.0.1:2222".to_string());
 
         let config = CheckpointCoordinatorConfig {
             chain_ws_url: chain_rpc,
@@ -104,7 +104,7 @@ async fn main() {
         .unwrap_or(false)
     {
         let chain_rpc =
-            std::env::var("CHAIN_RPC").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+            std::env::var("CHAIN_RPC").unwrap_or_else(|_| "ws://127.0.0.1:2222".to_string());
 
         let poll_interval = std::env::var("REPLICA_POLL_INTERVAL")
             .ok()
@@ -155,7 +155,7 @@ async fn main() {
     };
 
     // Get bind address
-    let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+    let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3333".to_string());
 
     tracing::info!("Starting storage provider node on {}", addr);
 

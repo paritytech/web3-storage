@@ -13,10 +13,10 @@ curl -s -H "Content-Type: application/json" \
 echo ""
 
 # Check parachain
-echo "Parachain (port 9944):"
+echo "Parachain (port 2222):"
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1, "jsonrpc":"2.0", "method":"system_health"}' \
-  http://127.0.0.1:9944 | jq .
+  http://127.0.0.1:2222 | jq .
 
 echo ""
 
@@ -24,4 +24,4 @@ echo ""
 echo "Current block number:"
 curl -s -H "Content-Type: application/json" \
   -d '{"id":1, "jsonrpc":"2.0", "method":"chain_getHeader"}' \
-  http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "Block: %d\n" 2>/dev/null || echo "Waiting for blocks..."
+  http://127.0.0.1:2222 | jq -r '.result.number' | xargs printf "Block: %d\n" 2>/dev/null || echo "Waiting for blocks..."
