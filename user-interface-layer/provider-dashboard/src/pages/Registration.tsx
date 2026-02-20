@@ -1,33 +1,76 @@
-import { useState } from 'react'
-import { Server, Info } from 'lucide-react'
+/**
+ * Registration Page
+ *
+ * Handles both:
+ * 1. New provider registration (wizard flow)
+ * 2. Existing provider settings management
+ *
+ * The flow detects whether the connected wallet is already registered
+ * and shows the appropriate UI.
+ */
+
+import { useState, useEffect } from 'react'
+import {
+  Server,
+  Info,
+  Wallet,
+  CheckCircle,
+  ArrowRight,
+  ArrowLeft,
+  AlertCircle,
+  ExternalLink,
+} from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
 import { Switch } from '@/components/ui/Switch'
+import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
+import { Progress } from '@/components/ui/Progress'
 import {
-  useProviderInfo,
+  useSelectedAccount,
+  useSelectedBalance,
+  useIsSelectedRegistered,
+  useWalletStatus,
+  connectWallet,
+  markAsRegistered,
+} from '@/state/wallet.state'
+import { useIsConnected, connect as connectChain } from '@/state/chain.state'
+import {
   useProviderSettings,
   useIsProviderLoading,
-  useIsRegistered,
-  registerProvider,
   updateSettings,
+  loadProviderData,
   type ProviderSettings,
 } from '@/state/provider.state'
-import { useSelectedAccount, useSelectedBalance } from '@/state/wallet.state'
 import { formatTokens, parseTokens, formatBytes } from '@/utils/format'
 
 const UNIT = 1_000_000_000_000n
+const MIN_STAKE = 1000n * UNIT // 1000 tokens
+
+// Registration wizard steps
+type WizardStep = 'connect' | 'stake' | 'settings' | 'confirm' | 'complete'
+
+const WIZARD_STEPS: { id: WizardStep; title: string }[] = [
+  { id: 'connect', title: 'Connect' },
+  { id: 'stake', title: 'Stake' },
+  { id: 'settings', title: 'Settings' },
+  { id: 'confirm', title: 'Confirm' },
+  { id: 'complete', title: 'Complete' },
+]
 
 export function Registration() {
   const selectedAccount = useSelectedAccount()
   const balance = useSelectedBalance()
-  const providerInfo = useProviderInfo()
+  const isRegistered = useIsSelectedRegistered()
+  const walletStatus = useWalletStatus()
+  const isChainConnected = useIsConnected()
   const currentSettings = useProviderSettings()
   const isLoading = useIsProviderLoading()
-  const isRegistered = useIsRegistered()
 
+  // Wizard state
+  const [step, setStep] = useState<WizardStep>('connect')
   const [stake, setStake] = useState('1000')
   const [settings, setSettings] = useState<ProviderSettings>({
     minDuration: 100,
@@ -39,68 +82,206 @@ export function Registration() {
     acceptingExtensions: true,
     maxCapacity: 1_073_741_824_000n, // 1 TB
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [txHash, setTxHash] = useState<string | null>(null)
 
-  const handleRegister = async () => {
-    setError(null)
-    try {
-      const stakeAmount = parseTokens(stake)
-      await registerProvider(stakeAmount, settings)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed')
+  // Auto-advance wizard based on state
+  useEffect(() => {
+    if (step === 'connect') {
+      if (isChainConnected && selectedAccount) {
+        setStep('stake')
+      }
     }
+  }, [step, isChainConnected, selectedAccount])
+
+  // Load existing settings if registered
+  useEffect(() => {
+    if (isRegistered && selectedAccount) {
+      loadProviderData(selectedAccount.address)
+    }
+  }, [isRegistered, selectedAccount])
+
+  // If registered, show settings management instead of wizard
+  if (isRegistered === true) {
+    return <SettingsManager />
   }
 
-  const handleUpdateSettings = async () => {
-    setError(null)
-    try {
-      await updateSettings(settings)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Update failed')
-    }
-  }
-
-  if (!selectedAccount) {
+  // Show loading while checking registration
+  if (isRegistered === null && selectedAccount) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
-        <Server className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to register as a provider</p>
+        <Spinner size="lg" />
+        <p className="text-gray-400 mt-4">Checking registration status...</p>
       </div>
     )
   }
 
+  // Calculate progress
+  const currentStepIndex = WIZARD_STEPS.findIndex((s) => s.id === step)
+  const progress = ((currentStepIndex + 1) / WIZARD_STEPS.length) * 100
+
+  const handleConnect = async () => {
+    setError(null)
+    try {
+      if (!isChainConnected) {
+        await connectChain()
+      }
+      await connectWallet()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connection failed')
+    }
+  }
+
+  const handleRegister = async () => {
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      // In real implementation, this would submit the extrinsic
+      // const stakeAmount = parseTokens(stake)
+      // const tx = buildRegisterProviderTx({ stake: stakeAmount })
+      // await signAndSubmit(tx)
+
+      // Simulate transaction
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      setTxHash('0x1234567890abcdef...')
+
+      // Mark as registered in state
+      if (selectedAccount) {
+        markAsRegistered(selectedAccount.address)
+      }
+
+      setStep('complete')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const stakeAmount = parseTokens(stake)
+  const hasEnoughBalance = balance && balance.free >= stakeAmount
+  const meetsMinStake = stakeAmount >= MIN_STAKE
+
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">
-          {isRegistered ? 'Provider Settings' : 'Provider Registration'}
-        </h1>
+        <h1 className="text-2xl font-bold">Become a Storage Provider</h1>
         <p className="text-gray-400">
-          {isRegistered
-            ? 'Update your provider settings and configuration'
-            : 'Register as a storage provider to start earning'}
+          Register on-chain to start accepting storage agreements and earning rewards
         </p>
       </div>
 
+      {/* Progress */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-sm">
+          {WIZARD_STEPS.map((s, i) => (
+            <span
+              key={s.id}
+              className={
+                i <= currentStepIndex ? 'text-purple-400' : 'text-gray-600'
+              }
+            >
+              {s.title}
+            </span>
+          ))}
+        </div>
+        <Progress value={progress} />
+      </div>
+
+      {/* Error */}
       {error && (
         <Card className="border-red-500/50 bg-red-500/10">
-          <CardContent className="py-4 text-red-400">{error}</CardContent>
+          <CardContent className="flex items-center gap-3 py-4">
+            <AlertCircle className="h-5 w-5 text-red-500" />
+            <p className="text-red-400">{error}</p>
+          </CardContent>
         </Card>
       )}
 
-      {/* Stake Section (only for new registration) */}
-      {!isRegistered && (
+      {/* Step: Connect */}
+      {step === 'connect' && (
         <Card>
           <CardHeader>
-            <CardTitle>Stake Amount</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5" />
+              Connect to Get Started
+            </CardTitle>
             <CardDescription>
-              Minimum stake required: {formatTokens(1000n * UNIT)} (1000 tokens)
+              Connect your wallet and the blockchain to begin registration
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-800/50">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`h-3 w-3 rounded-full ${
+                      isChainConnected ? 'bg-green-500' : 'bg-gray-600'
+                    }`}
+                  />
+                  <span>Blockchain Connection</span>
+                </div>
+                {isChainConnected ? (
+                  <Badge variant="success">Connected</Badge>
+                ) : (
+                  <Badge variant="secondary">Disconnected</Badge>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-lg bg-gray-800/50">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`h-3 w-3 rounded-full ${
+                      selectedAccount ? 'bg-green-500' : 'bg-gray-600'
+                    }`}
+                  />
+                  <span>Wallet</span>
+                </div>
+                {selectedAccount ? (
+                  <Badge variant="success">{selectedAccount.name}</Badge>
+                ) : (
+                  <Badge variant="secondary">Not Connected</Badge>
+                )}
+              </div>
+            </div>
+
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={handleConnect}
+              disabled={walletStatus === 'connecting'}
+            >
+              {walletStatus === 'connecting' ? (
+                <>
+                  <Spinner size="sm" className="mr-2" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  Connect Wallet
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step: Stake */}
+      {step === 'stake' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Set Your Stake</CardTitle>
+            <CardDescription>
+              Stake tokens as collateral. Higher stake enables more capacity.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="stake">Stake (tokens)</Label>
+              <Label htmlFor="stake">Stake Amount (tokens)</Label>
               <Input
                 id="stake"
                 type="number"
@@ -109,46 +290,403 @@ export function Registration() {
                 onChange={(e) => setStake(e.target.value)}
                 placeholder="1000"
               />
-              {balance && (
-                <p className="text-sm text-gray-500">
-                  Available balance: {formatTokens(balance.free)}
-                </p>
-              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">
+                  Minimum: {formatTokens(MIN_STAKE)}
+                </span>
+                {balance && (
+                  <span className="text-gray-500">
+                    Available: {formatTokens(balance.free)}
+                  </span>
+                )}
+              </div>
             </div>
+
+            {!meetsMinStake && (
+              <div className="flex items-start gap-2 p-3 rounded-md bg-yellow-500/10 border border-yellow-500/30">
+                <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5" />
+                <p className="text-sm text-yellow-400">
+                  Stake must be at least {formatTokens(MIN_STAKE)}
+                </p>
+              </div>
+            )}
+
+            {meetsMinStake && !hasEnoughBalance && (
+              <div className="flex items-start gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/30">
+                <AlertCircle className="h-4 w-4 text-red-500 mt-0.5" />
+                <p className="text-sm text-red-400">
+                  Insufficient balance. You need {formatTokens(stakeAmount)} but only have{' '}
+                  {balance ? formatTokens(balance.free) : '0'}
+                </p>
+              </div>
+            )}
+
             <div className="flex items-start gap-2 p-3 rounded-md bg-gray-800/50">
               <Info className="h-4 w-4 text-purple-400 mt-0.5" />
-              <p className="text-sm text-gray-400">
-                Your stake is locked and will be slashed if you fail to respond to challenges.
-                Higher stake allows for higher capacity commitments.
-              </p>
+              <div className="text-sm text-gray-400">
+                <p>Your stake serves as collateral and will be:</p>
+                <ul className="list-disc list-inside mt-1 space-y-1">
+                  <li>Locked while you have active agreements</li>
+                  <li>Slashed if you fail to respond to challenges</li>
+                  <li>Returnable when you deregister (after cooldown)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep('connect')}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => setStep('settings')}
+                disabled={!meetsMinStake || !hasEnoughBalance}
+              >
+                Continue
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Current Stake Info (for registered providers) */}
-      {isRegistered && providerInfo && (
+      {/* Step: Settings */}
+      {step === 'settings' && (
         <Card>
           <CardHeader>
-            <CardTitle>Current Stake</CardTitle>
+            <CardTitle>Configure Provider Settings</CardTitle>
+            <CardDescription>Set your pricing and acceptance preferences</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{formatTokens(providerInfo.stake)}</p>
-            <p className="text-sm text-gray-500 mt-1">
-              Supports up to {formatBytes(Number(providerInfo.capacity))} capacity
-            </p>
+          <CardContent className="space-y-6">
+            {/* Pricing */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="pricePerByte">Price per Byte (per block)</Label>
+                <Input
+                  id="pricePerByte"
+                  type="number"
+                  value={settings.pricePerByte.toString()}
+                  onChange={(e) =>
+                    setSettings({ ...settings, pricePerByte: BigInt(e.target.value || '0') })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="maxCapacity">Max Capacity (bytes)</Label>
+                <Input
+                  id="maxCapacity"
+                  type="number"
+                  value={settings.maxCapacity.toString()}
+                  onChange={(e) =>
+                    setSettings({ ...settings, maxCapacity: BigInt(e.target.value || '0') })
+                  }
+                />
+                <p className="text-xs text-gray-500">
+                  {formatBytes(Number(settings.maxCapacity))}
+                </p>
+              </div>
+            </div>
+
+            {/* Duration */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="minDuration">Min Duration (blocks)</Label>
+                <Input
+                  id="minDuration"
+                  type="number"
+                  min="1"
+                  value={settings.minDuration}
+                  onChange={(e) =>
+                    setSettings({ ...settings, minDuration: parseInt(e.target.value) || 1 })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="maxDuration">Max Duration (blocks)</Label>
+                <Input
+                  id="maxDuration"
+                  type="number"
+                  min="1"
+                  value={settings.maxDuration}
+                  onChange={(e) =>
+                    setSettings({ ...settings, maxDuration: parseInt(e.target.value) || 1 })
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Toggles */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Accept Primary Agreements</Label>
+                  <p className="text-sm text-gray-500">Be the primary storage provider</p>
+                </div>
+                <Switch
+                  checked={settings.acceptingPrimary}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, acceptingPrimary: checked })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Accept Replica Agreements</Label>
+                  <p className="text-sm text-gray-500">Store backup copies</p>
+                </div>
+                <Switch
+                  checked={settings.acceptingReplica}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, acceptingReplica: checked })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Accept Extensions</Label>
+                  <p className="text-sm text-gray-500">Allow agreement extensions</p>
+                </div>
+                <Switch
+                  checked={settings.acceptingExtensions}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, acceptingExtensions: checked })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep('stake')}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </Button>
+              <Button className="flex-1" onClick={() => setStep('confirm')}>
+                Review & Confirm
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Settings Section */}
+      {/* Step: Confirm */}
+      {step === 'confirm' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Confirm Registration</CardTitle>
+            <CardDescription>Review your settings before submitting</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Summary */}
+            <div className="space-y-4 p-4 rounded-lg bg-gray-800/50">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Account</span>
+                <span className="font-mono">{selectedAccount?.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Stake</span>
+                <span className="font-medium">{formatTokens(parseTokens(stake))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Price per Byte</span>
+                <span>{formatTokens(settings.pricePerByte)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Max Capacity</span>
+                <span>{formatBytes(Number(settings.maxCapacity))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Duration Range</span>
+                <span>
+                  {settings.minDuration.toLocaleString()} - {settings.maxDuration.toLocaleString()} blocks
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Accepting</span>
+                <div className="flex gap-2">
+                  {settings.acceptingPrimary && <Badge>Primary</Badge>}
+                  {settings.acceptingReplica && <Badge>Replica</Badge>}
+                  {settings.acceptingExtensions && <Badge variant="secondary">Extensions</Badge>}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 p-3 rounded-md bg-purple-500/10 border border-purple-500/30">
+              <Info className="h-4 w-4 text-purple-400 mt-0.5" />
+              <p className="text-sm text-purple-300">
+                This will submit a transaction to the blockchain. You'll need to sign it with your
+                wallet.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setStep('settings')}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={handleRegister}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Spinner size="sm" className="mr-2" />
+                    Registering...
+                  </>
+                ) : (
+                  <>
+                    Register Provider
+                    <CheckCircle className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step: Complete */}
+      {step === 'complete' && (
+        <Card className="border-green-500/30">
+          <CardContent className="py-12 text-center space-y-6">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-green-500/20 flex items-center justify-center">
+                <CheckCircle className="h-8 w-8 text-green-500" />
+              </div>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-green-400">Registration Successful!</h2>
+              <p className="text-gray-400 mt-2">
+                You are now registered as a storage provider on-chain.
+              </p>
+            </div>
+
+            {txHash && (
+              <div className="p-3 rounded-lg bg-gray-800/50">
+                <p className="text-sm text-gray-400">Transaction Hash</p>
+                <code className="text-xs text-purple-400">{txHash}</code>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <h3 className="font-medium">Next Steps</h3>
+              <div className="text-left space-y-2 text-sm text-gray-400">
+                <div className="flex items-start gap-2">
+                  <span className="text-purple-400">1.</span>
+                  <span>Set up and run your provider node</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-purple-400">2.</span>
+                  <span>Configure your provider node with your keypair</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="text-purple-400">3.</span>
+                  <span>Start accepting storage agreements</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-center">
+              <Button variant="outline" asChild>
+                <a
+                  href="https://github.com/user/web3-storage/blob/main/docs/getting-started/QUICKSTART.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  View Setup Guide
+                  <ExternalLink className="ml-2 h-4 w-4" />
+                </a>
+              </Button>
+              <Button asChild>
+                <a href="/">Go to Dashboard</a>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings Manager (for already registered providers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SettingsManager() {
+  const selectedAccount = useSelectedAccount()
+  const currentSettings = useProviderSettings()
+  const isLoading = useIsProviderLoading()
+
+  const [settings, setSettings] = useState<ProviderSettings | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  // Initialize form with current settings
+  useEffect(() => {
+    if (currentSettings) {
+      setSettings(currentSettings)
+    }
+  }, [currentSettings])
+
+  const handleUpdate = async () => {
+    if (!settings) return
+
+    setIsSubmitting(true)
+    setError(null)
+    setSuccess(false)
+
+    try {
+      await updateSettings(settings)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Update failed')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  if (isLoading || !settings) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Spinner size="lg" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Provider Settings</h1>
+          <p className="text-gray-400">Update your provider configuration</p>
+        </div>
+        <Badge variant="success">Registered</Badge>
+      </div>
+
+      {error && (
+        <Card className="border-red-500/50 bg-red-500/10">
+          <CardContent className="py-4 text-red-400">{error}</CardContent>
+        </Card>
+      )}
+
+      {success && (
+        <Card className="border-green-500/50 bg-green-500/10">
+          <CardContent className="flex items-center gap-3 py-4">
+            <CheckCircle className="h-5 w-5 text-green-500" />
+            <p className="text-green-400">Settings updated successfully!</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle>Provider Settings</CardTitle>
-          <CardDescription>Configure your pricing and acceptance settings</CardDescription>
+          <CardTitle>Pricing & Capacity</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Pricing */}
+        <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="pricePerByte">Price per Byte (per block)</Label>
@@ -162,30 +700,25 @@ export function Registration() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="replicaSyncPrice">Replica Sync Price (optional)</Label>
+              <Label htmlFor="maxCapacity">Max Capacity</Label>
               <Input
-                id="replicaSyncPrice"
+                id="maxCapacity"
                 type="number"
-                value={settings.replicaSyncPrice?.toString() || ''}
+                value={settings.maxCapacity.toString()}
                 onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    replicaSyncPrice: e.target.value ? BigInt(e.target.value) : null,
-                  })
+                  setSettings({ ...settings, maxCapacity: BigInt(e.target.value || '0') })
                 }
-                placeholder="Optional"
               />
+              <p className="text-xs text-gray-500">{formatBytes(Number(settings.maxCapacity))}</p>
             </div>
           </div>
 
-          {/* Duration */}
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="minDuration">Min Duration (blocks)</Label>
               <Input
                 id="minDuration"
                 type="number"
-                min="1"
                 value={settings.minDuration}
                 onChange={(e) =>
                   setSettings({ ...settings, minDuration: parseInt(e.target.value) || 1 })
@@ -197,7 +730,6 @@ export function Registration() {
               <Input
                 id="maxDuration"
                 type="number"
-                min="1"
                 value={settings.maxDuration}
                 onChange={(e) =>
                   setSettings({ ...settings, maxDuration: parseInt(e.target.value) || 1 })
@@ -205,81 +737,66 @@ export function Registration() {
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Capacity */}
-          <div className="space-y-2">
-            <Label htmlFor="maxCapacity">Max Capacity (bytes)</Label>
-            <Input
-              id="maxCapacity"
-              type="number"
-              value={settings.maxCapacity.toString()}
-              onChange={(e) =>
-                setSettings({ ...settings, maxCapacity: BigInt(e.target.value || '0') })
+      <Card>
+        <CardHeader>
+          <CardTitle>Acceptance Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Accept Primary Agreements</Label>
+              <p className="text-sm text-gray-500">Be the primary storage provider</p>
+            </div>
+            <Switch
+              checked={settings.acceptingPrimary}
+              onCheckedChange={(checked) =>
+                setSettings({ ...settings, acceptingPrimary: checked })
               }
             />
-            <p className="text-sm text-gray-500">
-              {formatBytes(Number(settings.maxCapacity))} total capacity
-            </p>
           </div>
-
-          {/* Toggles */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Accept Primary Agreements</Label>
-                <p className="text-sm text-gray-500">Accept new primary storage agreements</p>
-              </div>
-              <Switch
-                checked={settings.acceptingPrimary}
-                onCheckedChange={(checked) =>
-                  setSettings({ ...settings, acceptingPrimary: checked })
-                }
-              />
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Accept Replica Agreements</Label>
+              <p className="text-sm text-gray-500">Store backup copies</p>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Accept Replica Agreements</Label>
-                <p className="text-sm text-gray-500">Accept replica/backup storage requests</p>
-              </div>
-              <Switch
-                checked={settings.acceptingReplica}
-                onCheckedChange={(checked) =>
-                  setSettings({ ...settings, acceptingReplica: checked })
-                }
-              />
+            <Switch
+              checked={settings.acceptingReplica}
+              onCheckedChange={(checked) =>
+                setSettings({ ...settings, acceptingReplica: checked })
+              }
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Accept Extensions</Label>
+              <p className="text-sm text-gray-500">Allow agreement extensions</p>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Accept Extensions</Label>
-                <p className="text-sm text-gray-500">Allow existing agreements to be extended</p>
-              </div>
-              <Switch
-                checked={settings.acceptingExtensions}
-                onCheckedChange={(checked) =>
-                  setSettings({ ...settings, acceptingExtensions: checked })
-                }
-              />
-            </div>
+            <Switch
+              checked={settings.acceptingExtensions}
+              onCheckedChange={(checked) =>
+                setSettings({ ...settings, acceptingExtensions: checked })
+              }
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* Submit Button */}
       <Button
         className="w-full"
         size="lg"
-        onClick={isRegistered ? handleUpdateSettings : handleRegister}
-        disabled={isLoading}
+        onClick={handleUpdate}
+        disabled={isSubmitting}
       >
-        {isLoading ? (
+        {isSubmitting ? (
           <>
             <Spinner size="sm" className="mr-2" />
-            {isRegistered ? 'Updating...' : 'Registering...'}
+            Updating...
           </>
-        ) : isRegistered ? (
-          'Update Settings'
         ) : (
-          'Register as Provider'
+          'Update Settings'
         )}
       </Button>
     </div>

@@ -1,63 +1,43 @@
-import { BehaviorSubject, interval, switchMap, catchError, of, map, distinctUntilChanged, shareReplay } from 'rxjs'
+/**
+ * Chain State - Blockchain connection and block tracking
+ *
+ * This state manages the WebSocket connection to the blockchain,
+ * independent of any provider node. New providers use this to
+ * register before they even have a provider node running.
+ */
+
+import { BehaviorSubject, map } from 'rxjs'
 import { bind } from '@react-rxjs/core'
-import { createSignal } from '@react-rxjs/utils'
+import {
+  connectToChain,
+  disconnectFromChain,
+  subscribeToBlocks,
+  getClient,
+} from '@/lib/chain-client'
 
 // Types
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 
-export interface ChainState {
-  endpoint: string
-  status: ConnectionStatus
-  blockNumber: number
-  chainName: string
-  error?: string
+export interface ChainInfo {
+  name: string
+  version: string
+  genesisHash: string
 }
-
-// Signals for actions
-const [endpointChange$, setEndpoint] = createSignal<string>()
-const [connectionTrigger$, triggerConnection] = createSignal<void>()
 
 // State subjects
 const connectionStatus$ = new BehaviorSubject<ConnectionStatus>('disconnected')
 const blockNumber$ = new BehaviorSubject<number>(0)
-const chainName$ = new BehaviorSubject<string>('')
+const chainInfo$ = new BehaviorSubject<ChainInfo | null>(null)
 const endpoint$ = new BehaviorSubject<string>('ws://127.0.0.1:9944')
 const connectionError$ = new BehaviorSubject<string | undefined>(undefined)
 
-// Block polling when connected
-const blockPolling$ = connectionStatus$.pipe(
-  switchMap((status) => {
-    if (status !== 'connected') {
-      return of(null)
-    }
-    // Poll every 6 seconds (block time)
-    return interval(6000).pipe(
-      switchMap(async () => {
-        // In a real implementation, this would query the chain
-        // For now, simulate block increment
-        const current = blockNumber$.getValue()
-        return current + 1
-      }),
-      catchError((err) => {
-        console.error('Block polling error:', err)
-        return of(null)
-      })
-    )
-  }),
-  shareReplay(1)
-)
-
-// Subscribe to block polling to update state
-blockPolling$.subscribe((block) => {
-  if (block !== null) {
-    blockNumber$.next(block)
-  }
-})
+// Block subscription cleanup
+let blockUnsubscribe: (() => void) | null = null
 
 // React hooks
 export const [useConnectionStatus] = bind(connectionStatus$, 'disconnected')
 export const [useBlockNumber] = bind(blockNumber$, 0)
-export const [useChainName] = bind(chainName$, '')
+export const [useChainInfo] = bind(chainInfo$, null)
 export const [useEndpoint] = bind(endpoint$, 'ws://127.0.0.1:9944')
 export const [useConnectionError] = bind(connectionError$, undefined)
 
@@ -66,7 +46,23 @@ export const [useIsConnected] = bind(
   false
 )
 
+export const [useChainName] = bind(
+  chainInfo$.pipe(map((info) => info?.name ?? '')),
+  ''
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Connect to the blockchain
+ *
+ * This establishes a WebSocket connection to the chain, allowing:
+ * - New providers to register (no provider node needed)
+ * - Querying on-chain state
+ * - Subscribing to blocks and events
+ */
 export async function connect(wsEndpoint?: string): Promise<void> {
   const ep = wsEndpoint || endpoint$.getValue()
   endpoint$.next(ep)
@@ -74,12 +70,23 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   connectionError$.next(undefined)
 
   try {
-    // TODO: Implement actual polkadot-api connection
-    // For now, simulate connection
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await connectToChain(ep)
+
+    // Get chain info (placeholder - would come from chain metadata)
+    chainInfo$.next({
+      name: 'Storage Parachain',
+      version: '0.1.0',
+      genesisHash: '0x...',
+    })
 
     connectionStatus$.next('connected')
-    chainName$.next('Storage Parachain')
+
+    // Subscribe to blocks
+    blockUnsubscribe = subscribeToBlocks((block) => {
+      blockNumber$.next(block)
+    })
+
+    // Set initial block
     blockNumber$.next(1)
   } catch (error) {
     connectionStatus$.next('error')
@@ -88,16 +95,59 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   }
 }
 
+/**
+ * Disconnect from the blockchain
+ */
 export function disconnect(): void {
+  if (blockUnsubscribe) {
+    blockUnsubscribe()
+    blockUnsubscribe = null
+  }
+
+  disconnectFromChain()
   connectionStatus$.next('disconnected')
   blockNumber$.next(0)
-  chainName$.next('')
+  chainInfo$.next(null)
 }
 
-// Export state setters for testing/mocking
+/**
+ * Reconnect with a new endpoint
+ */
+export async function reconnect(newEndpoint: string): Promise<void> {
+  disconnect()
+  await connect(newEndpoint)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Get current connection status (non-reactive)
+ */
+export function getConnectionStatus(): ConnectionStatus {
+  return connectionStatus$.getValue()
+}
+
+/**
+ * Check if connected (non-reactive)
+ */
+export function isConnected(): boolean {
+  return connectionStatus$.getValue() === 'connected'
+}
+
+/**
+ * Get current block number (non-reactive)
+ */
+export function getCurrentBlock(): number {
+  return blockNumber$.getValue()
+}
+
+// Export for testing
 export const chainActions = {
   connect,
   disconnect,
+  reconnect,
   setEndpoint: (ep: string) => endpoint$.next(ep),
   setBlockNumber: (block: number) => blockNumber$.next(block),
   setConnectionStatus: (status: ConnectionStatus) => connectionStatus$.next(status),
