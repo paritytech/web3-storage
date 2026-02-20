@@ -10,7 +10,7 @@
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create subscriber
-//! let mut subscriber = EventSubscriber::connect("ws://localhost:9944").await?;
+//! let mut subscriber = EventSubscriber::connect("ws://localhost:2222").await?;
 //!
 //! // Subscribe to checkpoint events for a specific bucket
 //! subscriber.set_filter(EventFilter::bucket(1));
@@ -825,7 +825,7 @@ impl SubscriptionHandle {
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let handle = subscribe_with_callback(
-///     "ws://localhost:9944",
+///     "ws://localhost:2222",
 ///     EventFilter::checkpoints_only(),
 ///     Box::new(|event| {
 ///         if let StorageEvent::BucketCheckpointed { bucket_id, .. } = event {

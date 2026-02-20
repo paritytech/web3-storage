@@ -18,7 +18,7 @@ darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
 
 # Provider port (override with: just PORT=3001 start-provider)
-PORT := "3000"
+PORT := "3333"
 
 # Default recipe
 default:
@@ -73,12 +73,12 @@ start-chain: check build
     echo ""
     echo "Web UIs (once ready):"
     echo "  Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944"
+    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222"
     echo ""
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
+start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ==="
@@ -92,16 +92,16 @@ start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:9944": build
 
 # Health check for provider node
 health:
-    curl -s http://localhost:3000/health | jq .
+    curl -s http://localhost:3333/health | jq .
 
 # Storage stats for provider node
 stats:
-    curl -s http://localhost:3000/stats | jq .
+    curl -s http://localhost:3333/stats | jq .
 
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo CHAIN_WS="ws://127.0.0.1:9944" PROVIDER_URL="http://127.0.0.1:3000": papi-setup
+demo CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333": papi-setup
     node examples/papi/full-flow.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)

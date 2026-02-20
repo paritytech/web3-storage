@@ -30,7 +30,7 @@ pub struct ChallengeResponderConfig {
 impl Default for ChallengeResponderConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:9944".to_string(),
+            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(6), // ~1 block
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_challenge_responder_config_default() {
         let config = ChallengeResponderConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:9944");
+        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(6));
         assert!(config.auto_respond);
     }

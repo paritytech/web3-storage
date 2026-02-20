@@ -37,7 +37,7 @@ All clients that need on-chain access must connect to the chain and set a signer
 ```rust
 use storage_client::{AdminClient, ClientConfig};
 
-let config = ClientConfig::default(); // ws://localhost:9944
+let config = ClientConfig::default(); // ws://localhost:2222
 let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
 
 // Connect to chain
@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register as provider
     client.register(
-        "/ip4/203.0.113.1/tcp/3000".to_string(), // multiaddr
+        "/ip4/203.0.113.1/tcp/3333".to_string(), // multiaddr
         vec![0u8; 32],                           // public key
         10_000_000_000_000,                      // stake
     ).await?;
@@ -253,8 +253,8 @@ All clients can be configured with custom settings:
 use storage_client::ClientConfig;
 
 let config = ClientConfig {
-    chain_ws_url: "ws://localhost:9944".to_string(),
-    provider_urls: vec!["http://localhost:3000".to_string()],
+    chain_ws_url: "ws://localhost:2222".to_string(),
+    provider_urls: vec!["http://localhost:3333".to_string()],
     timeout_secs: 30,
     enable_retries: true,
 };

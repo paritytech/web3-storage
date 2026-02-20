@@ -9,13 +9,13 @@ Quick reference for all available extrinsics in the storage provider pallet.
 Register a new storage provider.
 
 **Parameters:**
-- `multiaddr`: `BoundedVec<u8>` - Provider's network address (e.g., `/ip4/127.0.0.1/tcp/3000`)
+- `multiaddr`: `BoundedVec<u8>` - Provider's network address (e.g., `/ip4/127.0.0.1/tcp/3333`)
 - `publicKey`: `BoundedVec<u8>` - Provider's public key (32 bytes for Sr25519/Ed25519, 33 for ECDSA)
 - `stake`: `Balance` - Amount to stake (must be ≥ MinProviderStake)
 
 **Example:**
 ```
-multiaddr: /ip4/127.0.0.1/tcp/3000
+multiaddr: /ip4/127.0.0.1/tcp/3333
 publicKey: 0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d
 stake: 1000000000000000  (1000 tokens, minimum required)
 ```
@@ -358,7 +358,7 @@ For testing on local development network:
 
 | Account | AccountId | Public Key (Sr25519) | Port |
 |---------|-----------|---------------------|------|
-| Alice | `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY` | `0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d` | 3000 |
+| Alice | `5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY` | `0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d` | 3333 |
 | Bob | `5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty` | `0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48` | 3001 |
 | Charlie | `5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y` | `0x90b5ab205c6974c9ea841be688864633dc9ca8a357843eeacf2314649965fe22` | 3002 |
 

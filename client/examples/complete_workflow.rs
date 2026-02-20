@@ -23,8 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configuration
     let config = ClientConfig {
-        chain_ws_url: "ws://localhost:9944".to_string(),
-        provider_urls: vec!["http://localhost:3000".to_string()],
+        chain_ws_url: "ws://localhost:2222".to_string(),
+        provider_urls: vec!["http://localhost:3333".to_string()],
         timeout_secs: 30,
         enable_retries: true,
     };
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Registering provider {}...", provider_account);
     provider_client
         .register(
-            "/ip4/203.0.113.1/tcp/3000".to_string(),
+            "/ip4/203.0.113.1/tcp/3333".to_string(),
             vec![0u8; 32],      // Mock public key
             10_000_000_000_000, // 10 tokens stake
         )

@@ -643,8 +643,8 @@ With this protocol, the user API becomes simple:
 ```rust
 // User doesn't need to know about checkpoints!
 let mut fs_client = FileSystemClient::new(
-    "ws://localhost:9944",
-    "http://localhost:3000",
+    "ws://localhost:2222",
+    "http://localhost:3333",
 ).await?
     .with_dev_signer("alice").await?;
 
@@ -781,9 +781,9 @@ use storage_client::{
 use storage_client::{CheckpointManager, CheckpointConfig, CheckpointResult};
 
 // Create manager
-let manager = CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default())
+let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
-    .with_providers(vec!["http://localhost:3000".to_string()])
+    .with_providers(vec!["http://localhost:3333".to_string()])
     .with_dev_signer("alice")?;
 
 // Submit checkpoint
@@ -816,9 +816,9 @@ use storage_client::{
 use std::sync::Arc;
 
 // Create manager wrapped in Arc for background loop
-let manager = Arc::new(CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default())
+let manager = Arc::new(CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
-    .with_providers(vec!["http://localhost:3000".to_string()])
+    .with_providers(vec!["http://localhost:3333".to_string()])
     .with_dev_signer("alice")?);
 
 // Configure batched checkpoints
@@ -932,14 +932,14 @@ if let Some(conflict) = conflict {
 ```rust
 use file_system_client::FileSystemClient;
 
-let mut fs_client = FileSystemClient::new("ws://localhost:9944", "http://localhost:3000")
+let mut fs_client = FileSystemClient::new("ws://localhost:2222", "http://localhost:3333")
     .await?
     .with_dev_signer("alice").await?;
 
 // Enable automatic checkpoints for a drive
 fs_client.enable_auto_checkpoints(
     drive_id,
-    vec!["http://localhost:3000".to_string()],
+    vec!["http://localhost:3333".to_string()],
     Some(100),  // Checkpoint every 100 blocks
     Some(Arc::new(|bucket_id, result| {
         println!("Auto-checkpoint for bucket {}: {:?}", bucket_id, result);
@@ -959,7 +959,7 @@ if fs_client.is_auto_checkpoints_enabled() {
 }
 
 // Manual checkpoint (for drives with Manual commit strategy)
-let result = fs_client.submit_checkpoint(drive_id, vec!["http://localhost:3000".to_string()]).await?;
+let result = fs_client.submit_checkpoint(drive_id, vec!["http://localhost:3333".to_string()]).await?;
 
 // Disable when done
 fs_client.disable_auto_checkpoints().await?;

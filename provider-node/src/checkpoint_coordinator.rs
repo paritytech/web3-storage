@@ -31,7 +31,7 @@ pub struct CheckpointCoordinatorConfig {
 impl Default for CheckpointCoordinatorConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:9944".to_string(),
+            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(6), // ~1 block
             signature_timeout: Duration::from_secs(30),
             auto_submit: true,
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = CheckpointCoordinatorConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:9944");
+        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(6));
         assert!(config.auto_submit);
     }

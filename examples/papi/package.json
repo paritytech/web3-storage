@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "papi:generate": "papi add -w ws://localhost:9944 parachain && papi",
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
     "demo": "node full-flow.js"
   },
   "dependencies": {
