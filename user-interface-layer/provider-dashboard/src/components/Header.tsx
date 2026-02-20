@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom'
 import { Server, FileText, Shield, Coins, CheckCircle, Settings } from 'lucide-react'
-import { useConnectionStatus, useBlockNumber } from '@/state/chain.state'
-import { useSelectedAccount } from '@/state/wallet.state'
+import { useConnectionStatus, useBlockNumber, connect as connectChain } from '@/state/chain.state'
+import { useSelectedAccount, useWalletStatus, connectWallet } from '@/state/wallet.state'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { Spinner } from '@/components/ui/Spinner'
 import { formatAddress } from '@/utils/format'
 
 const navItems = [
@@ -20,6 +21,19 @@ export function Header() {
   const connectionStatus = useConnectionStatus()
   const blockNumber = useBlockNumber()
   const selectedAccount = useSelectedAccount()
+  const walletStatus = useWalletStatus()
+
+  const handleConnect = async () => {
+    try {
+      // Connect to chain first, then wallet
+      if (connectionStatus !== 'connected') {
+        await connectChain()
+      }
+      await connectWallet()
+    } catch (error) {
+      console.error('Connection failed:', error)
+    }
+  }
 
   return (
     <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-50">
@@ -73,7 +87,20 @@ export function Header() {
                 {formatAddress(selectedAccount.address)}
               </Button>
             ) : (
-              <Button size="sm">Connect Wallet</Button>
+              <Button
+                size="sm"
+                onClick={handleConnect}
+                disabled={walletStatus === 'connecting'}
+              >
+                {walletStatus === 'connecting' ? (
+                  <>
+                    <Spinner size="sm" className="mr-2" />
+                    Connecting...
+                  </>
+                ) : (
+                  'Connect Wallet'
+                )}
+              </Button>
             )}
           </div>
         </div>
