@@ -1,5 +1,12 @@
 # CLAUDE.md - Scalable Web3 Storage
 
+## Claude Preferences
+
+**Git commit rules:**
+- NEVER add Co-Authored-By lines to commits
+- NEVER use git rebase
+- NEVER use git push --force or git push -f
+
 ## Project Overview
 
 Scalable Web3 Storage is a decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
