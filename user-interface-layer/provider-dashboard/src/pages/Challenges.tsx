@@ -19,7 +19,7 @@ import {
   respondToChallenge,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
-import { formatAddress, formatBlockNumber, formatRelativeTime, formatDuration } from '@/utils/format'
+import { formatAddress, formatBlockNumber } from '@/utils/format'
 
 export function Challenges() {
   const selectedAccount = useSelectedAccount()
@@ -29,11 +29,13 @@ export function Challenges() {
   const [respondingTo, setRespondingTo] = useState<number | null>(null)
 
   const handleRespond = async (challengeId: number) => {
+    if (!selectedAccount) return
+
     setRespondingTo(challengeId)
     try {
       // In a real implementation, this would fetch the proof from the provider node
       const mockProof = new Uint8Array(64)
-      await respondToChallenge(challengeId, mockProof)
+      await respondToChallenge(challengeId, mockProof, selectedAccount)
     } catch (error) {
       console.error('Failed to respond to challenge:', error)
     } finally {

@@ -1,4 +1,4 @@
-import { FileText, ExternalLink } from 'lucide-react'
+import { FileText } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import {

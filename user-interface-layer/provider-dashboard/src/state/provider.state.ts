@@ -1,7 +1,26 @@
-import { BehaviorSubject, combineLatest, map } from 'rxjs'
-import { bind } from '@react-rxjs/core'
+/**
+ * Provider State - Real chain data queries
+ *
+ * Queries provider information, settings, agreements, checkpoints,
+ * challenges, and earnings from the blockchain.
+ */
 
-// Types
+import { BehaviorSubject, map } from 'rxjs'
+import { bind } from '@react-rxjs/core'
+import {
+  getProviderInfo,
+  getProviderSettings,
+  getProviderAgreements,
+  getProviderCheckpoints,
+  getProviderChallenges,
+  OnChainProviderInfo,
+  OnChainProviderSettings,
+  OnChainAgreement,
+  OnChainCheckpoint,
+  OnChainChallenge,
+} from '@/lib/chain-client'
+
+// Types (matching chain types with some UI additions)
 export interface ProviderInfo {
   account: string
   stake: bigint
@@ -104,83 +123,59 @@ export const [useCapacityUsage] = bind(capacityUsage$, 0)
 export const [useIsProviderLoading] = bind(isLoading$, false)
 export const [useProviderError] = bind(error$, null)
 
+// ─────────────────────────────────────────────────────────────────────────────
 // Actions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Load provider data from chain
+ */
 export async function loadProviderData(address: string): Promise<void> {
   isLoading$.next(true)
   error$.next(null)
 
   try {
-    // TODO: Query chain for actual provider data
-    // For now, simulate with mock data
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    // Mock provider info
-    providerInfo$.next({
-      account: address,
-      stake: 1_000_000_000_000_000n, // 1000 tokens
-      capacity: 1_073_741_824_000n, // 1 TB
-      usedCapacity: 536_870_912_000n, // 500 GB
-      bucketCount: 5,
-      registeredAt: Date.now() - 86400000 * 30, // 30 days ago
-    })
-
-    providerSettings$.next({
-      minDuration: 100,
-      maxDuration: 100_000,
-      pricePerByte: 1_000_000n,
-      acceptingPrimary: true,
-      acceptingReplica: true,
-      replicaSyncPrice: 500_000n,
-      acceptingExtensions: true,
-      maxCapacity: 1_073_741_824_000n,
-    })
-
-    // Mock agreements
-    agreements$.next([
-      {
-        id: 1,
-        bucketId: 0,
-        provider: address,
-        user: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
-        maxBytes: 107_374_182_400n, // 100 GB
-        pricePerByte: 1_000_000n,
-        startBlock: 1000,
-        endBlock: 11000,
-        isPrimary: true,
-        status: 'active',
-      },
-      {
-        id: 2,
-        bucketId: 1,
-        provider: address,
-        user: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
-        maxBytes: 53_687_091_200n, // 50 GB
-        pricePerByte: 1_000_000n,
-        startBlock: 2000,
-        endBlock: 12000,
-        isPrimary: true,
-        status: 'active',
-      },
+    // Query provider info and settings in parallel
+    const [chainInfo, chainSettings] = await Promise.all([
+      getProviderInfo(address),
+      getProviderSettings(address),
     ])
 
-    // Mock checkpoints
-    checkpoints$.next([
-      {
-        bucketId: 0,
-        mmrRoot: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-        leafCount: 1000,
-        submittedAt: Date.now() - 3600000,
-        blockNumber: 5000,
-        providers: [address],
-      },
+    if (chainInfo) {
+      providerInfo$.next(convertProviderInfo(address, chainInfo))
+    } else {
+      providerInfo$.next(null)
+    }
+
+    if (chainSettings) {
+      providerSettings$.next(convertProviderSettings(chainSettings))
+    } else {
+      providerSettings$.next(null)
+    }
+
+    // Query agreements, checkpoints, challenges in parallel
+    const [chainAgreements, chainCheckpoints, chainChallenges] = await Promise.all([
+      getProviderAgreements(address),
+      getProviderCheckpoints(address),
+      getProviderChallenges(address),
     ])
 
-    // Mock earnings
+    agreements$.next(chainAgreements.map(convertAgreement))
+    checkpoints$.next(chainCheckpoints.map(convertCheckpoint))
+    challenges$.next(chainChallenges.map(convertChallenge))
+
+    // Calculate earnings from agreements
+    const activeAgreements = chainAgreements.filter((a) => a.status === 'active')
+    const activeValue = activeAgreements.reduce(
+      (sum, a) => sum + a.maxBytes * a.pricePerByte * BigInt(a.endBlock - a.startBlock),
+      0n
+    )
+
     earnings$.next({
-      totalEarned: 50_000_000_000_000n,
-      pendingPayouts: 5_000_000_000_000n,
-      lastPayoutBlock: 4500,
-      activeAgreementValue: 160_000_000_000_000n,
+      totalEarned: 0n, // Would need historical data
+      pendingPayouts: 0n, // Would need escrow queries
+      lastPayoutBlock: 0,
+      activeAgreementValue: activeValue,
     })
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Failed to load provider data')
@@ -189,16 +184,28 @@ export async function loadProviderData(address: string): Promise<void> {
   }
 }
 
-export async function registerProvider(stake: bigint, settings: ProviderSettings): Promise<void> {
+// Re-export TxStatus for UI components
+export type { TxStatus, TxProgressCallback } from '@/lib/chain-client'
+
+/**
+ * Register as a provider (submits extrinsic via wallet)
+ */
+export async function registerProvider(
+  stake: bigint,
+  multiaddr: string,
+  settings: ProviderSettings,
+  signer: any, // InjectedPolkadotAccount
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
   isLoading$.next(true)
   error$.next(null)
 
   try {
-    // TODO: Submit registration extrinsic
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    // Import submitRegisterProvider from chain-client
+    const { submitRegisterProvider } = await import('@/lib/chain-client')
+    await submitRegisterProvider({ stake, multiaddr }, settings, signer, onProgress)
 
-    // Reload data after registration
-    // loadProviderData would be called with the current account
+    // Data will be reloaded after successful registration
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Registration failed')
     throw err
@@ -207,7 +214,14 @@ export async function registerProvider(stake: bigint, settings: ProviderSettings
   }
 }
 
-export async function updateSettings(settings: Partial<ProviderSettings>): Promise<void> {
+/**
+ * Update provider settings (submits extrinsic via wallet)
+ */
+export async function updateSettings(
+  settings: Partial<ProviderSettings>,
+  signer: any, // InjectedPolkadotAccount
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
   const current = providerSettings$.getValue()
   if (!current) throw new Error('No provider settings to update')
 
@@ -215,10 +229,12 @@ export async function updateSettings(settings: Partial<ProviderSettings>): Promi
   error$.next(null)
 
   try {
-    // TODO: Submit update extrinsic
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const { submitUpdateSettings } = await import('@/lib/chain-client')
+    const fullSettings = { ...current, ...settings }
+    await submitUpdateSettings(fullSettings, signer, onProgress)
 
-    providerSettings$.next({ ...current, ...settings })
+    // Update local state optimistically
+    providerSettings$.next(fullSettings)
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Update failed')
     throw err
@@ -227,16 +243,47 @@ export async function updateSettings(settings: Partial<ProviderSettings>): Promi
   }
 }
 
+/**
+ * Add stake (submits extrinsic via wallet)
+ */
+export async function addStake(amount: bigint, signer: any): Promise<void> {
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitAddStake } = await import('@/lib/chain-client')
+    await submitAddStake(amount, signer)
+
+    // Update local state optimistically
+    const current = providerInfo$.getValue()
+    if (current) {
+      providerInfo$.next({
+        ...current,
+        stake: current.stake + amount,
+      })
+    }
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'Add stake failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
+ * Respond to a challenge (submits extrinsic via wallet)
+ */
 export async function respondToChallenge(
   challengeId: number,
-  proof: Uint8Array
+  proof: Uint8Array,
+  signer: any
 ): Promise<void> {
   isLoading$.next(true)
   error$.next(null)
 
   try {
-    // TODO: Submit challenge response extrinsic
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const { submitChallengeResponse } = await import('@/lib/chain-client')
+    await submitChallengeResponse(challengeId, proof, signer)
 
     // Update challenge status locally
     const currentChallenges = challenges$.getValue()
@@ -263,11 +310,79 @@ export function clearProviderState(): void {
   error$.next(null)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Converters (chain types to UI types)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function convertProviderInfo(address: string, chain: OnChainProviderInfo): ProviderInfo {
+  return {
+    account: address,
+    stake: chain.stake,
+    capacity: chain.capacity ?? 0n,
+    usedCapacity: chain.usedCapacity ?? 0n,
+    bucketCount: chain.activeBuckets,
+    registeredAt: chain.registeredAt,
+  }
+}
+
+function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettings {
+  return {
+    minDuration: chain.minDuration,
+    maxDuration: chain.maxDuration,
+    pricePerByte: chain.pricePerByte,
+    acceptingPrimary: chain.acceptingPrimary,
+    acceptingReplica: chain.acceptingReplica,
+    replicaSyncPrice: chain.replicaSyncPrice,
+    acceptingExtensions: chain.acceptingExtensions,
+    maxCapacity: chain.maxCapacity,
+  }
+}
+
+function convertAgreement(chain: OnChainAgreement): Agreement {
+  return {
+    id: chain.id,
+    bucketId: chain.bucketId,
+    provider: chain.provider,
+    user: chain.user,
+    maxBytes: chain.maxBytes,
+    pricePerByte: chain.pricePerByte,
+    startBlock: chain.startBlock,
+    endBlock: chain.endBlock,
+    isPrimary: chain.isPrimary,
+    status: chain.status,
+  }
+}
+
+function convertCheckpoint(chain: OnChainCheckpoint): Checkpoint {
+  return {
+    bucketId: chain.bucketId,
+    mmrRoot: chain.mmrRoot,
+    leafCount: chain.leafCount,
+    submittedAt: chain.submittedAt,
+    blockNumber: chain.blockNumber,
+    providers: chain.providers,
+  }
+}
+
+function convertChallenge(chain: OnChainChallenge): Challenge {
+  return {
+    id: chain.id,
+    bucketId: chain.bucketId,
+    challenger: chain.challenger,
+    provider: chain.provider,
+    leafIndex: chain.leafIndex,
+    status: chain.status,
+    createdAt: chain.createdAt,
+    deadline: chain.deadline,
+  }
+}
+
 // Export actions for testing
 export const providerActions = {
   loadProviderData,
   registerProvider,
   updateSettings,
+  addStake,
   respondToChallenge,
   clearProviderState,
 }

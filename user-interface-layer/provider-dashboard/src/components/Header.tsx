@@ -1,7 +1,29 @@
+import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Server, FileText, Shield, Coins, CheckCircle, Settings } from 'lucide-react'
+import {
+  Server,
+  FileText,
+  Shield,
+  Coins,
+  CheckCircle,
+  Settings,
+  ChevronDown,
+  TestTube,
+  Wallet,
+} from 'lucide-react'
 import { useConnectionStatus, useBlockNumber, connect as connectChain } from '@/state/chain.state'
-import { useSelectedAccount, useWalletStatus, connectWallet } from '@/state/wallet.state'
+import {
+  useSelectedAccount,
+  useWalletStatus,
+  useWalletMode,
+  useAvailableExtensions,
+  useAccounts,
+  refreshExtensions,
+  connectExtension,
+  connectDevAccounts,
+  selectAccount,
+  disconnectWallet,
+} from '@/state/wallet.state'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
@@ -22,17 +44,81 @@ export function Header() {
   const blockNumber = useBlockNumber()
   const selectedAccount = useSelectedAccount()
   const walletStatus = useWalletStatus()
+  const walletMode = useWalletMode()
+  const extensions = useAvailableExtensions()
+  const accounts = useAccounts()
 
-  const handleConnect = async () => {
-    try {
-      // Connect to chain first, then wallet
-      if (connectionStatus !== 'connected') {
+  const [showConnectOptions, setShowConnectOptions] = useState(false)
+  const [showExtensionPicker, setShowExtensionPicker] = useState(false)
+  const [showAccountPicker, setShowAccountPicker] = useState(false)
+
+  const handleConnectClick = async () => {
+    // Connect to chain first if needed
+    if (connectionStatus !== 'connected') {
+      try {
         await connectChain()
+      } catch (error) {
+        console.error('Failed to connect to chain:', error)
+        return
       }
-      await connectWallet()
-    } catch (error) {
-      console.error('Connection failed:', error)
     }
+
+    // Show connection options
+    setShowConnectOptions(true)
+  }
+
+  const handleDevConnect = async () => {
+    setShowConnectOptions(false)
+    try {
+      await connectDevAccounts()
+    } catch (error) {
+      console.error('Failed to connect dev accounts:', error)
+    }
+  }
+
+  const handleExtensionConnectClick = () => {
+    setShowConnectOptions(false)
+    const available = refreshExtensions()
+
+    if (available.length === 0) {
+      alert('No wallet extensions found. Please install Polkadot.js, Talisman, or SubWallet.')
+      return
+    }
+
+    if (available.length === 1) {
+      handleExtensionSelect(available[0])
+    } else {
+      setShowExtensionPicker(true)
+    }
+  }
+
+  const handleExtensionSelect = async (extensionName: string) => {
+    setShowExtensionPicker(false)
+    try {
+      await connectExtension(extensionName)
+    } catch (error) {
+      console.error('Failed to connect to extension:', error)
+    }
+  }
+
+  const handleAccountSelect = async (address: string) => {
+    setShowAccountPicker(false)
+    try {
+      await selectAccount(address)
+    } catch (error) {
+      console.error('Failed to select account:', error)
+    }
+  }
+
+  const handleDisconnect = () => {
+    setShowAccountPicker(false)
+    disconnectWallet()
+  }
+
+  const closeAllDropdowns = () => {
+    setShowConnectOptions(false)
+    setShowExtensionPicker(false)
+    setShowAccountPicker(false)
   }
 
   return (
@@ -83,28 +169,178 @@ export function Header() {
 
             {/* Account */}
             {selectedAccount ? (
-              <Button variant="outline" size="sm">
-                {formatAddress(selectedAccount.address)}
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={handleConnect}
-                disabled={walletStatus === 'connecting'}
-              >
-                {walletStatus === 'connecting' ? (
-                  <>
-                    <Spinner size="sm" className="mr-2" />
-                    Connecting...
-                  </>
-                ) : (
-                  'Connect Wallet'
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAccountPicker(!showAccountPicker)}
+                  className="flex items-center gap-2"
+                >
+                  {walletMode === 'dev' && (
+                    <TestTube className="h-3 w-3 text-yellow-500" />
+                  )}
+                  <span>{selectedAccount.name || formatAddress(selectedAccount.address)}</span>
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+
+                {/* Account Picker Dropdown */}
+                {showAccountPicker && (
+                  <div className="absolute right-0 mt-2 w-72 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
+                    {/* Mode indicator */}
+                    <div className="px-3 py-2 bg-gray-900/50 border-b border-gray-700">
+                      {walletMode === 'dev' ? (
+                        <div className="flex items-center gap-2 text-yellow-500 text-xs">
+                          <TestTube className="h-3 w-3" />
+                          <span>Development Mode - Test accounts only</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-green-500 text-xs">
+                          <Wallet className="h-3 w-3" />
+                          <span>Connected via browser extension</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-2 border-b border-gray-700">
+                      <div className="text-xs text-gray-400">Connected Account</div>
+                      <div className="text-sm font-medium truncate">
+                        {selectedAccount.name || 'Account'}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {selectedAccount.address}
+                      </div>
+                    </div>
+
+                    {accounts.length > 1 && (
+                      <div className="max-h-48 overflow-y-auto">
+                        <div className="p-2 text-xs text-gray-400 border-b border-gray-700">
+                          Switch Account
+                        </div>
+                        {accounts.map((account) => (
+                          <button
+                            key={account.address}
+                            onClick={() => handleAccountSelect(account.address)}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-700 ${
+                              account.address === selectedAccount.address
+                                ? 'bg-gray-700/50'
+                                : ''
+                            }`}
+                          >
+                            <div className="font-medium truncate">
+                              {account.name || 'Account'}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate">
+                              {formatAddress(account.address)}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleDisconnect}
+                      className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-700 border-t border-gray-700"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
                 )}
-              </Button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Button
+                  size="sm"
+                  onClick={handleConnectClick}
+                  disabled={walletStatus === 'connecting'}
+                >
+                  {walletStatus === 'connecting' ? (
+                    <>
+                      <Spinner size="sm" className="mr-2" />
+                      Connecting...
+                    </>
+                  ) : (
+                    'Connect'
+                  )}
+                </Button>
+
+                {/* Connection Options Dropdown */}
+                {showConnectOptions && (
+                  <div className="absolute right-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
+                    <div className="p-2 border-b border-gray-700">
+                      <div className="text-xs text-gray-400">Choose Connection Type</div>
+                    </div>
+
+                    {/* Dev Accounts Option */}
+                    <button
+                      onClick={handleDevConnect}
+                      className="w-full text-left px-3 py-3 hover:bg-gray-700 border-b border-gray-700"
+                    >
+                      <div className="flex items-center gap-2">
+                        <TestTube className="h-4 w-4 text-yellow-500" />
+                        <span className="font-medium">Dev Accounts</span>
+                        <Badge variant="warning" className="text-xs ml-auto">Local</Badge>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 ml-6">
+                        Use Alice, Bob, etc. for local development. No real funds.
+                      </p>
+                    </button>
+
+                    {/* Browser Extension Option */}
+                    <button
+                      onClick={handleExtensionConnectClick}
+                      className="w-full text-left px-3 py-3 hover:bg-gray-700"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Wallet className="h-4 w-4 text-purple-400" />
+                        <span className="font-medium">Browser Wallet</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 ml-6">
+                        Connect Polkadot.js, Talisman, or SubWallet for testnet/mainnet.
+                      </p>
+                    </button>
+
+                    <button
+                      onClick={() => setShowConnectOptions(false)}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 border-t border-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* Extension Picker Dropdown */}
+                {showExtensionPicker && extensions.length > 0 && (
+                  <div className="absolute right-0 mt-2 w-56 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
+                    <div className="p-2 border-b border-gray-700">
+                      <div className="text-xs text-gray-400">Select Wallet Extension</div>
+                    </div>
+                    {extensions.map((ext) => (
+                      <button
+                        key={ext}
+                        onClick={() => handleExtensionSelect(ext)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-700 capitalize"
+                      >
+                        {ext}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setShowExtensionPicker(false)}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 border-t border-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Click outside to close dropdowns */}
+      {(showConnectOptions || showExtensionPicker || showAccountPicker) && (
+        <div className="fixed inset-0 z-40" onClick={closeAllDropdowns} />
+      )}
     </header>
   )
 }

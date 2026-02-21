@@ -12,7 +12,6 @@ import {
   connectToChain,
   disconnectFromChain,
   subscribeToBlocks,
-  getClient,
 } from '@/lib/chain-client'
 
 // Types

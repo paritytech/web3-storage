@@ -11,7 +11,6 @@
 
 import { useState, useEffect } from 'react'
 import {
-  Server,
   Info,
   Wallet,
   CheckCircle,
@@ -33,7 +32,8 @@ import {
   useSelectedBalance,
   useIsSelectedRegistered,
   useWalletStatus,
-  connectWallet,
+  refreshExtensions,
+  connectExtension,
   markAsRegistered,
 } from '@/state/wallet.state'
 import { useIsConnected, connect as connectChain } from '@/state/chain.state'
@@ -42,7 +42,9 @@ import {
   useIsProviderLoading,
   updateSettings,
   loadProviderData,
+  registerProvider,
   type ProviderSettings,
+  type TxStatus,
 } from '@/state/provider.state'
 import { formatTokens, parseTokens, formatBytes } from '@/utils/format'
 
@@ -66,12 +68,11 @@ export function Registration() {
   const isRegistered = useIsSelectedRegistered()
   const walletStatus = useWalletStatus()
   const isChainConnected = useIsConnected()
-  const currentSettings = useProviderSettings()
-  const isLoading = useIsProviderLoading()
 
   // Wizard state
   const [step, setStep] = useState<WizardStep>('connect')
   const [stake, setStake] = useState('1000')
+  const [multiaddr, setMultiaddr] = useState('/ip4/127.0.0.1/tcp/3000')
   const [settings, setSettings] = useState<ProviderSettings>({
     minDuration: 100,
     maxDuration: 100_000,
@@ -85,6 +86,7 @@ export function Registration() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
+  const [progressStatus, setProgressStatus] = useState<string | null>(null)
 
   // Auto-advance wizard based on state
   useEffect(() => {
@@ -127,34 +129,49 @@ export function Registration() {
       if (!isChainConnected) {
         await connectChain()
       }
-      await connectWallet()
+
+      // Refresh and connect to wallet extension
+      const available = refreshExtensions()
+      if (available.length === 0) {
+        setError('No wallet extensions found. Please install Polkadot.js, Talisman, or SubWallet.')
+        return
+      }
+
+      // Connect to first available extension (or could show picker)
+      await connectExtension(available[0])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed')
     }
   }
 
   const handleRegister = async () => {
+    if (!selectedAccount) {
+      setError('No account selected')
+      return
+    }
+
     setIsSubmitting(true)
     setError(null)
+    setProgressStatus('Preparing transaction...')
 
     try {
-      // In real implementation, this would submit the extrinsic
-      // const stakeAmount = parseTokens(stake)
-      // const tx = buildRegisterProviderTx({ stake: stakeAmount })
-      // await signAndSubmit(tx)
+      const stakeAmount = parseTokens(stake)
 
-      // Simulate transaction
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      setTxHash('0x1234567890abcdef...')
+      // Submit the registration extrinsic via wallet signer with progress callback
+      await registerProvider(stakeAmount, multiaddr, settings, selectedAccount, (status: TxStatus) => {
+        setProgressStatus(status.message)
+        if (status.type === 'inBlock' || status.type === 'finalized') {
+          setTxHash('blockHash' in status ? status.blockHash : null)
+        }
+      })
 
       // Mark as registered in state
-      if (selectedAccount) {
-        markAsRegistered(selectedAccount.address)
-      }
-
+      markAsRegistered(selectedAccount.address)
+      setProgressStatus(null)
       setStep('complete')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
+      setProgressStatus(null)
     } finally {
       setIsSubmitting(false)
     }
@@ -359,6 +376,21 @@ export function Registration() {
             <CardDescription>Set your pricing and acceptance preferences</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Provider Node Address */}
+            <div className="space-y-2">
+              <Label htmlFor="multiaddr">Provider Node Address (multiaddr)</Label>
+              <Input
+                id="multiaddr"
+                type="text"
+                value={multiaddr}
+                onChange={(e) => setMultiaddr(e.target.value)}
+                placeholder="/ip4/127.0.0.1/tcp/3000"
+              />
+              <p className="text-xs text-gray-500">
+                The address where your provider node will accept connections (e.g., /ip4/127.0.0.1/tcp/3000)
+              </p>
+            </div>
+
             {/* Pricing */}
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
@@ -489,6 +521,10 @@ export function Registration() {
                 <span className="font-medium">{formatTokens(parseTokens(stake))}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-gray-400">Node Address</span>
+                <span className="font-mono text-sm">{multiaddr}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-400">Price per Byte</span>
                 <span>{formatTokens(settings.pricePerByte)}</span>
               </div>
@@ -533,7 +569,7 @@ export function Registration() {
                 {isSubmitting ? (
                   <>
                     <Spinner size="sm" className="mr-2" />
-                    Registering...
+                    {progressStatus || 'Registering...'}
                   </>
                 ) : (
                   <>
@@ -623,6 +659,7 @@ function SettingsManager() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [progressStatus, setProgressStatus] = useState<string | null>(null)
 
   // Initialize form with current settings
   useEffect(() => {
@@ -632,18 +669,23 @@ function SettingsManager() {
   }, [currentSettings])
 
   const handleUpdate = async () => {
-    if (!settings) return
+    if (!settings || !selectedAccount) return
 
     setIsSubmitting(true)
     setError(null)
     setSuccess(false)
+    setProgressStatus('Preparing transaction...')
 
     try {
-      await updateSettings(settings)
+      await updateSettings(settings, selectedAccount, (status: TxStatus) => {
+        setProgressStatus(status.message)
+      })
       setSuccess(true)
+      setProgressStatus(null)
       setTimeout(() => setSuccess(false), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Update failed')
+      setProgressStatus(null)
     } finally {
       setIsSubmitting(false)
     }
@@ -793,7 +835,7 @@ function SettingsManager() {
         {isSubmitting ? (
           <>
             <Spinner size="sm" className="mr-2" />
-            Updating...
+            {progressStatus || 'Updating...'}
           </>
         ) : (
           'Update Settings'
