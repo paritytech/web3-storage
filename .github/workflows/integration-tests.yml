@@ -129,3 +129,4 @@ jobs:
             /tmp/zombienet.log
             /tmp/provider.log
             /tmp/zombie-*/**/*.log
+            examples/papi/package-lock.json
