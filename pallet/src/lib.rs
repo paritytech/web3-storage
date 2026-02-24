@@ -238,36 +238,36 @@ pub mod pallet {
     pub struct GenesisConfig<T: Config> {
         /// Buckets to create at genesis: (admin_account, min_providers).
         pub buckets: Vec<(T::AccountId, u32)>,
-        // /// Providers to register at genesis: (account, multiaddr, public_key, stake).
-        // pub providers: Vec<(
-        //     T::AccountId,
-        //     BoundedVec<u8, T::MaxMultiaddrLength>,
-        //     BoundedVec<u8, ConstU32<64>>,
-        //     BalanceOf<T>,
-        // )>,
+        /// Providers to register at genesis: (account, multiaddr, public_key, stake).
+        pub providers: Vec<(
+            T::AccountId,
+            BoundedVec<u8, T::MaxMultiaddrLength>,
+            BoundedVec<u8, ConstU32<64>>,
+            BalanceOf<T>,
+        )>,
     }
 
     #[pallet::genesis_build]
     impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
         fn build(&self) {
-            // for (account, multiaddr, public_key, stake) in &self.providers {
-            //     T::Currency::reserve(account, *stake)
-            //         .expect("genesis provider must have enough balance for stake");
-            //
-            //     let provider_info = ProviderInfo {
-            //         multiaddr: multiaddr.clone(),
-            //         public_key: public_key.clone(),
-            //         stake: *stake,
-            //         committed_bytes: 0,
-            //         settings: ProviderSettings::default(),
-            //         stats: ProviderStats {
-            //             registered_at: Zero::zero(),
-            //             ..Default::default()
-            //         },
-            //     };
-            //
-            //     Providers::<T>::insert(account, provider_info);
-            // }
+            for (account, multiaddr, public_key, stake) in &self.providers {
+                T::Currency::reserve(account, *stake)
+                    .expect("genesis provider must have enough balance for stake");
+
+                let provider_info = ProviderInfo {
+                    multiaddr: multiaddr.clone(),
+                    public_key: public_key.clone(),
+                    stake: *stake,
+                    committed_bytes: 0,
+                    settings: ProviderSettings::default(),
+                    stats: ProviderStats {
+                        registered_at: Zero::zero(),
+                        ..Default::default()
+                    },
+                };
+
+                Providers::<T>::insert(account, provider_info);
+            }
 
             for (admin, min_providers) in &self.buckets {
                 Pallet::<T>::create_bucket_internal(admin, *min_providers)
