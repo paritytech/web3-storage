@@ -3,7 +3,7 @@
 use crate::*;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
-use frame_support::{build_struct_json_patch, BoundedVec};
+use frame_support::build_struct_json_patch;
 use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
@@ -17,12 +17,6 @@ fn storage_parachain_genesis(
     id: ParaId,
     sudo_account: Option<AccountId>,
     genesis_buckets: Vec<(AccountId, u32)>,
-    genesis_providers: Vec<(
-        AccountId,
-        BoundedVec<u8, ConstU32<128>>,
-        BoundedVec<u8, ConstU32<64>>,
-        Balance,
-    )>,
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
@@ -55,7 +49,6 @@ fn storage_parachain_genesis(
         sudo: SudoConfig { key: sudo_account },
         storage_provider: StorageProviderConfig {
             buckets: genesis_buckets,
-            providers: genesis_providers,
         },
     })
 }
@@ -87,21 +80,6 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
-            // Genesis providers: (account, multiaddr, public_key, stake)
-            vec![(
-                Sr25519Keyring::Alice.to_account_id(),
-                b"/ip4/127.0.0.1/tcp/3333/http"
-                    .to_vec()
-                    .try_into()
-                    .expect("multiaddr fits"),
-                Sr25519Keyring::Alice
-                    .public()
-                    .0
-                    .to_vec()
-                    .try_into()
-                    .expect("public key fits"),
-                MinProviderStake::get(),
-            )],
         ),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
@@ -124,21 +102,6 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
-            // Genesis providers: (account, multiaddr, public_key, stake)
-            vec![(
-                Sr25519Keyring::Alice.to_account_id(),
-                b"/ip4/127.0.0.1/tcp/3333/http"
-                    .to_vec()
-                    .try_into()
-                    .expect("multiaddr fits"),
-                Sr25519Keyring::Alice
-                    .public()
-                    .0
-                    .to_vec()
-                    .try_into()
-                    .expect("public key fits"),
-                MinProviderStake::get(),
-            )],
         ),
         _ => return None,
     };
