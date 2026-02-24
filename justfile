@@ -28,6 +28,14 @@ default:
 build:
     cargo build --release
 
+# Build only the runtime
+build-runtime:
+    cargo build --release -p storage-parachain-runtime
+
+# Build only the provider node
+build-provider:
+    cargo build --release -p storage-provider-node
+
 [private]
 _download BIN URL:
     #!/usr/bin/env bash
@@ -66,7 +74,7 @@ check: download-binaries
     @echo "All prerequisites found!"
 
 # Start the blockchain (relay chain + parachain)
-start-chain: check build
+start-chain: check build-runtime
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
@@ -76,10 +84,6 @@ start-chain: check build
     echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222"
     echo ""
     .bin/zombienet spawn zombienet.toml
-
-# Build only the provider node
-build-provider:
-    cargo build --release -p storage-provider-node
 
 # Start the storage provider node
 start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build-provider
@@ -117,7 +121,7 @@ papi-setup:
     npm run papi:generate
 
 # Generate chain spec
-generate-chain-spec: build
+generate-chain-spec: build-runtime
     ./scripts/build-chain-spec.sh > chain-spec.json
     @echo "Chain spec generated: chain-spec.json"
 

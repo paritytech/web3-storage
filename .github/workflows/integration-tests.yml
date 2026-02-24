@@ -64,15 +64,11 @@ jobs:
         if: steps.bin-cache.outputs.cache-hit != 'true'
         run: just download-binaries
 
-      - name: Build
-        run: cargo build --release
+      - name: Build runtime and provider
+        run: just build-runtime && just build-provider
 
       - name: Start chain (background)
         run: just start-chain &> /tmp/zombienet.log &
-
-      - name: Start provider (background)
-        run: just start-provider &> /tmp/provider.log &
-
       - name: Wait for chain to produce blocks
         run: |
           echo "Waiting for parachain RPC to be ready..."
@@ -91,6 +87,8 @@ jobs:
             sleep 5
           done
 
+      - name: Start provider (background)
+        run: just start-provider &> /tmp/provider.log &
       - name: Wait for provider to be ready
         run: |
           echo "Waiting for provider HTTP server..."
