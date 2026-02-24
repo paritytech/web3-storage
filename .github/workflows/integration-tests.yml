@@ -75,7 +75,7 @@ jobs:
           for i in $(seq 1 120); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
               -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null)
+              http://127.0.0.1:2222 2>/dev/null) || true
             BLOCK_HEX=$(echo "$RESPONSE" | jq -r '.result.number // empty' 2>/dev/null)
             if [ -n "$BLOCK_HEX" ]; then
               BLOCK_NUM=$((BLOCK_HEX))
@@ -121,9 +121,11 @@ jobs:
           pkill -f "storage-provider-node" 2>/dev/null || true
 
       - name: Upload logs (on failure)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-test-logs
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
+            /tmp/zombie-*/**/*.log
