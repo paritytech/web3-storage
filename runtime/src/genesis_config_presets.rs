@@ -17,6 +17,7 @@ fn storage_parachain_genesis(
     id: ParaId,
     sudo_account: Option<AccountId>,
     genesis_buckets: Vec<(AccountId, u32)>,
+    genesis_providers: Vec<(AccountId, Vec<u8>, Vec<u8>, Balance)>,
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
@@ -49,6 +50,7 @@ fn storage_parachain_genesis(
         sudo: SudoConfig { key: sudo_account },
         storage_provider: StorageProviderConfig {
             buckets: genesis_buckets,
+            providers: genesis_providers,
         },
     })
 }
@@ -80,6 +82,13 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
+            // Genesis providers: (account, multiaddr, public_key, stake)
+            vec![(
+                Sr25519Keyring::Alice.to_account_id(),
+                b"/ip4/127.0.0.1/tcp/3333/http".to_vec(),
+                Sr25519Keyring::Alice.public().0.to_vec(),
+                MinProviderStake::get(),
+            )],
         ),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
@@ -102,6 +111,13 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
+            // Genesis providers: (account, multiaddr, public_key, stake)
+            vec![(
+                Sr25519Keyring::Alice.to_account_id(),
+                b"/ip4/127.0.0.1/tcp/3333/http".to_vec(),
+                Sr25519Keyring::Alice.public().0.to_vec(),
+                MinProviderStake::get(),
+            )],
         ),
         _ => return None,
     };
