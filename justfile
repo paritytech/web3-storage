@@ -77,8 +77,12 @@ start-chain: check build
     echo ""
     .bin/zombienet spawn zombienet.toml
 
+# Build only the provider node
+build-provider:
+    cargo build --release -p storage-provider-node
+
 # Start the storage provider node
-start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build
+start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build-provider
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ==="
