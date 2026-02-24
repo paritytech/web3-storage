@@ -239,28 +239,24 @@ pub mod pallet {
         /// Buckets to create at genesis: (admin_account, min_providers).
         pub buckets: Vec<(T::AccountId, u32)>,
         /// Providers to register at genesis: (account, multiaddr, public_key, stake).
-        pub providers: Vec<(T::AccountId, Vec<u8>, Vec<u8>, BalanceOf<T>)>,
+        pub providers: Vec<(
+            T::AccountId,
+            BoundedVec<u8, T::MaxMultiaddrLength>,
+            BoundedVec<u8, ConstU32<64>>,
+            BalanceOf<T>,
+        )>,
     }
 
     #[pallet::genesis_build]
     impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
         fn build(&self) {
             for (account, multiaddr, public_key, stake) in &self.providers {
-                let multiaddr: BoundedVec<u8, T::MaxMultiaddrLength> = multiaddr
-                    .clone()
-                    .try_into()
-                    .expect("genesis provider multiaddr too long");
-                let public_key: BoundedVec<u8, ConstU32<64>> = public_key
-                    .clone()
-                    .try_into()
-                    .expect("genesis provider public_key too long");
-
                 T::Currency::reserve(account, *stake)
                     .expect("genesis provider must have enough balance for stake");
 
                 let provider_info = ProviderInfo {
-                    multiaddr,
-                    public_key,
+                    multiaddr: multiaddr.clone(),
+                    public_key: public_key.clone(),
                     stake: *stake,
                     committed_bytes: 0,
                     settings: ProviderSettings::default(),

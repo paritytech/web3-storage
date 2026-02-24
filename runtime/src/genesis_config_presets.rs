@@ -3,7 +3,7 @@
 use crate::*;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
-use frame_support::build_struct_json_patch;
+use frame_support::{build_struct_json_patch, BoundedVec};
 use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
@@ -17,7 +17,12 @@ fn storage_parachain_genesis(
     id: ParaId,
     sudo_account: Option<AccountId>,
     genesis_buckets: Vec<(AccountId, u32)>,
-    genesis_providers: Vec<(AccountId, Vec<u8>, Vec<u8>, Balance)>,
+    genesis_providers: Vec<(
+        AccountId,
+        BoundedVec<u8, ConstU32<128>>,
+        BoundedVec<u8, ConstU32<64>>,
+        Balance,
+    )>,
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
@@ -85,8 +90,16 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
             // Genesis providers: (account, multiaddr, public_key, stake)
             vec![(
                 Sr25519Keyring::Alice.to_account_id(),
-                b"/ip4/127.0.0.1/tcp/3333/http".to_vec(),
-                Sr25519Keyring::Alice.public().0.to_vec(),
+                b"/ip4/127.0.0.1/tcp/3333/http"
+                    .to_vec()
+                    .try_into()
+                    .expect("multiaddr fits"),
+                Sr25519Keyring::Alice
+                    .public()
+                    .0
+                    .to_vec()
+                    .try_into()
+                    .expect("public key fits"),
                 MinProviderStake::get(),
             )],
         ),
@@ -114,8 +127,16 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
             // Genesis providers: (account, multiaddr, public_key, stake)
             vec![(
                 Sr25519Keyring::Alice.to_account_id(),
-                b"/ip4/127.0.0.1/tcp/3333/http".to_vec(),
-                Sr25519Keyring::Alice.public().0.to_vec(),
+                b"/ip4/127.0.0.1/tcp/3333/http"
+                    .to_vec()
+                    .try_into()
+                    .expect("multiaddr fits"),
+                Sr25519Keyring::Alice
+                    .public()
+                    .0
+                    .to_vec()
+                    .try_into()
+                    .expect("public key fits"),
                 MinProviderStake::get(),
             )],
         ),
