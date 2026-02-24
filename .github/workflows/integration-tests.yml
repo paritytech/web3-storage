@@ -73,11 +73,16 @@ jobs:
         run: |
           echo "Waiting for parachain RPC to be ready..."
           for i in $(seq 1 120); do
-            if curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1]}' \
-              http://127.0.0.1:2222 2>/dev/null | jq -e '.result' > /dev/null 2>&1; then
-              echo "Parachain is producing blocks (attempt $i)"
-              break
+            RESPONSE=$(curl -s -H "Content-Type: application/json" \
+              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
+              http://127.0.0.1:2222 2>/dev/null)
+            BLOCK_HEX=$(echo "$RESPONSE" | jq -r '.result.number // empty' 2>/dev/null)
+            if [ -n "$BLOCK_HEX" ]; then
+              BLOCK_NUM=$((BLOCK_HEX))
+              if [ "$BLOCK_NUM" -ge 1 ]; then
+                echo "Parachain is producing blocks, latest block: #$BLOCK_NUM (attempt $i)"
+                break
+              fi
             fi
             if [ "$i" -eq 120 ]; then
               echo "Timeout: parachain did not start producing blocks"
