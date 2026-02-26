@@ -9,6 +9,7 @@
 
 **Code quality rules (MUST follow before committing):**
 - ALWAYS run `cargo +nightly fmt --all` before committing Rust code
+- ALWAYS run `taplo format --config .config/taplo.toml` before committing TOML files (Cargo.toml, etc.)
 - ALWAYS run `cargo clippy --all` and fix any errors before committing
 - ALWAYS run `cargo check --all` to verify code compiles before committing
 - Use `Debug` trait instead of deprecated `RuntimeDebug` from sp_runtime
@@ -17,10 +18,11 @@
 - Use proper line breaks for long function calls (rustfmt will handle this)
 
 **Pre-commit checklist:**
-1. `cargo +nightly fmt --all` - Format code
-2. `cargo check --all` - Verify compilation
-3. `cargo clippy --all` - Check for lint errors
-4. `cargo test` - Run tests (when relevant)
+1. `cargo +nightly fmt --all` - Format Rust code
+2. `taplo format --config .config/taplo.toml` - Format TOML files
+3. `cargo check --all` - Verify compilation
+4. `cargo clippy --all` - Check for lint errors
+5. `cargo test` - Run tests (when relevant)
 
 ## Project Overview
 
