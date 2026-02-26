@@ -691,6 +691,7 @@ pub enum CheckpointResult {
 /// - Verifying consensus (majority agreement)
 /// - Submitting checkpoint transactions on-chain
 /// - Tracking provider health over time
+#[allow(clippy::type_complexity)]
 pub struct CheckpointManager {
     /// Configuration.
     config: CheckpointConfig,

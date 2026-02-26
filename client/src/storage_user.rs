@@ -65,7 +65,7 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?;
 
         // Chunk the data
-        let chunks = self.chunk_data(data, strategy);
+        let chunks = Self::chunk_data(data, strategy);
 
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
@@ -425,14 +425,14 @@ impl StorageUserClient {
     // Helper Functions
     // ═════════════════════════════════════════════════════════════════════════
 
-    fn chunk_data(&self, data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
+    fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
             ChunkingStrategy::Fixed(chunk_size) => {
                 data.chunks(chunk_size).map(|c| c.to_vec()).collect()
             }
             ChunkingStrategy::ContentDefined => {
                 // TODO: Implement content-defined chunking
-                self.chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
+                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
             }
         }
     }

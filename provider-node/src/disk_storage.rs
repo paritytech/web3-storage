@@ -141,18 +141,16 @@ impl DiskStorage {
         let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         let mut summaries = Vec::new();
 
-        for item in iter {
-            if let Ok((key, value)) = item {
-                if key.len() == 8 {
-                    let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                    if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
-                        summaries.push(BucketSummary {
-                            bucket_id,
-                            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
-                            start_seq: state.start_seq,
-                            leaf_count: state.leaf_count(),
-                        });
-                    }
+        for (key, value) in iter.flatten() {
+            if key.len() == 8 {
+                let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
+                if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
+                    summaries.push(BucketSummary {
+                        bucket_id,
+                        mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+                        start_seq: state.start_seq,
+                        leaf_count: state.leaf_count(),
+                    });
                 }
             }
         }

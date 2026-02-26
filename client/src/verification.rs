@@ -75,7 +75,7 @@ impl ProviderStats {
             + (latency_score * latency_weight)
             + (spot_check_score * spot_check_weight);
 
-        self.reputation = total_score.min(100.0).max(0.0) as u8;
+        self.reputation = total_score.clamp(0.0, 100.0) as u8;
     }
 }
 
