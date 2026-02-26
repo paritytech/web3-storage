@@ -689,6 +689,7 @@ impl FileSystemClient {
     }
 
     /// Add an entry to a directory and update the DAG up to root
+    #[allow(clippy::too_many_arguments)]
     async fn add_entry_to_directory(
         &mut self,
         drive_id: DriveId,

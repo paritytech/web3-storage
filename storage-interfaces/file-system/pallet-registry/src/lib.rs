@@ -42,6 +42,9 @@ mod mock;
 mod tests;
 
 #[frame_support::pallet]
+#[allow(deprecated)]
+#[allow(clippy::let_unit_value)]
+#[allow(clippy::type_complexity)]
 pub mod pallet {
     use super::*;
     use alloc::vec::Vec;
@@ -49,10 +52,7 @@ pub mod pallet {
     use frame_support::{pallet_prelude::*, traits::Get};
     use frame_system::pallet_prelude::*;
     use pallet_storage_provider;
-    use sp_runtime::{
-        traits::{AtLeast32BitUnsigned, MaybeSerializeDeserialize, Member},
-        BoundedVec,
-    };
+    use sp_runtime::BoundedVec;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -1064,6 +1064,7 @@ pub mod pallet {
         }
 
         /// Helper: Get drive info
+        #[allow(clippy::type_complexity)]
         pub fn get_drive(
             drive_id: DriveId,
         ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength, BalanceOf<T>>>

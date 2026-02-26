@@ -677,10 +677,12 @@ mod tests {
 
     #[test]
     fn test_metrics_conversion() {
-        let mut metrics = CheckpointMetrics::default();
-        metrics.total_attempts = 100;
-        metrics.successful_submissions = 95;
-        metrics.conflicts_detected = 5;
+        let metrics = CheckpointMetrics {
+            total_attempts: 100,
+            successful_submissions: 95,
+            conflicts_detected: 5,
+            ..Default::default()
+        };
 
         let persisted = PersistedMetrics::from(&metrics);
         assert_eq!(persisted.total_attempts, 100);
@@ -760,8 +762,10 @@ mod tests {
         let account_id = AccountId32::new([1u8; 32]);
         histories.insert(account_id.clone(), ProviderHealthHistory::new(account_id));
 
-        let mut metrics = CheckpointMetrics::default();
-        metrics.total_attempts = 10;
+        let metrics = CheckpointMetrics {
+            total_attempts: 10,
+            ..Default::default()
+        };
 
         let state = StateBuilder::new()
             .with_health_histories(&histories)

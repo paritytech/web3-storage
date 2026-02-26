@@ -411,6 +411,7 @@ impl Storage {
     }
 
     /// Collect all leaf chunks under a root.
+    #[allow(dead_code)]
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
         let mut chunks = Vec::new();
         let mut stack = vec![root];

@@ -135,6 +135,7 @@ impl ChallengerClient {
     /// - `mmr_root`: The MMR root from the provider's commitment
     /// - `start_seq`: The start sequence from the commitment
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    #[allow(clippy::too_many_arguments)]
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,

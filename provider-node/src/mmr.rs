@@ -318,7 +318,7 @@ mod tests {
         let root = mmr.root();
 
         for (i, leaf) in leaves.iter().enumerate() {
-            let (siblings, path, peaks) =
+            let (siblings, path, _peaks) =
                 mmr.proof_with_path(i as u64).expect("proof should exist");
 
             // Verify via Mmr::verify_proof

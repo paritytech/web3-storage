@@ -1900,7 +1900,7 @@ pub mod pallet {
 
                     // Settle current period
                     let elapsed = current_block.saturating_sub(agreement.started_at);
-                    let remaining = if current_block < agreement.expires_at {
+                    let _remaining = if current_block < agreement.expires_at {
                         agreement.expires_at.saturating_sub(current_block)
                     } else {
                         Zero::zero()
@@ -2562,6 +2562,7 @@ pub mod pallet {
         /// Preferred for hot buckets where snapshots change frequently.
         #[pallet::call_index(42)]
         #[pallet::weight(T::WeightInfo::challenge_off_chain())]
+        #[allow(clippy::too_many_arguments)]
         pub fn challenge_offchain(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -3575,7 +3576,7 @@ pub mod pallet {
             Providers::<T>::iter()
                 .skip(offset as usize)
                 .take(limit as usize)
-                .filter_map(|(account, info)| {
+                .map(|(account, info)| {
                     let max_capacity = info.settings.max_capacity;
                     let available_capacity = if max_capacity > 0 {
                         Some(max_capacity.saturating_sub(info.committed_bytes))
@@ -3583,7 +3584,7 @@ pub mod pallet {
                         None // Unlimited
                     };
 
-                    Some((
+                    (
                         account,
                         crate::runtime_api::ProviderInfoResponse {
                             multiaddr: info.multiaddr.to_vec(),
@@ -3609,7 +3610,7 @@ pub mod pallet {
                             max_capacity,
                             available_capacity,
                         },
-                    ))
+                    )
                 })
                 .collect()
         }
@@ -3745,7 +3746,7 @@ pub mod pallet {
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
                 .map(
-                    |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
+                    |(_bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -4107,13 +4108,14 @@ pub mod pallet {
                 let mut partial_reason: Option<PartialMatchReason> = None;
 
                 // Check accepting status
-                if requirements.primary_only && !info.settings.accepting_primary {
-                    score = 0;
-                    partial_reason = Some(PartialMatchReason::NotAccepting);
-                } else if !requirements.primary_only
-                    && !info.settings.accepting_primary
-                    && info.settings.replica_sync_price.is_none()
-                {
+                // Primary required: must accept primary
+                // Replica acceptable: must accept primary OR have replica sync price
+                let not_accepting = if requirements.primary_only {
+                    !info.settings.accepting_primary
+                } else {
+                    !info.settings.accepting_primary && info.settings.replica_sync_price.is_none()
+                };
+                if not_accepting {
                     score = 0;
                     partial_reason = Some(PartialMatchReason::NotAccepting);
                 }
