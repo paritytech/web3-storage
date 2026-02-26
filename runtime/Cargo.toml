@@ -63,7 +63,6 @@ xcm-executor = { workspace = true }
 cumulus-pallet-aura-ext = { workspace = true }
 cumulus-pallet-weight-reclaim = { workspace = true }
 cumulus-pallet-parachain-system = { workspace = true }
-cumulus-pallet-session-benchmarking = { workspace = true }
 cumulus-pallet-xcm = { workspace = true }
 cumulus-pallet-xcmp-queue = { workspace = true }
 cumulus-primitives-aura = { workspace = true }
@@ -71,10 +70,6 @@ cumulus-primitives-core = { workspace = true }
 cumulus-primitives-utility = { workspace = true }
 parachains-common = { workspace = true }
 parachain-info = { workspace = true }
-
-# Utilities
-log = { workspace = true }
-docify = { version = "0.2.8" }
 
 [build-dependencies]
 substrate-wasm-builder = { workspace = true, optional = true }
@@ -84,7 +79,6 @@ default = ["std"]
 std = [
 	"codec/std",
 	"file-system-primitives/std",
-	"log/std",
 	"pallet-drive-registry/std",
 	"pallet-storage-provider/std",
 	"scale-info/std",
@@ -129,7 +123,6 @@ std = [
 	# Cumulus
 	"cumulus-pallet-aura-ext/std",
 	"cumulus-pallet-parachain-system/std",
-	"cumulus-pallet-session-benchmarking/std",
 	"cumulus-pallet-weight-reclaim/std",
 	"cumulus-pallet-xcm/std",
 	"cumulus-pallet-xcmp-queue/std",
@@ -143,7 +136,6 @@ std = [
 ]
 runtime-benchmarks = [
 	"cumulus-pallet-parachain-system/runtime-benchmarks",
-	"cumulus-pallet-session-benchmarking/runtime-benchmarks",
 	"cumulus-pallet-weight-reclaim/runtime-benchmarks",
 	"cumulus-pallet-xcmp-queue/runtime-benchmarks",
 	"cumulus-primitives-core/runtime-benchmarks",

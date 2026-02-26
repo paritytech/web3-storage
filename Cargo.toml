@@ -78,7 +78,6 @@ xcm-executor = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9
 # Cumulus
 cumulus-pallet-aura-ext = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
 cumulus-pallet-parachain-system = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
-cumulus-pallet-session-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
 cumulus-pallet-weight-reclaim = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
 cumulus-pallet-xcm = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
 cumulus-pallet-xcmp-queue = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
@@ -97,7 +96,7 @@ codec = { version = "3.7", default-features = false, features = ["derive", "max-
 scale-info = { version = "2.11", default-features = false, features = ["derive"] }
 
 # External dependencies
-log = { version = "0.4", default-features = false }
+log = "0.4"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
 
