@@ -10,19 +10,28 @@
 **Code quality rules (MUST follow before committing):**
 - ALWAYS run `cargo +nightly fmt --all` before committing Rust code
 - ALWAYS run `taplo format --config .config/taplo.toml` before committing TOML files (Cargo.toml, etc.)
-- ALWAYS run `cargo clippy --all` and fix any errors before committing
+- ALWAYS run `RUSTFLAGS="-D warnings" cargo clippy --all-targets --workspace` and fix ALL warnings (CI treats warnings as errors)
+- ALWAYS run `zepter run check --config .config/zepter.yaml` to verify feature propagation in Cargo.toml files
 - ALWAYS run `cargo check --all` to verify code compiles before committing
 - Use `Debug` trait instead of deprecated `RuntimeDebug` from sp_runtime
 - Avoid unused imports and variables (prefix with `_` if intentionally unused)
 - Follow Rust naming conventions: snake_case for functions/variables, CamelCase for types
 - Use proper line breaks for long function calls (rustfmt will handle this)
 
+**Common clippy fixes:**
+- `manual_clamp`: Use `.clamp(min, max)` instead of `.min(max).max(min)`
+- `only_used_in_recursion`: Convert methods that only use `self` in recursion to static methods
+- `manual_flatten`: Use `iter.flatten()` instead of `for item in iter { if let Ok(x) = item { ... } }`
+- `type_complexity`: Add `#[allow(clippy::type_complexity)]` for complex types that are intentional
+- `too_many_arguments`: Add `#[allow(clippy::too_many_arguments)]` if refactoring is not practical
+
 **Pre-commit checklist:**
 1. `cargo +nightly fmt --all` - Format Rust code
 2. `taplo format --config .config/taplo.toml` - Format TOML files
-3. `cargo check --all` - Verify compilation
-4. `cargo clippy --all` - Check for lint errors
-5. `cargo test` - Run tests (when relevant)
+3. `zepter run check --config .config/zepter.yaml` - Check feature propagation
+4. `cargo check --all` - Verify compilation
+5. `RUSTFLAGS="-D warnings" cargo clippy --all-targets --workspace` - Check for lint errors (warnings = errors)
+6. `cargo test` - Run tests (when relevant)
 
 ## Project Overview
 
