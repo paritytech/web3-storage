@@ -195,7 +195,12 @@ mod benchmarks {
         let max_price_per_byte: BalanceOf<T> = 1000u32.into();
 
         #[extrinsic_call]
-        create_bucket_with_storage(RawOrigin::Signed(admin), max_bytes, duration, max_price_per_byte);
+        create_bucket_with_storage(
+            RawOrigin::Signed(admin),
+            max_bytes,
+            duration,
+            max_price_per_byte,
+        );
     }
 
     #[benchmark]

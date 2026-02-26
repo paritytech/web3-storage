@@ -951,9 +951,9 @@ mod auto_matching_tests {
             // Create bucket with storage requirements
             assert_ok!(StorageProvider::create_bucket_with_storage(
                 RuntimeOrigin::signed(1),
-                100,  // max_bytes
-                100,  // duration
-                10    // max_price_per_byte (higher than provider's price of 0)
+                100, // max_bytes
+                100, // duration
+                10   // max_price_per_byte (higher than provider's price of 0)
             ));
 
             // Verify bucket was created
@@ -978,12 +978,7 @@ mod auto_matching_tests {
         new_test_ext().execute_with(|| {
             // No providers registered
             assert_noop!(
-                StorageProvider::create_bucket_with_storage(
-                    RuntimeOrigin::signed(1),
-                    100,
-                    100,
-                    10
-                ),
+                StorageProvider::create_bucket_with_storage(RuntimeOrigin::signed(1), 100, 100, 10),
                 Error::<Test>::NoMatchingProvider
             );
         });
@@ -1018,12 +1013,7 @@ mod auto_matching_tests {
             ));
 
             assert_noop!(
-                StorageProvider::create_bucket_with_storage(
-                    RuntimeOrigin::signed(1),
-                    100,
-                    100,
-                    10
-                ),
+                StorageProvider::create_bucket_with_storage(RuntimeOrigin::signed(1), 100, 100, 10),
                 Error::<Test>::NoMatchingProvider
             );
         });
@@ -1196,9 +1186,9 @@ mod auto_matching_tests {
             // Use small values to keep payment low: 10 * 10 * 5 = 500 max
             assert_ok!(StorageProvider::create_bucket_with_storage(
                 RuntimeOrigin::signed(1),
-                10,  // max_bytes
-                10,  // duration
-                10   // max_price_per_byte
+                10, // max_bytes
+                10, // duration
+                10  // max_price_per_byte
             ));
 
             // Verify matched with provider 3 (the cheaper one)

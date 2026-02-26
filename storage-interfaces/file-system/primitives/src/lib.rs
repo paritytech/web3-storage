@@ -34,7 +34,7 @@ use alloc::{string::String, vec::Vec};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
-use sp_runtime::{traits::Get, BoundedVec, RuntimeDebug};
+use sp_runtime::{traits::Get, BoundedVec};
 
 // ============================================================================
 // Protobuf types (std only)
@@ -71,7 +71,7 @@ pub type Cid = H256;
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -171,7 +171,7 @@ impl Get<u32> for MaxEncryptionParamsLength {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -226,7 +226,7 @@ impl DirectoryEntry {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -244,7 +244,7 @@ pub struct MetadataEntry {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -316,7 +316,7 @@ impl DirectoryNode {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -336,7 +336,7 @@ pub struct FileChunk {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -648,7 +648,7 @@ pub enum FileSystemError {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -702,7 +702,7 @@ impl<AccountId> Default for DriveConfig<AccountId> {
 }
 
 /// Drive information stored on-chain (user's virtual drive)
-#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen)]
 #[scale_info(skip_type_params(MaxNameLength, Balance))]
 #[codec(mel_bound())]
 pub struct DriveInfo<
