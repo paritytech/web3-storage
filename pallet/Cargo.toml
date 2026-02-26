@@ -19,7 +19,6 @@ sp-core = { workspace = true }
 sp-runtime = { workspace = true }
 sp-io = { workspace = true }
 serde = { workspace = true, optional = true }
-log = { workspace = true }
 
 [dev-dependencies]
 sp-keyring = { workspace = true, features = ["std"] }
@@ -33,7 +32,6 @@ std = [
 	"frame-benchmarking?/std",
 	"frame-support/std",
 	"frame-system/std",
-	"log/std",
 	"pallet-balances/std",
 	"scale-info/std",
 	"serde/std",

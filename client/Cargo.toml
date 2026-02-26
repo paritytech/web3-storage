@@ -14,7 +14,6 @@ serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
-sp-keyring = { workspace = true }
 tokio = { workspace = true }
 base64 = "0.22"
 thiserror = "2.0"
