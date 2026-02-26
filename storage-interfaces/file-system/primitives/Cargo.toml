@@ -40,7 +40,7 @@ std = [
 	"prost",
 	"prost-types",
 	"scale-info/std",
-	"serde",
+	"serde/std",
 	"sp-core/std",
 	"sp-runtime/std",
 	"thiserror",
