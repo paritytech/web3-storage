@@ -1,0 +1,59 @@
+[package]
+name = "pallet-s3-registry"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "S3 bucket and object registry pallet for web3-storage"
+
+[dependencies]
+# Internal
+s3-primitives = { workspace = true }
+pallet-storage-provider = { workspace = true }
+storage-primitives = { workspace = true }
+
+# Parity codec
+codec = { workspace = true }
+scale-info = { workspace = true }
+
+# Substrate
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-core = { workspace = true }
+sp-runtime = { workspace = true }
+
+# Utilities
+log = { workspace = true }
+
+[dev-dependencies]
+pallet-balances = { workspace = true, features = ["std"] }
+pallet-timestamp = { workspace = true, features = ["std"] }
+sp-io = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"frame-support/std",
+	"frame-system/std",
+	"log/std",
+	"pallet-storage-provider/std",
+	"s3-primitives/std",
+	"scale-info/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"storage-primitives/std",
+]
+runtime-benchmarks = [
+	"frame-support/runtime-benchmarks",
+	"frame-system/runtime-benchmarks",
+	"pallet-storage-provider/runtime-benchmarks",
+	"sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+	"frame-support/try-runtime",
+	"frame-system/try-runtime",
+	"pallet-storage-provider/try-runtime",
+	"sp-runtime/try-runtime",
+]

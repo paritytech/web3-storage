@@ -13,6 +13,8 @@ storage-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
 file-system-primitives = { workspace = true }
 pallet-drive-registry = { workspace = true }
+s3-primitives = { workspace = true }
+pallet-s3-registry = { workspace = true }
 
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
@@ -86,7 +88,9 @@ std = [
 	"file-system-primitives/std",
 	"log/std",
 	"pallet-drive-registry/std",
+	"pallet-s3-registry/std",
 	"pallet-storage-provider/std",
+	"s3-primitives/std",
 	"scale-info/std",
 	"storage-primitives/std",
 	# Substrate
