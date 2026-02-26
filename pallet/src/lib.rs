@@ -67,7 +67,7 @@ pub mod pallet {
                         deadline: n,
                         index: index as u16,
                     };
-                    Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
+                    Self::slash_provider_for_failed_challenge(challenge, challenge_id);
                 }
             }
         }
@@ -1949,12 +1949,7 @@ pub mod pallet {
                     agreement.price_per_byte = provider_info.settings.price_per_byte;
 
                     // For replicas, also update sync_price and handle sync_balance
-                    if let ProviderRole::Replica {
-                        sync_balance,
-                        sync_price,
-                        ..
-                    } = &mut agreement.role
-                    {
+                    if let ProviderRole::Replica { sync_price, .. } = &mut agreement.role {
                         let new_sync_price = provider_info
                             .settings
                             .replica_sync_price
@@ -2032,7 +2027,7 @@ pub mod pallet {
 
                 // Create bitfield using Vec<u8>
                 let num_providers = bucket.primary_providers.len();
-                let num_bytes = (num_providers + 7) / 8;
+                let num_bytes = num_providers.div_ceil(8);
                 let mut primary_signers = vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
@@ -2260,7 +2255,7 @@ pub mod pallet {
                 let encoded_proposal = proposal.encode();
 
                 // Create bitfield using Vec<u8>
-                let num_bytes = (num_providers as usize + 7) / 8;
+                let num_bytes = (num_providers as usize).div_ceil(8);
                 let mut primary_signers = vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();

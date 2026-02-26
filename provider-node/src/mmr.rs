@@ -270,13 +270,12 @@ mod tests {
         // Verify total nodes = 2*n - popcount(n)
         let mut mmr = Mmr::new();
         for i in 1u64..=8 {
-            mmr.push(blake2_256(format!("leaf{}", i).as_bytes()));
+            mmr.push(blake2_256(format!("leaf{i}").as_bytes()));
             let expected_nodes = 2 * i - i.count_ones() as u64;
             assert_eq!(
                 mmr.nodes.len() as u64,
                 expected_nodes,
-                "node count wrong after {} leaves",
-                i
+                "node count wrong after {i} leaves"
             );
         }
     }
@@ -286,7 +285,7 @@ mod tests {
         let mut mmr = Mmr::new();
 
         let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{}", i).as_bytes()))
+            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
             .collect();
 
         for leaf in &leaves {
@@ -299,8 +298,7 @@ mod tests {
             let proof = mmr.proof(i as u64).expect("proof should exist");
             assert!(
                 Mmr::verify_proof(root, *leaf, &proof),
-                "proof should verify for leaf {}",
-                i
+                "proof should verify for leaf {i}"
             );
         }
     }
@@ -310,7 +308,7 @@ mod tests {
         let mut mmr = Mmr::new();
 
         let leaves: Vec<H256> = (0..5)
-            .map(|i| blake2_256(format!("leaf{}", i).as_bytes()))
+            .map(|i| blake2_256(format!("leaf{i}").as_bytes()))
             .collect();
 
         for leaf in &leaves {
@@ -327,15 +325,13 @@ mod tests {
             let proof = mmr.proof(i as u64).expect("proof should exist");
             assert!(
                 Mmr::verify_proof(root, *leaf, &proof),
-                "basic proof should verify for leaf {}",
-                i
+                "basic proof should verify for leaf {i}"
             );
 
             assert_eq!(
                 siblings.len(),
                 path.len(),
-                "siblings and path length mismatch for leaf {}",
-                i
+                "siblings and path length mismatch for leaf {i}"
             );
         }
     }
@@ -350,7 +346,7 @@ mod tests {
 
         let mmr_leaves: Vec<storage_primitives::MmrLeaf> = (0..5)
             .map(|i| storage_primitives::MmrLeaf {
-                data_root: blake2_256(format!("root{}", i).as_bytes()),
+                data_root: blake2_256(format!("root{i}").as_bytes()),
                 data_size: 100 * (i as u64 + 1),
                 total_size: 100 * (i as u64 + 1),
             })
@@ -374,8 +370,7 @@ mod tests {
 
             assert!(
                 storage_primitives::verify_mmr_proof(&mmr_proof, &root),
-                "verify_mmr_proof failed for leaf {}",
-                i
+                "verify_mmr_proof failed for leaf {i}"
             );
         }
     }

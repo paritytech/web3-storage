@@ -165,15 +165,7 @@ impl Get<u32> for MaxEncryptionParamsLength {
 
 /// A single entry in a directory (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryEntry {
@@ -220,15 +212,7 @@ impl DirectoryEntry {
 
 /// Metadata key-value pair
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct MetadataEntry {
@@ -238,15 +222,7 @@ pub struct MetadataEntry {
 
 /// Directory node containing child references (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
@@ -310,15 +286,7 @@ impl DirectoryNode {
 
 /// A single chunk reference in a file (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
@@ -330,15 +298,7 @@ pub struct FileChunk {
 
 /// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {

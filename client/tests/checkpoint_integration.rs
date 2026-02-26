@@ -29,7 +29,7 @@ async fn start_test_provider() -> String {
     });
 
     tokio::time::sleep(Duration::from_millis(10)).await;
-    format!("http://{}", addr)
+    format!("http://{addr}")
 }
 
 /// Start multiple test provider nodes.
@@ -322,7 +322,7 @@ async fn test_provider_health_over_requests() {
     // Make several health check requests
     let client = reqwest::Client::new();
     for _ in 0..5 {
-        let resp = client.get(format!("{}/health", url)).send().await.unwrap();
+        let resp = client.get(format!("{url}/health")).send().await.unwrap();
         assert!(resp.status().is_success());
     }
 

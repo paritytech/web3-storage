@@ -23,7 +23,7 @@ impl SubstrateClient {
     pub async fn connect(ws_url: &str) -> Result<Self, FsClientError> {
         let api = OnlineClient::<PolkadotConfig>::from_url(ws_url)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Connection failed: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Connection failed: {e}")))?;
 
         Ok(Self {
             api,
@@ -51,8 +51,7 @@ impl SubstrateClient {
             "ferdie" => dev::ferdie(),
             _ => {
                 return Err(FsClientError::InvalidPath(format!(
-                    "Unknown dev account: {}",
-                    name
+                    "Unknown dev account: {name}"
                 )))
             }
         };
@@ -91,7 +90,7 @@ impl SubstrateClient {
     /// Parse an SS58 account ID string into AccountId32.
     pub fn parse_account(account: &str) -> Result<AccountId32, FsClientError> {
         AccountId32::from_str(account)
-            .map_err(|e| FsClientError::InvalidPath(format!("Invalid account ID: {}", e)))
+            .map_err(|e| FsClientError::InvalidPath(format!("Invalid account ID: {e}")))
     }
 }
 

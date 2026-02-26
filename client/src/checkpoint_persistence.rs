@@ -356,12 +356,11 @@ impl CheckpointPersistence {
         // Read file
         let contents = fs::read_to_string(&self.config.file_path)
             .await
-            .map_err(|e| ClientError::Storage(format!("Failed to read persistence file: {}", e)))?;
+            .map_err(|e| ClientError::Storage(format!("Failed to read persistence file: {e}")))?;
 
         // Parse JSON
-        let state: PersistedCheckpointState = serde_json::from_str(&contents).map_err(|e| {
-            ClientError::Storage(format!("Failed to parse persistence file: {}", e))
-        })?;
+        let state: PersistedCheckpointState = serde_json::from_str(&contents)
+            .map_err(|e| ClientError::Storage(format!("Failed to parse persistence file: {e}")))?;
 
         // Validate version
         if state.version > 1 {
@@ -395,7 +394,7 @@ impl CheckpointPersistence {
         if let Some(parent) = self.config.file_path.parent() {
             if !parent.exists() {
                 fs::create_dir_all(parent).await.map_err(|e| {
-                    ClientError::Storage(format!("Failed to create persistence directory: {}", e))
+                    ClientError::Storage(format!("Failed to create persistence directory: {e}"))
                 })?;
             }
         }
@@ -406,19 +405,17 @@ impl CheckpointPersistence {
 
         // Serialize to JSON
         let contents = serde_json::to_string_pretty(&state)
-            .map_err(|e| ClientError::Storage(format!("Failed to serialize state: {}", e)))?;
+            .map_err(|e| ClientError::Storage(format!("Failed to serialize state: {e}")))?;
 
         // Write atomically (write to temp file, then rename)
         let temp_path = self.config.file_path.with_extension("json.tmp");
-        fs::write(&temp_path, &contents).await.map_err(|e| {
-            ClientError::Storage(format!("Failed to write persistence file: {}", e))
-        })?;
+        fs::write(&temp_path, &contents)
+            .await
+            .map_err(|e| ClientError::Storage(format!("Failed to write persistence file: {e}")))?;
 
         fs::rename(&temp_path, &self.config.file_path)
             .await
-            .map_err(|e| {
-                ClientError::Storage(format!("Failed to rename persistence file: {}", e))
-            })?;
+            .map_err(|e| ClientError::Storage(format!("Failed to rename persistence file: {e}")))?;
 
         // Update cache
         *self.cached_state.write().await = Some(state);
@@ -472,7 +469,7 @@ impl CheckpointPersistence {
 
         // Rotate existing backups
         for i in (1..self.config.max_backups).rev() {
-            let from = self.config.file_path.with_extension(format!("json.{}", i));
+            let from = self.config.file_path.with_extension(format!("json.{i}"));
             let to = self
                 .config
                 .file_path
@@ -494,13 +491,13 @@ impl CheckpointPersistence {
         // Remove main file
         if self.config.file_path.exists() {
             fs::remove_file(&self.config.file_path).await.map_err(|e| {
-                ClientError::Storage(format!("Failed to remove persistence file: {}", e))
+                ClientError::Storage(format!("Failed to remove persistence file: {e}"))
             })?;
         }
 
         // Remove backups
         for i in 1..=self.config.max_backups {
-            let backup = self.config.file_path.with_extension(format!("json.{}", i));
+            let backup = self.config.file_path.with_extension(format!("json.{i}"));
             if backup.exists() {
                 let _ = fs::remove_file(&backup).await;
             }
@@ -597,8 +594,8 @@ fn account_id_to_string(account_id: &AccountId32) -> String {
 /// Convert hex string to AccountId32.
 fn string_to_account_id(s: &str) -> Result<AccountId32, ClientError> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s)
-        .map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {}", e)))?;
+    let bytes =
+        hex::decode(s).map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {e}")))?;
 
     if bytes.len() != 32 {
         return Err(ClientError::Storage(format!(
@@ -621,14 +618,14 @@ fn result_to_string(result: &CheckpointResult) -> String {
         CheckpointResult::InsufficientConsensus {
             agreeing, required, ..
         } => {
-            format!("InsufficientConsensus({}/{})", agreeing, required)
+            format!("InsufficientConsensus({agreeing}/{required})")
         }
         CheckpointResult::ProvidersUnreachable { providers } => {
             format!("ProvidersUnreachable({})", providers.len())
         }
         CheckpointResult::NoProviders => "NoProviders".to_string(),
         CheckpointResult::TransactionFailed { error } => {
-            format!("TransactionFailed({})", error)
+            format!("TransactionFailed({error})")
         }
     }
 }

@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider_account = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
     let provider_client = ProviderClient::new(config.clone(), provider_account.to_string())?;
 
-    println!("  Registering provider {}...", provider_account);
+    println!("  Registering provider {provider_account}...");
     provider_client
         .register(
             "/ip4/203.0.113.1/tcp/3333".to_string(),
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("  Creating bucket with min_providers=1...");
     let bucket_id = admin_client.create_bucket(1).await?;
-    println!("  ✓ Bucket created with ID: {}\n", bucket_id);
+    println!("  ✓ Bucket created with ID: {bucket_id}\n");
 
     // ═════════════════════════════════════════════════════════════════════════
     // Step 3: Agreement Request and Acceptance

@@ -614,7 +614,7 @@ mod bucket_tests {
 
             let bucket = Buckets::<Test>::get(0).unwrap();
             assert_eq!(bucket.members.len(), 1);
-            assert!(bucket.members.iter().find(|m| m.account == 2).is_none());
+            assert!(!bucket.members.iter().any(|m| m.account == 2));
         });
     }
 
