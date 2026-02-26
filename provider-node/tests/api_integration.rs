@@ -108,7 +108,7 @@ async fn test_upload_and_download_node() {
     // Download node
     let download_response = server
         .client
-        .get(server.url(&format!("/node?hash={}", hash_hex)))
+        .get(server.url(&format!("/node?hash={hash_hex}")))
         .send()
         .await
         .unwrap();
@@ -375,10 +375,7 @@ async fn test_full_upload_commit_read_flow() {
     // Step 4: Read back
     let read_response = server
         .client
-        .get(server.url(&format!(
-            "/read?data_root={}&offset=0&length=100",
-            data_root
-        )))
+        .get(server.url(&format!("/read?data_root={data_root}&offset=0&length=100")))
         .send()
         .await
         .unwrap();
@@ -392,7 +389,7 @@ async fn test_full_upload_commit_read_flow() {
 // Helper functions
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {

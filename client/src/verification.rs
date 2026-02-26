@@ -119,7 +119,7 @@ impl ClientVerifier {
         let samples = self
             .latency_samples
             .entry(provider_url.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         samples.push(latency_ms);
         if samples.len() > self.max_samples {

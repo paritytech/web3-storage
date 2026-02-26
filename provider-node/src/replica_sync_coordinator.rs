@@ -671,7 +671,7 @@ impl ReplicaSyncCoordinator {
         // Build dummy signature (pallet accepts any MultiSignature)
         let signature = subxt::dynamic::Value::unnamed_variant(
             "Sr25519",
-            vec![subxt::dynamic::Value::from_bytes(&[0u8; 64])],
+            vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
         );
 
         let tx = subxt::dynamic::tx(
@@ -1338,7 +1338,7 @@ impl ReplicaSyncCoordinator {
             }
         }
 
-        format!("http://{}:{}", host, port)
+        format!("http://{host}:{port}")
     }
 }
 

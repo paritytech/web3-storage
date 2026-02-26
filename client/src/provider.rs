@@ -94,13 +94,13 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Provider registered successfully");
         Ok(())
@@ -165,12 +165,12 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Agreement accepted successfully");
         Ok(())
@@ -246,12 +246,12 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Challenge response submitted successfully");
         Ok(())

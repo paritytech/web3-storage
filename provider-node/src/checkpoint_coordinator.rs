@@ -177,7 +177,7 @@ impl CheckpointCoordinator {
     pub async fn connect(&mut self) -> Result<(), Error> {
         let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
 
         self.api = Some(api);
 
@@ -188,7 +188,7 @@ impl CheckpointCoordinator {
                 .try_into()
                 .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
             let signer = Keypair::from_secret_key(secret_bytes)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
             self.signer = Some(signer);
         }
 
@@ -426,7 +426,7 @@ impl CheckpointCoordinator {
         endpoint: &str,
         proposal: &CheckpointProposal,
     ) -> Result<SignProposalResponse, Error> {
-        let url = format!("{}/checkpoint/sign", endpoint);
+        let url = format!("{endpoint}/checkpoint/sign");
 
         let request = SignProposalRequest {
             bucket_id: proposal.bucket_id,
@@ -443,7 +443,7 @@ impl CheckpointCoordinator {
             .timeout(self.config.signature_timeout)
             .send()
             .await
-            .map_err(|e| Error::Internal(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
             return Err(Error::Internal(format!(
@@ -455,7 +455,7 @@ impl CheckpointCoordinator {
         response
             .json::<SignProposalResponse>()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to parse response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to parse response: {e}")))
     }
 
     /// Submit the checkpoint to the chain.
@@ -481,13 +481,13 @@ impl CheckpointCoordinator {
                 subxt::dynamic::Value::unnamed_composite(vec![
                     // Account ID
                     subxt::dynamic::Value::from_bytes(
-                        &hex::decode(account.trim_start_matches("0x")).unwrap_or_default(),
+                        hex::decode(account.trim_start_matches("0x")).unwrap_or_default(),
                     ),
                     // Signature (Sr25519)
                     subxt::dynamic::Value::unnamed_variant(
                         "Sr25519",
                         vec![subxt::dynamic::Value::from_bytes(
-                            &hex::decode(sig.trim_start_matches("0x")).unwrap_or_default(),
+                            hex::decode(sig.trim_start_matches("0x")).unwrap_or_default(),
                         )],
                     ),
                 ])
@@ -519,12 +519,12 @@ impl CheckpointCoordinator {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
 
         Ok(H256::zero())
     }

@@ -8,8 +8,6 @@
 //!
 //! Run with: `cargo run --example pallet_interaction`
 
-use file_system_primitives::Cid;
-
 fn main() {
     println!("=== Drive Registry Pallet Interaction ===\n");
 

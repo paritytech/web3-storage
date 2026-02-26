@@ -603,7 +603,7 @@ impl_runtime_apis! {
         }
 
         fn execute_block(block: <Block as BlockT>::LazyBlock) {
-            Executive::execute_block(block.into())
+            Executive::execute_block(block)
         }
 
         fn initialize_block(header: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
@@ -642,7 +642,7 @@ impl_runtime_apis! {
             block: <Block as BlockT>::LazyBlock,
             data: sp_inherents::InherentData,
         ) -> sp_inherents::CheckInherentsResult {
-            data.check_extrinsics(&block.into())
+            data.check_extrinsics(&block)
         }
     }
 
