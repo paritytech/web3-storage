@@ -129,8 +129,6 @@ pub struct S3Client {
 	storage_client: storage_client::StorageUserClient,
 	/// Substrate client for chain operations.
 	substrate_client: SubstrateClient,
-	/// Provider URL.
-	provider_url: String,
 }
 
 impl S3Client {
@@ -150,11 +148,7 @@ impl S3Client {
 			.await
 			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-		Ok(Self {
-			storage_client,
-			substrate_client,
-			provider_url: provider_url.to_string(),
-		})
+		Ok(Self { storage_client, substrate_client })
 	}
 
 	/// Create a new S3 bucket.

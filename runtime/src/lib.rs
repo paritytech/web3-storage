@@ -500,7 +500,6 @@ impl pallet_drive_registry::Config for Runtime {
 // --------------------------------
 
 impl pallet_s3_registry::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
     type MaxBucketsPerUser = ConstU32<100>;
     type MaxObjectsPerBucket = ConstU32<100000>;
 }

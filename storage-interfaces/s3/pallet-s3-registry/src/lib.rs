@@ -18,9 +18,9 @@ use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
 use s3_primitives::{
-	validate_bucket_name, validate_object_key, BucketName, MaxBucketNameLen, MaxContentTypeLen,
-	MaxEtagLen, MaxMetadataEntries, MaxMetadataKeyLen, MaxMetadataValueLen, MaxObjectKeyLen,
-	MetadataEntry, ObjectKey, ObjectMetadata, S3BucketId, S3BucketInfo,
+	validate_bucket_name, validate_object_key, BucketName, MaxContentTypeLen, MaxEtagLen,
+	MaxMetadataEntries, MaxMetadataKeyLen, MaxMetadataValueLen, MetadataEntry, ObjectKey,
+	ObjectMetadata, S3BucketId, S3BucketInfo,
 };
 use sp_core::H256;
 use sp_runtime::{BoundedVec, SaturatedConversion};
@@ -37,10 +37,9 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
-	pub trait Config: frame_system::Config + pallet_storage_provider::Config {
-		/// The overarching event type.
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
+	pub trait Config:
+		frame_system::Config<RuntimeEvent: From<Event<Self>>> + pallet_storage_provider::Config
+	{
 		/// Maximum number of buckets per user.
 		#[pallet::constant]
 		type MaxBucketsPerUser: Get<u32>;

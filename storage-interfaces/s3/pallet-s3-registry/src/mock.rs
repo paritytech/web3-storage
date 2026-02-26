@@ -3,7 +3,7 @@
 use crate as pallet_s3_registry;
 use frame_support::{
 	derive_impl, parameter_types,
-	traits::{ConstU32, ConstU64, ConstU128},
+	traits::{ConstU32, ConstU64},
 };
 use sp_core::H256;
 use sp_runtime::{
@@ -108,7 +108,6 @@ impl pallet_storage_provider::Config for Test {
 }
 
 impl pallet_s3_registry::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
 	type MaxBucketsPerUser = ConstU32<100>;
 	type MaxObjectsPerBucket = ConstU32<10000>;
 }
