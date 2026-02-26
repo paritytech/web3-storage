@@ -7,6 +7,21 @@
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
 
+**Code quality rules (MUST follow before committing):**
+- ALWAYS run `cargo +nightly fmt --all` before committing Rust code
+- ALWAYS run `cargo clippy --all` and fix any errors before committing
+- ALWAYS run `cargo check --all` to verify code compiles before committing
+- Use `Debug` trait instead of deprecated `RuntimeDebug` from sp_runtime
+- Avoid unused imports and variables (prefix with `_` if intentionally unused)
+- Follow Rust naming conventions: snake_case for functions/variables, CamelCase for types
+- Use proper line breaks for long function calls (rustfmt will handle this)
+
+**Pre-commit checklist:**
+1. `cargo +nightly fmt --all` - Format code
+2. `cargo check --all` - Verify compilation
+3. `cargo clippy --all` - Check for lint errors
+4. `cargo test` - Run tests (when relevant)
+
 ## Project Overview
 
 Scalable Web3 Storage is a decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
