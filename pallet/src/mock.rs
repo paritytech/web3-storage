@@ -123,6 +123,7 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 }
 
 /// Build test externalities with custom balances.
+#[allow(dead_code)]
 pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
@@ -139,6 +140,7 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
 }
 
 /// Run to a specific block number.
+#[allow(dead_code)]
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         <System as Hooks<u64>>::on_finalize(System::block_number());

@@ -245,7 +245,7 @@ async fn read_chunks(
     // Calculate chunk indices
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
-    let end_chunk = (query.offset + query.length + chunk_size - 1) / chunk_size;
+    let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
 
     let mut chunks = Vec::new();
     for chunk_idx in start_chunk..end_chunk {

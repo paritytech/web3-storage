@@ -29,7 +29,7 @@ async fn start_test_provider() -> String {
     });
 
     tokio::time::sleep(Duration::from_millis(10)).await;
-    format!("http://{}", addr)
+    format!("http://{addr}")
 }
 
 /// Start multiple test provider nodes.
@@ -248,11 +248,11 @@ fn test_metrics_failure_tracking() {
 
 #[test]
 fn test_metrics_provider_response_rate() {
-    let mut metrics = CheckpointMetrics::default();
-
-    // Record some providers queried
-    metrics.providers_queried = 10;
-    metrics.providers_responded = 8;
+    let metrics = CheckpointMetrics {
+        providers_queried: 10,
+        providers_responded: 8,
+        ..Default::default()
+    };
 
     assert_eq!(metrics.provider_response_rate(), 0.8);
 }
@@ -322,7 +322,7 @@ async fn test_provider_health_over_requests() {
     // Make several health check requests
     let client = reqwest::Client::new();
     for _ in 0..5 {
-        let resp = client.get(format!("{}/health", url)).send().await.unwrap();
+        let resp = client.get(format!("{url}/health")).send().await.unwrap();
         assert!(resp.status().is_success());
     }
 

@@ -12,8 +12,6 @@
 //!     --output pallet/src/weights.rs
 //! ```
 
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
 use frame_benchmarking::v2::*;
 use frame_support::{pallet_prelude::*, traits::Currency};
@@ -116,7 +114,7 @@ mod benchmarks {
 
     #[benchmark]
     fn deregister_provider() {
-        let provider = create_provider::<T>(0);
+        let _provider = create_provider::<T>(0);
         // Need to remove all agreements first - just use a fresh provider with no agreements
 
         let provider2 = funded_account::<T>("provider2", 99);
@@ -182,6 +180,25 @@ mod benchmarks {
 
         #[extrinsic_call]
         create_bucket(RawOrigin::Signed(admin), 1);
+    }
+
+    #[benchmark]
+    fn create_bucket_with_storage() {
+        // Create a provider first
+        let _provider = create_provider::<T>(0);
+        let admin = funded_account::<T>("admin", 1);
+
+        let max_bytes = 1_000u64;
+        let duration: BlockNumberFor<T> = 100u32.into();
+        let max_price_per_byte: BalanceOf<T> = 1000u32.into();
+
+        #[extrinsic_call]
+        create_bucket_with_storage(
+            RawOrigin::Signed(admin),
+            max_bytes,
+            duration,
+            max_price_per_byte,
+        );
     }
 
     #[benchmark]
@@ -701,7 +718,7 @@ mod benchmarks {
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
-        let signature = sp_runtime::MultiSignature::Sr25519(sig.into());
+        let signature = sp_runtime::MultiSignature::Sr25519(sig);
 
         #[extrinsic_call]
         challenge_offchain(

@@ -1,11 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
+	# Layer 0: Scalable Web3 Storage
 	"client",
 	"pallet",
 	"primitives",
 	"provider-node",
 	"runtime",
+
+	# Storage Interfaces: File System Interface
+	"storage-interfaces/file-system/client",
+	"storage-interfaces/file-system/pallet-registry",
+	"storage-interfaces/file-system/primitives",
 ]
 
 [workspace.package]
@@ -15,12 +21,17 @@ license = "Apache-2.0"
 repository = "https://github.com/parity/scalable-web3-storage"
 
 [workspace.dependencies]
-# Internal crates
+# Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-storage-provider = { path = "pallet", default-features = false }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtime" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
+
+# Storage Interfaces: File System Interface
+file-system-client = { path = "storage-interfaces/file-system/client" }
+file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
+pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
 
 # Substrate frame
 frame-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
@@ -81,10 +92,11 @@ parachains-common = { git = "https://github.com/paritytech/polkadot-sdk", rev = 
 substrate-wasm-builder = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2" }
 
 # Codec
-codec = { version = "3.6", default-features = false, features = ["derive"], package = "parity-scale-codec" }
+codec = { version = "3.7", default-features = false, features = ["derive", "max-encoded-len"], package = "parity-scale-codec" }
 scale-info = { version = "2.11", default-features = false, features = ["derive"] }
 
 # External dependencies
+log = "0.4"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false }
 

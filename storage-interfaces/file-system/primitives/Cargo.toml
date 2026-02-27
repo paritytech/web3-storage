@@ -1,0 +1,47 @@
+[package]
+name = "file-system-primitives"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Serialization (std only - for protobuf)
+prost = { version = "0.13", optional = true }
+prost-types = { version = "0.13", optional = true }
+
+# Substrate/Polkadot primitives
+codec = { workspace = true }
+scale-info = { workspace = true }
+sp-core = { workspace = true }
+sp-runtime = { workspace = true }
+serde = { workspace = true, optional = true }
+
+# Utilities
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+# Error handling (std only)
+thiserror = { version = "1.0", optional = true }
+
+[build-dependencies]
+prost-build = "0.13"
+
+[[example]]
+name = "basic_usage"
+path = "../examples/basic_usage.rs"
+
+[[example]]
+name = "pallet_interaction"
+path = "../examples/pallet_interaction.rs"
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"hex/std",
+	"prost",
+	"prost-types",
+	"scale-info/std",
+	"serde/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"thiserror",
+]

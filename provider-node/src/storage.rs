@@ -302,13 +302,13 @@ impl Storage {
         let leaf = bucket
             .leaves
             .get(leaf_index as usize)
-            .ok_or(Error::NodeNotFound(format!("leaf_{}", leaf_index)))?
+            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
             .clone();
 
         let (siblings, path, peaks) = bucket
             .mmr
             .proof_with_path(leaf_index)
-            .ok_or(Error::NodeNotFound(format!("mmr_proof_{}", leaf_index)))?;
+            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
 
         Ok(storage_primitives::MmrProof {
             peaks,
@@ -327,7 +327,7 @@ impl Storage {
         let chunk_hashes = self.collect_chunk_hashes(data_root);
 
         if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{}", chunk_index)));
+            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
         }
 
         // Get the actual chunk data
@@ -335,7 +335,7 @@ impl Storage {
         let chunk_data = self
             .nodes
             .get(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{}", chunk_index)))?
+            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
             .data
             .clone();
 
@@ -411,6 +411,7 @@ impl Storage {
     }
 
     /// Collect all leaf chunks under a root.
+    #[allow(dead_code)]
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
         let mut chunks = Vec::new();
         let mut stack = vec![root];
@@ -480,7 +481,7 @@ impl Default for Storage {
 /// Hex encoding utility (simple implementation).
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, &'static str> {
@@ -586,8 +587,7 @@ mod tests {
             let chunk_hash = blake2_256(&chunk_data);
             assert!(
                 verify_merkle_proof(chunk_hash, i, &proof, &data_root),
-                "Merkle proof failed for chunk {}",
-                i
+                "Merkle proof failed for chunk {i}"
             );
         }
     }
@@ -624,8 +624,7 @@ mod tests {
             let chunk_hash = blake2_256(&chunk_data);
             assert!(
                 verify_merkle_proof(chunk_hash, i, &proof, &data_root),
-                "Merkle proof failed for chunk {}",
-                i
+                "Merkle proof failed for chunk {i}"
             );
         }
     }
@@ -651,7 +650,7 @@ mod tests {
         // Commit several data roots
         let mut data_roots = Vec::new();
         for i in 0..5 {
-            let data = format!("data_{}", i);
+            let data = format!("data_{i}");
             let hash = blake2_256(data.as_bytes());
             storage
                 .store_node(bucket_id, hash, data.into_bytes(), None)
@@ -666,8 +665,7 @@ mod tests {
             let mmr_proof = storage.get_mmr_proof(bucket_id, i).unwrap();
             assert!(
                 verify_mmr_proof(&mmr_proof, &mmr_root),
-                "MMR proof failed for leaf {}",
-                i
+                "MMR proof failed for leaf {i}"
             );
         }
     }
