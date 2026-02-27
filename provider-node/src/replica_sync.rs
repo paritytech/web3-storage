@@ -44,11 +44,11 @@ impl ReplicaSync {
         // Get primary's current MMR state
         let response = self
             .http
-            .get(format!("{}/mmr_peaks", primary_url))
+            .get(format!("{primary_url}/mmr_peaks"))
             .query(&[("bucket_id", bucket_id.to_string())])
             .send()
             .await
-            .map_err(|e| Error::Storage(format!("Failed to fetch peaks: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to fetch peaks: {e}")))?;
 
         if !response.status().is_success() {
             return Err(Error::Storage(format!(
@@ -124,11 +124,11 @@ impl ReplicaSync {
             // Fetch the node from primary
             let response = self
                 .http
-                .get(format!("{}/node", primary_url))
+                .get(format!("{primary_url}/node"))
                 .query(&[("hash", format!("0x{}", hex::encode(root_hash.as_bytes())))])
                 .send()
                 .await
-                .map_err(|e| Error::Storage(format!("Failed to fetch node: {}", e)))?;
+                .map_err(|e| Error::Storage(format!("Failed to fetch node: {e}")))?;
 
             if !response.status().is_success() {
                 return Err(Error::Storage(format!(
@@ -227,6 +227,7 @@ impl ReplicaSync {
 // Helper types matching the API responses
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct MmrPeaksResponse {
     bucket_id: u64,
     mmr_root: String,
@@ -234,6 +235,7 @@ struct MmrPeaksResponse {
 }
 
 #[derive(serde::Deserialize)]
+#[allow(dead_code)]
 struct DownloadNodeResponse {
     hash: String,
     data: String,
@@ -243,5 +245,5 @@ struct DownloadNodeResponse {
 /// Decode hex string (with or without 0x prefix).
 fn hex_decode(s: &str) -> Result<Vec<u8>, Error> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(s).map_err(|e| Error::Serialization(format!("Invalid hex: {}", e)))
+    hex::decode(s).map_err(|e| Error::Serialization(format!("Invalid hex: {e}")))
 }

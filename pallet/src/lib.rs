@@ -67,7 +67,7 @@ pub mod pallet {
                         deadline: n,
                         index: index as u16,
                     };
-                    Self::slash_provider_for_failed_challenge(&challenge, challenge_id);
+                    Self::slash_provider_for_failed_challenge(challenge, challenge_id);
                 }
             }
         }
@@ -772,6 +772,10 @@ pub mod pallet {
         WithinGracePeriod,
         /// No rewards to claim.
         NoRewardsToClaim,
+
+        // Auto-matching errors
+        /// No provider found matching the storage requirements.
+        NoMatchingProvider,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1013,6 +1017,116 @@ pub mod pallet {
             Self::deposit_event(Event::BucketCreated {
                 bucket_id,
                 admin: who,
+            });
+
+            Ok(())
+        }
+
+        /// Create a new bucket with storage requirements and auto-match to a provider.
+        ///
+        /// This is the preferred way to create a bucket with storage. The system
+        /// automatically finds a matching provider based on your requirements and
+        /// creates both the bucket and agreement in one atomic operation.
+        ///
+        /// Providers who set `accepting_primary: true` have pre-consented to accepting
+        /// agreements within their stated parameters (capacity, price, duration).
+        #[pallet::call_index(16)]
+        #[pallet::weight(T::WeightInfo::create_bucket_with_storage())]
+        pub fn create_bucket_with_storage(
+            origin: OriginFor<T>,
+            max_bytes: u64,
+            duration: BlockNumberFor<T>,
+            max_price_per_byte: BalanceOf<T>,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Find a matching provider
+            let (provider, provider_info) =
+                Self::find_matching_provider(max_bytes, duration, max_price_per_byte)?;
+
+            // Calculate payment using provider's actual price
+            let payment = Self::calculate_payment(
+                provider_info.settings.price_per_byte,
+                max_bytes,
+                duration,
+            )?;
+
+            // Reserve funds from caller
+            T::Currency::reserve(&who, payment)?;
+
+            // Create the bucket
+            let bucket_id = NextBucketId::<T>::get();
+            NextBucketId::<T>::put(bucket_id.saturating_add(1));
+
+            let admin_member = Member {
+                account: who.clone(),
+                role: Role::Admin,
+            };
+
+            let mut members = BoundedVec::new();
+            members
+                .try_push(admin_member)
+                .map_err(|_| Error::<T>::MaxMembersReached)?;
+
+            let mut primary_providers = BoundedVec::new();
+            primary_providers
+                .try_push(provider.clone())
+                .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
+
+            let bucket = Bucket {
+                members,
+                frozen_start_seq: None,
+                min_providers: 1,
+                primary_providers,
+                snapshot: None,
+                historical_roots: [(0, H256::zero()); 6],
+                total_snapshots: 0,
+            };
+
+            Buckets::<T>::insert(bucket_id, bucket);
+
+            // Create the agreement
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let expires_at = current_block.saturating_add(duration);
+
+            let agreement = StorageAgreement {
+                owner: who.clone(),
+                max_bytes,
+                payment_locked: payment,
+                price_per_byte: provider_info.settings.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role: ProviderRole::Primary,
+                started_at: current_block,
+            };
+
+            // Update provider's committed_bytes
+            Providers::<T>::mutate(&provider, |maybe_provider| {
+                if let Some(provider_info) = maybe_provider {
+                    provider_info.committed_bytes =
+                        provider_info.committed_bytes.saturating_add(max_bytes);
+                    provider_info.stats.agreements_total =
+                        provider_info.stats.agreements_total.saturating_add(1);
+                }
+            });
+
+            StorageAgreements::<T>::insert(bucket_id, &provider, agreement);
+
+            // Emit events
+            Self::deposit_event(Event::BucketCreated {
+                bucket_id,
+                admin: who.clone(),
+            });
+
+            Self::deposit_event(Event::AgreementAccepted {
+                bucket_id,
+                provider: provider.clone(),
+                expires_at,
+            });
+
+            Self::deposit_event(Event::ProviderAddedToBucket {
+                bucket_id,
+                provider,
             });
 
             Ok(())
@@ -1786,7 +1900,7 @@ pub mod pallet {
 
                     // Settle current period
                     let elapsed = current_block.saturating_sub(agreement.started_at);
-                    let remaining = if current_block < agreement.expires_at {
+                    let _remaining = if current_block < agreement.expires_at {
                         agreement.expires_at.saturating_sub(current_block)
                     } else {
                         Zero::zero()
@@ -1835,12 +1949,7 @@ pub mod pallet {
                     agreement.price_per_byte = provider_info.settings.price_per_byte;
 
                     // For replicas, also update sync_price and handle sync_balance
-                    if let ProviderRole::Replica {
-                        sync_balance,
-                        sync_price,
-                        ..
-                    } = &mut agreement.role
-                    {
+                    if let ProviderRole::Replica { sync_price, .. } = &mut agreement.role {
                         let new_sync_price = provider_info
                             .settings
                             .replica_sync_price
@@ -1918,7 +2027,7 @@ pub mod pallet {
 
                 // Create bitfield using Vec<u8>
                 let num_providers = bucket.primary_providers.len();
-                let num_bytes = (num_providers + 7) / 8;
+                let num_bytes = num_providers.div_ceil(8);
                 let mut primary_signers = vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
@@ -2146,7 +2255,7 @@ pub mod pallet {
                 let encoded_proposal = proposal.encode();
 
                 // Create bitfield using Vec<u8>
-                let num_bytes = (num_providers as usize + 7) / 8;
+                let num_bytes = (num_providers as usize).div_ceil(8);
                 let mut primary_signers = vec![0u8; num_bytes];
                 let mut signing_count = 0usize;
                 let mut signing_providers = Vec::new();
@@ -2453,6 +2562,7 @@ pub mod pallet {
         /// Preferred for hot buckets where snapshots change frequently.
         #[pallet::call_index(42)]
         #[pallet::weight(T::WeightInfo::challenge_off_chain())]
+        #[allow(clippy::too_many_arguments)]
         pub fn challenge_offchain(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2934,6 +3044,79 @@ pub mod pallet {
                 .ok_or(Error::<T>::ArithmeticOverflow.into())
         }
 
+        /// Find a provider matching the storage requirements.
+        ///
+        /// Returns the best matching provider that:
+        /// - Is accepting primary agreements
+        /// - Has sufficient available capacity
+        /// - Has price at or below max_price_per_byte
+        /// - Accepts the requested duration
+        /// - Has sufficient stake to back the additional bytes
+        fn find_matching_provider(
+            bytes_needed: u64,
+            duration: BlockNumberFor<T>,
+            max_price_per_byte: BalanceOf<T>,
+        ) -> Result<(T::AccountId, ProviderInfo<T>), DispatchError> {
+            use sp_runtime::traits::SaturatedConversion;
+
+            let mut best_match: Option<(T::AccountId, ProviderInfo<T>, BalanceOf<T>)> = None;
+
+            for (account, info) in Providers::<T>::iter() {
+                // Must be accepting primary agreements
+                if !info.settings.accepting_primary {
+                    continue;
+                }
+
+                // Check duration constraints
+                if duration < info.settings.min_duration || duration > info.settings.max_duration {
+                    continue;
+                }
+
+                // Check price constraint
+                if info.settings.price_per_byte > max_price_per_byte {
+                    continue;
+                }
+
+                // Check capacity constraint
+                let max_capacity = info.settings.max_capacity;
+                if max_capacity > 0 {
+                    let available = max_capacity.saturating_sub(info.committed_bytes);
+                    if available < bytes_needed {
+                        continue;
+                    }
+                }
+
+                // Check stake constraint (can they back the additional bytes?)
+                let new_committed = info.committed_bytes.saturating_add(bytes_needed);
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                if let Some(required_stake) =
+                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
+                {
+                    if info.stake < required_stake {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+
+                // This provider matches! Track best by lowest price
+                let price = info.settings.price_per_byte;
+                match &best_match {
+                    None => {
+                        best_match = Some((account, info, price));
+                    }
+                    Some((_, _, best_price)) if price < *best_price => {
+                        best_match = Some((account, info, price));
+                    }
+                    _ => {}
+                }
+            }
+
+            best_match
+                .map(|(account, info, _)| (account, info))
+                .ok_or(Error::<T>::NoMatchingProvider.into())
+        }
+
         fn finalize_agreement(
             bucket_id: BucketId,
             provider: &T::AccountId,
@@ -3393,7 +3576,7 @@ pub mod pallet {
             Providers::<T>::iter()
                 .skip(offset as usize)
                 .take(limit as usize)
-                .filter_map(|(account, info)| {
+                .map(|(account, info)| {
                     let max_capacity = info.settings.max_capacity;
                     let available_capacity = if max_capacity > 0 {
                         Some(max_capacity.saturating_sub(info.committed_bytes))
@@ -3401,7 +3584,7 @@ pub mod pallet {
                         None // Unlimited
                     };
 
-                    Some((
+                    (
                         account,
                         crate::runtime_api::ProviderInfoResponse {
                             multiaddr: info.multiaddr.to_vec(),
@@ -3427,7 +3610,7 @@ pub mod pallet {
                             max_capacity,
                             available_capacity,
                         },
-                    ))
+                    )
                 })
                 .collect()
         }
@@ -3563,7 +3746,7 @@ pub mod pallet {
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
                 .map(
-                    |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
+                    |(_bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -3925,13 +4108,14 @@ pub mod pallet {
                 let mut partial_reason: Option<PartialMatchReason> = None;
 
                 // Check accepting status
-                if requirements.primary_only && !info.settings.accepting_primary {
-                    score = 0;
-                    partial_reason = Some(PartialMatchReason::NotAccepting);
-                } else if !requirements.primary_only
-                    && !info.settings.accepting_primary
-                    && info.settings.replica_sync_price.is_none()
-                {
+                // Primary required: must accept primary
+                // Replica acceptable: must accept primary OR have replica sync price
+                let not_accepting = if requirements.primary_only {
+                    !info.settings.accepting_primary
+                } else {
+                    !info.settings.accepting_primary && info.settings.replica_sync_price.is_none()
+                };
+                if not_accepting {
                     score = 0;
                     partial_reason = Some(PartialMatchReason::NotAccepting);
                 }

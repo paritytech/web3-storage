@@ -73,7 +73,7 @@ impl DiskStorage {
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
 
         let db = DB::open_cf(&opts, path, &cf_names)
-            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -89,7 +89,7 @@ impl DiskStorage {
         let key = bucket_id.to_le_bytes();
         if self
             .db
-            .get_cf(&cf, &key)
+            .get_cf(&cf, key)
             .map_err(|e| Error::Storage(e.to_string()))?
             .is_some()
         {
@@ -100,7 +100,7 @@ impl DiskStorage {
         let value = bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
-            .put_cf(&cf, &key, &value)
+            .put_cf(&cf, key, &value)
             .map_err(|e| Error::Storage(e.to_string()))?;
 
         Ok(())
@@ -110,7 +110,7 @@ impl DiskStorage {
     pub fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
-        let value = self.db.get_cf(&cf, &key).ok()??;
+        let value = self.db.get_cf(&cf, key).ok()??;
         bincode::deserialize(&value).ok()
     }
 
@@ -125,7 +125,7 @@ impl DiskStorage {
         let value = bincode::serialize(bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
-            .put_cf(&cf, &key, &value)
+            .put_cf(&cf, key, &value)
             .map_err(|e| Error::Storage(e.to_string()))?;
 
         Ok(())
@@ -141,18 +141,16 @@ impl DiskStorage {
         let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         let mut summaries = Vec::new();
 
-        for item in iter {
-            if let Ok((key, value)) = item {
-                if key.len() == 8 {
-                    let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                    if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
-                        summaries.push(BucketSummary {
-                            bucket_id,
-                            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
-                            start_seq: state.start_seq,
-                            leaf_count: state.leaf_count(),
-                        });
-                    }
+        for (key, value) in iter.flatten() {
+            if key.len() == 8 {
+                let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
+                if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
+                    summaries.push(BucketSummary {
+                        bucket_id,
+                        mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+                        start_seq: state.start_seq,
+                        leaf_count: state.leaf_count(),
+                    });
                 }
             }
         }

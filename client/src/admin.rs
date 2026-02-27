@@ -84,13 +84,13 @@ impl AdminClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization and extract bucket ID from events
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         // Extract bucket ID from BucketCreated event
         // For now, return a placeholder - in production, parse the event
@@ -229,12 +229,12 @@ impl AdminClient {
                 .tx()
                 .sign_and_submit_then_watch_default(&tx, signer)
                 .await
-                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
             tx_progress
                 .wait_for_finalized_success()
                 .await
-                .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+                .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
         } else {
             // Primary agreement
             let tx = extrinsics::request_primary_agreement(
@@ -250,12 +250,12 @@ impl AdminClient {
                 .tx()
                 .sign_and_submit_then_watch_default(&tx, signer)
                 .await
-                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
             tx_progress
                 .wait_for_finalized_success()
                 .await
-                .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+                .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
         }
 
         tracing::info!("Agreement request submitted successfully");
@@ -391,12 +391,12 @@ impl AdminClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {e}")))?;
 
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Checkpoint transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Checkpoint transaction failed: {e}")))?;
 
         tracing::info!(
             "Checkpoint submitted for bucket {} with MMR root 0x{}",

@@ -190,6 +190,14 @@ async function uploadData(api) {
 }
 
 async function challengeOffchain(api, alice, bob, upload) {
+  console.log("  Submitting challenge_offchain with:");
+  console.log("    bucket_id:", BUCKET_ID);
+  console.log("    provider:", alice.address);
+  console.log("    mmr_root:", upload.mmrRoot);
+  console.log("    start_seq:", upload.startSeq);
+  console.log("    leaf_index:", upload.leafIndex);
+  console.log("    provider_signature:", upload.providerSignature.slice(0, 20) + "...");
+
   const result = await api.tx.StorageProvider.challenge_offchain({
     bucket_id: BUCKET_ID,
     provider: alice.address,
@@ -199,6 +207,15 @@ async function challengeOffchain(api, alice, bob, upload) {
     chunk_index: 0n,
     provider_signature: Enum("Sr25519", Binary.fromBytes(hexToBytes(upload.providerSignature))),
   }).signAndSubmit(bob.signer);
+
+  // Check for extrinsic failure
+  const failedEvents = api.event.System.ExtrinsicFailed.filter(result.events);
+  if (failedEvents.length > 0) {
+    console.log("  ERROR: Extrinsic failed!");
+    for (const e of failedEvents) {
+      console.log("    dispatch_error:", JSON.stringify(e.dispatch_error, null, 2));
+    }
+  }
 
   const events = api.event.StorageProvider.ChallengeCreated.filter(result.events);
   assert.strictEqual(events.length, 1, "Expected 1 ChallengeCreated from off-chain challenge");

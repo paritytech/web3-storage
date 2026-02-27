@@ -346,7 +346,7 @@ pub enum CheckpointLoopCommand {
 }
 
 /// Status of a bucket in the checkpoint loop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BucketCheckpointStatus {
     /// Whether the bucket has pending changes.
     pub dirty: bool,
@@ -356,17 +356,6 @@ pub struct BucketCheckpointStatus {
     pub last_result: Option<CheckpointResult>,
     /// Number of consecutive failures.
     pub consecutive_failures: u32,
-}
-
-impl Default for BucketCheckpointStatus {
-    fn default() -> Self {
-        Self {
-            dirty: false,
-            last_checkpoint: None,
-            last_result: None,
-            consecutive_failures: 0,
-        }
-    }
 }
 
 /// Handle for controlling a running checkpoint loop.
@@ -702,6 +691,7 @@ pub enum CheckpointResult {
 /// - Verifying consensus (majority agreement)
 /// - Submitting checkpoint transactions on-chain
 /// - Tracking provider health over time
+#[allow(clippy::type_complexity)]
 pub struct CheckpointManager {
     /// Configuration.
     config: CheckpointConfig,
@@ -877,21 +867,20 @@ impl CheckpointManager {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
         let bucket_bytes = storage
             .fetch_raw(bucket_storage_key)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {}", e)))?
-            .ok_or_else(|| ClientError::Chain(format!("Bucket {} not found", bucket_id)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
         // Extract primary_providers from bucket raw bytes
         let provider_accounts = self.extract_primary_providers_from_raw(&bucket_bytes)?;
 
         if provider_accounts.is_empty() {
             return Err(ClientError::Chain(format!(
-                "No primary providers found for bucket {}",
-                bucket_id
+                "No primary providers found for bucket {bucket_id}"
             )));
         }
 
@@ -941,14 +930,14 @@ impl CheckpointManager {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
         let provider_bytes = storage
             .fetch_raw(provider_storage_key)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {}", e)))?
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?
             .ok_or_else(|| {
-                ClientError::Chain(format!("Provider {:?} not found on chain", account_id))
+                ClientError::Chain(format!("Provider {account_id:?} not found on chain"))
             })?;
 
         // Extract multiaddr and public_key from provider raw bytes
@@ -1106,15 +1095,14 @@ impl CheckpointManager {
     /// Parse a multiaddr (e.g., /ip4/127.0.0.1/tcp/3000) to HTTP endpoint.
     fn parse_multiaddr_to_http(&self, multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
         let multiaddr_str = String::from_utf8(multiaddr_bytes.to_vec())
-            .map_err(|e| ClientError::Chain(format!("Invalid multiaddr encoding: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Invalid multiaddr encoding: {e}")))?;
 
         // Parse multiaddr format: /ip4/<ip>/tcp/<port> or /dns4/<host>/tcp/<port>
         let parts: Vec<&str> = multiaddr_str.split('/').filter(|s| !s.is_empty()).collect();
 
         if parts.len() < 4 {
             return Err(ClientError::Chain(format!(
-                "Invalid multiaddr format: {}",
-                multiaddr_str
+                "Invalid multiaddr format: {multiaddr_str}"
             )));
         }
 
@@ -1142,7 +1130,7 @@ impl CheckpointManager {
         };
 
         // Construct HTTP URL
-        Ok(format!("http://{}:{}", host, port))
+        Ok(format!("http://{host}:{port}"))
     }
 
     /// Update the provider cache.
@@ -1173,8 +1161,7 @@ impl CheckpointManager {
 
         if providers.is_empty() {
             return Err(ClientError::Chain(format!(
-                "No providers found for bucket {}",
-                bucket_id
+                "No providers found for bucket {bucket_id}"
             )));
         }
 
@@ -1287,7 +1274,7 @@ impl CheckpointManager {
                                 return Ok(commitment);
                             }
                             Err(e) => {
-                                let error = format!("JSON parse error: {}", e);
+                                let error = format!("JSON parse error: {e}");
                                 self.record_provider_failure(&provider.account_id, error.clone())
                                     .await;
                                 return Err(ClientError::Serialization(error));
@@ -1313,7 +1300,7 @@ impl CheckpointManager {
                         delay *= 2;
                         continue;
                     }
-                    let error = format!("Request failed: {}", e);
+                    let error = format!("Request failed: {e}");
                     self.record_provider_failure(&provider.account_id, error.clone())
                         .await;
                     return Err(ClientError::Api(error));
@@ -1438,12 +1425,12 @@ impl CheckpointManager {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?;
 
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         // Return a success hash (we can't easily get block hash from events in this subxt version)
         Ok(collection.mmr_root)
@@ -1528,7 +1515,7 @@ impl CheckpointManager {
                 Err(ClientError::Api(error))
             }
             Ok(Err(e)) => {
-                let error = format!("Health check failed: {}", e);
+                let error = format!("Health check failed: {e}");
                 self.record_provider_failure(&provider.account_id, error.clone())
                     .await;
                 Err(ClientError::Api(error))
@@ -2380,7 +2367,7 @@ impl CheckpointManager {
         // Restore health histories
         {
             let mut health_histories = self.health_history.write().await;
-            for (_, persisted) in &state.health_histories {
+            for persisted in state.health_histories.values() {
                 let history = persisted.to_health_history()?;
                 health_histories.insert(history.account_id.clone(), history);
             }
