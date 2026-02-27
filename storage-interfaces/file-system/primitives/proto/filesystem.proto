@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package filesystem;
+
+// Entry type enumeration
+enum EntryType {
+  FILE = 0;
+  DIRECTORY = 1;
+}
+
+// A single entry in a directory (child reference)
+message DirectoryEntry {
+  string name = 1;      // Human-readable name
+  EntryType type = 2;   // File or Directory
+  string cid = 3;       // Content ID in Layer 0 (hex-encoded hash)
+  uint64 size = 4;      // Size in bytes
+  uint64 mtime = 5;     // Modification timestamp (Unix timestamp)
+}
+
+// Directory node containing child references
+message DirectoryNode {
+  string drive_id = 1;              // Maps to the Layer 0 Bucket (hex-encoded)
+  repeated DirectoryEntry children = 2;
+  map<string, string> metadata = 3; // Custom attributes (tags, colors, etc.)
+}
+
+// A single chunk reference in a file
+message FileChunk {
+  string cid = 1;       // Chunk CID in Layer 0 (hex-encoded hash)
+  uint32 sequence = 2;  // Position in the file (0-indexed)
+}
+
+// File manifest tracking how to reassemble a file from chunks
+message FileManifest {
+  string drive_id = 1;              // Maps to the Layer 0 Bucket
+  string mime_type = 2;             // MIME type (e.g., "image/png")
+  uint64 total_size = 3;            // Total file size in bytes
+  repeated FileChunk chunks = 4;    // Ordered list of chunks
+  string encryption_params = 5;     // Salt, IV, etc. for W3ACL (optional)
+}

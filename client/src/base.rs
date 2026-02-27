@@ -146,7 +146,7 @@ impl BaseClient {
     /// Helper to decode hex strings.
     pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>, ClientError> {
         let s = s.strip_prefix("0x").unwrap_or(s);
-        hex::decode(s).map_err(|e| ClientError::Serialization(format!("Invalid hex: {}", e)))
+        hex::decode(s).map_err(|e| ClientError::Serialization(format!("Invalid hex: {e}")))
     }
 
     /// Helper to encode to hex strings.

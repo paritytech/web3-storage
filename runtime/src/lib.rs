@@ -485,6 +485,16 @@ impl pallet_storage_provider::Config for Runtime {
     type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
+// --------------------------------
+// Drive Registry Pallet Config
+// --------------------------------
+
+impl pallet_drive_registry::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type MaxDriveNameLength = ConstU32<128>;
+    type MaxDrivesPerUser = ConstU32<100>;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
 mod runtime {
@@ -561,6 +571,10 @@ mod runtime {
     // Storage Provider
     #[runtime::pallet_index(50)]
     pub type StorageProvider = pallet_storage_provider;
+
+    // Drive Registry (Layer 1: File System)
+    #[runtime::pallet_index(51)]
+    pub type DriveRegistry = pallet_drive_registry;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {
@@ -576,7 +590,7 @@ impl_runtime_apis! {
         }
 
         fn execute_block(block: <Block as BlockT>::LazyBlock) {
-            Executive::execute_block(block.into())
+            Executive::execute_block(block)
         }
 
         fn initialize_block(header: &<Block as BlockT>::Header) -> sp_runtime::ExtrinsicInclusionMode {
@@ -615,7 +629,7 @@ impl_runtime_apis! {
             block: <Block as BlockT>::LazyBlock,
             data: sp_inherents::InherentData,
         ) -> sp_inherents::CheckInherentsResult {
-            data.check_extrinsics(&block.into())
+            data.check_extrinsics(&block)
         }
     }
 

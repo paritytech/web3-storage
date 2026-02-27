@@ -137,7 +137,14 @@ Open in browser: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
    - `acceptingPrimary`: `true`
    - `replicaSyncPrice`: `Some(5000000)` or `None`
    - `acceptingExtensions`: `true`
+   - `maxCapacity`: `10737418240` (10 GB - or 0 for unlimited)
 4. Submit transaction
+
+**Capacity Notes:**
+- `maxCapacity` declares maximum storage capacity (in bytes)
+- Provider's stake must cover capacity: `stake >= maxCapacity × MinStakePerByte`
+- `maxCapacity = 0` means unlimited (backward compatible)
+- See [Storage Marketplace Design](../design/marketplace.md) for details
 
 ### 2. Create Bucket
 
@@ -256,6 +263,39 @@ See: [Manual Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)
 
 ---
 
+## Advanced: Programmatic Provider Discovery
+
+Instead of manually selecting providers, use the `DiscoveryClient` to find matching providers automatically:
+
+```rust
+use storage_client::{DiscoveryClient, StorageRequirements};
+
+let mut client = DiscoveryClient::with_defaults()?;
+client.connect().await?;
+
+// Find providers matching your requirements
+let requirements = StorageRequirements {
+    bytes_needed: 10 * 1024 * 1024 * 1024, // 10 GB
+    min_duration: 500,
+    max_price_per_byte: 2_000_000,
+    primary_only: true,
+};
+
+let providers = client.find_providers(requirements, 5).await?;
+
+for provider in &providers {
+    println!("Provider: {} (score: {}, available: {:?} bytes)",
+        provider.account,
+        provider.match_score,
+        provider.available_capacity
+    );
+}
+```
+
+See [Storage Marketplace Design](../design/marketplace.md) for details on the matching algorithm.
+
+---
+
 ## Next Steps
 
 Once the basic test passes:
@@ -268,3 +308,5 @@ Try:
 - Creating more buckets
 - Testing challenges
 - Benchmarking performance
+- Using the Discovery Client for automatic provider selection
+- Setting up automatic checkpoints with `CheckpointManager`

@@ -56,10 +56,21 @@ cargo test -p storage-provider-node
 # Run client SDK tests
 cargo test -p storage-client
 
+# Run file system tests (Layer 1)
+cargo test -p file-system-primitives
+cargo test -p pallet-drive-registry
+cargo test -p file-system-client
+
+# Or test all file system components at once
+just fs-test-all
+
 # Run integration tests (requires running services)
 just start-chain     # Terminal 1
 just start-provider  # Terminal 2
 just demo  # Terminal 3
+
+# File system integration test (starts everything)
+just fs-integration-test
 
 # Clippy linting
 cargo clippy --all-targets --all-features --workspace -- -D warnings
@@ -100,13 +111,51 @@ bash scripts/verify-setup.sh
 just demo
 ```
 
+## File System (Layer 1) Commands
+
+The File System Interface provides a high-level abstraction over Layer 0's raw blob storage.
+
+```bash
+# Full integration test (recommended for first run)
+# Starts infrastructure + runs file system example
+just fs-integration-test
+
+# Quick demo (assumes infrastructure is running)
+just fs-demo
+
+# Run file system example
+just fs-example
+
+# Build file system components
+just fs-build
+
+# Test file system components
+just fs-test              # Client only
+just fs-test-verbose      # With logging
+just fs-test-all          # All components (primitives + pallet + client)
+
+# Clean file system artifacts
+just fs-clean
+
+# Show file system documentation links
+just fs-docs
+
+# Manual example run
+cd storage-interfaces/file-system/client
+cargo run --example basic_usage
+```
+
+**Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
+
+**Complete Documentation**: [docs/filesystems/README.md](./docs/filesystems/README.md)
+
 ## Architecture
 
 ### Directory Structure
 
 ```
 web3-storage/
-├── pallet/                     # Substrate pallet (on-chain logic)
+├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
 │   ├── src/lib.rs             # Core pallet implementation
 │   └── Cargo.toml             # Pallet dependencies
 ├── runtime/                    # Parachain runtime
@@ -118,15 +167,26 @@ web3-storage/
 │   │   ├── storage.rs        # Storage layer
 │   │   └── mmr.rs            # MMR commitment logic
 │   └── Cargo.toml            # Provider dependencies
-├── client/                     # Client SDK for applications
+├── client/                     # Layer 0 Client SDK
 │   ├── src/                   # SDK implementation
 │   │   ├── lib.rs            # Main client API
 │   │   └── types.rs          # Client types
 │   ├── examples/             # Usage examples
 │   └── README.md             # SDK documentation
-├── primitives/                 # Shared types and utilities
+├── primitives/                 # Layer 0 shared types and utilities
 │   ├── src/lib.rs            # Common types
 │   └── Cargo.toml            # Primitive dependencies
+├── storage-interfaces/         # Layer 1 - High-level interfaces
+│   └── file-system/           # File System Interface
+│       ├── primitives/        # File system types (DriveInfo, CommitStrategy, etc.)
+│       ├── pallet-registry/   # Drive Registry pallet (on-chain)
+│       └── client/            # File System Client SDK
+│           ├── src/
+│           │   ├── lib.rs     # Main file system client
+│           │   └── substrate.rs # Blockchain integration (subxt)
+│           ├── examples/
+│           │   └── basic_usage.rs # Complete workflow example
+│           └── README.md      # File system client docs
 ├── scripts/                    # Helper scripts
 │   ├── quick-test.sh         # Automated basic tests
 │   ├── verify-setup.sh       # On-chain setup verification
@@ -137,11 +197,20 @@ web3-storage/
 │   ├── getting-started/      # Quick start guides
 │   ├── testing/              # Testing procedures
 │   ├── reference/            # API references
-│   └── design/               # Architecture docs
+│   ├── design/               # Architecture docs
+│   └── filesystems/          # Layer 1 File System docs
+│       ├── README.md         # File system overview
+│       ├── USER_GUIDE.md     # User guide
+│       ├── API_REFERENCE.md  # API documentation
+│       ├── EXAMPLE_WALKTHROUGH.md # Step-by-step example
+│       └── ADMIN_GUIDE.md    # Admin guide
+├── FILE_SYSTEM_QUICKSTART.md  # Quick start for file system
 └── justfile                    # Development commands
 ```
 
 ### Key Components
+
+#### Layer 0 (Raw Storage)
 
 **Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
@@ -160,6 +229,36 @@ web3-storage/
 - Challenge providers (on-chain)
 
 **Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
+
+#### Layer 1 (File System Interface)
+
+**File System Primitives (`storage-interfaces/file-system/primitives/`)**: High-level types for file system:
+- `DriveInfo`: Drive metadata and configuration
+- `DirectoryNode`: Protobuf-based directory structure
+- `FileManifest`: File metadata with chunk tracking
+- `CommitStrategy`: Checkpoint strategies (Immediate, Batched, Manual)
+- Helper functions for CID computation and path handling
+
+**Drive Registry Pallet (`storage-interfaces/file-system/pallet-registry/`)**: On-chain drive management:
+- Drive creation with automatic infrastructure setup
+- Root CID tracking for drive state
+- User-to-drive mapping
+- Bucket-to-drive mapping
+- Drive lifecycle (create, update, clear, delete)
+
+**File System Client (`storage-interfaces/file-system/client/`)**: High-level SDK providing:
+- Familiar file/folder interface over Layer 0 blob storage
+- Automatic drive creation and provider selection
+- Directory operations (create, list, navigate)
+- File operations (upload, download, delete)
+- Real blockchain integration using `subxt`
+- Content-addressed storage with CID verification
+- Flexible commit strategies
+
+**Example:** `storage-interfaces/file-system/client/examples/basic_usage.rs`
+- Complete workflow: drive creation → directories → file uploads/downloads
+- Real blockchain integration with event extraction
+- Demonstrates the full Layer 1 capabilities
 
 ## Development Workflow
 
@@ -247,7 +346,22 @@ pub struct ProviderSettings {
     accepting_primary: bool,          // Accepting new agreements
     replica_sync_price: Option<Balance>, // Price for replica sync
     accepting_extensions: bool,       // Accepting agreement extensions
+    max_capacity: u64,                // Maximum storage capacity (0 = unlimited)
 }
+```
+
+### Capacity & Stake Requirements
+
+Providers must stake tokens proportional to their declared capacity:
+
+```rust
+// Minimum stake per byte of declared capacity
+pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+
+// Required stake calculation
+required_stake = max_capacity * MinStakePerByte
+
+// Example: 1 TB capacity requires 1,000,000,000,000 units stake
 ```
 
 ## Key Concepts
@@ -300,7 +414,99 @@ payment = 536,870,912,000,000,000
 
 Set `maxPayment` with 10-20% buffer to account for price changes.
 
-## Code Review Guidelines
+## Advanced Features
+
+### Provider Discovery & Marketplace
+
+The SDK provides automatic provider discovery based on storage requirements:
+
+```rust
+use storage_client::{DiscoveryClient, StorageRequirements};
+
+let mut client = DiscoveryClient::with_defaults()?;
+client.connect().await?;
+
+// Define requirements
+let requirements = StorageRequirements {
+    bytes_needed: 10 * 1024 * 1024 * 1024, // 10 GB
+    min_duration: 100_000,
+    max_price_per_byte: 1_000_000,
+    primary_only: true,
+};
+
+// Find matching providers (sorted by score)
+let providers = client.find_providers(requirements, 10).await?;
+
+// Or get recommendations with cost estimates
+let recommendations = client.suggest_providers(bytes, duration, budget).await?;
+```
+
+**Matching Algorithm**: Providers are scored 0-100 based on:
+- Accepting status (not accepting = 0)
+- Capacity (insufficient = -50 points)
+- Price (too high = -30 points)
+- Duration (mismatch = -20 points)
+
+See [Storage Marketplace Design](docs/design/marketplace.md) for details.
+
+### Checkpoint Management
+
+The client SDK provides comprehensive checkpoint management:
+
+```rust
+use storage_client::{CheckpointManager, CheckpointConfig, BatchedCheckpointConfig};
+
+// Create checkpoint manager
+let manager = CheckpointManager::new(chain_endpoint, CheckpointConfig::default()).await?;
+let manager = manager.with_providers(provider_endpoints);
+
+// Manual checkpoint submission
+let result = manager.submit_checkpoint(bucket_id).await;
+
+// Or enable automatic checkpoints
+let config = BatchedCheckpointConfig {
+    interval: BatchedInterval::Blocks(100),
+    ..Default::default()
+};
+let handle = manager.start_checkpoint_loop(bucket_id, config, callback).await?;
+
+// Control the loop
+handle.submit_now().await?;  // Force immediate checkpoint
+handle.stop().await?;         // Stop background loop
+```
+
+**Key Components**:
+- `CheckpointManager`: Coordinates multi-provider checkpoint collection and consensus
+- `CheckpointPersistence`: Persists checkpoint state to disk with backup rotation
+- `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
+- `ProviderHealthHistory`: Tracks provider reliability and response times
+
+See [Checkpoint Protocol Design](docs/design/CHECKPOINT_PROTOCOL.md) for details.
+
+### Event Subscription
+
+Subscribe to real-time blockchain events:
+
+```rust
+use storage_client::{EventSubscriber, EventFilter, StorageEvent};
+
+let subscriber = EventSubscriber::new(chain_endpoint).await?;
+
+// Subscribe to specific events
+let filter = EventFilter::bucket(bucket_id);
+let mut stream = subscriber.subscribe(filter).await?;
+
+while let Some(event) = stream.next().await {
+    match event {
+        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => { /* ... */ }
+        StorageEvent::ChallengeCreated { challenge_id, .. } => { /* ... */ }
+        StorageEvent::ProviderSlashed { provider, amount, .. } => { /* ... */ }
+        _ => {}
+    }
+}
+```
+
+## Code Review Guidelines (Parity Standards)
 
 For the full review criteria (Parity Standards), see the `/review` skill. The review bot and all contributors follow those guidelines.
 
@@ -362,6 +568,10 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 | [Benchmarking Guide](docs/reference/BENCHMARKING.md) | Generate weights for extrinsics |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
+| [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
+| [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
+| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
+| [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
 
@@ -381,6 +591,12 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 ### Provider Not Accepting Agreements
 - Call `updateProviderSettings` after registration
 - Set `acceptingPrimary: true`
+
+### "CapacityExceeded" or "InsufficientStakeForCapacity" Error
+- Provider's `max_capacity` is too low for the agreement
+- Or provider's stake doesn't cover their declared capacity
+- Required: `stake >= max_capacity * MinStakePerByte`
+- Use `DiscoveryClient.find_providers()` to find providers with sufficient capacity
 
 ## Feature Flags
 

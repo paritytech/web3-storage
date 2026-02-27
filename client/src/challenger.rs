@@ -108,13 +108,13 @@ impl ChallengerClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization and extract challenge ID from events
         let events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -135,6 +135,7 @@ impl ChallengerClient {
     /// - `mmr_root`: The MMR root from the provider's commitment
     /// - `start_seq`: The start sequence from the commitment
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
+    #[allow(clippy::too_many_arguments)]
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
@@ -175,13 +176,13 @@ impl ChallengerClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization and extract challenge ID from events
         let events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         let challenge_id = Self::extract_challenge_id(&events)?;
         tracing::info!(
@@ -327,13 +328,13 @@ impl ChallengerClient {
     fn extract_challenge_id(events: &ExtrinsicEvents<PolkadotConfig>) -> ClientResult<ChallengeId> {
         for event in events.iter() {
             let event =
-                event.map_err(|e| ClientError::Chain(format!("Failed to decode event: {}", e)))?;
+                event.map_err(|e| ClientError::Chain(format!("Failed to decode event: {e}")))?;
 
             if event.pallet_name() == "StorageProvider"
                 && event.variant_name() == "ChallengeCreated"
             {
                 let fields = event.field_values().map_err(|e| {
-                    ClientError::Chain(format!("Failed to decode event fields: {}", e))
+                    ClientError::Chain(format!("Failed to decode event fields: {e}"))
                 })?;
 
                 // fields is a scale_value::Value — navigate the composite

@@ -65,7 +65,7 @@ impl StorageUserClient {
         let provider_url = self.base.get_provider_url()?;
 
         // Chunk the data
-        let chunks = self.chunk_data(data, strategy);
+        let chunks = Self::chunk_data(data, strategy);
 
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
@@ -144,7 +144,7 @@ impl StorageUserClient {
         let response = self
             .base
             .http
-            .get(format!("{}/read", provider_url))
+            .get(format!("{provider_url}/read"))
             .query(&[
                 ("data_root", BaseClient::hex_encode(data_root.as_bytes())),
                 ("offset", offset.to_string()),
@@ -216,7 +216,7 @@ impl StorageUserClient {
         let response = self
             .base
             .http
-            .get(format!("{}/node", provider_url))
+            .get(format!("{provider_url}/node"))
             .query(&[("hash", &hash_hex)])
             .send()
             .await?;
@@ -236,7 +236,7 @@ impl StorageUserClient {
         // Decode base64 data
         let data = BASE64
             .decode(&node_response.data)
-            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {}", e)))?;
+            .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))?;
 
         // Parse children hashes if present
         let children = node_response
@@ -306,7 +306,7 @@ impl StorageUserClient {
         let response = self
             .base
             .http
-            .post(format!("{}/commit", provider_url))
+            .post(format!("{provider_url}/commit"))
             .json(&request)
             .send()
             .await?;
@@ -338,7 +338,7 @@ impl StorageUserClient {
         let response = self
             .base
             .http
-            .get(format!("{}/checkpoint-signature", provider_url))
+            .get(format!("{provider_url}/checkpoint-signature"))
             .query(&[("bucket_id", bucket_id.to_string())])
             .send()
             .await?;
@@ -425,14 +425,14 @@ impl StorageUserClient {
     // Helper Functions
     // ═════════════════════════════════════════════════════════════════════════
 
-    fn chunk_data(&self, data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
+    fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
             ChunkingStrategy::Fixed(chunk_size) => {
                 data.chunks(chunk_size).map(|c| c.to_vec()).collect()
             }
             ChunkingStrategy::ContentDefined => {
                 // TODO: Implement content-defined chunking
-                self.chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
+                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
             }
         }
     }
@@ -459,7 +459,7 @@ impl StorageUserClient {
         let response = self
             .base
             .http
-            .put(format!("{}/node", provider_url))
+            .put(format!("{provider_url}/node"))
             .json(&request)
             .send()
             .await?;
