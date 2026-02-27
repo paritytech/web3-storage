@@ -30,7 +30,7 @@ import assert from "node:assert";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const BUCKET_ID = 1n;
+const BUCKET_ID = 0n; // First bucket ID (auto-incremented from 0)
 
 // ---------------------------------------------------------------------------
 // Helpers
