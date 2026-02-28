@@ -32,6 +32,17 @@ docs/
 
 Perfect for new users who want to get up and running quickly.
 
+### [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) ⭐ **Recommended**
+**Get started with File System and S3 interfaces!**
+
+- Prerequisites and one-time setup
+- Starting the infrastructure (chain + provider)
+- Using the File System API (drives, directories, files)
+- Using the S3-Compatible API (buckets, objects)
+- Troubleshooting and quick reference
+
+**Start here if you want to use File System or S3 storage APIs.**
+
 ### [Quick Start Guide](./getting-started/QUICKSTART.md)
 **Get running in 5 minutes!**
 
@@ -224,15 +235,42 @@ High-level abstraction over Layer 0 storage - use drives and files instead of bu
 
 ---
 
+## 🪣 S3-Compatible Interface (Layer 1)
+
+Amazon S3-compatible API over decentralized storage - familiar API with trustless guarantees!
+
+### [S3 Interface Overview](../storage-interfaces/s3/README.md)
+**Architecture, API reference, and detailed flows**
+
+- S3 Client SDK usage
+- Bucket and object operations
+- Detailed flow diagrams (upload, download, checkpoints, challenges)
+- API reference and examples
+
+**Read this to use S3-compatible storage.**
+
+---
+
 ## 🎯 Quick Navigation
 
 ### By User Type
 
+#### **New User - First Time with Layer 1** ⭐
+1. [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) - Setup and use File System or S3
+2. Choose your interface:
+   - File System: [User Guide](./filesystems/USER_GUIDE.md)
+   - S3: [S3 Interface](../storage-interfaces/s3/README.md)
+
 #### **File System User - Simplified Storage (Layer 1)**
-1. [User Guide](./filesystems/USER_GUIDE.md) - Complete file system guide
-2. [Example Walkthrough](./filesystems/EXAMPLE_WALKTHROUGH.md) - Learn by example
-3. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Understand Layer 1
+1. [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) - Setup infrastructure
+2. [User Guide](./filesystems/USER_GUIDE.md) - Complete file system guide
+3. [Example Walkthrough](./filesystems/EXAMPLE_WALKTHROUGH.md) - Learn by example
 4. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
+
+#### **S3 User - AWS-Compatible Storage (Layer 1)**
+1. [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) - Setup infrastructure
+2. [S3 Interface](../storage-interfaces/s3/README.md) - S3 API guide and reference
+3. Run `just s3-example` to see it in action
 
 #### **File System Admin - Managing Layer 1**
 1. [Admin Guide](./filesystems/ADMIN_GUIDE.md) - System administration
@@ -365,6 +403,10 @@ just health
 | - User Guide | ✅ Ready | Feb 2026 | Complete |
 | - Admin Guide | ✅ Ready | Feb 2026 | Complete |
 | - API Reference | ✅ Ready | Feb 2026 | Complete |
+| **S3 Interface** | | | |
+| - S3 README | ✅ Ready | Feb 2026 | Complete |
+| **Getting Started** | | | |
+| - Layer 1 Quick Start | ✅ Ready | Feb 2026 | Complete |
 
 ---
 
