@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Upload as UploadIcon,
   File,
@@ -6,6 +6,8 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
+  HardDrive,
+  Archive,
 } from "lucide-react";
 import {
   Card,
@@ -17,8 +19,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChain } from "@/hooks/useChain";
+import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes } from "@/lib/utils";
+import type { DriveInfo, BucketInfo } from "@/lib/storage";
 
 type UploadTarget = "drive" | "bucket";
 
@@ -33,11 +37,31 @@ interface UploadFile {
 
 export default function Upload() {
   const { connected } = useChain();
+  const {
+    signerAddress,
+    drives,
+    buckets,
+    loading,
+    refreshDrives,
+    refreshBuckets,
+    uploadToDrive,
+    putObject,
+  } = useStorage();
+
   const [uploadTarget, setUploadTarget] = useState<UploadTarget>("drive");
-  const [targetName, setTargetName] = useState("");
+  const [selectedDrive, setSelectedDrive] = useState<DriveInfo | null>(null);
+  const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
   const [targetPath, setTargetPath] = useState("/");
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
+
+  // Refresh drives/buckets on mount
+  useEffect(() => {
+    if (signerAddress && connected) {
+      refreshDrives();
+      refreshBuckets();
+    }
+  }, [signerAddress, connected, refreshDrives, refreshBuckets]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -65,11 +89,35 @@ export default function Upload() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
+  const readFileAsUint8Array = (file: File): Promise<Uint8Array> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(new Uint8Array(reader.result));
+        } else {
+          reject(new Error("Failed to read file"));
+        }
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
   const handleUpload = async () => {
-    if (!targetName.trim()) {
+    if (uploadTarget === "drive" && !selectedDrive) {
       toast({
         title: "Error",
-        description: `Please select a ${uploadTarget}`,
+        description: "Please select a drive",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (uploadTarget === "bucket" && !selectedBucket) {
+      toast({
+        title: "Error",
+        description: "Please select a bucket",
         variant: "destructive",
       });
       return;
@@ -91,29 +139,51 @@ export default function Upload() {
 
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === uploadFile.id ? { ...f, status: "uploading" as const } : f
+          f.id === uploadFile.id ? { ...f, status: "uploading" as const, progress: 10 } : f
         )
       );
 
       try {
-        // TODO: Call SDK to upload file
-        // Simulate upload progress
-        for (let i = 0; i <= 100; i += 10) {
-          await new Promise((r) => setTimeout(r, 100));
-          setFiles((prev) =>
-            prev.map((f) => (f.id === uploadFile.id ? { ...f, progress: i } : f))
+        // Read file data
+        const data = await readFileAsUint8Array(uploadFile.file);
+
+        setFiles((prev) =>
+          prev.map((f) => (f.id === uploadFile.id ? { ...f, progress: 30 } : f))
+        );
+
+        let result;
+
+        if (uploadTarget === "drive" && selectedDrive) {
+          // Upload to drive
+          const path = targetPath.endsWith("/")
+            ? `${targetPath}${uploadFile.file.name}`
+            : `${targetPath}/${uploadFile.file.name}`;
+
+          result = await uploadToDrive(
+            selectedDrive.driveId,
+            selectedDrive.bucketId,
+            path,
+            data
+          );
+        } else if (uploadTarget === "bucket" && selectedBucket) {
+          // Upload to S3 bucket
+          const key = targetPath.startsWith("/")
+            ? `${targetPath.slice(1)}${uploadFile.file.name}`
+            : `${targetPath}${uploadFile.file.name}`;
+
+          result = await putObject(
+            selectedBucket.name,
+            key,
+            data,
+            selectedBucket.layer0BucketId,
+            { contentType: uploadFile.file.type || "application/octet-stream" }
           );
         }
-
-        // Generate mock CID
-        const mockCid = `0x${Array.from({ length: 64 }, () =>
-          Math.floor(Math.random() * 16).toString(16)
-        ).join("")}`;
 
         setFiles((prev) =>
           prev.map((f) =>
             f.id === uploadFile.id
-              ? { ...f, status: "completed" as const, cid: mockCid }
+              ? { ...f, status: "completed" as const, progress: 100, cid: result?.cid }
               : f
           )
         );
@@ -133,7 +203,11 @@ export default function Upload() {
     }
 
     setUploading(false);
-    toast({ title: "Success", description: "Files uploaded successfully" });
+
+    const successCount = files.filter(f => f.status === "completed" || files.find(uf => uf.id === f.id && uf.status === "pending")).length;
+    if (successCount > 0) {
+      toast({ title: "Success", description: "Files uploaded successfully" });
+    }
   };
 
   if (!connected) {
@@ -148,6 +222,26 @@ export default function Upload() {
             <UploadIcon className="mx-auto h-12 w-12 mb-4 opacity-50" />
             <p className="text-muted-foreground">
               Connect to the network to upload files
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!signerAddress) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Upload</h1>
+          <p className="text-muted-foreground">Upload files to storage</p>
+        </div>
+        <Card>
+          <CardContent className="py-8 text-center">
+            <AlertCircle className="mx-auto h-12 w-12 mb-4 text-yellow-500" />
+            <p className="text-muted-foreground mb-2">No signer set</p>
+            <p className="text-sm text-muted-foreground">
+              Go to the Accounts page to set a signing account first
             </p>
           </CardContent>
         </Card>
@@ -176,12 +270,14 @@ export default function Upload() {
               variant={uploadTarget === "drive" ? "default" : "outline"}
               onClick={() => setUploadTarget("drive")}
             >
+              <HardDrive className="mr-2 h-4 w-4" />
               File System Drive
             </Button>
             <Button
               variant={uploadTarget === "bucket" ? "default" : "outline"}
               onClick={() => setUploadTarget("bucket")}
             >
+              <Archive className="mr-2 h-4 w-4" />
               S3 Bucket
             </Button>
           </div>
@@ -189,13 +285,55 @@ export default function Upload() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm font-medium">
-                {uploadTarget === "drive" ? "Drive Name" : "Bucket Name"}
+                {uploadTarget === "drive" ? "Select Drive" : "Select Bucket"}
               </label>
-              <Input
-                placeholder={uploadTarget === "drive" ? "my-drive" : "my-bucket"}
-                value={targetName}
-                onChange={(e) => setTargetName(e.target.value)}
-              />
+              {uploadTarget === "drive" ? (
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={selectedDrive?.driveId.toString() || ""}
+                  onChange={(e) => {
+                    const drive = drives.find(
+                      (d) => d.driveId.toString() === e.target.value
+                    );
+                    setSelectedDrive(drive || null);
+                  }}
+                >
+                  <option value="">Select a drive...</option>
+                  {drives.map((drive) => (
+                    <option key={drive.driveId.toString()} value={drive.driveId.toString()}>
+                      {drive.name || `Drive ${drive.driveId.toString()}`}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={selectedBucket?.s3BucketId.toString() || ""}
+                  onChange={(e) => {
+                    const bucket = buckets.find(
+                      (b) => b.s3BucketId.toString() === e.target.value
+                    );
+                    setSelectedBucket(bucket || null);
+                  }}
+                >
+                  <option value="">Select a bucket...</option>
+                  {buckets.map((bucket) => (
+                    <option key={bucket.s3BucketId.toString()} value={bucket.s3BucketId.toString()}>
+                      {bucket.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {uploadTarget === "drive" && drives.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No drives found. Create one in the Drives page.
+                </p>
+              )}
+              {uploadTarget === "bucket" && buckets.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No buckets found. Create one in the Buckets page.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">
@@ -251,7 +389,7 @@ export default function Upload() {
               <CardTitle>Files ({files.length})</CardTitle>
               <Button
                 onClick={handleUpload}
-                disabled={uploading || files.every((f) => f.status !== "pending")}
+                disabled={uploading || loading || files.every((f) => f.status !== "pending")}
               >
                 {uploading ? (
                   <>

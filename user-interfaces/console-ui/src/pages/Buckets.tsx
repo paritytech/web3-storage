@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Archive,
   Plus,
@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Trash2,
   ChevronRight,
+  AlertCircle,
 } from "lucide-react";
 import {
   Card,
@@ -17,33 +18,55 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChain } from "@/hooks/useChain";
+import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
-
-interface Bucket {
-  id: string;
-  name: string;
-  createdAt: number;
-  objectCount: number;
-  totalSize: number;
-}
+import { formatBytes } from "@/lib/utils";
+import type { BucketInfo } from "@/lib/storage";
 
 interface S3Object {
   key: string;
   size: number;
   lastModified: number;
   etag: string;
+  cid: string;
 }
 
 export default function Buckets() {
   const { connected } = useChain();
-  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const {
+    signerAddress,
+    buckets: chainBuckets,
+    loading,
+    createBucket,
+    refreshBuckets,
+    deleteBucket: sdkDeleteBucket,
+  } = useStorage();
+
+  const [buckets, setBuckets] = useState<BucketInfo[]>([]);
   const [newBucketName, setNewBucketName] = useState("");
+  const [capacity, setCapacity] = useState("1000000000"); // 1 GB default
+  const [duration, setDuration] = useState("500");
+  const [maxPayment, setMaxPayment] = useState("1000000000000000"); // 1000 tokens
   const [creating, setCreating] = useState(false);
-  const [selectedBucket, setSelectedBucket] = useState<Bucket | null>(null);
+  const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
   const [objects, setObjects] = useState<S3Object[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Sync chain buckets to local state
+  useEffect(() => {
+    if (chainBuckets.length > 0) {
+      setBuckets(chainBuckets);
+    }
+  }, [chainBuckets]);
+
+  // Refresh buckets when signer is set
+  useEffect(() => {
+    if (signerAddress && connected) {
+      refreshBuckets();
+    }
+  }, [signerAddress, connected, refreshBuckets]);
 
   const validateBucketName = (name: string): boolean => {
-    // S3 bucket naming rules
     if (name.length < 3 || name.length > 63) return false;
     if (!/^[a-z0-9]/.test(name)) return false;
     if (!/[a-z0-9]$/.test(name)) return false;
@@ -67,17 +90,24 @@ export default function Buckets() {
       return;
     }
 
+    if (!signerAddress) {
+      toast({
+        title: "Error",
+        description: "Please set a signer in the Accounts page first",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setCreating(true);
     try {
-      // TODO: Call SDK to create bucket
-      const newBucket: Bucket = {
-        id: `bucket-${Date.now()}`,
-        name: newBucketName,
-        createdAt: Date.now(),
-        objectCount: 0,
-        totalSize: 0,
-      };
-      setBuckets([...buckets, newBucket]);
+      const bucket = await createBucket(newBucketName, {
+        capacity: BigInt(capacity),
+        duration: parseInt(duration, 10),
+        maxPayment: BigInt(maxPayment),
+      });
+
+      setBuckets([...buckets, bucket]);
       setNewBucketName("");
       toast({ title: "Success", description: `Bucket "${newBucketName}" created` });
     } catch (err) {
@@ -91,11 +121,11 @@ export default function Buckets() {
     }
   };
 
-  const handleDeleteBucket = async (bucket: Bucket) => {
+  const handleDeleteBucket = async (bucket: BucketInfo) => {
     try {
-      // TODO: Call SDK to delete bucket
-      setBuckets(buckets.filter((b) => b.id !== bucket.id));
-      if (selectedBucket?.id === bucket.id) {
+      await sdkDeleteBucket(bucket.name);
+      setBuckets(buckets.filter((b) => b.s3BucketId !== bucket.s3BucketId));
+      if (selectedBucket?.s3BucketId === bucket.s3BucketId) {
         setSelectedBucket(null);
         setObjects([]);
       }
@@ -109,7 +139,7 @@ export default function Buckets() {
     }
   };
 
-  const handleSelectBucket = async (bucket: Bucket) => {
+  const handleSelectBucket = async (bucket: BucketInfo) => {
     setSelectedBucket(bucket);
     // TODO: Load objects from SDK
     setObjects([]);
@@ -134,6 +164,28 @@ export default function Buckets() {
     );
   }
 
+  if (!signerAddress) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">S3 Buckets</h1>
+          <p className="text-muted-foreground">Manage your S3-compatible storage buckets</p>
+        </div>
+        <Card>
+          <CardContent className="py-8 text-center">
+            <AlertCircle className="mx-auto h-12 w-12 mb-4 text-yellow-500" />
+            <p className="text-muted-foreground mb-2">
+              No signer set
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Go to the Accounts page to set a signing account first
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -143,8 +195,8 @@ export default function Buckets() {
             Manage your S3-compatible storage buckets
           </p>
         </div>
-        <Button variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
+        <Button variant="outline" size="sm" onClick={refreshBuckets} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
       </div>
@@ -161,7 +213,7 @@ export default function Buckets() {
             lowercase, and follow S3 naming rules.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex gap-3">
             <Input
               placeholder="my-bucket-name"
@@ -169,10 +221,53 @@ export default function Buckets() {
               onChange={(e) => setNewBucketName(e.target.value.toLowerCase())}
               className="max-w-sm"
             />
-            <Button onClick={handleCreateBucket} disabled={creating}>
+            <Button onClick={handleCreateBucket} disabled={creating || loading}>
               {creating ? "Creating..." : "Create Bucket"}
             </Button>
           </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? "Hide" : "Show"} Advanced Options
+          </Button>
+
+          {showAdvanced && (
+            <div className="grid gap-4 md:grid-cols-3 pt-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Capacity (bytes)</label>
+                <Input
+                  type="number"
+                  value={capacity}
+                  onChange={(e) => setCapacity(e.target.value)}
+                  placeholder="1000000000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {formatBytes(parseInt(capacity, 10) || 0)}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Duration (blocks)</label>
+                <Input
+                  type="number"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  placeholder="500"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Max Payment (12 decimals)</label>
+                <Input
+                  type="number"
+                  value={maxPayment}
+                  onChange={(e) => setMaxPayment(e.target.value)}
+                  placeholder="1000000000000000"
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -191,9 +286,9 @@ export default function Buckets() {
         ) : (
           buckets.map((bucket) => (
             <Card
-              key={bucket.id}
+              key={bucket.s3BucketId.toString()}
               className={`cursor-pointer transition-colors hover:border-primary ${
-                selectedBucket?.id === bucket.id ? "border-primary" : ""
+                selectedBucket?.s3BucketId === bucket.s3BucketId ? "border-primary" : ""
               }`}
               onClick={() => handleSelectBucket(bucket)}
             >
@@ -219,20 +314,19 @@ export default function Buckets() {
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
                     <p className="text-muted-foreground">Objects</p>
-                    <p className="font-medium">{bucket.objectCount}</p>
+                    <p className="font-medium">{bucket.objectCount.toString()}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Size</p>
                     <p className="font-medium">
-                      {bucket.totalSize === 0
-                        ? "0 B"
-                        : `${(bucket.totalSize / 1024).toFixed(1)} KB`}
+                      {formatBytes(Number(bucket.totalSize))}
                     </p>
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Created: {new Date(bucket.createdAt).toLocaleDateString()}
-                </p>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  <p>S3 ID: {bucket.s3BucketId.toString()}</p>
+                  <p>Layer0 ID: {bucket.layer0BucketId.toString()}</p>
+                </div>
               </CardContent>
             </Card>
           ))
@@ -256,10 +350,10 @@ export default function Buckets() {
               <div className="rounded-lg border p-4 text-center text-muted-foreground">
                 <File className="mx-auto h-8 w-8 mb-2 opacity-50" />
                 <p>This bucket is empty</p>
-                <p className="text-sm">Upload objects to get started</p>
+                <p className="text-sm">Go to Upload page to add objects</p>
               </div>
             ) : (
-              <div className="rounded-lg border">
+              <div className="rounded-lg border overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b bg-muted/50">
@@ -274,7 +368,7 @@ export default function Buckets() {
                       <tr key={obj.key} className="border-b">
                         <td className="px-4 py-2 font-mono text-sm">{obj.key}</td>
                         <td className="px-4 py-2 text-sm">
-                          {(obj.size / 1024).toFixed(1)} KB
+                          {formatBytes(obj.size)}
                         </td>
                         <td className="px-4 py-2 text-sm">
                           {new Date(obj.lastModified).toLocaleString()}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Download as DownloadIcon,
   Search,
@@ -7,6 +7,8 @@ import {
   CheckCircle,
   AlertCircle,
   Copy,
+  HardDrive,
+  Archive,
 } from "lucide-react";
 import {
   Card,
@@ -18,31 +20,47 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChain } from "@/hooks/useChain";
+import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
-
-type DownloadSource = "cid" | "path";
+import type { DriveInfo, BucketInfo } from "@/lib/storage";
 
 interface DownloadResult {
   cid: string;
   size: number;
   contentType: string;
-  data?: Uint8Array;
+  data: Uint8Array;
 }
 
 export default function Download() {
   const { connected } = useChain();
-  const [downloadSource, setDownloadSource] = useState<DownloadSource>("cid");
+  const {
+    signerAddress,
+    drives,
+    buckets,
+    loading,
+    refreshDrives,
+    refreshBuckets,
+    downloadFromDrive,
+    getObject,
+  } = useStorage();
+
   const [cidInput, setCidInput] = useState("");
-  const [driveName, setDriveName] = useState("");
-  const [filePath, setFilePath] = useState("");
-  const [bucketName, setBucketName] = useState("");
-  const [objectKey, setObjectKey] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [selectedDrive, setSelectedDrive] = useState<DriveInfo | null>(null);
+  const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
+  const [downloadLoading, setDownloadLoading] = useState(false);
   const [result, setResult] = useState<DownloadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleDownloadByCid = async () => {
+  // Refresh drives/buckets on mount
+  useEffect(() => {
+    if (signerAddress && connected) {
+      refreshDrives();
+      refreshBuckets();
+    }
+  }, [signerAddress, connected, refreshDrives, refreshBuckets]);
+
+  const handleDownloadByCid = async (bucketId: bigint, source: "drive" | "bucket") => {
     if (!cidInput.trim()) {
       toast({
         title: "Error",
@@ -52,119 +70,84 @@ export default function Download() {
       return;
     }
 
-    setLoading(true);
+    setDownloadLoading(true);
     setError(null);
     setResult(null);
 
     try {
-      // TODO: Call SDK to download by CID
-      await new Promise((r) => setTimeout(r, 1000));
+      let data: Uint8Array;
 
-      // Mock result
+      if (source === "drive") {
+        data = await downloadFromDrive(bucketId, cidInput);
+      } else {
+        data = await getObject(bucketId, cidInput);
+      }
+
       setResult({
         cid: cidInput,
-        size: 1024 * Math.floor(Math.random() * 100 + 1),
+        size: data.length,
         contentType: "application/octet-stream",
+        data,
       });
 
       toast({ title: "Success", description: "File retrieved successfully" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Download failed");
+      const message = err instanceof Error ? err.message : "Download failed";
+      setError(message);
       toast({
         title: "Error",
-        description: "Failed to download file",
+        description: message,
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setDownloadLoading(false);
     }
   };
 
-  const handleDownloadByPath = async () => {
-    if (!driveName.trim() || !filePath.trim()) {
+  const handleDownloadFromDrive = async () => {
+    if (!selectedDrive) {
       toast({
         title: "Error",
-        description: "Please enter drive name and file path",
+        description: "Please select a drive",
         variant: "destructive",
       });
       return;
     }
-
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      // TODO: Call SDK to download from drive
-      await new Promise((r) => setTimeout(r, 1000));
-
-      const mockCid = `0x${Array.from({ length: 64 }, () =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join("")}`;
-
-      setResult({
-        cid: mockCid,
-        size: 1024 * Math.floor(Math.random() * 100 + 1),
-        contentType: "text/plain",
-      });
-
-      toast({ title: "Success", description: "File retrieved successfully" });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Download failed");
-      toast({
-        title: "Error",
-        description: "Failed to download file",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
+    await handleDownloadByCid(selectedDrive.bucketId, "drive");
   };
 
   const handleDownloadFromBucket = async () => {
-    if (!bucketName.trim() || !objectKey.trim()) {
+    if (!selectedBucket) {
       toast({
         title: "Error",
-        description: "Please enter bucket name and object key",
+        description: "Please select a bucket",
         variant: "destructive",
       });
       return;
     }
-
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      // TODO: Call SDK to download from S3 bucket
-      await new Promise((r) => setTimeout(r, 1000));
-
-      const mockCid = `0x${Array.from({ length: 64 }, () =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join("")}`;
-
-      setResult({
-        cid: mockCid,
-        size: 1024 * Math.floor(Math.random() * 100 + 1),
-        contentType: "application/json",
-      });
-
-      toast({ title: "Success", description: "Object retrieved successfully" });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Download failed");
-      toast({
-        title: "Error",
-        description: "Failed to download object",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
+    await handleDownloadByCid(selectedBucket.layer0BucketId, "bucket");
   };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast({ title: "Copied", description: "CID copied to clipboard" });
+  };
+
+  const saveToDevice = () => {
+    if (!result) return;
+
+    // Create blob and download
+    const blob = new Blob([result.data], { type: result.contentType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `download-${result.cid.slice(0, 8)}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({ title: "Success", description: "File saved to device" });
   };
 
   if (!connected) {
@@ -186,6 +169,26 @@ export default function Download() {
     );
   }
 
+  if (!signerAddress) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Download</h1>
+          <p className="text-muted-foreground">Download files from storage</p>
+        </div>
+        <Card>
+          <CardContent className="py-8 text-center">
+            <AlertCircle className="mx-auto h-12 w-12 mb-4 text-yellow-500" />
+            <p className="text-muted-foreground mb-2">No signer set</p>
+            <p className="text-sm text-muted-foreground">
+              Go to the Accounts page to set a signing account first
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -193,7 +196,7 @@ export default function Download() {
         <p className="text-muted-foreground">Download files from storage</p>
       </div>
 
-      {/* Download by CID */}
+      {/* CID Input */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -201,26 +204,16 @@ export default function Download() {
             Download by CID
           </CardTitle>
           <CardDescription>
-            Download a file directly using its content identifier (CID)
+            Enter a content identifier (CID) to download
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-3">
-            <Input
-              placeholder="0x..."
-              value={cidInput}
-              onChange={(e) => setCidInput(e.target.value)}
-              className="font-mono"
-            />
-            <Button onClick={handleDownloadByCid} disabled={loading}>
-              {loading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <DownloadIcon className="mr-2 h-4 w-4" />
-              )}
-              Download
-            </Button>
-          </div>
+          <Input
+            placeholder="0x..."
+            value={cidInput}
+            onChange={(e) => setCidInput(e.target.value)}
+            className="font-mono"
+          />
         </CardContent>
       </Card>
 
@@ -228,46 +221,49 @@ export default function Download() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <File className="h-5 w-5" />
+            <HardDrive className="h-5 w-5" />
             Download from Drive
           </CardTitle>
           <CardDescription>
-            Download a file from a File System drive by path
+            Select a drive and download content by CID
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Drive Name</label>
-              <Input
-                placeholder="my-drive"
-                value={driveName}
-                onChange={(e) => setDriveName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">File Path</label>
-              <Input
-                placeholder="/documents/file.txt"
-                value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button
-                onClick={handleDownloadByPath}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <DownloadIcon className="mr-2 h-4 w-4" />
-                )}
-                Download
-              </Button>
-            </div>
+          <div className="flex gap-3">
+            <select
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={selectedDrive?.driveId.toString() || ""}
+              onChange={(e) => {
+                const drive = drives.find(
+                  (d) => d.driveId.toString() === e.target.value
+                );
+                setSelectedDrive(drive || null);
+              }}
+            >
+              <option value="">Select a drive...</option>
+              {drives.map((drive) => (
+                <option key={drive.driveId.toString()} value={drive.driveId.toString()}>
+                  {drive.name || `Drive ${drive.driveId.toString()}`}
+                </option>
+              ))}
+            </select>
+            <Button
+              onClick={handleDownloadFromDrive}
+              disabled={downloadLoading || !selectedDrive || !cidInput}
+            >
+              {downloadLoading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <DownloadIcon className="mr-2 h-4 w-4" />
+              )}
+              Download
+            </Button>
           </div>
+          {drives.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              No drives found. Create one in the Drives page.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -275,46 +271,49 @@ export default function Download() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <File className="h-5 w-5" />
+            <Archive className="h-5 w-5" />
             Download from S3 Bucket
           </CardTitle>
           <CardDescription>
-            Download an object from an S3-compatible bucket
+            Select a bucket and download content by CID
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Bucket Name</label>
-              <Input
-                placeholder="my-bucket"
-                value={bucketName}
-                onChange={(e) => setBucketName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Object Key</label>
-              <Input
-                placeholder="uploads/file.txt"
-                value={objectKey}
-                onChange={(e) => setObjectKey(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button
-                onClick={handleDownloadFromBucket}
-                disabled={loading}
-                className="w-full"
-              >
-                {loading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <DownloadIcon className="mr-2 h-4 w-4" />
-                )}
-                Download
-              </Button>
-            </div>
+          <div className="flex gap-3">
+            <select
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={selectedBucket?.s3BucketId.toString() || ""}
+              onChange={(e) => {
+                const bucket = buckets.find(
+                  (b) => b.s3BucketId.toString() === e.target.value
+                );
+                setSelectedBucket(bucket || null);
+              }}
+            >
+              <option value="">Select a bucket...</option>
+              {buckets.map((bucket) => (
+                <option key={bucket.s3BucketId.toString()} value={bucket.s3BucketId.toString()}>
+                  {bucket.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              onClick={handleDownloadFromBucket}
+              disabled={downloadLoading || !selectedBucket || !cidInput}
+            >
+              {downloadLoading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <DownloadIcon className="mr-2 h-4 w-4" />
+              )}
+              Download
+            </Button>
           </div>
+          {buckets.length === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              No buckets found. Create one in the Buckets page.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -364,7 +363,18 @@ export default function Download() {
                     </div>
                   </div>
                 </div>
-                <Button>
+
+                {/* Preview for text files */}
+                {result.size < 10000 && (
+                  <div className="rounded-lg border p-4">
+                    <p className="text-sm text-muted-foreground mb-2">Preview</p>
+                    <pre className="text-sm bg-muted p-2 rounded overflow-auto max-h-48">
+                      {new TextDecoder().decode(result.data)}
+                    </pre>
+                  </div>
+                )}
+
+                <Button onClick={saveToDevice}>
                   <DownloadIcon className="mr-2 h-4 w-4" />
                   Save to Device
                 </Button>
