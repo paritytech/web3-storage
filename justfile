@@ -109,7 +109,7 @@ stats:
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333": papi-setup
+demo CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL=("http://127.0.0.1:" + PORT): papi-setup
     node examples/papi/full-flow.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
@@ -270,8 +270,8 @@ fs-demo:
     echo ""
     just fs-example
 
-# File system integration test for CI (uses CI ports: 2222/3333)
-fs-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333":
+# File system integration test for CI
+fs-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL=("http://127.0.0.1:" + PORT):
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running File System CI Integration Test"
