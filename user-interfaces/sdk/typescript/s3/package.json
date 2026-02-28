@@ -1,0 +1,79 @@
+{
+  "name": "@web3-storage/s3-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Web3 Storage S3-Compatible Interface",
+  "author": "Parity Technologies <admin@parity.io>",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src",
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
+    "example": "tsx examples/basic-usage.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@polkadot-api/substrate-bindings": "^0.16.5",
+    "@polkadot/keyring": "^14.0.1",
+    "@polkadot/util-crypto": "^14.0.1",
+    "polkadot-api": "^1.23.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@polkadot-api/cli": "^0.13.4",
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.0"
+  },
+  "peerDependencies": {
+    "@polkadot-api/descriptors": "*"
+  },
+  "peerDependenciesMeta": {
+    "@polkadot-api/descriptors": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "web3",
+    "storage",
+    "s3",
+    "aws-compatible",
+    "polkadot",
+    "substrate",
+    "decentralized"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paritytech/web3-storage.git",
+    "directory": "sdk/typescript/s3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
