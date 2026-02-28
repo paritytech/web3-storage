@@ -28,4 +28,4 @@ name = "alice"
 validator = true
 command = ".bin/polkadot-omni-node"
 rpc_port = 2222
-args = ["--collator", "-lruntime=info"]
+args = ["--collator", "--force-authoring", "-lruntime=info,aura=debug,cumulus-consensus=debug"]
