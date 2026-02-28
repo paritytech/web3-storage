@@ -270,6 +270,17 @@ fs-demo:
     echo ""
     just fs-example
 
+# File system integration test for CI (uses CI ports: 2222/3333)
+fs-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running File System CI Integration Test"
+    echo "  Chain: {{CHAIN_WS}}"
+    echo "  Provider: {{PROVIDER_URL}}"
+    echo ""
+    cd storage-interfaces/file-system/client
+    cargo run --release --example ci_integration_test "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
 # Build file system components only
 fs-build:
     #!/usr/bin/env bash
