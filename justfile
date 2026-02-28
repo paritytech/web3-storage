@@ -6,7 +6,7 @@
 #   brew install just
 
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2512"
+polkadot_version := "polkadot-stable2512-2"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
