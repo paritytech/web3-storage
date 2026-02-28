@@ -96,7 +96,7 @@ export default function Drives() {
         bucketId: driveId, // Simulated - would be from chain
         rootCid: null,
         createdAt: BigInt(Date.now()),
-        updatedAt: BigInt(Date.now()),
+        lastCommittedAt: BigInt(Date.now()),
         fileCount: 0,
         totalSize: 0,
       };

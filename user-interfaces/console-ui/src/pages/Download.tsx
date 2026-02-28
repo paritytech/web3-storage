@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import {
   Download as DownloadIcon,
   Search,
-  File,
   Loader2,
   CheckCircle,
   AlertCircle,
@@ -38,7 +37,6 @@ export default function Download() {
     signerAddress,
     drives,
     buckets,
-    loading,
     refreshDrives,
     refreshBuckets,
     downloadFromDrive,

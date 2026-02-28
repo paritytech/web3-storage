@@ -10,6 +10,7 @@
     "papi:generate": "papi add -w ws://localhost:2222 parachain && papi"
   },
   "dependencies": {
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-api/substrate-bindings": "^0.9.3",
     "@polkadot/keyring": "^14.0.1",
     "@polkadot/util-crypto": "^14.0.1",

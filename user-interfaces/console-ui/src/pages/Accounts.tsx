@@ -50,7 +50,7 @@ const DEV_ACCOUNTS: Omit<Account, "isActive">[] = [
 
 export default function Accounts() {
   const { connected } = useChain();
-  const { signerAddress, setSigner, loading } = useStorage();
+  const { setSigner, loading } = useStorage();
 
   const [accounts, setAccounts] = useState<Account[]>(
     DEV_ACCOUNTS.map((acc) => ({

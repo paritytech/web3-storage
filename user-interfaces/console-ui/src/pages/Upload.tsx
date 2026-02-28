@@ -151,7 +151,7 @@ export default function Upload() {
           prev.map((f) => (f.id === uploadFile.id ? { ...f, progress: 30 } : f))
         );
 
-        let result;
+        let result: { cid: string; size: number } | undefined;
 
         if (uploadTarget === "drive" && selectedDrive) {
           // Upload to drive
