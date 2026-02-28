@@ -1,8 +1,6 @@
 //! File System CI Integration Test
 //!
-//! This test is designed to run in CI after the infrastructure is set up
-//! (chain running on ws://127.0.0.1:2222, provider on http://127.0.0.1:3333).
-//!
+//! This test is designed to run in CI after the infrastructure is set up.
 //! It tests the full file system workflow:
 //! 1. Create a drive (which creates bucket + agreement internally)
 //! 2. Create directories
@@ -10,31 +8,28 @@
 //! 4. List directories
 //! 5. Download and verify files
 //!
-//! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
+//! Usage: cargo run --example ci_integration_test <chain_ws> <provider_url>
 //!
-//! Defaults:
-//!   chain_ws: ws://127.0.0.1:2222
-//!   provider_url: http://127.0.0.1:3333
+//! Run via justfile (recommended): just fs-demo-ci
 
 use file_system_client::FileSystemClient;
 use file_system_primitives::CommitStrategy;
 use std::env;
-
-const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
-const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // Parse command line arguments
+    // Parse command line arguments (required)
     let args: Vec<String> = env::args().collect();
-    let chain_ws = args.get(1).map(|s| s.as_str()).unwrap_or(DEFAULT_CHAIN_WS);
-    let provider_url = args
-        .get(2)
-        .map(|s| s.as_str())
-        .unwrap_or(DEFAULT_PROVIDER_URL);
+    if args.len() < 3 {
+        eprintln!("Usage: {} <chain_ws> <provider_url>", args[0]);
+        eprintln!("  Run via justfile: just fs-demo-ci");
+        std::process::exit(1);
+    }
+    let chain_ws = &args[1];
+    let provider_url = &args[2];
 
     println!("=== File System CI Integration Test ===");
     println!();
