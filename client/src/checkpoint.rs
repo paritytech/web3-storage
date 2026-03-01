@@ -34,7 +34,7 @@ use crate::substrate::SubstrateClient;
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,7 +119,7 @@ pub struct ProviderHealthHistory {
     /// Average response time in milliseconds.
     pub avg_response_time_ms: u64,
     /// Last N status changes for trend analysis.
-    pub recent_statuses: Vec<(Instant, ProviderStatus)>,
+    pub recent_statuses: VecDeque<(Instant, ProviderStatus)>,
     /// Last successful contact time.
     pub last_success: Option<Instant>,
     /// Last failure time.
@@ -137,7 +137,7 @@ impl ProviderHealthHistory {
             successful_requests: 0,
             failed_requests: 0,
             avg_response_time_ms: 0,
-            recent_statuses: Vec::new(),
+            recent_statuses: VecDeque::new(),
             last_success: None,
             last_failure: None,
             consecutive_failures: 0,
@@ -173,9 +173,9 @@ impl ProviderHealthHistory {
 
     /// Add a status to the history (keep last 10).
     fn add_status(&mut self, status: ProviderStatus) {
-        self.recent_statuses.push((Instant::now(), status));
+        self.recent_statuses.push_back((Instant::now(), status));
         if self.recent_statuses.len() > 10 {
-            self.recent_statuses.remove(0);
+            self.recent_statuses.pop_front();
         }
     }
 
@@ -473,18 +473,13 @@ impl CheckpointMetrics {
         self.total_attempts += 1;
         self.last_checkpoint_time = Some(Instant::now());
 
-        // Update rolling average submission time
-        if self.successful_submissions > 0 {
-            self.avg_submission_time_ms =
-                (self.avg_submission_time_ms * (self.successful_submissions - 1) + duration_ms)
-                    / self.successful_submissions;
-        } else {
-            self.avg_submission_time_ms = duration_ms;
-        }
-
         match result {
             CheckpointResult::Submitted { signers, .. } => {
                 self.successful_submissions += 1;
+                // Update rolling average submission time (after incrementing count)
+                let n = self.successful_submissions;
+                self.avg_submission_time_ms =
+                    (self.avg_submission_time_ms * (n - 1) + duration_ms) / n;
                 self.providers_responded += signers.len() as u64;
             }
             CheckpointResult::InsufficientConsensus { agreeing, .. } => {
