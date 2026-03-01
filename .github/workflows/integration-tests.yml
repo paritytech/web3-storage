@@ -34,6 +34,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
       - name: Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
@@ -49,9 +52,6 @@ jobs:
         with:
           path: .bin
           key: binaries-${{ env.POLKADOT_SDK_VERSION }}
-
-      - name: Load environment variables
-        run: cat .github/env >> $GITHUB_ENV
 
       - name: Download binaries
         if: steps.bin-cache.outputs.cache-hit != 'true'
