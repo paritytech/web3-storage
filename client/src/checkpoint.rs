@@ -3105,4 +3105,62 @@ mod tests {
         // Verify failed challenge error
         assert_eq!(result.challenges_failed[0].error, "Insufficient funds");
     }
+
+    // ========================================================================
+    // CheckpointMetrics Rolling Average Tests
+    // ========================================================================
+
+    #[test]
+    fn test_metrics_rolling_average_first_submission() {
+        let mut metrics = CheckpointMetrics::default();
+        let result = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+
+        metrics.record_attempt(&result, 200);
+
+        assert_eq!(metrics.successful_submissions, 1);
+        assert_eq!(metrics.avg_submission_time_ms, 200);
+    }
+
+    #[test]
+    fn test_metrics_rolling_average_multiple_submissions() {
+        let mut metrics = CheckpointMetrics::default();
+        let result = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+
+        metrics.record_attempt(&result, 100);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        metrics.record_attempt(&result, 200);
+        assert_eq!(metrics.avg_submission_time_ms, 150); // (100 + 200) / 2
+
+        metrics.record_attempt(&result, 300);
+        assert_eq!(metrics.avg_submission_time_ms, 200); // (150*2 + 300) / 3 = 200
+    }
+
+    #[test]
+    fn test_metrics_rolling_average_ignores_failures() {
+        let mut metrics = CheckpointMetrics::default();
+        let success = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+        let failure = CheckpointResult::TransactionFailed {
+            error: "timeout".to_string(),
+        };
+
+        metrics.record_attempt(&success, 100);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        // Failure should not change the submission time average
+        metrics.record_attempt(&failure, 5000);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        metrics.record_attempt(&success, 200);
+        assert_eq!(metrics.avg_submission_time_ms, 150);
+    }
 }
