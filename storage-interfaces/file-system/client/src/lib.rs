@@ -57,6 +57,7 @@ pub use substrate::SubstrateClient;
 
 /// File system client errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FsClientError {
     #[error("Storage client error: {0}")]
     StorageClient(String),
@@ -93,6 +94,12 @@ pub enum FsClientError {
 
     #[error("Bounded collection overflow")]
     BoundedOverflow,
+
+    #[error("No signer configured")]
+    NoSigner,
+
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
