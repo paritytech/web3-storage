@@ -32,7 +32,7 @@ use crate::checkpoint::{
 use crate::ClientError;
 use serde::{Deserialize, Serialize};
 use sp_runtime::AccountId32;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use storage_primitives::BucketId;
@@ -177,7 +177,7 @@ impl PersistedHealthHistory {
             successful_requests: self.successful_requests,
             failed_requests: self.failed_requests,
             avg_response_time_ms: self.avg_response_time_ms,
-            recent_statuses: Vec::new(), // Not persisted - rebuilt at runtime
+            recent_statuses: VecDeque::new(), // Not persisted - rebuilt at runtime
             last_success: self.last_success_timestamp.map(|_| Instant::now()),
             last_failure: self.last_failure_timestamp.map(|_| Instant::now()),
             consecutive_failures: self.consecutive_failures,
@@ -346,17 +346,20 @@ impl CheckpointPersistence {
     ///
     /// Returns the loaded state, or a new empty state if the file doesn't exist.
     pub async fn load(&self) -> Result<PersistedCheckpointState, ClientError> {
-        // Check if file exists
-        if !self.config.file_path.exists() {
-            let state = PersistedCheckpointState::new();
-            *self.cached_state.write().await = Some(state.clone());
-            return Ok(state);
-        }
-
-        // Read file
-        let contents = fs::read_to_string(&self.config.file_path)
-            .await
-            .map_err(|e| ClientError::Storage(format!("Failed to read persistence file: {e}")))?;
+        // Attempt to read file directly, handling NotFound without a prior exists() check
+        let contents = match fs::read_to_string(&self.config.file_path).await {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let state = PersistedCheckpointState::new();
+                *self.cached_state.write().await = Some(state.clone());
+                return Ok(state);
+            }
+            Err(e) => {
+                return Err(ClientError::Storage(format!(
+                    "Failed to read persistence file: {e}"
+                )));
+            }
+        };
 
         // Parse JSON
         let state: PersistedCheckpointState = serde_json::from_str(&contents)
@@ -390,13 +393,11 @@ impl CheckpointPersistence {
             self.rotate_backups().await?;
         }
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists (create_dir_all is idempotent)
         if let Some(parent) = self.config.file_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    ClientError::Storage(format!("Failed to create persistence directory: {e}"))
-                })?;
-            }
+            fs::create_dir_all(parent).await.map_err(|e| {
+                ClientError::Storage(format!("Failed to create persistence directory: {e}"))
+            })?;
         }
 
         // Update timestamp
