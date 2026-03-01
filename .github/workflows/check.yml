@@ -31,7 +31,7 @@ jobs:
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Cargo fmt
         run: |
@@ -59,7 +59,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -85,7 +85,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -109,7 +109,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -132,7 +132,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
