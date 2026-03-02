@@ -91,8 +91,10 @@ jobs:
             echo "WARNING: no /tmp/zombie-* directory found"
           fi
           echo "=== End early diagnostics ==="
-          echo "Waiting for parachain RPC to be ready..."
+          ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
+          echo "Waiting for parachain to produce finalized blocks..."
           for i in $(seq 1 180); do
+            # Check parachain finalized head
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
               -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
               http://127.0.0.1:2222 2>/dev/null) || true
@@ -110,46 +112,51 @@ jobs:
                 fi
               fi
             fi
+            # Progress report every 20 iterations (~100s)
+            if [ "$((i % 20))" -eq 0 ]; then
+              echo "=== Progress check (attempt $i) ==="
+              # Relay chain finalized block
+              RELAY_RESP=$(curl -s -H "Content-Type: application/json" \
+                -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
+                http://127.0.0.1:9900 2>/dev/null) || true
+              RELAY_HASH=$(echo "$RELAY_RESP" | jq -r '.result // empty' 2>/dev/null)
+              if [ -n "$RELAY_HASH" ]; then
+                RELAY_HDR=$(curl -s -H "Content-Type: application/json" \
+                  -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$RELAY_HASH\"]}" \
+                  http://127.0.0.1:9900 2>/dev/null) || true
+                RELAY_BLOCK=$(echo "$RELAY_HDR" | jq -r '.result.number // empty' 2>/dev/null)
+                echo "  Relay finalized: $RELAY_BLOCK"
+              else
+                echo "  Relay finalized: NO RESPONSE"
+              fi
+              # Parachain best block (chain_getHeader with no params = best)
+              PARA_BEST=$(curl -s -H "Content-Type: application/json" \
+                -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
+                http://127.0.0.1:2222 2>/dev/null) || true
+              PARA_BEST_NUM=$(echo "$PARA_BEST" | jq -r '.result.number // empty' 2>/dev/null)
+              echo "  Parachain best: $PARA_BEST_NUM"
+              echo "  Parachain finalized: ${BLOCK_HEX:-NO RESPONSE}"
+              # Collator log - last 10 lines for progress
+              if [ -n "$ZOMBIE_DIR" ]; then
+                echo "  Collator log (last 10 lines):"
+                tail -10 "$ZOMBIE_DIR"/alice-1.log 2>/dev/null | sed 's/^/    /' || echo "    NOT FOUND"
+              fi
+            fi
             if [ "$i" -eq 180 ]; then
-              echo "=== TIMEOUT: parachain did not start producing blocks ==="
-              echo "--- Zombienet process ---"
-              ps aux | grep -E "zombienet|polkadot|omni-node" 2>/dev/null || echo "NO PROCESSES"
-              echo "--- All listening ports ---"
-              ss -tlnp 2>/dev/null || echo "ss not available"
-              echo "--- Curl verbose to parachain RPC ---"
-              curl -v -s -H "Content-Type: application/json" \
-                -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' \
-                http://127.0.0.1:2222 2>&1 || echo "CURL FAILED"
-              echo "--- Curl verbose to relay RPC ---"
-              curl -v -s -H "Content-Type: application/json" \
-                -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' \
-                http://127.0.0.1:9900 2>&1 || echo "CURL FAILED"
-              echo "--- Zombie dir contents ---"
+              echo "=== TIMEOUT: parachain did not finalize blocks ==="
               ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
               if [ -n "$ZOMBIE_DIR" ]; then
-                echo "Zombie dir: $ZOMBIE_DIR"
-                ls -la "$ZOMBIE_DIR"/ 2>&1 || true
-                echo "--- alice-1 collator keystore (parachain) ---"
-                ls -la "$ZOMBIE_DIR"/alice-1/data/chains/storage-local/keystore/ 2>&1 || echo "NOT FOUND"
-                echo "--- alice-1 collator keystore (relay) ---"
-                ls -la "$ZOMBIE_DIR"/alice-1/relay-data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
-                echo "--- alice relay validator keystore ---"
-                ls -la "$ZOMBIE_DIR"/alice/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
-                echo "--- bob relay validator keystore ---"
-                ls -la "$ZOMBIE_DIR"/bob/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
-                echo "--- alice-1 cfg ---"
-                ls -la "$ZOMBIE_DIR"/alice-1/cfg/ 2>&1 || echo "NOT FOUND"
+                echo "--- Collator alice-1 log (first 30 lines - startup) ---"
+                head -30 "$ZOMBIE_DIR"/alice-1.log 2>/dev/null || echo "NOT FOUND"
                 echo "--- Collator alice-1 log (last 50 lines) ---"
                 tail -50 "$ZOMBIE_DIR"/alice-1.log 2>/dev/null || echo "NOT FOUND"
                 echo "--- Relay alice log (last 30 lines) ---"
                 tail -30 "$ZOMBIE_DIR"/alice.log 2>/dev/null || echo "NOT FOUND"
-                echo "--- Relay bob log (last 30 lines) ---"
-                tail -30 "$ZOMBIE_DIR"/bob.log 2>/dev/null || echo "NOT FOUND"
               else
                 echo "WARNING: no /tmp/zombie-* directory found"
               fi
-              echo "--- Zombienet log (last 100 lines) ---"
-              tail -100 /tmp/zombienet.log 2>/dev/null || echo "EMPTY"
+              echo "--- Zombienet log (last 50 lines) ---"
+              tail -50 /tmp/zombienet.log 2>/dev/null || echo "EMPTY"
               echo "=== End timeout diagnostics ==="
               exit 1
             fi
