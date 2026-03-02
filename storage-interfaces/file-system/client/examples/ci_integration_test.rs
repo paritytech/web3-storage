@@ -13,8 +13,24 @@
 //! Run via justfile (recommended): just fs-demo-ci
 
 use file_system_client::FileSystemClient;
-use file_system_primitives::CommitStrategy;
+use file_system_primitives::{CommitStrategy, DirectoryEntry};
 use std::env;
+
+async fn list_and_verify(
+    fs_client: &mut FileSystemClient,
+    drive_id: u64,
+    path: &str,
+    expected_count: usize,
+) -> Result<Vec<DirectoryEntry>, Box<dyn std::error::Error>> {
+    let entries = fs_client.list_directory(drive_id, path).await?;
+    println!("  {path} entries: {}", entries.len());
+    for entry in &entries {
+        let kind = if entry.is_directory() { "DIR " } else { "FILE" };
+        println!("    [{kind}] {} ({} bytes)", entry.name_str(), entry.size);
+    }
+    assert_eq!(entries.len(), expected_count, "Expected {expected_count} entries in {path}");
+    Ok(entries)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -108,56 +124,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Step 5: Listing directories...");
 
-    let root_entries = fs_client.list_directory(drive_id, "/").await?;
-    println!("  Root directory entries: {}", root_entries.len());
-    for entry in &root_entries {
-        let entry_type = if entry.is_directory() { "DIR " } else { "FILE" };
-        println!(
-            "    [{entry_type}] {} ({} bytes)",
-            entry.name_str(),
-            entry.size
-        );
-    }
-    assert_eq!(root_entries.len(), 1, "Expected 1 entry in root");
-    assert!(
-        root_entries[0].is_directory(),
-        "Expected test-dir to be a directory"
-    );
-    assert_eq!(
-        root_entries[0].name_str(),
-        "test-dir",
-        "Expected entry named 'test-dir'"
-    );
+    let root_entries = list_and_verify(&mut fs_client, drive_id, "/", 1).await?;
+    assert!(root_entries[0].is_directory(), "Expected test-dir to be a directory");
+    assert_eq!(root_entries[0].name_str(), "test-dir", "Expected entry named 'test-dir'");
 
-    let test_dir_entries = fs_client.list_directory(drive_id, "/test-dir").await?;
-    println!("  /test-dir entries: {}", test_dir_entries.len());
-    for entry in &test_dir_entries {
-        let entry_type = if entry.is_directory() { "DIR " } else { "FILE" };
-        println!(
-            "    [{entry_type}] {} ({} bytes)",
-            entry.name_str(),
-            entry.size
-        );
-    }
-    assert_eq!(test_dir_entries.len(), 2, "Expected 2 entries in /test-dir");
-
-    let subdir_entries = fs_client
-        .list_directory(drive_id, "/test-dir/subdir")
-        .await?;
-    println!("  /test-dir/subdir entries: {}", subdir_entries.len());
-    for entry in &subdir_entries {
-        let entry_type = if entry.is_directory() { "DIR " } else { "FILE" };
-        println!(
-            "    [{entry_type}] {} ({} bytes)",
-            entry.name_str(),
-            entry.size
-        );
-    }
-    assert_eq!(
-        subdir_entries.len(),
-        1,
-        "Expected 1 entry in /test-dir/subdir"
-    );
+    list_and_verify(&mut fs_client, drive_id, "/test-dir", 2).await?;
+    list_and_verify(&mut fs_client, drive_id, "/test-dir/subdir", 1).await?;
 
     // Step 6: Download and verify files
     println!();
