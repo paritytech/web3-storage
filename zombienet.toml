@@ -1,7 +1,6 @@
 [settings]
 timeout = 1000
 provider = "native"
-node_spawn_timeout = 240
 
 [relaychain]
 default_command = ".bin/polkadot"
@@ -28,5 +27,4 @@ name = "alice"
 validator = true
 command = ".bin/polkadot-omni-node"
 rpc_port = 2222
-args = ["--collator", "--force-authoring", "-lruntime=info,aura=debug,cumulus-consensus=debug"]
-keystore_key_types = ["aura"]
+args = ["--collator", "-lruntime=info"]
