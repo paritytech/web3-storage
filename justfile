@@ -7,6 +7,8 @@
 
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
+# Zombienet version
+zombienet_version := "v1.3.138"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -58,21 +60,23 @@ _download BIN URL:
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-[private]
-download-binaries: download-polkadot download-polkadot-omni-node download-chain-spec-builder download-zombienet
+download-binaries: download-polkadot-sdk-binaries download-zombienet
     @echo "All binaries downloaded to .bin/"
 
-[private]
-download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
+# Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
+download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node _download-chain-spec-builder
+
+# Download zombienet
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/download/" + zombienet_version + "/" + zombienet_asset)
 
 [private]
-download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
+_download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
 
 [private]
-download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
+_download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
 
 [private]
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/latest/download/" + zombienet_asset)
+_download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
 
 [private]
 check: download-binaries
