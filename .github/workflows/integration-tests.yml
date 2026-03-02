@@ -146,9 +146,6 @@ jobs:
       - name: Run demo
         run: just demo
 
-      - name: Build file system client
-        run: cargo build --release -p file-system-client --examples
-
       - name: Run file system integration test
         run: just fs-demo-ci
 
