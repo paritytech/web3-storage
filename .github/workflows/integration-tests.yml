@@ -57,6 +57,11 @@ jobs:
         if: steps.bin-cache.outputs.cache-hit != 'true'
         run: just download-binaries
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Build runtime and provider
         run: just build-runtime && just build-provider
 
