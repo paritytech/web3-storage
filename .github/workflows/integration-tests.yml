@@ -73,6 +73,12 @@ jobs:
         if: steps.zombienet-cache.outputs.cache-hit != 'true'
         run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
 
+      - name: Log binary versions
+        run: |
+          .bin/zombienet version
+          .bin/polkadot --version
+          .bin/polkadot-omni-node --version
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
