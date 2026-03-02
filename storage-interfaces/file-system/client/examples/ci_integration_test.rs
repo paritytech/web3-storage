@@ -28,7 +28,11 @@ async fn list_and_verify(
         let kind = if entry.is_directory() { "DIR " } else { "FILE" };
         println!("    [{kind}] {} ({} bytes)", entry.name_str(), entry.size);
     }
-    assert_eq!(entries.len(), expected_count, "Expected {expected_count} entries in {path}");
+    assert_eq!(
+        entries.len(),
+        expected_count,
+        "Expected {expected_count} entries in {path}"
+    );
     Ok(entries)
 }
 
@@ -125,8 +129,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Step 5: Listing directories...");
 
     let root_entries = list_and_verify(&mut fs_client, drive_id, "/", 1).await?;
-    assert!(root_entries[0].is_directory(), "Expected test-dir to be a directory");
-    assert_eq!(root_entries[0].name_str(), "test-dir", "Expected entry named 'test-dir'");
+    assert!(
+        root_entries[0].is_directory(),
+        "Expected test-dir to be a directory"
+    );
+    assert_eq!(
+        root_entries[0].name_str(),
+        "test-dir",
+        "Expected entry named 'test-dir'"
+    );
 
     list_and_verify(&mut fs_client, drive_id, "/test-dir", 2).await?;
     list_and_verify(&mut fs_client, drive_id, "/test-dir/subdir", 1).await?;
