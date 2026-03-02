@@ -65,7 +65,7 @@ download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base +
 download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
 
 [private]
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/latest/download/" + zombienet_asset)
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/download/v1.3.138/" + zombienet_asset)
 
 [private]
 check: download-binaries
