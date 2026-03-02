@@ -60,10 +60,9 @@ jobs:
       - name: Build runtime and provider
         run: just build-runtime && just build-provider
 
-      - name: Start chain (background)
-        run: just start-chain &> /tmp/zombienet.log &
-      - name: Wait for chain to produce blocks
+      - name: Start chain and wait for blocks
         run: |
+          nohup .bin/zombienet spawn zombienet.toml &> /tmp/zombienet.log &
           echo "Waiting for parachain RPC to be ready..."
           for i in $(seq 1 120); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
@@ -91,10 +90,10 @@ jobs:
             sleep 5
           done
 
-      - name: Start provider (background)
-        run: just start-provider &> /tmp/provider.log &
-      - name: Wait for provider to be ready
+      - name: Start provider and wait for health
         run: |
+          SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
+            nohup ./target/release/storage-provider-node &> /tmp/provider.log &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
