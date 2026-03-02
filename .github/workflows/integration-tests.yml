@@ -62,7 +62,7 @@ jobs:
 
       - name: Start chain and wait for blocks
         run: |
-          nohup .bin/zombienet spawn zombienet.toml &> /tmp/zombienet.log &
+          nohup .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
           echo "Waiting for parachain RPC to be ready..."
           for i in $(seq 1 120); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
@@ -93,7 +93,7 @@ jobs:
       - name: Start provider and wait for health
         run: |
           SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
-            nohup ./target/release/storage-provider-node &> /tmp/provider.log &
+            nohup ./target/release/storage-provider-node > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
