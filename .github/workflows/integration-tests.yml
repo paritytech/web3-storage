@@ -114,8 +114,16 @@ jobs:
               echo "=== TIMEOUT: parachain did not start producing blocks ==="
               echo "--- Zombienet process ---"
               ps aux | grep -E "zombienet|polkadot|omni-node" 2>/dev/null || echo "NO PROCESSES"
-              echo "--- Listening ports ---"
-              ss -tlnp 2>/dev/null | grep -E "2222|9900|9944" || echo "NO MATCHING PORTS"
+              echo "--- All listening ports ---"
+              ss -tlnp 2>/dev/null || echo "ss not available"
+              echo "--- Curl verbose to parachain RPC ---"
+              curl -v -s -H "Content-Type: application/json" \
+                -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' \
+                http://127.0.0.1:2222 2>&1 || echo "CURL FAILED"
+              echo "--- Curl verbose to relay RPC ---"
+              curl -v -s -H "Content-Type: application/json" \
+                -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' \
+                http://127.0.0.1:9900 2>&1 || echo "CURL FAILED"
               echo "--- Zombie dir contents ---"
               ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
               if [ -n "$ZOMBIE_DIR" ]; then
@@ -131,12 +139,12 @@ jobs:
                 ls -la "$ZOMBIE_DIR"/bob/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
                 echo "--- alice-1 cfg ---"
                 ls -la "$ZOMBIE_DIR"/alice-1/cfg/ 2>&1 || echo "NOT FOUND"
-                echo "--- Collator log (last 50 lines) ---"
-                tail -50 "$ZOMBIE_DIR"/alice-1/alice-1.log 2>/dev/null || echo "NOT FOUND"
+                echo "--- Collator alice-1 log (last 50 lines) ---"
+                tail -50 "$ZOMBIE_DIR"/alice-1.log 2>/dev/null || echo "NOT FOUND"
                 echo "--- Relay alice log (last 30 lines) ---"
-                tail -30 "$ZOMBIE_DIR"/alice/alice.log 2>/dev/null || echo "NOT FOUND"
+                tail -30 "$ZOMBIE_DIR"/alice.log 2>/dev/null || echo "NOT FOUND"
                 echo "--- Relay bob log (last 30 lines) ---"
-                tail -30 "$ZOMBIE_DIR"/bob/bob.log 2>/dev/null || echo "NOT FOUND"
+                tail -30 "$ZOMBIE_DIR"/bob.log 2>/dev/null || echo "NOT FOUND"
               else
                 echo "WARNING: no /tmp/zombie-* directory found"
               fi
@@ -184,6 +192,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
+            /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/alice-1/data/chains/storage-local/keystore/
             /tmp/zombie-*/alice-1/relay-data/chains/westend_local_testnet/keystore/
