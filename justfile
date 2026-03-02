@@ -6,7 +6,7 @@
 #   brew install just
 
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2512"
+polkadot_version := "polkadot-stable2512-2"
 # Zombienet version
 zombienet_version := "v1.3.138"
 
@@ -19,8 +19,15 @@ polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/downlo
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
 
-# Provider port (override with: just PORT=3001 start-provider)
-PORT := "3333"
+# Network ports (override with: just PROVIDER_PORT=3001 start-provider)
+RELAY_PORT := "9900"
+CHAIN_PORT := "2222"
+PROVIDER_PORT := "3333"
+
+# Network URLs (constructed from ports)
+RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
+CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
+PROVIDER_URL := "http://127.0.0.1:" + PROVIDER_PORT
 
 # Default recipe
 default:
@@ -84,37 +91,37 @@ start-chain: check build-runtime
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
     echo "Web UIs (once ready):"
-    echo "  Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222"
+    echo "  Relay chain: https://polkadot.js.org/apps/?rpc={{ RELAY_WS }}"
+    echo "  Parachain:   https://polkadot.js.org/apps/?rpc={{ CHAIN_WS }}"
     echo ""
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build-provider
+start-provider SEED="//Alice": build-provider
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ==="
     echo ""
-    echo "Provider health: http://127.0.0.1:{{ PORT }}/health"
+    echo "Provider health: {{ PROVIDER_URL }}/health"
     echo ""
     SEED="{{SEED}}" \
-    CHAIN_RPC="{{CHAIN_WS}}" \
-    BIND_ADDR="0.0.0.0:{{ PORT }}" \
+    CHAIN_RPC="{{ CHAIN_WS }}" \
+    BIND_ADDR="0.0.0.0:{{ PROVIDER_PORT }}" \
     ./target/release/storage-provider-node
 
 # Health check for provider node
 health:
-    curl -s http://localhost:3333/health | jq .
+    curl -s {{ PROVIDER_URL }}/health | jq .
 
 # Storage stats for provider node
 stats:
-    curl -s http://localhost:3333/stats | jq .
+    curl -s {{ PROVIDER_URL }}/stats | jq .
 
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333": papi-setup
-    node examples/papi/full-flow.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+demo: papi-setup
+    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
 papi-setup:
@@ -273,6 +280,16 @@ fs-demo:
     echo "✅ Infrastructure is running"
     echo ""
     just fs-example
+
+# File system integration test for CI
+fs-demo-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running File System CI Integration Test"
+    echo "  Chain: {{ CHAIN_WS }}"
+    echo "  Provider: {{ PROVIDER_URL }}"
+    echo ""
+    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Build file system components only
 fs-build:

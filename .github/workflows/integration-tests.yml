@@ -146,6 +146,9 @@ jobs:
       - name: Run demo
         run: just demo
 
+      - name: Run file system integration test
+        run: just fs-demo-ci
+
       - name: Stop services
         if: always()
         run: |
