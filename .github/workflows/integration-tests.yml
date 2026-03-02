@@ -63,6 +63,30 @@ jobs:
       - name: Start chain and wait for blocks
         run: |
           nohup .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
+          ZOMBIE_PID=$!
+          echo "Waiting for zombienet to set up nodes..."
+          sleep 15
+          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
+            echo "ERROR: zombienet exited early"
+            cat /tmp/zombienet.log || true
+            exit 1
+          fi
+          echo "=== Diagnostics: zombienet temp directory ==="
+          ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
+          if [ -n "$ZOMBIE_DIR" ]; then
+            echo "Zombie dir: $ZOMBIE_DIR"
+            echo "--- Collator keystore (parachain) ---"
+            ls -la "$ZOMBIE_DIR"/alice-1/data/chains/storage-local/keystore/ 2>&1 || echo "NOT FOUND"
+            echo "--- Collator keystore (relay) ---"
+            ls -la "$ZOMBIE_DIR"/alice-1/relay-data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+            echo "--- Parachain chain spec session keys ---"
+            jq '.genesis.runtimeGenesis.patch.session' "$ZOMBIE_DIR"/alice-1/cfg/*-4000.json 2>/dev/null || echo "NOT FOUND"
+            echo "--- Chain spec files ---"
+            ls -la "$ZOMBIE_DIR"/*.json 2>/dev/null || echo "NO JSON FILES"
+          else
+            echo "WARNING: no /tmp/zombie-* directory found"
+          fi
+          echo "=== End diagnostics ==="
           echo "Waiting for parachain RPC to be ready..."
           for i in $(seq 1 120); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
@@ -127,4 +151,7 @@ jobs:
             /tmp/zombienet.log
             /tmp/provider.log
             /tmp/zombie-*/**/*.log
-            examples/papi/package-lock.json
+            /tmp/zombie-*/alice-1/data/chains/storage-local/keystore/
+            /tmp/zombie-*/alice-1/cfg/
+            /tmp/zombie-*/*-plain.json
+            /tmp/zombie-*/*-raw.json
