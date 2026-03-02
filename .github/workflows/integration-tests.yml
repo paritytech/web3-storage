@@ -71,14 +71,18 @@ jobs:
             cat /tmp/zombienet.log || true
             exit 1
           fi
-          echo "=== Diagnostics: zombienet temp directory ==="
+          echo "=== Early diagnostics (15s): zombienet temp directory ==="
           ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
           if [ -n "$ZOMBIE_DIR" ]; then
             echo "Zombie dir: $ZOMBIE_DIR"
-            echo "--- Collator keystore (parachain) ---"
+            echo "--- alice-1 collator keystore (parachain) ---"
             ls -la "$ZOMBIE_DIR"/alice-1/data/chains/storage-local/keystore/ 2>&1 || echo "NOT FOUND"
-            echo "--- Collator keystore (relay) ---"
+            echo "--- alice-1 collator keystore (relay) ---"
             ls -la "$ZOMBIE_DIR"/alice-1/relay-data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+            echo "--- alice relay validator keystore ---"
+            ls -la "$ZOMBIE_DIR"/alice/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+            echo "--- bob relay validator keystore ---"
+            ls -la "$ZOMBIE_DIR"/bob/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
             echo "--- Parachain chain spec session keys ---"
             jq '.genesis.runtimeGenesis.patch.session' "$ZOMBIE_DIR"/alice-1/cfg/*-4000.json 2>/dev/null || echo "NOT FOUND"
             echo "--- Chain spec files ---"
@@ -86,9 +90,9 @@ jobs:
           else
             echo "WARNING: no /tmp/zombie-* directory found"
           fi
-          echo "=== End diagnostics ==="
+          echo "=== End early diagnostics ==="
           echo "Waiting for parachain RPC to be ready..."
-          for i in $(seq 1 120); do
+          for i in $(seq 1 180); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
               -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
               http://127.0.0.1:2222 2>/dev/null) || true
@@ -106,9 +110,39 @@ jobs:
                 fi
               fi
             fi
-            if [ "$i" -eq 120 ]; then
-              echo "Timeout: parachain did not start producing blocks"
-              cat /tmp/zombienet.log || true
+            if [ "$i" -eq 180 ]; then
+              echo "=== TIMEOUT: parachain did not start producing blocks ==="
+              echo "--- Zombienet process ---"
+              ps aux | grep -E "zombienet|polkadot|omni-node" 2>/dev/null || echo "NO PROCESSES"
+              echo "--- Listening ports ---"
+              ss -tlnp 2>/dev/null | grep -E "2222|9900|9944" || echo "NO MATCHING PORTS"
+              echo "--- Zombie dir contents ---"
+              ZOMBIE_DIR=$(ls -d /tmp/zombie-* 2>/dev/null | head -1)
+              if [ -n "$ZOMBIE_DIR" ]; then
+                echo "Zombie dir: $ZOMBIE_DIR"
+                ls -la "$ZOMBIE_DIR"/ 2>&1 || true
+                echo "--- alice-1 collator keystore (parachain) ---"
+                ls -la "$ZOMBIE_DIR"/alice-1/data/chains/storage-local/keystore/ 2>&1 || echo "NOT FOUND"
+                echo "--- alice-1 collator keystore (relay) ---"
+                ls -la "$ZOMBIE_DIR"/alice-1/relay-data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+                echo "--- alice relay validator keystore ---"
+                ls -la "$ZOMBIE_DIR"/alice/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+                echo "--- bob relay validator keystore ---"
+                ls -la "$ZOMBIE_DIR"/bob/data/chains/westend_local_testnet/keystore/ 2>&1 || echo "NOT FOUND"
+                echo "--- alice-1 cfg ---"
+                ls -la "$ZOMBIE_DIR"/alice-1/cfg/ 2>&1 || echo "NOT FOUND"
+                echo "--- Collator log (last 50 lines) ---"
+                tail -50 "$ZOMBIE_DIR"/alice-1/alice-1.log 2>/dev/null || echo "NOT FOUND"
+                echo "--- Relay alice log (last 30 lines) ---"
+                tail -30 "$ZOMBIE_DIR"/alice/alice.log 2>/dev/null || echo "NOT FOUND"
+                echo "--- Relay bob log (last 30 lines) ---"
+                tail -30 "$ZOMBIE_DIR"/bob/bob.log 2>/dev/null || echo "NOT FOUND"
+              else
+                echo "WARNING: no /tmp/zombie-* directory found"
+              fi
+              echo "--- Zombienet log (last 100 lines) ---"
+              tail -100 /tmp/zombienet.log 2>/dev/null || echo "EMPTY"
+              echo "=== End timeout diagnostics ==="
               exit 1
             fi
             sleep 5
@@ -152,6 +186,9 @@ jobs:
             /tmp/provider.log
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/alice-1/data/chains/storage-local/keystore/
+            /tmp/zombie-*/alice-1/relay-data/chains/westend_local_testnet/keystore/
             /tmp/zombie-*/alice-1/cfg/
+            /tmp/zombie-*/alice/data/chains/westend_local_testnet/keystore/
+            /tmp/zombie-*/bob/data/chains/westend_local_testnet/keystore/
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
