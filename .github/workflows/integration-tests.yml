@@ -46,16 +46,32 @@ jobs:
       - name: Install just
         run: cargo install just --locked || true
 
-      - name: Cache binaries
+      - name: Cache Polkadot SDK binaries
         uses: actions/cache@v4
-        id: bin-cache
+        id: sdk-cache
         with:
-          path: .bin
-          key: binaries-${{ env.POLKADOT_SDK_VERSION }}
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
 
-      - name: Download binaries
-        if: steps.bin-cache.outputs.cache-hit != 'true'
-        run: just download-binaries
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+
+      - name: Cache zombienet
+        uses: actions/cache@v4
+        id: zombienet-cache
+        with:
+          path: .bin/zombienet
+          key: zombienet-${{ env.ZOMBIENET_VERSION }}
+
+      - name: Download zombienet
+        if: steps.zombienet-cache.outputs.cache-hit != 'true'
+        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
