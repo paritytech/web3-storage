@@ -291,6 +291,7 @@ fs-demo-ci:
     echo ""
     cd storage-interfaces/file-system/client
     cargo run --release --example ci_integration_test "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Build file system components only
 fs-build:
