@@ -29,3 +29,4 @@ validator = true
 command = ".bin/polkadot-omni-node"
 rpc_port = 2222
 args = ["--collator", "--force-authoring", "-lruntime=info,aura=debug,cumulus-consensus=debug"]
+keystore_key_types = ["aura"]
