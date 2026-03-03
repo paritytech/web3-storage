@@ -1,3 +1,6 @@
+#![allow(deprecated)]
+#![allow(unused_attributes)]
+
 use crate::{mock::*, Error, Event};
 use file_system_primitives::{compute_cid, CommitStrategy};
 use frame_support::{assert_noop, assert_ok};

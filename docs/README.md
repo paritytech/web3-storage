@@ -265,7 +265,8 @@ Amazon S3-compatible API over decentralized storage - familiar API with trustles
 1. [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) - Setup infrastructure
 2. [User Guide](./filesystems/USER_GUIDE.md) - Complete file system guide
 3. [Example Walkthrough](./filesystems/EXAMPLE_WALKTHROUGH.md) - Learn by example
-4. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
+4. [File System Overview](./filesystems/FILE_SYSTEM_INTERFACE.md) - Understand Layer 1
+5. [API Reference](./filesystems/API_REFERENCE.md) - API documentation
 
 #### **S3 User - AWS-Compatible Storage (Layer 1)**
 1. [Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md) - Setup infrastructure

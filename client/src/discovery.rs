@@ -160,9 +160,9 @@ impl DiscoveryClient {
     pub async fn find_providers(
         &self,
         requirements: StorageRequirements,
-        limit: u32,
+        _limit: u32,
     ) -> ClientResult<Vec<MatchedProvider>> {
-        let chain = self.base.chain()?;
+        let _chain = self.base.chain()?;
 
         // Call runtime API via storage query
         // For now, we'll iterate providers using storage queries
@@ -204,7 +204,7 @@ impl DiscoveryClient {
         offset: u32,
         limit: u32,
     ) -> ClientResult<Vec<(String, ProviderInfo)>> {
-        let chain = self.base.chain()?;
+        let _chain = self.base.chain()?;
 
         tracing::info!(
             "Finding providers with {} bytes capacity (offset={}, limit={})",

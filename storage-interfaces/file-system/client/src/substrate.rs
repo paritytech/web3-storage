@@ -50,7 +50,7 @@ impl SubstrateClient {
             "eve" => dev::eve(),
             "ferdie" => dev::ferdie(),
             _ => {
-                return Err(FsClientError::InvalidPath(format!(
+                return Err(FsClientError::Config(format!(
                     "Unknown dev account: {name}"
                 )))
             }
@@ -69,7 +69,7 @@ impl SubstrateClient {
         self.signer
             .as_ref()
             .map(|s| s.as_ref())
-            .ok_or_else(|| FsClientError::InvalidPath("No signer configured".to_string()))
+            .ok_or(FsClientError::NoSigner)
     }
 
     /// Get the signer keypair (cloned) if available.
@@ -79,7 +79,7 @@ impl SubstrateClient {
         self.signer
             .as_ref()
             .map(|s| (**s).clone())
-            .ok_or_else(|| FsClientError::InvalidPath("No signer configured".to_string()))
+            .ok_or(FsClientError::NoSigner)
     }
 
     /// Get the WebSocket endpoint URL.
@@ -90,7 +90,7 @@ impl SubstrateClient {
     /// Parse an SS58 account ID string into AccountId32.
     pub fn parse_account(account: &str) -> Result<AccountId32, FsClientError> {
         AccountId32::from_str(account)
-            .map_err(|e| FsClientError::InvalidPath(format!("Invalid account ID: {e}")))
+            .map_err(|e| FsClientError::Config(format!("Invalid account ID: {e}")))
     }
 }
 

@@ -12,8 +12,6 @@
 //!     --output pallet/src/weights.rs
 //! ```
 
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
 use frame_benchmarking::v2::*;
 use frame_support::{pallet_prelude::*, traits::Currency};
@@ -116,7 +114,7 @@ mod benchmarks {
 
     #[benchmark]
     fn deregister_provider() {
-        let provider = create_provider::<T>(0);
+        let _provider = create_provider::<T>(0);
         // Need to remove all agreements first - just use a fresh provider with no agreements
 
         let provider2 = funded_account::<T>("provider2", 99);
@@ -720,7 +718,7 @@ mod benchmarks {
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
-        let signature = sp_runtime::MultiSignature::Sr25519(sig.into());
+        let signature = sp_runtime::MultiSignature::Sr25519(sig);
 
         #[extrinsic_call]
         challenge_offchain(
