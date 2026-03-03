@@ -6216,6 +6216,7 @@ name = "s3-client"
 version = "0.1.0"
 dependencies = [
  "bip39",
+ "env_logger",
  "hex",
  "parity-scale-codec",
  "reqwest",
