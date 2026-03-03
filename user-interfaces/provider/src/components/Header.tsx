@@ -24,6 +24,7 @@ import {
   selectAccount,
   disconnectWallet,
 } from '@/state/wallet.state'
+import { NetworkSelector } from '@/components/NetworkSelector'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
@@ -151,6 +152,9 @@ export function Header() {
 
           {/* Status & Account */}
           <div className="flex items-center gap-4">
+            {/* Network Selector */}
+            <NetworkSelector />
+
             {/* Connection Status */}
             <div className="flex items-center gap-2">
               <div

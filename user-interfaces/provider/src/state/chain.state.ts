@@ -13,6 +13,7 @@ import {
   disconnectFromChain,
   subscribeToBlocks,
 } from '@/lib/chain-client'
+import { loadSelectedNetwork } from '@web3-storage/network-config'
 
 // Types
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -27,7 +28,8 @@ export interface ChainInfo {
 const connectionStatus$ = new BehaviorSubject<ConnectionStatus>('disconnected')
 const blockNumber$ = new BehaviorSubject<number>(0)
 const chainInfo$ = new BehaviorSubject<ChainInfo | null>(null)
-const endpoint$ = new BehaviorSubject<string>('ws://127.0.0.1:9944')
+const initialNetwork = loadSelectedNetwork()
+const endpoint$ = new BehaviorSubject<string>(initialNetwork.config.parachainWs)
 const connectionError$ = new BehaviorSubject<string | undefined>(undefined)
 
 // Block subscription cleanup
@@ -37,7 +39,7 @@ let blockUnsubscribe: (() => void) | null = null
 export const [useConnectionStatus] = bind(connectionStatus$, 'disconnected')
 export const [useBlockNumber] = bind(blockNumber$, 0)
 export const [useChainInfo] = bind(chainInfo$, null)
-export const [useEndpoint] = bind(endpoint$, 'ws://127.0.0.1:9944')
+export const [useEndpoint] = bind(endpoint$, initialNetwork.config.parachainWs)
 export const [useConnectionError] = bind(connectionError$, undefined)
 
 export const [useIsConnected] = bind(

@@ -1,0 +1,5 @@
+{
+  "name": "web3-storage-ui",
+  "private": true,
+  "workspaces": ["shared/*", "provider", "console-ui"]
+}

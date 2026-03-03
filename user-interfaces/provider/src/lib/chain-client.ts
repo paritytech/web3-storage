@@ -55,9 +55,20 @@ export async function connectToChain(endpoint: string): Promise<PolkadotClient> 
     client = createClient(wsProvider)
     unsafeApi = client.getUnsafeApi()
 
-    // Connect @polkadot/api for transactions
-    const pjsWsProvider = new WsProvider(endpoint)
-    polkadotApi = await ApiPromise.create({ provider: pjsWsProvider })
+    // Connect @polkadot/api for transactions (with timeout to avoid hanging)
+    const pjsWsProvider = new WsProvider(endpoint, /* autoConnectMs */ 1000)
+    const CONNECTION_TIMEOUT_MS = 10_000
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    polkadotApi = await Promise.race([
+      ApiPromise.create({ provider: pjsWsProvider }),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          pjsWsProvider.disconnect()
+          reject(new Error(`Connection to ${endpoint} timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`))
+        }, CONNECTION_TIMEOUT_MS)
+      }),
+    ])
+    clearTimeout(timeoutId)
     console.log('@polkadot/api connected to', endpoint)
 
     // Subscribe to best blocks
