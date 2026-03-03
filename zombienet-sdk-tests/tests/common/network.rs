@@ -16,15 +16,9 @@ pub fn build_network_config() -> Result<NetworkConfig> {
     log::info!("Omni-node binary: {}", omni_node_bin);
     log::info!("Chain spec command: {}", chain_spec_cmd);
 
-    let relay_args: Vec<_> = vec!["-lruntime=info"]
-        .into_iter()
-        .map(|s| s.into())
-        .collect();
+    let relay_args = vec!["-lruntime=info".into()];
     let relay_args2 = relay_args.clone();
-    let para_args: Vec<_> = vec!["--collator", "-lruntime=info"]
-        .into_iter()
-        .map(|s| s.into())
-        .collect();
+    let para_args = vec!["--collator".into(), "-lruntime=info".into()];
 
     NetworkConfigBuilder::new()
         .with_relaychain(|rc| {
