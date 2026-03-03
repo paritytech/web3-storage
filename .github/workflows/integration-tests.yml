@@ -119,6 +119,12 @@ jobs:
       - name: Run demo
         run: just demo
 
+      - name: Build S3 client
+        run: cargo build --release -p s3-client --examples
+
+      - name: Run S3 integration test
+        run: just s3-demo-ci
+
       - name: Stop services
         if: always()
         run: |
