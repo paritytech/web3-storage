@@ -12,6 +12,9 @@ members = [
 	"storage-interfaces/file-system/client",
 	"storage-interfaces/file-system/pallet-registry",
 	"storage-interfaces/file-system/primitives",
+
+	# Integration tests (zombienet-sdk)
+	"zombienet-sdk-tests",
 ]
 
 [workspace.package]
