@@ -241,13 +241,13 @@ pub fn validate_bucket_name(name: &[u8]) -> bool {
     }
     if !name
         .first()
-        .map_or(false, |c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
         return false;
     }
     if !name
         .last()
-        .map_or(false, |c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     {
         return false;
     }

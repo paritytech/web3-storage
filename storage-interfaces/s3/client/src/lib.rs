@@ -7,7 +7,7 @@ mod substrate;
 pub use substrate::SubstrateClient;
 
 use s3_primitives::{
-    compute_cid, validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse,
+    validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse,
     S3BucketId,
 };
 use sp_core::H256;
@@ -201,14 +201,14 @@ impl S3Client {
             .substrate_client
             .create_s3_bucket(name, min_providers)
             .await
-            .map_err(|e| S3ClientError::ChainError(e))?;
+            .map_err(S3ClientError::ChainError)?;
 
         // Fetch the created bucket info to get the layer0_bucket_id
         let bucket_info = self
             .substrate_client
             .get_bucket_info(s3_bucket_id)
             .await
-            .map_err(|e| S3ClientError::ChainError(e))?
+            .map_err(S3ClientError::ChainError)?
             .ok_or_else(|| {
                 S3ClientError::InternalError("Bucket created but not found".to_string())
             })?;
@@ -285,14 +285,17 @@ impl S3Client {
         let bucket_info = self.head_bucket(bucket).await?;
 
         debug!("Uploading to provider");
-        let cid = compute_cid(data);
 
-        // Upload to provider (the CID we compute should match what upload returns)
-        let _data_root = self
+        // Upload to provider — the returned data_root is the Merkle tree root
+        // used to retrieve data from the provider's storage layer.
+        let data_root = self
             .storage_client
             .upload(bucket_info.layer0_bucket_id, data, Default::default())
             .await
             .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
+
+        // Use data_root as the CID so download can find the data
+        let cid = data_root;
 
         let content_type = options
             .content_type

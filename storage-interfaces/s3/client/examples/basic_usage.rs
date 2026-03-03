@@ -14,9 +14,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let seed = env::var("SEED").unwrap_or_else(|_| "//Alice".to_string());
 
     println!("=== S3 Client Basic Usage Example ===\n");
-    println!("Chain URL: {}", chain_url);
-    println!("Provider URL: {}", provider_url);
-    println!("Account: {}\n", seed);
+    println!("Chain URL: {chain_url}");
+    println!("Provider URL: {provider_url}");
+    println!("Account: {seed}\n");
 
     println!("Creating S3 client...");
     let client = S3Client::new(&chain_url, &provider_url, &seed).await?;
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_secs()
     );
 
-    println!("Creating bucket: {}", bucket_name);
+    println!("Creating bucket: {bucket_name}");
     let bucket = client.create_bucket(&bucket_name).await?;
     println!("Bucket created:");
     println!("  S3 Bucket ID: {}", bucket.s3_bucket_id);

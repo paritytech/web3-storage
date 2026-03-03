@@ -48,7 +48,7 @@ impl SubstrateClient {
 
         let client = OnlineClient::<PolkadotConfig>::from_url(chain_url)
             .await
-            .map_err(|e| format!("Failed to connect to chain: {}", e))?;
+            .map_err(|e| format!("Failed to connect to chain: {e}"))?;
 
         let keypair = if seed_phrase.starts_with("//") {
             // Dev account like //Alice
@@ -59,14 +59,14 @@ impl SubstrateClient {
                 "//Dave" => subxt_signer::sr25519::dev::dave(),
                 "//Eve" => subxt_signer::sr25519::dev::eve(),
                 "//Ferdie" => subxt_signer::sr25519::dev::ferdie(),
-                _ => return Err(format!("Unknown dev account: {}", seed_phrase)),
+                _ => return Err(format!("Unknown dev account: {seed_phrase}")),
             }
         } else {
             // Mnemonic phrase - parse and create keypair
             let mnemonic = bip39::Mnemonic::parse(seed_phrase)
-                .map_err(|e| format!("Invalid mnemonic: {:?}", e))?;
+                .map_err(|e| format!("Invalid mnemonic: {e:?}"))?;
             subxt_signer::sr25519::Keypair::from_phrase(&mnemonic, None)
-                .map_err(|e| format!("Failed to create keypair: {:?}", e))?
+                .map_err(|e| format!("Failed to create keypair: {e:?}"))?
         };
 
         let public_key = keypair.public_key();
@@ -118,22 +118,19 @@ impl SubstrateClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| format!("Failed to submit tx: {}", e))?;
+            .map_err(|e| format!("Failed to submit tx: {e}"))?;
 
         let events = progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
+            .map_err(|e| format!("Transaction failed: {e}"))?;
 
         // Try to extract bucket ID from event
-        for event in events.iter() {
-            if let Ok(event) = event {
-                if event.pallet_name() == "S3Registry" && event.variant_name() == "S3BucketCreated"
-                {
-                    if let Ok(values) = event.field_values() {
-                        if let Some(id) = values.at("s3_bucket_id").and_then(|v| v.as_u128()) {
-                            return Ok(id as u64);
-                        }
+        for event in events.iter().flatten() {
+            if event.pallet_name() == "S3Registry" && event.variant_name() == "S3BucketCreated" {
+                if let Ok(values) = event.field_values() {
+                    if let Some(id) = values.at("s3_bucket_id").and_then(|v| v.as_u128()) {
+                        return Ok(id as u64);
                     }
                 }
             }
@@ -162,12 +159,12 @@ impl SubstrateClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| format!("Failed to submit tx: {}", e))?;
+            .map_err(|e| format!("Failed to submit tx: {e}"))?;
 
         progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
+            .map_err(|e| format!("Transaction failed: {e}"))?;
 
         Ok(())
     }
@@ -209,12 +206,12 @@ impl SubstrateClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| format!("Failed to submit tx: {}", e))?;
+            .map_err(|e| format!("Failed to submit tx: {e}"))?;
 
         progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
+            .map_err(|e| format!("Transaction failed: {e}"))?;
 
         Ok(())
     }
@@ -245,12 +242,12 @@ impl SubstrateClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| format!("Failed to submit tx: {}", e))?;
+            .map_err(|e| format!("Failed to submit tx: {e}"))?;
 
         progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
+            .map_err(|e| format!("Transaction failed: {e}"))?;
 
         Ok(())
     }
@@ -285,12 +282,12 @@ impl SubstrateClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| format!("Failed to submit tx: {}", e))?;
+            .map_err(|e| format!("Failed to submit tx: {e}"))?;
 
         progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
+            .map_err(|e| format!("Transaction failed: {e}"))?;
 
         Ok(())
     }
@@ -424,7 +421,7 @@ impl SubstrateClient {
         let storage_query = subxt::dynamic::storage(
             "S3Registry",
             "UserBuckets",
-            vec![Value::from_bytes(&self.account_id)],
+            vec![Value::from_bytes(self.account_id)],
         );
 
         let result = self
