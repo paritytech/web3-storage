@@ -32,7 +32,7 @@ use crate::checkpoint::{
 use crate::ClientError;
 use serde::{Deserialize, Serialize};
 use sp_runtime::AccountId32;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use storage_primitives::BucketId;
@@ -177,7 +177,7 @@ impl PersistedHealthHistory {
             successful_requests: self.successful_requests,
             failed_requests: self.failed_requests,
             avg_response_time_ms: self.avg_response_time_ms,
-            recent_statuses: Vec::new(), // Not persisted - rebuilt at runtime
+            recent_statuses: VecDeque::new(), // Not persisted - rebuilt at runtime
             last_success: self.last_success_timestamp.map(|_| Instant::now()),
             last_failure: self.last_failure_timestamp.map(|_| Instant::now()),
             consecutive_failures: self.consecutive_failures,
@@ -346,22 +346,24 @@ impl CheckpointPersistence {
     ///
     /// Returns the loaded state, or a new empty state if the file doesn't exist.
     pub async fn load(&self) -> Result<PersistedCheckpointState, ClientError> {
-        // Check if file exists
-        if !self.config.file_path.exists() {
-            let state = PersistedCheckpointState::new();
-            *self.cached_state.write().await = Some(state.clone());
-            return Ok(state);
-        }
-
-        // Read file
-        let contents = fs::read_to_string(&self.config.file_path)
-            .await
-            .map_err(|e| ClientError::Storage(format!("Failed to read persistence file: {}", e)))?;
+        // Attempt to read file directly, handling NotFound without a prior exists() check
+        let contents = match fs::read_to_string(&self.config.file_path).await {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let state = PersistedCheckpointState::new();
+                *self.cached_state.write().await = Some(state.clone());
+                return Ok(state);
+            }
+            Err(e) => {
+                return Err(ClientError::Storage(format!(
+                    "Failed to read persistence file: {e}"
+                )));
+            }
+        };
 
         // Parse JSON
-        let state: PersistedCheckpointState = serde_json::from_str(&contents).map_err(|e| {
-            ClientError::Storage(format!("Failed to parse persistence file: {}", e))
-        })?;
+        let state: PersistedCheckpointState = serde_json::from_str(&contents)
+            .map_err(|e| ClientError::Storage(format!("Failed to parse persistence file: {e}")))?;
 
         // Validate version
         if state.version > 1 {
@@ -391,13 +393,11 @@ impl CheckpointPersistence {
             self.rotate_backups().await?;
         }
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists (create_dir_all is idempotent)
         if let Some(parent) = self.config.file_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    ClientError::Storage(format!("Failed to create persistence directory: {}", e))
-                })?;
-            }
+            fs::create_dir_all(parent).await.map_err(|e| {
+                ClientError::Storage(format!("Failed to create persistence directory: {e}"))
+            })?;
         }
 
         // Update timestamp
@@ -406,19 +406,17 @@ impl CheckpointPersistence {
 
         // Serialize to JSON
         let contents = serde_json::to_string_pretty(&state)
-            .map_err(|e| ClientError::Storage(format!("Failed to serialize state: {}", e)))?;
+            .map_err(|e| ClientError::Storage(format!("Failed to serialize state: {e}")))?;
 
         // Write atomically (write to temp file, then rename)
         let temp_path = self.config.file_path.with_extension("json.tmp");
-        fs::write(&temp_path, &contents).await.map_err(|e| {
-            ClientError::Storage(format!("Failed to write persistence file: {}", e))
-        })?;
+        fs::write(&temp_path, &contents)
+            .await
+            .map_err(|e| ClientError::Storage(format!("Failed to write persistence file: {e}")))?;
 
         fs::rename(&temp_path, &self.config.file_path)
             .await
-            .map_err(|e| {
-                ClientError::Storage(format!("Failed to rename persistence file: {}", e))
-            })?;
+            .map_err(|e| ClientError::Storage(format!("Failed to rename persistence file: {e}")))?;
 
         // Update cache
         *self.cached_state.write().await = Some(state);
@@ -472,7 +470,7 @@ impl CheckpointPersistence {
 
         // Rotate existing backups
         for i in (1..self.config.max_backups).rev() {
-            let from = self.config.file_path.with_extension(format!("json.{}", i));
+            let from = self.config.file_path.with_extension(format!("json.{i}"));
             let to = self
                 .config
                 .file_path
@@ -494,13 +492,13 @@ impl CheckpointPersistence {
         // Remove main file
         if self.config.file_path.exists() {
             fs::remove_file(&self.config.file_path).await.map_err(|e| {
-                ClientError::Storage(format!("Failed to remove persistence file: {}", e))
+                ClientError::Storage(format!("Failed to remove persistence file: {e}"))
             })?;
         }
 
         // Remove backups
         for i in 1..=self.config.max_backups {
-            let backup = self.config.file_path.with_extension(format!("json.{}", i));
+            let backup = self.config.file_path.with_extension(format!("json.{i}"));
             if backup.exists() {
                 let _ = fs::remove_file(&backup).await;
             }
@@ -597,8 +595,8 @@ fn account_id_to_string(account_id: &AccountId32) -> String {
 /// Convert hex string to AccountId32.
 fn string_to_account_id(s: &str) -> Result<AccountId32, ClientError> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s)
-        .map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {}", e)))?;
+    let bytes =
+        hex::decode(s).map_err(|e| ClientError::Storage(format!("Invalid account ID hex: {e}")))?;
 
     if bytes.len() != 32 {
         return Err(ClientError::Storage(format!(
@@ -621,14 +619,14 @@ fn result_to_string(result: &CheckpointResult) -> String {
         CheckpointResult::InsufficientConsensus {
             agreeing, required, ..
         } => {
-            format!("InsufficientConsensus({}/{})", agreeing, required)
+            format!("InsufficientConsensus({agreeing}/{required})")
         }
         CheckpointResult::ProvidersUnreachable { providers } => {
             format!("ProvidersUnreachable({})", providers.len())
         }
         CheckpointResult::NoProviders => "NoProviders".to_string(),
         CheckpointResult::TransactionFailed { error } => {
-            format!("TransactionFailed({})", error)
+            format!("TransactionFailed({error})")
         }
     }
 }
@@ -680,10 +678,12 @@ mod tests {
 
     #[test]
     fn test_metrics_conversion() {
-        let mut metrics = CheckpointMetrics::default();
-        metrics.total_attempts = 100;
-        metrics.successful_submissions = 95;
-        metrics.conflicts_detected = 5;
+        let metrics = CheckpointMetrics {
+            total_attempts: 100,
+            successful_submissions: 95,
+            conflicts_detected: 5,
+            ..Default::default()
+        };
 
         let persisted = PersistedMetrics::from(&metrics);
         assert_eq!(persisted.total_attempts, 100);
@@ -763,8 +763,10 @@ mod tests {
         let account_id = AccountId32::new([1u8; 32]);
         histories.insert(account_id.clone(), ProviderHealthHistory::new(account_id));
 
-        let mut metrics = CheckpointMetrics::default();
-        metrics.total_attempts = 10;
+        let metrics = CheckpointMetrics {
+            total_attempts: 10,
+            ..Default::default()
+        };
 
         let state = StateBuilder::new()
             .with_health_histories(&histories)

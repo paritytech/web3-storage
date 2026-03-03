@@ -24,7 +24,7 @@ impl SubstrateClient {
     pub async fn connect(ws_url: &str) -> Result<Self, ClientError> {
         let api = OnlineClient::<PolkadotConfig>::from_url(ws_url)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to connect: {e}")))?;
 
         Ok(Self { api, signer: None })
     }
@@ -44,12 +44,7 @@ impl SubstrateClient {
             "dave" => dev::dave(),
             "eve" => dev::eve(),
             "ferdie" => dev::ferdie(),
-            _ => {
-                return Err(ClientError::Config(format!(
-                    "Unknown dev account: {}",
-                    name
-                )))
-            }
+            _ => return Err(ClientError::Config(format!("Unknown dev account: {name}"))),
         };
         self.signer = Some(Arc::new(keypair));
         Ok(self)
@@ -71,7 +66,7 @@ impl SubstrateClient {
     /// Parse an SS58 account ID string into AccountId32.
     pub fn parse_account(account: &str) -> Result<AccountId32, ClientError> {
         AccountId32::from_str(account)
-            .map_err(|e| ClientError::Config(format!("Invalid account ID: {}", e)))
+            .map_err(|e| ClientError::Config(format!("Invalid account ID: {e}")))
     }
 
     /// Subscribe to finalized blocks.
@@ -83,7 +78,7 @@ impl SubstrateClient {
             .blocks()
             .subscribe_finalized()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to subscribe: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to subscribe: {e}")))?;
 
         Ok(stream.map(|result| {
             result
@@ -91,7 +86,7 @@ impl SubstrateClient {
                     let hash = block.hash();
                     H256::from_slice(hash.as_ref())
                 })
-                .map_err(|e| ClientError::Chain(format!("Block stream error: {}", e)))
+                .map_err(|e| ClientError::Chain(format!("Block stream error: {e}")))
         }))
     }
 }
@@ -545,7 +540,7 @@ pub mod storage {
 pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     let bytes =
-        hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {}", e)))?;
+        hex::decode(hex).map_err(|e| ClientError::Serialization(format!("Invalid hex: {e}")))?;
     if bytes.len() != 32 {
         return Err(ClientError::Serialization(format!(
             "Expected 32 bytes, got {}",

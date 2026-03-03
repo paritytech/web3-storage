@@ -52,7 +52,7 @@ impl ProviderClient {
     /// This creates a provider profile with initial settings.
     ///
     /// # Parameters
-    /// - `multiaddr`: Network address for clients to connect (e.g., "/ip4/1.2.3.4/tcp/3000")
+    /// - `multiaddr`: Network address for clients to connect (e.g., "/ip4/1.2.3.4/tcp/3333")
     /// - `public_key`: Public key for signature verification (32-64 bytes)
     /// - `stake`: Initial stake to lock (in smallest unit)
     ///
@@ -61,7 +61,7 @@ impl ProviderClient {
     /// # use storage_client::ProviderClient;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
-    /// let multiaddr = "/ip4/203.0.113.1/tcp/3000".to_string();
+    /// let multiaddr = "/ip4/203.0.113.1/tcp/3333".to_string();
     /// let public_key = vec![0u8; 32]; // Your actual public key
     /// let stake = 1_000_000_000_000u128; // 1 token with 12 decimals
     ///
@@ -94,13 +94,13 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Provider registered successfully");
         Ok(())
@@ -165,12 +165,12 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Agreement accepted successfully");
         Ok(())
@@ -246,12 +246,12 @@ impl ProviderClient {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
         tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Challenge response submitted successfully");
         Ok(())

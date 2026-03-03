@@ -38,7 +38,7 @@
 //!
 //! // Register as provider
 //! client.register(
-//!     "/ip4/1.2.3.4/tcp/3000".to_string(),
+//!     "/ip4/1.2.3.4/tcp/3333".to_string(),
 //!     vec![0u8; 32], // public key
 //!     1_000_000_000_000, // stake
 //! ).await?;
@@ -164,7 +164,7 @@ impl StorageClient {
         strategy: ChunkingStrategy,
     ) -> Result<H256, Error> {
         // Chunk the data
-        let chunks = self.chunk_data(data, strategy);
+        let chunks = Self::chunk_data(data, strategy);
 
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
@@ -330,14 +330,14 @@ impl StorageClient {
 
     // Private helper methods
 
-    fn chunk_data(&self, data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
+    fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
             ChunkingStrategy::Fixed(chunk_size) => {
                 data.chunks(chunk_size).map(|c| c.to_vec()).collect()
             }
             ChunkingStrategy::ContentDefined => {
                 // Not implemented - fall back to fixed
-                self.chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
+                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
             }
         }
     }
@@ -485,7 +485,7 @@ struct ApiError {
 // Hex utilities
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
@@ -506,10 +506,8 @@ mod tests {
 
     #[test]
     fn test_chunking() {
-        let client = StorageClient::new("http://localhost:3000");
-
         let data = vec![0u8; 1024 * 1024]; // 1 MiB
-        let chunks = client.chunk_data(&data, ChunkingStrategy::Fixed(256 * 1024));
+        let chunks = StorageClient::chunk_data(&data, ChunkingStrategy::Fixed(256 * 1024));
 
         assert_eq!(chunks.len(), 4);
         for chunk in &chunks {

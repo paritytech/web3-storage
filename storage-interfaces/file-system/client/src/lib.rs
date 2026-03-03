@@ -57,6 +57,7 @@ pub use substrate::SubstrateClient;
 
 /// File system client errors
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FsClientError {
     #[error("Storage client error: {0}")]
     StorageClient(String),
@@ -93,6 +94,12 @@ pub enum FsClientError {
 
     #[error("Bounded collection overflow")]
     BoundedOverflow,
+
+    #[error("No signer configured")]
+    NoSigner,
+
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
@@ -238,22 +245,14 @@ impl FileSystemClient {
         // Verify the CID matches what we would compute locally
         let expected_cid = compute_cid(&root_dir_bytes);
         if root_cid != expected_cid {
-            log::warn!(
-                "CID mismatch: data_root={:?}, expected={:?}",
-                root_cid,
-                expected_cid
-            );
+            log::warn!("CID mismatch: data_root={root_cid:?}, expected={expected_cid:?}");
         }
 
         // Update the on-chain root CID
         self.update_drive_root_cid(drive_id, root_cid).await?;
 
         // Cache the root CID
-        log::debug!(
-            "create_drive: caching root_cid={:?} for drive {}",
-            root_cid,
-            drive_id
-        );
+        log::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
         self.root_cache.insert(drive_id, root_cid);
 
         Ok(drive_id)
@@ -331,7 +330,7 @@ impl FileSystemClient {
         // Fetch FileManifest
         let manifest_bytes = self.fetch_blob(file_cid).await?;
         let manifest = FileManifest::from_scale_bytes(&manifest_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid manifest: {:?}", e)))?;
+            .map_err(|e| FsClientError::Serialization(format!("Invalid manifest: {e:?}")))?;
 
         // Validate it's a file
         if manifest.chunks.is_empty() {
@@ -365,7 +364,7 @@ impl FileSystemClient {
         // Fetch DirectoryNode
         let dir_bytes = self.fetch_blob(dir_cid).await?;
         let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
         Ok(dir_node.children.into_inner())
     }
@@ -406,21 +405,13 @@ impl FileSystemClient {
     pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
         // Check cache first
         if let Some(cid) = self.root_cache.get(&drive_id) {
-            log::debug!(
-                "get_root_cid: cache hit for drive {}, cid={:?}",
-                drive_id,
-                cid
-            );
+            log::debug!("get_root_cid: cache hit for drive {drive_id}, cid={cid:?}");
             return Ok(*cid);
         }
 
         // Query on-chain
         let cid = self.query_drive_root_cid(drive_id).await?;
-        log::debug!(
-            "get_root_cid: cache miss for drive {}, queried cid={:?}",
-            drive_id,
-            cid
-        );
+        log::debug!("get_root_cid: cache miss for drive {drive_id}, queried cid={cid:?}");
         self.root_cache.insert(drive_id, cid);
 
         Ok(cid)
@@ -691,7 +682,7 @@ impl FileSystemClient {
         for component in components {
             let dir_bytes = self.fetch_blob(current_cid).await?;
             let dir_node = DirectoryNode::from_scale_bytes(&dir_bytes)
-                .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
+                .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
             // Find child entry
             let entry = dir_node
@@ -705,6 +696,7 @@ impl FileSystemClient {
     }
 
     /// Add an entry to a directory and update the DAG up to root
+    #[allow(clippy::too_many_arguments)]
     async fn add_entry_to_directory(
         &mut self,
         drive_id: DriveId,
@@ -719,7 +711,7 @@ impl FileSystemClient {
         let parent_cid = self.resolve_path(drive_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
         // Check if entry already exists
         if parent_node.find_child(name).is_some() {
@@ -789,7 +781,7 @@ impl FileSystemClient {
         let parent_cid = self.resolve_path(drive_id, parent_path).await?;
         let parent_bytes = self.fetch_blob(parent_cid).await?;
         let mut parent_node = DirectoryNode::from_scale_bytes(&parent_bytes)
-            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {:?}", e)))?;
+            .map_err(|e| FsClientError::Serialization(format!("Invalid directory: {e:?}")))?;
 
         // Update child entry
         if let Some(entry) = parent_node.find_child_mut(child_name) {
@@ -818,7 +810,7 @@ impl FileSystemClient {
 
         // The data_root returned by the storage client is the hash of the data
         // which should match our CID for single-chunk uploads
-        log::debug!("Uploaded blob, data_root: {:?}", data_root);
+        log::debug!("Uploaded blob, data_root: {data_root:?}");
 
         Ok(data_root)
     }
@@ -936,23 +928,23 @@ impl FileSystemClient {
             .tx()
             .sign_and_submit_then_watch_default(&call, signer)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization and extract drive_id from event
         while let Some(event) = progress.next().await {
-            let event = event
-                .map_err(|e| FsClientError::Blockchain(format!("Transaction error: {}", e)))?;
+            let event =
+                event.map_err(|e| FsClientError::Blockchain(format!("Transaction error: {e}")))?;
 
             if let Some(finalized) = event.as_finalized() {
                 // Fetch events from the finalized block
                 let events = finalized.fetch_events().await.map_err(|e| {
-                    FsClientError::Blockchain(format!("Failed to fetch events: {}", e))
+                    FsClientError::Blockchain(format!("Failed to fetch events: {e}"))
                 })?;
 
                 // Find DriveCreated or DriveCreatedOnBucket event
                 for ev in events.iter() {
                     let ev = ev.map_err(|e| {
-                        FsClientError::Blockchain(format!("Event decode error: {}", e))
+                        FsClientError::Blockchain(format!("Event decode error: {e}"))
                     })?;
 
                     // Check if this is a DriveRegistry event
@@ -962,7 +954,7 @@ impl FileSystemClient {
                             // Extract drive_id from first field (all drive events have drive_id as first field)
                             if let Some(drive_id_value) = value.at(0) {
                                 if let Some(drive_id) = drive_id_value.as_u128() {
-                                    log::info!("Drive created with ID: {}", drive_id);
+                                    log::info!("Drive created with ID: {drive_id}");
                                     return Ok(drive_id as DriveId);
                                 }
                             }
@@ -991,15 +983,15 @@ impl FileSystemClient {
             .tx()
             .sign_and_submit_then_watch_default(&call, signer)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?;
 
         // Wait for finalization
         while let Some(event) = progress.next().await {
-            let event = event
-                .map_err(|e| FsClientError::Blockchain(format!("Transaction error: {}", e)))?;
+            let event =
+                event.map_err(|e| FsClientError::Blockchain(format!("Transaction error: {e}")))?;
 
             if event.as_finalized().is_some() {
-                log::info!("Root CID updated for drive {}", drive_id);
+                log::info!("Root CID updated for drive {drive_id}");
                 return Ok(());
             }
         }
@@ -1016,7 +1008,7 @@ impl FileSystemClient {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
 
         // Build the storage key for Drives storage map
         // Format: pallet_hash + storage_hash + key_hash(drive_id)
@@ -1036,7 +1028,7 @@ impl FileSystemClient {
         let bytes_opt = storage_client
             .fetch_raw(storage_key)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?;
 
         if let Some(bytes) = bytes_opt {
             // DriveInfo structure:
@@ -1072,7 +1064,7 @@ impl FileSystemClient {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
 
         // Build the storage key for Drives storage map
         use sp_core::twox_128;
@@ -1091,7 +1083,7 @@ impl FileSystemClient {
         let bytes_opt = storage_client
             .fetch_raw(storage_key)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {}", e)))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?;
 
         if let Some(bytes) = bytes_opt {
             // DriveInfo structure:

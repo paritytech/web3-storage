@@ -37,7 +37,7 @@ pub struct ReplicaSyncCoordinatorConfig {
 impl Default for ReplicaSyncCoordinatorConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:9944".to_string(),
+            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(12),
             sync_timeout: Duration::from_secs(300),
             max_concurrent_syncs: 3,
@@ -671,7 +671,7 @@ impl ReplicaSyncCoordinator {
         // Build dummy signature (pallet accepts any MultiSignature)
         let signature = subxt::dynamic::Value::unnamed_variant(
             "Sr25519",
-            vec![subxt::dynamic::Value::from_bytes(&[0u8; 64])],
+            vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
         );
 
         let tx = subxt::dynamic::tx(
@@ -1303,7 +1303,7 @@ impl ReplicaSyncCoordinator {
         let parts: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
 
         let mut host = "127.0.0.1".to_string();
-        let mut port = "3000".to_string();
+        let mut port = "3333".to_string();
 
         let mut i = 0;
         while i < parts.len() {
@@ -1338,7 +1338,7 @@ impl ReplicaSyncCoordinator {
             }
         }
 
-        format!("http://{}:{}", host, port)
+        format!("http://{host}:{port}")
     }
 }
 
@@ -1370,7 +1370,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = ReplicaSyncCoordinatorConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:9944");
+        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.max_concurrent_syncs, 3);
         assert!(config.auto_confirm);

@@ -30,7 +30,7 @@ pub struct ChallengeResponderConfig {
 impl Default for ChallengeResponderConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:9944".to_string(),
+            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(6), // ~1 block
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
@@ -160,7 +160,7 @@ impl ChallengeResponder {
     pub async fn connect(&mut self) -> Result<(), Error> {
         let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
 
         self.api = Some(api);
 
@@ -173,7 +173,7 @@ impl ChallengeResponder {
                 .try_into()
                 .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
             let signer = Keypair::from_secret_key(secret_bytes)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
             self.signer = Some(signer);
         }
 
@@ -293,7 +293,7 @@ impl ChallengeResponder {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
         // TODO: Implement proper storage query for Challenges
         // For now, return empty - challenges would be detected via events
@@ -500,12 +500,12 @@ impl ChallengeResponder {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
 
         Ok(H256::zero())
     }
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_challenge_responder_config_default() {
         let config = ChallengeResponderConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:9944");
+        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(6));
         assert!(config.auto_respond);
     }

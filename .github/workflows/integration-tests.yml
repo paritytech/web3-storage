@@ -11,91 +11,127 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CI_IMAGE: "paritytech/ci-unified:bullseye-1.88.0-2025-06-27-v202507112050"
+
 jobs:
+  set-image:
+    runs-on: ubuntu-latest
+    outputs:
+      CI_IMAGE: ${{ steps.set_image.outputs.CI_IMAGE }}
+    steps:
+      - id: set_image
+        run: echo "CI_IMAGE=${{ env.CI_IMAGE }}" >> $GITHUB_OUTPUT
+
   integration-tests:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: parity-large
     timeout-minutes: 60
+    needs: [set-image]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Load environment variables
+      - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
-        with:
-          tool-cache: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-          components: rust-src
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libclang-dev jq
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "integration-tests"
-          save-if: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
         run: cargo install just --locked || true
 
-      - name: Cache binaries
+      - name: Cache Polkadot SDK binaries
         uses: actions/cache@v4
-        id: bin-cache
+        id: sdk-cache
         with:
-          path: .bin
-          key: binaries-${{ env.POLKADOT_SDK_VERSION }}
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
 
-      - name: Download binaries
-        if: steps.bin-cache.outputs.cache-hit != 'true'
-        run: just download-binaries
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
-      - name: Build
-        run: cargo build --release
+      - name: Cache zombienet
+        uses: actions/cache@v4
+        id: zombienet-cache
+        with:
+          path: .bin/zombienet
+          key: zombienet-${{ env.ZOMBIENET_VERSION }}
 
-      - name: Start chain (background)
-        run: just start-chain &> /tmp/zombienet.log &
+      - name: Download zombienet
+        if: steps.zombienet-cache.outputs.cache-hit != 'true'
+        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
 
-      - name: Start provider (background)
-        run: just start-provider &> /tmp/provider.log &
-
-      - name: Wait for chain to produce blocks
+      - name: Log binary versions
         run: |
-          echo "Waiting for parachain RPC to be ready..."
-          for i in $(seq 1 120); do
-            if curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1]}' \
-              http://127.0.0.1:9944 2>/dev/null | jq -e '.result' > /dev/null 2>&1; then
-              echo "Parachain is producing blocks (attempt $i)"
-              break
+          .bin/zombienet version
+          .bin/polkadot --version
+          .bin/polkadot-omni-node --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build runtime and provider
+        run: just build-runtime && just build-provider
+
+      - name: Start chain and wait for blocks
+        run: |
+          nohup .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
+          ZOMBIE_PID=$!
+          echo "Waiting for zombienet to set up nodes..."
+          sleep 15
+          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
+            echo "ERROR: zombienet exited early"
+            cat /tmp/zombienet.log || true
+            exit 1
+          fi
+          echo "Waiting for parachain to produce finalized blocks..."
+          for i in $(seq 1 180); do
+            # Check parachain finalized head
+            RESPONSE=$(curl -s -H "Content-Type: application/json" \
+              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
+              http://127.0.0.1:2222 2>/dev/null) || true
+            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
+            if [ -n "$FINALIZED_HASH" ]; then
+              HEADER=$(curl -s -H "Content-Type: application/json" \
+                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
+                http://127.0.0.1:2222 2>/dev/null) || true
+              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
+              if [ -n "$BLOCK_HEX" ]; then
+                BLOCK_NUM=$((BLOCK_HEX))
+                if [ "$BLOCK_NUM" -ge 1 ]; then
+                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
+                  break
+                fi
+              fi
             fi
-            if [ "$i" -eq 120 ]; then
-              echo "Timeout: parachain did not start producing blocks"
-              cat /tmp/zombienet.log || true
+            if [ "$i" -eq 180 ]; then
+              echo "TIMEOUT: parachain did not finalize blocks"
               exit 1
             fi
             sleep 5
           done
 
-      - name: Wait for provider to be ready
+      - name: Start provider and wait for health
         run: |
+          SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
+            nohup ./target/release/storage-provider-node > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3000/health | jq -e '.status' > /dev/null 2>&1; then
+            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
               echo "Provider is healthy (attempt $i)"
               break
             fi
@@ -110,6 +146,9 @@ jobs:
       - name: Run demo
         run: just demo
 
+      - name: Run file system integration test
+        run: just fs-demo-ci
+
       - name: Stop services
         if: always()
         run: |
@@ -118,9 +157,14 @@ jobs:
           pkill -f "storage-provider-node" 2>/dev/null || true
 
       - name: Upload logs (on failure)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-test-logs
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
+            /tmp/zombie-*/*.log
+            /tmp/zombie-*/**/*.log
+            /tmp/zombie-*/*-plain.json
+            /tmp/zombie-*/*-raw.json

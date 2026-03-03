@@ -75,7 +75,7 @@ impl ProviderStats {
             + (latency_score * latency_weight)
             + (spot_check_score * spot_check_weight);
 
-        self.reputation = total_score.min(100.0).max(0.0) as u8;
+        self.reputation = total_score.clamp(0.0, 100.0) as u8;
     }
 }
 
@@ -119,7 +119,7 @@ impl ClientVerifier {
         let samples = self
             .latency_samples
             .entry(provider_url.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         samples.push(latency_ms);
         if samples.len() > self.max_samples {

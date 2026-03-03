@@ -57,7 +57,7 @@ Once blockchain is ready:
 
 ```bash
 export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
+export CHAIN_RPC=ws://127.0.0.1:2222
 cargo run --release -p storage-provider-node
 ```
 
@@ -74,7 +74,7 @@ bash scripts/check-chain.sh
 # Check provider health
 just health
 # Or:
-curl http://localhost:3000/health
+curl http://localhost:3333/health
 ```
 
 **Expected output:**
@@ -112,7 +112,7 @@ For a full end-to-end test, you need to:
 
 ### 1. Register Provider On-Chain
 
-Open in browser: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
+Open in browser: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
 
 **Step 1a: Register Provider (Basic Info)**
 
@@ -121,7 +121,7 @@ Open in browser: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
 3. Select pallet: **storageProvider**
 4. Select extrinsic: **registerProvider**
 5. Fill in parameters:
-   - `multiaddr`: `/ip4/127.0.0.1/tcp/3000` (Polkadot.js will encode it)
+   - `multiaddr`: `/ip4/127.0.0.1/tcp/3333` (Polkadot.js will encode it)
    - `publicKey`: `0xd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d` (Alice's public key)
    - `stake`: `1000000000000000` (1000 tokens - minimum required stake)
 6. Submit transaction
@@ -222,9 +222,9 @@ See: [Manual Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)
 | Component | Address | Purpose |
 |-----------|---------|---------|
 | Relay Chain | ws://127.0.0.1:9900 | Validator network |
-| Parachain | ws://127.0.0.1:9944 | Storage pallet chain |
-| Provider HTTP | http://127.0.0.1:3000 | Data upload/download |
-| Block Explorer | https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944 | UI for chain interaction |
+| Parachain | ws://127.0.0.1:2222 | Storage pallet chain |
+| Provider HTTP | http://127.0.0.1:3333 | Data upload/download |
+| Block Explorer | https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222 | UI for chain interaction |
 
 ---
 
@@ -237,7 +237,7 @@ See: [Manual Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)
 
 ### "Provider node is not responding"
 - Ensure provider is running in Terminal 2
-- Check no other process is using port 3000
+- Check no other process is using port 3333
 - Verify `CHAIN_RPC` environment variable is set
 
 ### "Insufficient stake" error when registering provider

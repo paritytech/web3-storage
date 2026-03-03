@@ -63,7 +63,7 @@ impl ProviderState {
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
     pub fn with_seed(storage: Arc<Storage>, seed: &str) -> Result<Self, String> {
         let keypair = sr25519::Pair::from_string(seed, None)
-            .map_err(|e| format!("Failed to create keypair: {:?}", e))?;
+            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
 
         let provider_id = keypair.public().to_ss58check();
 

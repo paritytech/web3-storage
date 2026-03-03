@@ -1,11 +1,16 @@
 # CLAUDE.md - Scalable Web3 Storage
 
-## Claude Preferences
+## Agent Rules
 
 **Git commit rules:**
 - NEVER add Co-Authored-By lines to commits
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
+
+**Automatic formatting:**
+- ALWAYS run `/format` after generating or modifying Rust code
+- ALWAYS run `/format` before creating any git commit
+- This ensures all code follows project formatting standards (Rust, TOML, feature propagation) and passes clippy
 
 ## Project Overview
 
@@ -283,12 +288,12 @@ just start-chain
 
 **Network URLs**:
 - Relay chain: `ws://127.0.0.1:9900`
-- Parachain: `ws://127.0.0.1:9944`
-- Provider HTTP: `http://localhost:3000`
+- Parachain: `ws://127.0.0.1:2222`
+- Provider HTTP: `http://localhost:3333`
 
 **Web UI**:
 - Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900
-- Parachain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
+- Parachain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222
 
 ## Polkadot SDK (Upstream)
 
@@ -503,7 +508,7 @@ while let Some(event) = stream.next().await {
 
 ## Code Review Guidelines (Parity Standards)
 
-These guidelines are used by the Claude Code review bot and should be followed by all contributors.
+For the full review criteria (Parity Standards), see the `/review` skill. The review bot and all contributors follow those guidelines.
 
 ### Rust Code Quality
 
@@ -607,3 +612,9 @@ These guidelines are used by the Claude Code review bot and should be followed b
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes
+
+## Using the Claude Review Bot
+
+- **@claude** - Mention in any comment to ask questions or request help
+- **Assign to claude[bot]** - Assign an issue to have Claude analyze and propose solutions
+- **Label with `claude`** - Add the `claude` label to an issue for Claude to investigate

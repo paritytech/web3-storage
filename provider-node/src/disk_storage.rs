@@ -73,7 +73,7 @@ impl DiskStorage {
         let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
 
         let db = DB::open_cf(&opts, path, &cf_names)
-            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {}", e)))?;
+            .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
 
         Ok(Self { db: Arc::new(db) })
     }
@@ -89,7 +89,7 @@ impl DiskStorage {
         let key = bucket_id.to_le_bytes();
         if self
             .db
-            .get_cf(&cf, &key)
+            .get_cf(&cf, key)
             .map_err(|e| Error::Storage(e.to_string()))?
             .is_some()
         {
@@ -100,7 +100,7 @@ impl DiskStorage {
         let value = bincode::serialize(&bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
-            .put_cf(&cf, &key, &value)
+            .put_cf(&cf, key, &value)
             .map_err(|e| Error::Storage(e.to_string()))?;
 
         Ok(())
@@ -110,7 +110,7 @@ impl DiskStorage {
     pub fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
-        let value = self.db.get_cf(&cf, &key).ok()??;
+        let value = self.db.get_cf(&cf, key).ok()??;
         bincode::deserialize(&value).ok()
     }
 
@@ -125,7 +125,7 @@ impl DiskStorage {
         let value = bincode::serialize(bucket).map_err(|e| Error::Serialization(e.to_string()))?;
 
         self.db
-            .put_cf(&cf, &key, &value)
+            .put_cf(&cf, key, &value)
             .map_err(|e| Error::Storage(e.to_string()))?;
 
         Ok(())
@@ -141,18 +141,16 @@ impl DiskStorage {
         let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
         let mut summaries = Vec::new();
 
-        for item in iter {
-            if let Ok((key, value)) = item {
-                if key.len() == 8 {
-                    let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                    if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
-                        summaries.push(BucketSummary {
-                            bucket_id,
-                            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
-                            start_seq: state.start_seq,
-                            leaf_count: state.leaf_count(),
-                        });
-                    }
+        for (key, value) in iter.flatten() {
+            if key.len() == 8 {
+                let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
+                if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
+                    summaries.push(BucketSummary {
+                        bucket_id,
+                        mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+                        start_seq: state.start_seq,
+                        leaf_count: state.leaf_count(),
+                    });
                 }
             }
         }
@@ -251,6 +249,24 @@ impl DiskStorage {
         bincode::deserialize(&value).ok()
     }
 
+    /// Calculate the size of a content tree by traversing stored nodes.
+    fn calculate_tree_size(&self, root: H256) -> u64 {
+        let mut size = 0u64;
+        let mut stack = vec![root];
+
+        while let Some(hash) = stack.pop() {
+            if let Some(node) = self.get_node(&hash) {
+                if let Some(ref children) = node.children {
+                    stack.extend(children.iter().copied());
+                } else {
+                    size = size.saturating_add(node.data.len() as u64);
+                }
+            }
+        }
+
+        size
+    }
+
     /// Check which hashes exist.
     pub fn check_exists(&self, _bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
         let cf = match self.db.cf_handle(CF_NODES) {
@@ -305,7 +321,7 @@ impl DiskStorage {
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
 
-        let start_seq = bucket.start_seq.saturating_add(bucket.leaf_count());
+        let start_seq = bucket.start_seq;
         let mut leaf_indices = Vec::new();
         let mut mmr = crate::mmr::Mmr::new();
 
@@ -315,15 +331,26 @@ impl DiskStorage {
         }
 
         // Add new leaves
-        for data_root in data_roots {
+        let start_index = bucket.leaves.len() as u64;
+        for (i, data_root) in data_roots.iter().enumerate() {
+            leaf_indices.push(start_index + i as u64);
+
+            // Calculate data size by traversing the stored node tree
+            let data_size = self.calculate_tree_size(*data_root);
+            let total_size = bucket
+                .leaves
+                .last()
+                .map(|l| l.total_size)
+                .unwrap_or(0)
+                .saturating_add(data_size);
+
             let leaf = MmrLeaf {
-                data_root,
-                data_size: 0,  // Would calculate from node tree
-                total_size: 0, // Would track cumulative
+                data_root: *data_root,
+                data_size,
+                total_size,
             };
             let leaf_hash = blake2_256(&leaf.encode());
-            let leaf_idx = mmr.push(leaf_hash);
-            leaf_indices.push(leaf_idx);
+            mmr.push(leaf_hash);
             bucket.leaves.push(leaf);
         }
 

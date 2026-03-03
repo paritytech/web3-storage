@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    println!("✅ Drive created with ID: {}", drive_id);
+    println!("✅ Drive created with ID: {drive_id}");
     println!("   Name: My Documents");
     println!("   Capacity: 10 GB");
     println!("   Duration: 500 blocks");
@@ -222,7 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n{}", "=".repeat(60));
     println!("\n🎉 Example completed successfully!");
     println!("\n📊 Summary:");
-    println!("   ✅ Created drive: {}", drive_id);
+    println!("   ✅ Created drive: {drive_id}");
     println!("   ✅ Created 3 directories");
     println!("   ✅ Uploaded 3 files");
     println!("   ✅ Listed directory contents");

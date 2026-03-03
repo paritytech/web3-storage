@@ -10,7 +10,7 @@
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create subscriber
-//! let mut subscriber = EventSubscriber::connect("ws://localhost:9944").await?;
+//! let mut subscriber = EventSubscriber::connect("ws://localhost:2222").await?;
 //!
 //! // Subscribe to checkpoint events for a specific bucket
 //! subscriber.set_filter(EventFilter::bucket(1));
@@ -470,7 +470,7 @@ impl EventSubscriber {
     pub async fn connect(ws_url: &str) -> Result<Self, ClientError> {
         let api = OnlineClient::<PolkadotConfig>::from_url(ws_url)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to connect: {e}")))?;
 
         Ok(Self {
             api,
@@ -567,7 +567,7 @@ impl EventSubscriber {
             .blocks()
             .subscribe_finalized()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to subscribe to blocks: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to subscribe to blocks: {e}")))?;
 
         while running.load(Ordering::SeqCst) {
             match block_sub.next().await {
@@ -586,11 +586,11 @@ impl EventSubscriber {
                                             if let Some(storage_event) =
                                                 Self::parse_event(&event, block_hash, block_number)
                                             {
-                                                if filter.matches(&storage_event) {
-                                                    if event_tx.send(storage_event).await.is_err() {
-                                                        // Channel closed, stop
-                                                        return Ok(());
-                                                    }
+                                                if filter.matches(&storage_event)
+                                                    && event_tx.send(storage_event).await.is_err()
+                                                {
+                                                    // Channel closed, stop
+                                                    return Ok(());
                                                 }
                                             }
                                         }
@@ -825,7 +825,7 @@ impl SubscriptionHandle {
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let handle = subscribe_with_callback(
-///     "ws://localhost:9944",
+///     "ws://localhost:2222",
 ///     EventFilter::checkpoints_only(),
 ///     Box::new(|event| {
 ///         if let StorageEvent::BucketCheckpointed { bucket_id, .. } = event {

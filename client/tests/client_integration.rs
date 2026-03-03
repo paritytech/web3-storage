@@ -26,7 +26,7 @@ async fn start_test_server() -> String {
     // Give server time to start
     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-    format!("http://{}", addr)
+    format!("http://{addr}")
 }
 
 #[tokio::test]

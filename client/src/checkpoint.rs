@@ -12,12 +12,12 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create manager with default config
 //! let manager = CheckpointManager::new(
-//!     "ws://localhost:9944",
+//!     "ws://localhost:2222",
 //!     CheckpointConfig::default(),
 //! ).await?;
 //!
 //! // Add provider endpoints
-//! let manager = manager.with_provider("http://localhost:3000");
+//! let manager = manager.with_provider("http://localhost:3333");
 //!
 //! // Submit checkpoint for a bucket
 //! let bucket_id = 1u64;
@@ -34,7 +34,7 @@ use crate::substrate::SubstrateClient;
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,7 +119,7 @@ pub struct ProviderHealthHistory {
     /// Average response time in milliseconds.
     pub avg_response_time_ms: u64,
     /// Last N status changes for trend analysis.
-    pub recent_statuses: Vec<(Instant, ProviderStatus)>,
+    pub recent_statuses: VecDeque<(Instant, ProviderStatus)>,
     /// Last successful contact time.
     pub last_success: Option<Instant>,
     /// Last failure time.
@@ -137,7 +137,7 @@ impl ProviderHealthHistory {
             successful_requests: 0,
             failed_requests: 0,
             avg_response_time_ms: 0,
-            recent_statuses: Vec::new(),
+            recent_statuses: VecDeque::new(),
             last_success: None,
             last_failure: None,
             consecutive_failures: 0,
@@ -173,9 +173,9 @@ impl ProviderHealthHistory {
 
     /// Add a status to the history (keep last 10).
     fn add_status(&mut self, status: ProviderStatus) {
-        self.recent_statuses.push((Instant::now(), status));
+        self.recent_statuses.push_back((Instant::now(), status));
         if self.recent_statuses.len() > 10 {
-            self.recent_statuses.remove(0);
+            self.recent_statuses.pop_front();
         }
     }
 
@@ -346,7 +346,7 @@ pub enum CheckpointLoopCommand {
 }
 
 /// Status of a bucket in the checkpoint loop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BucketCheckpointStatus {
     /// Whether the bucket has pending changes.
     pub dirty: bool,
@@ -356,17 +356,6 @@ pub struct BucketCheckpointStatus {
     pub last_result: Option<CheckpointResult>,
     /// Number of consecutive failures.
     pub consecutive_failures: u32,
-}
-
-impl Default for BucketCheckpointStatus {
-    fn default() -> Self {
-        Self {
-            dirty: false,
-            last_checkpoint: None,
-            last_result: None,
-            consecutive_failures: 0,
-        }
-    }
 }
 
 /// Handle for controlling a running checkpoint loop.
@@ -484,18 +473,13 @@ impl CheckpointMetrics {
         self.total_attempts += 1;
         self.last_checkpoint_time = Some(Instant::now());
 
-        // Update rolling average submission time
-        if self.successful_submissions > 0 {
-            self.avg_submission_time_ms =
-                (self.avg_submission_time_ms * (self.successful_submissions - 1) + duration_ms)
-                    / self.successful_submissions;
-        } else {
-            self.avg_submission_time_ms = duration_ms;
-        }
-
         match result {
             CheckpointResult::Submitted { signers, .. } => {
                 self.successful_submissions += 1;
+                // Update rolling average submission time (after incrementing count)
+                let n = self.successful_submissions;
+                self.avg_submission_time_ms =
+                    (self.avg_submission_time_ms * (n - 1) + duration_ms) / n;
                 self.providers_responded += signers.len() as u64;
             }
             CheckpointResult::InsufficientConsensus { agreeing, .. } => {
@@ -702,6 +686,7 @@ pub enum CheckpointResult {
 /// - Verifying consensus (majority agreement)
 /// - Submitting checkpoint transactions on-chain
 /// - Tracking provider health over time
+#[allow(clippy::type_complexity)]
 pub struct CheckpointManager {
     /// Configuration.
     config: CheckpointConfig,
@@ -877,21 +862,20 @@ impl CheckpointManager {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
         let bucket_bytes = storage
             .fetch_raw(bucket_storage_key)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {}", e)))?
-            .ok_or_else(|| ClientError::Chain(format!("Bucket {} not found", bucket_id)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
         // Extract primary_providers from bucket raw bytes
         let provider_accounts = self.extract_primary_providers_from_raw(&bucket_bytes)?;
 
         if provider_accounts.is_empty() {
             return Err(ClientError::Chain(format!(
-                "No primary providers found for bucket {}",
-                bucket_id
+                "No primary providers found for bucket {bucket_id}"
             )));
         }
 
@@ -941,14 +925,14 @@ impl CheckpointManager {
             .storage()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
         let provider_bytes = storage
             .fetch_raw(provider_storage_key)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {}", e)))?
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?
             .ok_or_else(|| {
-                ClientError::Chain(format!("Provider {:?} not found on chain", account_id))
+                ClientError::Chain(format!("Provider {account_id:?} not found on chain"))
             })?;
 
         // Extract multiaddr and public_key from provider raw bytes
@@ -1106,15 +1090,14 @@ impl CheckpointManager {
     /// Parse a multiaddr (e.g., /ip4/127.0.0.1/tcp/3000) to HTTP endpoint.
     fn parse_multiaddr_to_http(&self, multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
         let multiaddr_str = String::from_utf8(multiaddr_bytes.to_vec())
-            .map_err(|e| ClientError::Chain(format!("Invalid multiaddr encoding: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Invalid multiaddr encoding: {e}")))?;
 
         // Parse multiaddr format: /ip4/<ip>/tcp/<port> or /dns4/<host>/tcp/<port>
         let parts: Vec<&str> = multiaddr_str.split('/').filter(|s| !s.is_empty()).collect();
 
         if parts.len() < 4 {
             return Err(ClientError::Chain(format!(
-                "Invalid multiaddr format: {}",
-                multiaddr_str
+                "Invalid multiaddr format: {multiaddr_str}"
             )));
         }
 
@@ -1142,7 +1125,7 @@ impl CheckpointManager {
         };
 
         // Construct HTTP URL
-        Ok(format!("http://{}:{}", host, port))
+        Ok(format!("http://{host}:{port}"))
     }
 
     /// Update the provider cache.
@@ -1173,8 +1156,7 @@ impl CheckpointManager {
 
         if providers.is_empty() {
             return Err(ClientError::Chain(format!(
-                "No providers found for bucket {}",
-                bucket_id
+                "No providers found for bucket {bucket_id}"
             )));
         }
 
@@ -1287,7 +1269,7 @@ impl CheckpointManager {
                                 return Ok(commitment);
                             }
                             Err(e) => {
-                                let error = format!("JSON parse error: {}", e);
+                                let error = format!("JSON parse error: {e}");
                                 self.record_provider_failure(&provider.account_id, error.clone())
                                     .await;
                                 return Err(ClientError::Serialization(error));
@@ -1313,7 +1295,7 @@ impl CheckpointManager {
                         delay *= 2;
                         continue;
                     }
-                    let error = format!("Request failed: {}", e);
+                    let error = format!("Request failed: {e}");
                     self.record_provider_failure(&provider.account_id, error.clone())
                         .await;
                     return Err(ClientError::Api(error));
@@ -1438,12 +1420,12 @@ impl CheckpointManager {
             .tx()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?;
 
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {}", e)))?;
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         // Return a success hash (we can't easily get block hash from events in this subxt version)
         Ok(collection.mmr_root)
@@ -1528,7 +1510,7 @@ impl CheckpointManager {
                 Err(ClientError::Api(error))
             }
             Ok(Err(e)) => {
-                let error = format!("Health check failed: {}", e);
+                let error = format!("Health check failed: {e}");
                 self.record_provider_failure(&provider.account_id, error.clone())
                     .await;
                 Err(ClientError::Api(error))
@@ -2320,7 +2302,7 @@ impl CheckpointManager {
     /// use storage_client::{CheckpointManager, CheckpointConfig, PersistenceConfig};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let manager = CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default()).await?;
+    /// let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default()).await?;
     ///
     /// // Save state to file
     /// manager.save_state("/var/lib/storage/checkpoint_state.json").await?;
@@ -2344,7 +2326,7 @@ impl CheckpointManager {
     /// use storage_client::{CheckpointManager, CheckpointConfig};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let manager = CheckpointManager::new("ws://localhost:9944", CheckpointConfig::default()).await?;
+    /// let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default()).await?;
     ///
     /// // Restore state from file
     /// manager.restore_state("/var/lib/storage/checkpoint_state.json").await?;
@@ -2380,7 +2362,7 @@ impl CheckpointManager {
         // Restore health histories
         {
             let mut health_histories = self.health_history.write().await;
-            for (_, persisted) in &state.health_histories {
+            for persisted in state.health_histories.values() {
                 let history = persisted.to_health_history()?;
                 health_histories.insert(history.account_id.clone(), history);
             }
@@ -2798,7 +2780,7 @@ mod tests {
         let account = AccountId32::new([1u8; 32]);
         let info = ProviderInfo {
             account_id: account.clone(),
-            endpoint: "http://localhost:3000".to_string(),
+            endpoint: "http://localhost:3333".to_string(),
             public_key: vec![1, 2, 3],
             last_seen: None,
             status: ProviderStatus::Healthy,
@@ -2806,7 +2788,7 @@ mod tests {
 
         let cloned = info.clone();
         assert_eq!(cloned.account_id, account);
-        assert_eq!(cloned.endpoint, "http://localhost:3000");
+        assert_eq!(cloned.endpoint, "http://localhost:3333");
         assert_eq!(cloned.public_key, vec![1, 2, 3]);
     }
 
@@ -3122,5 +3104,63 @@ mod tests {
 
         // Verify failed challenge error
         assert_eq!(result.challenges_failed[0].error, "Insufficient funds");
+    }
+
+    // ========================================================================
+    // CheckpointMetrics Rolling Average Tests
+    // ========================================================================
+
+    #[test]
+    fn test_metrics_rolling_average_first_submission() {
+        let mut metrics = CheckpointMetrics::default();
+        let result = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+
+        metrics.record_attempt(&result, 200);
+
+        assert_eq!(metrics.successful_submissions, 1);
+        assert_eq!(metrics.avg_submission_time_ms, 200);
+    }
+
+    #[test]
+    fn test_metrics_rolling_average_multiple_submissions() {
+        let mut metrics = CheckpointMetrics::default();
+        let result = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+
+        metrics.record_attempt(&result, 100);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        metrics.record_attempt(&result, 200);
+        assert_eq!(metrics.avg_submission_time_ms, 150); // (100 + 200) / 2
+
+        metrics.record_attempt(&result, 300);
+        assert_eq!(metrics.avg_submission_time_ms, 200); // (150*2 + 300) / 3 = 200
+    }
+
+    #[test]
+    fn test_metrics_rolling_average_ignores_failures() {
+        let mut metrics = CheckpointMetrics::default();
+        let success = CheckpointResult::Submitted {
+            block_hash: H256::zero(),
+            signers: vec![AccountId32::new([1u8; 32])],
+        };
+        let failure = CheckpointResult::TransactionFailed {
+            error: "timeout".to_string(),
+        };
+
+        metrics.record_attempt(&success, 100);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        // Failure should not change the submission time average
+        metrics.record_attempt(&failure, 5000);
+        assert_eq!(metrics.avg_submission_time_ms, 100);
+
+        metrics.record_attempt(&success, 200);
+        assert_eq!(metrics.avg_submission_time_ms, 150);
     }
 }

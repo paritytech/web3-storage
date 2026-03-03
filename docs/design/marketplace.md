@@ -380,8 +380,8 @@ pub const ChallengeTimeout: BlockNumber = 100;
 
 ```rust
 let config = ClientConfig {
-    chain_rpc: "ws://127.0.0.1:9944".to_string(),
-    provider_http: "http://localhost:3000".to_string(),
+    chain_rpc: "ws://127.0.0.1:2222".to_string(),
+    provider_http: "http://localhost:3333".to_string(),
     chunk_size: 256 * 1024,
     max_retries: 3,
 };

@@ -22,6 +22,7 @@ pub trait WeightInfo {
 
     // Bucket management
     fn create_bucket() -> Weight;
+    fn create_bucket_with_storage() -> Weight;
     fn delete_bucket() -> Weight;
     fn set_bucket_member() -> Weight;
     fn remove_bucket_member() -> Weight;
@@ -106,6 +107,13 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
         Weight::from_parts(45_000_000, 4500)
             .saturating_add(T::DbWeight::get().reads(1_u64))
             .saturating_add(T::DbWeight::get().writes(2_u64))
+    }
+
+    fn create_bucket_with_storage() -> Weight {
+        // Heavier than create_bucket: iterates providers, creates agreement
+        Weight::from_parts(120_000_000, 12000)
+            .saturating_add(T::DbWeight::get().reads(10_u64))
+            .saturating_add(T::DbWeight::get().writes(5_u64))
     }
 
     fn delete_bucket() -> Weight {
@@ -312,6 +320,7 @@ impl WeightInfo for () {
     fn add_stake() -> Weight { Weight::from_parts(10_000, 0) }
     fn update_provider_multiaddr() -> Weight { Weight::from_parts(10_000, 0) }
     fn create_bucket() -> Weight { Weight::from_parts(10_000, 0) }
+    fn create_bucket_with_storage() -> Weight { Weight::from_parts(10_000, 0) }
     fn delete_bucket() -> Weight { Weight::from_parts(10_000, 0) }
     fn set_bucket_member() -> Weight { Weight::from_parts(10_000, 0) }
     fn remove_bucket_member() -> Weight { Weight::from_parts(10_000, 0) }

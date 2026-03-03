@@ -34,7 +34,7 @@ use alloc::{string::String, vec::Vec};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
-use sp_runtime::{traits::Get, BoundedVec, RuntimeDebug};
+use sp_runtime::{traits::Get, BoundedVec};
 
 // ============================================================================
 // Protobuf types (std only)
@@ -71,7 +71,7 @@ pub type Cid = H256;
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -165,15 +165,7 @@ impl Get<u32> for MaxEncryptionParamsLength {
 
 /// A single entry in a directory (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    RuntimeDebug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryEntry {
@@ -220,15 +212,7 @@ impl DirectoryEntry {
 
 /// Metadata key-value pair
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    RuntimeDebug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct MetadataEntry {
@@ -238,15 +222,7 @@ pub struct MetadataEntry {
 
 /// Directory node containing child references (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    RuntimeDebug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirectoryNode {
@@ -275,17 +251,25 @@ impl DirectoryNode {
 
     /// Find a child by name
     pub fn find_child(&self, name: &str) -> Option<&DirectoryEntry> {
-        self.children.iter().find(|e| e.name_str() == name)
+        self.children
+            .iter()
+            .find(|e| e.name.as_slice() == name.as_bytes())
     }
 
     /// Find a child by name (mutable)
     pub fn find_child_mut(&mut self, name: &str) -> Option<&mut DirectoryEntry> {
-        self.children.iter_mut().find(|e| e.name_str() == name)
+        self.children
+            .iter_mut()
+            .find(|e| e.name.as_slice() == name.as_bytes())
     }
 
     /// Remove a child by name
     pub fn remove_child(&mut self, name: &str) -> Option<DirectoryEntry> {
-        if let Some(pos) = self.children.iter().position(|e| e.name_str() == name) {
+        if let Some(pos) = self
+            .children
+            .iter()
+            .position(|e| e.name.as_slice() == name.as_bytes())
+        {
             Some(self.children.remove(pos))
         } else {
             None
@@ -310,15 +294,7 @@ impl DirectoryNode {
 
 /// A single chunk reference in a file (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    RuntimeDebug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChunk {
@@ -330,15 +306,7 @@ pub struct FileChunk {
 
 /// File manifest tracking how to reassemble a file from chunks (SCALE-encoded, no_std compatible)
 #[derive(
-    Clone,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    RuntimeDebug,
-    TypeInfo,
-    MaxEncodedLen,
+    Clone, Encode, Decode, DecodeWithMemTracking, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen,
 )]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileManifest {
@@ -648,7 +616,7 @@ pub enum FileSystemError {
     DecodeWithMemTracking,
     Eq,
     PartialEq,
-    RuntimeDebug,
+    Debug,
     TypeInfo,
     MaxEncodedLen,
 )]
@@ -702,7 +670,7 @@ impl<AccountId> Default for DriveConfig<AccountId> {
 }
 
 /// Drive information stored on-chain (user's virtual drive)
-#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen)]
 #[scale_info(skip_type_params(MaxNameLength, Balance))]
 #[codec(mel_bound())]
 pub struct DriveInfo<

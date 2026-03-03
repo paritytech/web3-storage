@@ -43,3 +43,7 @@ env_logger = "0.11"
 [[example]]
 name = "basic_usage"
 path = "examples/basic_usage.rs"
+
+[[example]]
+name = "ci_integration_test"
+path = "examples/ci_integration_test.rs"
