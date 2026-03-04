@@ -375,15 +375,14 @@ s3-test-all:
     echo "✅ All S3 tests passed!"
 
 # Run S3 CI integration test (used by CI pipeline)
-s3-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333":
+s3-demo-ci:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running S3 CI Integration Test"
-    echo "  Chain: {{CHAIN_WS}}"
-    echo "  Provider: {{PROVIDER_URL}}"
+    echo "  Chain: {{ CHAIN_WS }}"
+    echo "  Provider: {{ PROVIDER_URL }}"
     echo ""
-    cd storage-interfaces/s3/client
-    cargo run --release --example ci_integration_test "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Build S3 components only
 s3-build:
