@@ -495,6 +495,15 @@ impl pallet_drive_registry::Config for Runtime {
     type MaxDrivesPerUser = ConstU32<100>;
 }
 
+// --------------------------------
+// S3 Registry Pallet Config
+// --------------------------------
+
+impl pallet_s3_registry::Config for Runtime {
+    type MaxBucketsPerUser = ConstU32<100>;
+    type MaxObjectsPerBucket = ConstU32<100000>;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
 mod runtime {
@@ -575,6 +584,10 @@ mod runtime {
     // Drive Registry (Layer 1: File System)
     #[runtime::pallet_index(51)]
     pub type DriveRegistry = pallet_drive_registry;
+
+    // S3 Registry (Layer 1: S3-Compatible Interface)
+    #[runtime::pallet_index(52)]
+    pub type S3Registry = pallet_s3_registry;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {

@@ -1,0 +1,47 @@
+[package]
+name = "s3-client"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "S3-compatible client SDK for web3-storage"
+
+[dependencies]
+# Internal
+s3-primitives = { workspace = true, features = ["std"] }
+storage-client = { workspace = true }
+
+# Codec
+codec = { workspace = true, features = ["std"] }
+
+# Substrate primitives
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+
+# Async/HTTP
+reqwest = { workspace = true }
+tokio = { workspace = true }
+
+# Subxt for chain interaction
+subxt = "0.44"
+subxt-signer = "0.44"
+bip39 = "2.0"
+
+# Utilities
+hex = "0.4"
+thiserror = "2.0"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full", "macros"] }
+tracing-subscriber = "0.3"
+env_logger = "0.11"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "ci_integration_test"
+path = "examples/ci_integration_test.rs"
