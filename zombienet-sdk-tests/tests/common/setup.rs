@@ -41,8 +41,8 @@ impl TestEnvironment {
         let provider = ProviderProcess::spawn(&chain_ws, "//Alice").await?;
         let provider_url = provider_url();
 
-        log::info!("  Chain: {chain_ws}");
-        log::info!("  Provider: {provider_url}");
+        log::info!("Chain: {chain_ws}");
+        log::info!("Provider: {provider_url}");
 
         log::info!("Registering provider on-chain...");
         let alice_provider = register_alice_provider(&chain_ws, &provider_url).await?;
@@ -87,7 +87,7 @@ pub async fn register_alice_provider(chain_ws: &str, provider_url: &str) -> Resu
         .await
         .map_err(|e| anyhow!("register_provider failed: {e}"))?;
 
-    log::info!("  Provider registered (Alice)");
+    log::info!("Provider registered (Alice)");
     Ok(client)
 }
 

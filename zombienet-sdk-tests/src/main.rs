@@ -20,25 +20,20 @@ async fn main() -> anyhow::Result<()> {
     let relay_rpc_port = config::relay_rpc_port();
     let provider_port = config::provider_port();
 
-    println!();
-    println!("=== Network Ready ===");
-    println!();
-    println!("  Relay WS:      ws://127.0.0.1:{relay_rpc_port}");
-    println!("  Parachain WS:  ws://127.0.0.1:{chain_rpc_port}");
-    println!("  Polkadot.js:   https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A{chain_rpc_port}");
+    log::info!("=== Network Ready ===");
+    log::info!("Relay WS: ws://127.0.0.1:{relay_rpc_port}");
+    log::info!("Parachain WS: ws://127.0.0.1:{chain_rpc_port}");
+    log::info!("Polkadot.js: https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A{chain_rpc_port}");
     if provider.is_some() {
-        println!("  Provider HTTP:  http://127.0.0.1:{provider_port}");
-        println!("  Provider health: http://127.0.0.1:{provider_port}/health");
+        log::info!("Provider HTTP: http://127.0.0.1:{provider_port}");
+        log::info!("Provider health: http://127.0.0.1:{provider_port}/health");
     }
-    println!();
-    println!("  export CHAIN_WS=ws://127.0.0.1:{chain_rpc_port}");
-    println!("  export PROVIDER_URL=http://127.0.0.1:{provider_port}");
-    println!();
-    println!("Press Ctrl+C to stop.");
-    println!();
+    log::info!("export CHAIN_WS=ws://127.0.0.1:{chain_rpc_port}");
+    log::info!("export PROVIDER_URL=http://127.0.0.1:{provider_port}");
+    log::info!("Press Ctrl+C to stop.");
 
     tokio::signal::ctrl_c().await?;
-    println!("Shutting down...");
+    log::info!("Shutting down...");
 
     // Drop provider first, then network goes out of scope
     drop(provider);

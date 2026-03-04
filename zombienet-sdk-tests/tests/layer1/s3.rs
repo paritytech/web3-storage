@@ -25,7 +25,7 @@ async fn s3_integration_test() -> Result<()> {
     let client = S3Client::new(&env.chain_ws, &env.provider_url, "//Alice")
         .await
         .context("Failed to create S3Client")?;
-    log::info!("  Client connected successfully");
+    log::info!("Client connected successfully");
 
     // Step 3: Create an S3 bucket
     log::info!("Step 3: Creating S3 bucket...");
@@ -40,9 +40,9 @@ async fn s3_integration_test() -> Result<()> {
         .create_bucket(&bucket_name)
         .await
         .context("Failed to create S3 bucket")?;
-    log::info!("  Bucket created: {bucket_name}");
-    log::info!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
-    log::info!("  Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
+    log::info!("Bucket created: {bucket_name}");
+    log::info!("S3 Bucket ID: {}", bucket.s3_bucket_id);
+    log::info!("Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
 
     // Step 4: Upload objects
     log::info!("Step 4: Uploading objects...");
@@ -93,8 +93,8 @@ async fn s3_integration_test() -> Result<()> {
         .head_bucket(&bucket_name)
         .await
         .context("Failed to head bucket")?;
-    log::info!("  Object count: {}", bucket_info.object_count);
-    log::info!("  Total size: {} bytes", bucket_info.total_size);
+    log::info!("Object count: {}", bucket_info.object_count);
+    log::info!("Total size: {} bytes", bucket_info.total_size);
     assert_eq!(bucket_info.object_count, 2, "Expected 2 objects in bucket");
 
     // Step 6: Download and verify objects
@@ -114,7 +114,7 @@ async fn s3_integration_test() -> Result<()> {
         content_1,
         "Content mismatch for hello.txt"
     );
-    log::info!("    Content verified!");
+    log::info!("Content verified!");
 
     let get_result_2 = client
         .get_object(&bucket_name, "data/payload.bin")
@@ -130,7 +130,7 @@ async fn s3_integration_test() -> Result<()> {
         content_2,
         "Content mismatch for data/payload.bin"
     );
-    log::info!("    Content verified!");
+    log::info!("Content verified!");
 
     // Step 7: Copy object
     log::info!("Step 7: Copying object...");
@@ -152,7 +152,7 @@ async fn s3_integration_test() -> Result<()> {
         content_1,
         "Content mismatch for copied object"
     );
-    log::info!("    Copy content verified!");
+    log::info!("Copy content verified!");
 
     // Step 8: Clean up
     log::info!("Step 8: Cleaning up...");
@@ -160,34 +160,34 @@ async fn s3_integration_test() -> Result<()> {
         .delete_object(&bucket_name, "hello.txt")
         .await
         .context("Failed to delete hello.txt")?;
-    log::info!("  Deleted hello.txt");
+    log::info!("Deleted hello.txt");
 
     client
         .delete_object(&bucket_name, "data/payload.bin")
         .await
         .context("Failed to delete data/payload.bin")?;
-    log::info!("  Deleted data/payload.bin");
+    log::info!("Deleted data/payload.bin");
 
     client
         .delete_object(&bucket_name, "hello-copy.txt")
         .await
         .context("Failed to delete hello-copy.txt")?;
-    log::info!("  Deleted hello-copy.txt");
+    log::info!("Deleted hello-copy.txt");
 
     client
         .delete_bucket(&bucket_name)
         .await
         .context("Failed to delete bucket")?;
-    log::info!("  Deleted bucket: {bucket_name}");
+    log::info!("Deleted bucket: {bucket_name}");
 
     // Summary
     log::info!("=== PASSED: S3-Compatible Interface Integration Test ===");
-    log::info!("  - Created S3 bucket ({bucket_name})");
-    log::info!("  - Uploaded 2 objects with metadata");
-    log::info!("  - Verified bucket info");
-    log::info!("  - Downloaded and verified 2 objects");
-    log::info!("  - Copied and verified 1 object");
-    log::info!("  - Cleaned up all objects and bucket");
+    log::info!("- Created S3 bucket ({bucket_name})");
+    log::info!("- Uploaded 2 objects with metadata");
+    log::info!("- Verified bucket info");
+    log::info!("- Downloaded and verified 2 objects");
+    log::info!("- Copied and verified 1 object");
+    log::info!("- Cleaned up all objects and bucket");
 
     Ok(())
 }

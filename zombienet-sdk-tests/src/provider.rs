@@ -24,9 +24,9 @@ impl ProviderProcess {
         let bind_addr = provider_bind_addr();
 
         log::info!("Starting provider: {provider_bin}");
-        log::info!("  SEED={seed}");
-        log::info!("  CHAIN_RPC={chain_ws}");
-        log::info!("  BIND_ADDR={bind_addr}");
+        log::info!("SEED={seed}");
+        log::info!("CHAIN_RPC={chain_ws}");
+        log::info!("BIND_ADDR={bind_addr}");
 
         let child = Command::new(&provider_bin)
             .env("SEED", seed)

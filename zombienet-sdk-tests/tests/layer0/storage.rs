@@ -243,7 +243,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     // Step 1: Setup - create bucket, create agreement
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 1: Setup ===");
+    log::info!("=== Step 1: Setup ===");
 
     // Bob = bucket admin / challenger
     let mut bob_admin = AdminClient::new(config.clone(), BOB_SS58.to_string())
@@ -267,15 +267,15 @@ async fn storage_full_flow_test() -> Result<()> {
         .context("ChallengerClient set_dev_signer failed")?;
 
     // Create bucket (Bob)
-    log::info!("  Creating bucket...");
+    log::info!("Creating bucket...");
     bob_admin
         .create_bucket(1)
         .await
         .context("create_bucket failed")?;
-    log::info!("  Bucket created (ID: {BUCKET_ID})");
+    log::info!("Bucket created (ID: {BUCKET_ID})");
 
     // Request agreement (Bob)
-    log::info!("  Requesting agreement (Bob)...");
+    log::info!("Requesting agreement (Bob)...");
     bob_admin
         .request_agreement(
             BUCKET_ID,
@@ -287,20 +287,20 @@ async fn storage_full_flow_test() -> Result<()> {
         )
         .await
         .context("request_agreement failed")?;
-    log::info!("  Agreement requested");
+    log::info!("Agreement requested");
 
     // Accept agreement (Alice)
-    log::info!("  Accepting agreement (Alice)...");
+    log::info!("Accepting agreement (Alice)...");
     alice_provider
         .accept_agreement(BUCKET_ID)
         .await
         .context("accept_agreement failed")?;
-    log::info!("  Agreement accepted");
+    log::info!("Agreement accepted");
 
     // ═══════════════════════════════════════════════════════════════════
     // Step 2: Upload data
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 2: Upload data ===");
+    log::info!("=== Step 2: Upload data ===");
 
     let storage_client = StorageClient::new(&env.provider_url);
     let data = format!(
@@ -309,22 +309,22 @@ async fn storage_full_flow_test() -> Result<()> {
     );
     let data_bytes = data.as_bytes();
 
-    log::info!("  Uploading data ({} bytes)...", data_bytes.len());
+    log::info!("Uploading data ({} bytes)...", data_bytes.len());
     let data_root = storage_client
         .upload(BUCKET_ID, data_bytes, Default::default())
         .await
         .context("upload failed")?;
-    log::info!("  Data root: {data_root:?}");
+    log::info!("Data root: {data_root:?}");
 
-    log::info!("  Committing to MMR...");
+    log::info!("Committing to MMR...");
     let commit_resp = storage_client
         .commit(BUCKET_ID, vec![data_root])
         .await
         .context("commit failed")?;
-    log::info!("  MMR root: {}", commit_resp.mmr_root);
-    log::info!("  Leaf indices: {:?}", commit_resp.leaf_indices);
+    log::info!("MMR root: {}", commit_resp.mmr_root);
+    log::info!("Leaf indices: {:?}", commit_resp.leaf_indices);
 
-    log::info!("  Verifying download...");
+    log::info!("Verifying download...");
     let downloaded = storage_client
         .read(&data_root, 0, data_bytes.len() as u64)
         .await
@@ -346,7 +346,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     // Step 3: Off-chain challenge
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 3: Off-chain challenge ===");
+    log::info!("=== Step 3: Off-chain challenge ===");
 
     let mmr_root = hex_to_h256(&commit_resp.mmr_root)?;
     let provider_sig_bytes = hex_to_bytes(&commit_resp.provider_signature)?;
@@ -372,7 +372,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     // Step 4: Respond to off-chain challenge
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 4: Respond to off-chain challenge ===");
+    log::info!("=== Step 4: Respond to off-chain challenge ===");
 
     let http = reqwest::Client::new();
     respond_to_challenge(
@@ -385,16 +385,16 @@ async fn storage_full_flow_test() -> Result<()> {
         0,
     )
     .await?;
-    log::info!("  Challenge defended (1/2)");
+    log::info!("Challenge defended (1/2)");
 
     // ═══════════════════════════════════════════════════════════════════
     // Step 5: Submit checkpoint
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 5: Submit checkpoint ===");
+    log::info!("=== Step 5: Submit checkpoint ===");
 
     let checkpoint_sig = fetch_checkpoint_signature(&http, &env.provider_url, BUCKET_ID).await?;
-    log::info!("  Checkpoint MMR root: {}", checkpoint_sig.mmr_root);
-    log::info!("  Checkpoint leaf_count: {}", checkpoint_sig.leaf_count);
+    log::info!("Checkpoint MMR root: {}", checkpoint_sig.mmr_root);
+    log::info!("Checkpoint leaf_count: {}", checkpoint_sig.leaf_count);
 
     let checkpoint_mmr_root = hex_to_h256(&checkpoint_sig.mmr_root)?;
     let checkpoint_provider_sig = hex_to_bytes(&checkpoint_sig.provider_signature)?;
@@ -409,12 +409,12 @@ async fn storage_full_flow_test() -> Result<()> {
         )
         .await
         .context("submit_checkpoint failed")?;
-    log::info!("  Checkpoint submitted");
+    log::info!("Checkpoint submitted");
 
     // ═══════════════════════════════════════════════════════════════════
     // Step 6: Checkpoint challenge
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 6: Checkpoint challenge ===");
+    log::info!("=== Step 6: Checkpoint challenge ===");
 
     let challenge_id_2 = bob_challenger
         .challenge_checkpoint(
@@ -434,7 +434,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     // Step 7: Respond to checkpoint challenge
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== Step 7: Respond to checkpoint challenge ===");
+    log::info!("=== Step 7: Respond to checkpoint challenge ===");
 
     respond_to_challenge(
         &alice_provider,
@@ -446,17 +446,17 @@ async fn storage_full_flow_test() -> Result<()> {
         0,
     )
     .await?;
-    log::info!("  Challenge defended (2/2)");
+    log::info!("Challenge defended (2/2)");
 
     // ═══════════════════════════════════════════════════════════════════
     // Summary
     // ═══════════════════════════════════════════════════════════════════
-    log::info!("\n=== PASSED: Both challenges were defended! ===");
-    log::info!("  - Registered provider");
-    log::info!("  - Created bucket + agreement");
-    log::info!("  - Uploaded + verified data");
-    log::info!("  - Off-chain challenge defended");
-    log::info!("  - Checkpoint submitted + challenge defended");
+    log::info!("=== PASSED: Both challenges were defended! ===");
+    log::info!("- Registered provider");
+    log::info!("- Created bucket + agreement");
+    log::info!("- Uploaded + verified data");
+    log::info!("- Off-chain challenge defended");
+    log::info!("- Checkpoint submitted + challenge defended");
 
     Ok(())
 }

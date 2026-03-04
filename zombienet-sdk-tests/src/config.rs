@@ -5,6 +5,9 @@ pub const POLKADOT_BINARY_PATH_ENV: &str = "POLKADOT_BINARY_PATH";
 pub const POLKADOT_OMNI_NODE_PATH_ENV: &str = "POLKADOT_OMNI_NODE_PATH";
 pub const CHAIN_SPEC_COMMAND_ENV: &str = "CHAIN_SPEC_COMMAND";
 pub const PROVIDER_BINARY_PATH_ENV: &str = "PROVIDER_BINARY_PATH";
+pub const RELAY_RPC_PORT_ENV: &str = "RELAY_RPC_PORT";
+pub const CHAIN_RPC_PORT_ENV: &str = "CHAIN_RPC_PORT";
+pub const PROVIDER_PORT_ENV: &str = "PROVIDER_PORT";
 
 // Default binary paths
 pub const DEFAULT_POLKADOT_BINARY: &str = ".bin/polkadot";
@@ -101,15 +104,15 @@ fn env_port(var: &str, default: u16) -> u16 {
 }
 
 pub fn relay_rpc_port() -> u16 {
-    env_port("RELAY_RPC_PORT", DEFAULT_RELAY_RPC_PORT)
+    env_port(RELAY_RPC_PORT_ENV, DEFAULT_RELAY_RPC_PORT)
 }
 
 pub fn chain_rpc_port() -> u16 {
-    env_port("CHAIN_RPC_PORT", DEFAULT_CHAIN_RPC_PORT)
+    env_port(CHAIN_RPC_PORT_ENV, DEFAULT_CHAIN_RPC_PORT)
 }
 
 pub fn provider_port() -> u16 {
-    env_port("PROVIDER_PORT", DEFAULT_PROVIDER_PORT)
+    env_port(PROVIDER_PORT_ENV, DEFAULT_PROVIDER_PORT)
 }
 
 pub fn provider_url() -> String {

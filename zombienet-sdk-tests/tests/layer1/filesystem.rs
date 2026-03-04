@@ -25,10 +25,10 @@ async fn list_and_verify(
         .await
         .with_context(|| format!("Failed to list directory '{path}'"))?;
 
-    log::info!("  {} entries: {}", path, entries.len());
+    log::info!("{} entries: {}", path, entries.len());
     for entry in &entries {
         let kind = if entry.is_directory() { "DIR " } else { "FILE" };
-        log::info!("    [{}] {} ({} bytes)", kind, entry.name_str(), entry.size);
+        log::info!("[{}] {} ({} bytes)", kind, entry.name_str(), entry.size);
     }
 
     assert_eq!(
@@ -57,7 +57,7 @@ async fn filesystem_integration_test() -> Result<()> {
         .with_dev_signer("alice")
         .await
         .context("Failed to set dev signer on FileSystemClient")?;
-    log::info!("  Client connected successfully");
+    log::info!("Client connected successfully");
 
     // Step 3: Create a drive
     log::info!("Step 3: Creating drive...");
@@ -72,13 +72,13 @@ async fn filesystem_integration_test() -> Result<()> {
         )
         .await
         .context("Failed to create drive")?;
-    log::info!("  Drive created: ID = {drive_id}");
+    log::info!("Drive created: ID = {drive_id}");
 
     let bucket_id = fs_client
         .get_bucket_id(drive_id)
         .await
         .context("Failed to get bucket ID for drive")?;
-    log::info!("  Associated bucket: ID = {bucket_id}");
+    log::info!("Associated bucket: ID = {bucket_id}");
 
     // Step 4: Create directories
     log::info!("Step 4: Creating directories...");
@@ -86,13 +86,13 @@ async fn filesystem_integration_test() -> Result<()> {
         .create_directory(drive_id, "/test-dir", bucket_id)
         .await
         .context("Failed to create /test-dir")?;
-    log::info!("  Created /test-dir");
+    log::info!("Created /test-dir");
 
     fs_client
         .create_directory(drive_id, "/test-dir/subdir", bucket_id)
         .await
         .context("Failed to create /test-dir/subdir")?;
-    log::info!("  Created /test-dir/subdir");
+    log::info!("Created /test-dir/subdir");
 
     // Step 5: Upload files
     log::info!("Step 5: Uploading files...");
@@ -155,7 +155,7 @@ async fn filesystem_integration_test() -> Result<()> {
         test_content_1,
         "Content mismatch for hello.txt"
     );
-    log::info!("    Content verified!");
+    log::info!("Content verified!");
 
     let downloaded_2 = fs_client
         .download_file(drive_id, "/test-dir/subdir/nested.txt")
@@ -170,15 +170,15 @@ async fn filesystem_integration_test() -> Result<()> {
         test_content_2,
         "Content mismatch for nested.txt"
     );
-    log::info!("    Content verified!");
+    log::info!("Content verified!");
 
     // Summary
     log::info!("=== PASSED: File System Integration Test ===");
-    log::info!("  - Created drive (ID: {drive_id})");
-    log::info!("  - Created 2 directories");
-    log::info!("  - Uploaded 2 files");
-    log::info!("  - Listed 3 directories");
-    log::info!("  - Downloaded and verified 2 files");
+    log::info!("- Created drive (ID: {drive_id})");
+    log::info!("- Created 2 directories");
+    log::info!("- Uploaded 2 files");
+    log::info!("- Listed 3 directories");
+    log::info!("- Downloaded and verified 2 files");
 
     Ok(())
 }
