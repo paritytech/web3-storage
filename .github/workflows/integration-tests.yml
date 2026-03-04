@@ -78,6 +78,7 @@ jobs:
           path: |
             target/release/storage-provider-node
             target/release/wbuild/
+            .bin/
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -114,25 +115,6 @@ jobs:
         with:
           shared-key: "integration-tests"
           save-if: false
-
-      - name: Install just
-        run: cargo install just --locked || true
-
-      - name: Cache Polkadot SDK binaries
-        uses: actions/cache@v4
-        id: sdk-cache
-        with:
-          path: |
-            .bin/polkadot
-            .bin/polkadot-execute-worker
-            .bin/polkadot-prepare-worker
-            .bin/polkadot-omni-node
-            .bin/chain-spec-builder
-          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
-
-      - name: Download Polkadot SDK binaries
-        if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
