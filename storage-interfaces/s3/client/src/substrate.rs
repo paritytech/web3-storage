@@ -517,34 +517,40 @@ fn extract_u64_vec<T: Clone>(value: &Value<T>) -> Vec<u64> {
     result
 }
 
-/// Extract bytes from a Value (handles BoundedVec encoding).
+/// Extract bytes from a Value (handles BoundedVec and H256 encoding).
+///
+/// Subxt decodes wrapper types like H256 and BoundedVec<u8> as nested composites:
+/// e.g. H256 becomes Composite::Unnamed([Composite::Unnamed([b0..b31])]).
+/// This function handles both flat byte sequences and single-element wrapper composites.
 fn extract_bytes_from_value<T: Clone>(value: &Value<T>) -> Option<Vec<u8>> {
     match &value.value {
         ValueDef::Composite(Composite::Unnamed(values)) => {
-            let mut bytes = Vec::new();
-            for item in values {
-                if let Some(v) = item.as_u128() {
-                    bytes.push(v as u8);
-                }
+            // Try direct byte extraction (each element is a u8 encoded as u128)
+            let bytes: Vec<u8> = values
+                .iter()
+                .filter_map(|v| v.as_u128().map(|n| n as u8))
+                .collect();
+            if bytes.len() == values.len() && !bytes.is_empty() {
+                return Some(bytes);
             }
-            if !bytes.is_empty() {
-                Some(bytes)
-            } else {
-                None
+            // Single-element wrapper (e.g., H256 wrapping [u8; 32], BoundedVec wrapping Vec<u8>)
+            if values.len() == 1 {
+                return extract_bytes_from_value(&values[0]);
             }
+            None
         }
         ValueDef::Composite(Composite::Named(values)) => {
-            let mut bytes = Vec::new();
-            for (_name, item) in values {
-                if let Some(v) = item.as_u128() {
-                    bytes.push(v as u8);
-                }
+            let bytes: Vec<u8> = values
+                .iter()
+                .filter_map(|(_, v)| v.as_u128().map(|n| n as u8))
+                .collect();
+            if bytes.len() == values.len() && !bytes.is_empty() {
+                return Some(bytes);
             }
-            if !bytes.is_empty() {
-                Some(bytes)
-            } else {
-                None
+            if values.len() == 1 {
+                return extract_bytes_from_value(&values[0].1);
             }
+            None
         }
         _ => None,
     }
