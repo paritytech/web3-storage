@@ -7,8 +7,7 @@ mod substrate;
 pub use substrate::SubstrateClient;
 
 use s3_primitives::{
-	compute_cid, validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse,
-	S3BucketId,
+    validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse, S3BucketId,
 };
 use sp_core::H256;
 use std::collections::HashMap;
@@ -18,35 +17,35 @@ use tracing::{debug, info};
 /// S3 client error types.
 #[derive(Error, Debug)]
 pub enum S3ClientError {
-	#[error("Bucket not found: {0}")]
-	BucketNotFound(String),
+    #[error("Bucket not found: {0}")]
+    BucketNotFound(String),
 
-	#[error("Object not found: {bucket}/{key}")]
-	ObjectNotFound { bucket: String, key: String },
+    #[error("Object not found: {bucket}/{key}")]
+    ObjectNotFound { bucket: String, key: String },
 
-	#[error("Bucket already exists: {0}")]
-	BucketAlreadyExists(String),
+    #[error("Bucket already exists: {0}")]
+    BucketAlreadyExists(String),
 
-	#[error("Invalid bucket name: {0}")]
-	InvalidBucketName(String),
+    #[error("Invalid bucket name: {0}")]
+    InvalidBucketName(String),
 
-	#[error("Invalid object key: {0}")]
-	InvalidObjectKey(String),
+    #[error("Invalid object key: {0}")]
+    InvalidObjectKey(String),
 
-	#[error("Access denied")]
-	AccessDenied,
+    #[error("Access denied")]
+    AccessDenied,
 
-	#[error("Chain error: {0}")]
-	ChainError(String),
+    #[error("Chain error: {0}")]
+    ChainError(String),
 
-	#[error("Provider error: {0}")]
-	ProviderError(String),
+    #[error("Provider error: {0}")]
+    ProviderError(String),
 
-	#[error("HTTP error: {0}")]
-	HttpError(#[from] reqwest::Error),
+    #[error("HTTP error: {0}")]
+    HttpError(#[from] reqwest::Error),
 
-	#[error("Internal error: {0}")]
-	InternalError(String),
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// Result type for S3 client operations.
@@ -55,371 +54,418 @@ pub type Result<T> = std::result::Result<T, S3ClientError>;
 /// Options for put_object operation.
 #[derive(Default, Clone, Debug)]
 pub struct PutObjectOptions {
-	/// Content type (MIME type).
-	pub content_type: Option<String>,
-	/// User-defined metadata.
-	pub metadata: HashMap<String, String>,
+    /// Content type (MIME type).
+    pub content_type: Option<String>,
+    /// User-defined metadata.
+    pub metadata: HashMap<String, String>,
 }
 
 /// Response from put_object operation.
 #[derive(Clone, Debug)]
 pub struct PutObjectResponse {
-	/// ETag of the uploaded object.
-	pub etag: String,
-	/// CID of the uploaded object.
-	pub cid: H256,
-	/// Size of the uploaded object.
-	pub size: u64,
+    /// ETag of the uploaded object.
+    pub etag: String,
+    /// CID of the uploaded object.
+    pub cid: H256,
+    /// Size of the uploaded object.
+    pub size: u64,
 }
 
 /// Response from get_object operation.
 #[derive(Clone, Debug)]
 pub struct GetObjectResponse {
-	/// Object data.
-	pub data: Vec<u8>,
-	/// Content type.
-	pub content_type: String,
-	/// ETag.
-	pub etag: String,
-	/// Size.
-	pub size: u64,
-	/// Last modified timestamp.
-	pub last_modified: u64,
-	/// User metadata.
-	pub metadata: HashMap<String, String>,
+    /// Object data.
+    pub data: Vec<u8>,
+    /// Content type.
+    pub content_type: String,
+    /// ETag.
+    pub etag: String,
+    /// Size.
+    pub size: u64,
+    /// Last modified timestamp.
+    pub last_modified: u64,
+    /// User metadata.
+    pub metadata: HashMap<String, String>,
 }
 
 /// Response from head_object operation.
 #[derive(Clone, Debug)]
 pub struct HeadObjectResponse {
-	/// Content type.
-	pub content_type: String,
-	/// ETag.
-	pub etag: String,
-	/// Size.
-	pub size: u64,
-	/// Last modified timestamp.
-	pub last_modified: u64,
-	/// CID.
-	pub cid: H256,
-	/// User metadata.
-	pub metadata: HashMap<String, String>,
+    /// Content type.
+    pub content_type: String,
+    /// ETag.
+    pub etag: String,
+    /// Size.
+    pub size: u64,
+    /// Last modified timestamp.
+    pub last_modified: u64,
+    /// CID.
+    pub cid: H256,
+    /// User metadata.
+    pub metadata: HashMap<String, String>,
 }
 
 /// Bucket information.
 #[derive(Clone, Debug)]
 pub struct BucketInfo {
-	/// S3 bucket ID.
-	pub s3_bucket_id: S3BucketId,
-	/// Bucket name.
-	pub name: String,
-	/// Layer 0 bucket ID.
-	pub layer0_bucket_id: u64,
-	/// Object count.
-	pub object_count: u64,
-	/// Total size.
-	pub total_size: u64,
-	/// Creation timestamp (block number).
-	pub created_at: u32,
+    /// S3 bucket ID.
+    pub s3_bucket_id: S3BucketId,
+    /// Bucket name.
+    pub name: String,
+    /// Layer 0 bucket ID.
+    pub layer0_bucket_id: u64,
+    /// Object count.
+    pub object_count: u64,
+    /// Total size.
+    pub total_size: u64,
+    /// Creation timestamp (block number).
+    pub created_at: u32,
 }
 
 /// S3 client for interacting with web3-storage using S3-compatible semantics.
 pub struct S3Client {
-	/// Layer 0 storage client for blob operations.
-	storage_client: storage_client::StorageUserClient,
-	/// Substrate client for chain operations.
-	substrate_client: SubstrateClient,
+    /// Layer 0 storage client for blob operations.
+    storage_client: storage_client::StorageUserClient,
+    /// Substrate client for chain operations.
+    substrate_client: SubstrateClient,
 }
 
 impl S3Client {
-	/// Create a new S3 client.
-	pub async fn new(chain_url: &str, provider_url: &str, seed_phrase: &str) -> Result<Self> {
-		info!("Creating S3 client with chain={}, provider={}", chain_url, provider_url);
+    /// Create a new S3 client.
+    pub async fn new(chain_url: &str, provider_url: &str, seed_phrase: &str) -> Result<Self> {
+        info!(
+            "Creating S3 client with chain={}, provider={}",
+            chain_url, provider_url
+        );
 
-		let config = storage_client::ClientConfig {
-			chain_ws_url: chain_url.to_string(),
-			provider_urls: vec![provider_url.to_string()],
-			..Default::default()
-		};
-		let storage_client = storage_client::StorageUserClient::new(config)
-			.map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
+        let config = storage_client::ClientConfig {
+            chain_ws_url: chain_url.to_string(),
+            provider_urls: vec![provider_url.to_string()],
+            ..Default::default()
+        };
+        let storage_client = storage_client::StorageUserClient::new(config)
+            .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
-		let substrate_client = SubstrateClient::new(chain_url, seed_phrase)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        let substrate_client = SubstrateClient::new(chain_url, seed_phrase)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-		Ok(Self { storage_client, substrate_client })
-	}
+        Ok(Self {
+            storage_client,
+            substrate_client,
+        })
+    }
 
-	/// Create a new S3 bucket.
-	///
-	/// This creates both the underlying Layer 0 storage bucket and the S3 metadata bucket
-	/// in a single transaction. The Layer 0 bucket is created automatically.
-	///
-	/// Parameters:
-	/// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
-	pub async fn create_bucket(&self, name: &str) -> Result<BucketInfo> {
-		self.create_bucket_with_options(name, 1).await
-	}
+    /// Create a new S3 bucket.
+    ///
+    /// This creates both the underlying Layer 0 storage bucket and the S3 metadata bucket
+    /// in a single transaction. The Layer 0 bucket is created automatically.
+    ///
+    /// Parameters:
+    /// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
+    pub async fn create_bucket(&self, name: &str) -> Result<BucketInfo> {
+        self.create_bucket_with_options(name, 1).await
+    }
 
-	/// Create a new S3 bucket with custom options.
-	///
-	/// Parameters:
-	/// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
-	/// - `min_providers`: Minimum number of storage providers required
-	pub async fn create_bucket_with_options(&self, name: &str, min_providers: u32) -> Result<BucketInfo> {
-		info!("Creating bucket: {} (min_providers={})", name, min_providers);
+    /// Create a new S3 bucket with custom options.
+    ///
+    /// Parameters:
+    /// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
+    /// - `min_providers`: Minimum number of storage providers required
+    pub async fn create_bucket_with_options(
+        &self,
+        name: &str,
+        min_providers: u32,
+    ) -> Result<BucketInfo> {
+        info!(
+            "Creating bucket: {} (min_providers={})",
+            name, min_providers
+        );
 
-		if !validate_bucket_name(name.as_bytes()) {
-			return Err(S3ClientError::InvalidBucketName(name.to_string()));
-		}
+        if !validate_bucket_name(name.as_bytes()) {
+            return Err(S3ClientError::InvalidBucketName(name.to_string()));
+        }
 
-		if self.substrate_client.get_bucket_id_by_name(name).await?.is_some() {
-			return Err(S3ClientError::BucketAlreadyExists(name.to_string()));
-		}
+        if self
+            .substrate_client
+            .get_bucket_id_by_name(name)
+            .await?
+            .is_some()
+        {
+            return Err(S3ClientError::BucketAlreadyExists(name.to_string()));
+        }
 
-		// Create S3 bucket (Layer 0 bucket is created internally by the pallet)
-		let s3_bucket_id = self
-			.substrate_client
-			.create_s3_bucket(name, min_providers)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e))?;
+        // Create S3 bucket (Layer 0 bucket is created internally by the pallet)
+        let s3_bucket_id = self
+            .substrate_client
+            .create_s3_bucket(name, min_providers)
+            .await
+            .map_err(S3ClientError::ChainError)?;
 
-		// Fetch the created bucket info to get the layer0_bucket_id
-		let bucket_info = self
-			.substrate_client
-			.get_bucket_info(s3_bucket_id)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e))?
-			.ok_or_else(|| S3ClientError::InternalError("Bucket created but not found".to_string()))?;
+        // Fetch the created bucket info to get the layer0_bucket_id
+        let bucket_info = self
+            .substrate_client
+            .get_bucket_info(s3_bucket_id)
+            .await
+            .map_err(S3ClientError::ChainError)?
+            .ok_or_else(|| {
+                S3ClientError::InternalError("Bucket created but not found".to_string())
+            })?;
 
-		info!("S3 bucket created: {} (s3_id={}, layer0_id={})", name, s3_bucket_id, bucket_info.layer0_bucket_id);
+        info!(
+            "S3 bucket created: {} (s3_id={}, layer0_id={})",
+            name, s3_bucket_id, bucket_info.layer0_bucket_id
+        );
 
-		Ok(bucket_info)
-	}
+        Ok(bucket_info)
+    }
 
-	/// Delete an S3 bucket.
-	pub async fn delete_bucket(&self, name: &str) -> Result<()> {
-		info!("Deleting bucket: {}", name);
+    /// Delete an S3 bucket.
+    pub async fn delete_bucket(&self, name: &str) -> Result<()> {
+        info!("Deleting bucket: {}", name);
 
-		let bucket_id = self
-			.substrate_client
-			.get_bucket_id_by_name(name)
-			.await?
-			.ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))?;
+        let bucket_id = self
+            .substrate_client
+            .get_bucket_id_by_name(name)
+            .await?
+            .ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))?;
 
-		self.substrate_client
-			.delete_s3_bucket(bucket_id)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        self.substrate_client
+            .delete_s3_bucket(bucket_id)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-		info!("Bucket deleted: {}", name);
-		Ok(())
-	}
+        info!("Bucket deleted: {}", name);
+        Ok(())
+    }
 
-	/// Get bucket information.
-	pub async fn head_bucket(&self, name: &str) -> Result<BucketInfo> {
-		let bucket_id = self
-			.substrate_client
-			.get_bucket_id_by_name(name)
-			.await?
-			.ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))?;
+    /// Get bucket information.
+    pub async fn head_bucket(&self, name: &str) -> Result<BucketInfo> {
+        let bucket_id = self
+            .substrate_client
+            .get_bucket_id_by_name(name)
+            .await?
+            .ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))?;
 
-		self.substrate_client
-			.get_bucket_info(bucket_id)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?
-			.ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))
-	}
+        self.substrate_client
+            .get_bucket_info(bucket_id)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .ok_or_else(|| S3ClientError::BucketNotFound(name.to_string()))
+    }
 
-	/// List all buckets owned by the user.
-	pub async fn list_buckets(&self) -> Result<Vec<BucketInfo>> {
-		self.substrate_client
-			.list_user_buckets()
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))
-	}
+    /// List all buckets owned by the user.
+    pub async fn list_buckets(&self) -> Result<Vec<BucketInfo>> {
+        self.substrate_client
+            .list_user_buckets()
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))
+    }
 
-	/// Upload an object to a bucket.
-	pub async fn put_object(
-		&self,
-		bucket: &str,
-		key: &str,
-		data: &[u8],
-		options: PutObjectOptions,
-	) -> Result<PutObjectResponse> {
-		info!("Uploading object: {}/{} ({} bytes)", bucket, key, data.len());
+    /// Upload an object to a bucket.
+    pub async fn put_object(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        options: PutObjectOptions,
+    ) -> Result<PutObjectResponse> {
+        info!(
+            "Uploading object: {}/{} ({} bytes)",
+            bucket,
+            key,
+            data.len()
+        );
 
-		if !validate_object_key(key.as_bytes()) {
-			return Err(S3ClientError::InvalidObjectKey(key.to_string()));
-		}
+        if !validate_object_key(key.as_bytes()) {
+            return Err(S3ClientError::InvalidObjectKey(key.to_string()));
+        }
 
-		let bucket_info = self.head_bucket(bucket).await?;
+        let bucket_info = self.head_bucket(bucket).await?;
 
-		debug!("Uploading to provider");
-		let cid = compute_cid(data);
+        debug!("Uploading to provider");
 
-		// Upload to provider (the CID we compute should match what upload returns)
-		let _data_root = self.storage_client
-			.upload(bucket_info.layer0_bucket_id, data, Default::default())
-			.await
-			.map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
+        // Upload to provider — the returned data_root is the Merkle tree root
+        // used to retrieve data from the provider's storage layer.
+        let data_root = self
+            .storage_client
+            .upload(bucket_info.layer0_bucket_id, data, Default::default())
+            .await
+            .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
-		let content_type = options
-			.content_type
-			.unwrap_or_else(|| "application/octet-stream".to_string());
+        // Use data_root as the CID so download can find the data
+        let cid = data_root;
 
-		let metadata_vec: Vec<(Vec<u8>, Vec<u8>)> = options
-			.metadata
-			.into_iter()
-			.map(|(k, v)| (k.into_bytes(), v.into_bytes()))
-			.collect();
+        let content_type = options
+            .content_type
+            .unwrap_or_else(|| "application/octet-stream".to_string());
 
-		debug!("Storing object metadata on chain");
-		self.substrate_client
-			.put_object_metadata(
-				bucket_info.s3_bucket_id,
-				key,
-				cid,
-				data.len() as u64,
-				&content_type,
-				metadata_vec,
-			)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        let metadata_vec: Vec<(Vec<u8>, Vec<u8>)> = options
+            .metadata
+            .into_iter()
+            .map(|(k, v)| (k.into_bytes(), v.into_bytes()))
+            .collect();
 
-		let etag = hex::encode(cid.as_bytes());
-		info!("Object uploaded: {}/{} (etag={})", bucket, key, etag);
+        debug!("Storing object metadata on chain");
+        self.substrate_client
+            .put_object_metadata(
+                bucket_info.s3_bucket_id,
+                key,
+                cid,
+                data.len() as u64,
+                &content_type,
+                metadata_vec,
+            )
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-		Ok(PutObjectResponse { etag, cid, size: data.len() as u64 })
-	}
+        let etag = hex::encode(cid.as_bytes());
+        info!("Object uploaded: {}/{} (etag={})", bucket, key, etag);
 
-	/// Download an object from a bucket.
-	pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectResponse> {
-		info!("Downloading object: {}/{}", bucket, key);
+        Ok(PutObjectResponse {
+            etag,
+            cid,
+            size: data.len() as u64,
+        })
+    }
 
-		let bucket_info = self.head_bucket(bucket).await?;
+    /// Download an object from a bucket.
+    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectResponse> {
+        info!("Downloading object: {}/{}", bucket, key);
 
-		let metadata = self
-			.substrate_client
-			.get_object_metadata(bucket_info.s3_bucket_id, key)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?
-			.ok_or_else(|| S3ClientError::ObjectNotFound {
-				bucket: bucket.to_string(),
-				key: key.to_string(),
-			})?;
+        let bucket_info = self.head_bucket(bucket).await?;
 
-		debug!("Downloading from provider, CID: {:?}", metadata.cid);
-		let data = self
-			.storage_client
-			.download_full(&metadata.cid, metadata.size)
-			.await
-			.map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
+        let metadata = self
+            .substrate_client
+            .get_object_metadata(bucket_info.s3_bucket_id, key)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .ok_or_else(|| S3ClientError::ObjectNotFound {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+            })?;
 
-		info!("Object downloaded: {}/{} ({} bytes)", bucket, key, data.len());
+        debug!("Downloading from provider, CID: {:?}", metadata.cid);
+        let data = self
+            .storage_client
+            .download_full(&metadata.cid, metadata.size)
+            .await
+            .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
-		Ok(GetObjectResponse {
-			data,
-			content_type: String::from_utf8_lossy(&metadata.content_type).to_string(),
-			etag: String::from_utf8_lossy(&metadata.etag).to_string(),
-			size: metadata.size,
-			last_modified: metadata.last_modified,
-			metadata: metadata
-				.user_metadata
-				.into_iter()
-				.map(|e| {
-					(
-						String::from_utf8_lossy(&e.key).to_string(),
-						String::from_utf8_lossy(&e.value).to_string(),
-					)
-				})
-				.collect(),
-		})
-	}
+        info!(
+            "Object downloaded: {}/{} ({} bytes)",
+            bucket,
+            key,
+            data.len()
+        );
 
-	/// Delete an object from a bucket.
-	pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<()> {
-		info!("Deleting object: {}/{}", bucket, key);
+        Ok(GetObjectResponse {
+            data,
+            content_type: String::from_utf8_lossy(&metadata.content_type).to_string(),
+            etag: String::from_utf8_lossy(&metadata.etag).to_string(),
+            size: metadata.size,
+            last_modified: metadata.last_modified,
+            metadata: metadata
+                .user_metadata
+                .into_iter()
+                .map(|e| {
+                    (
+                        String::from_utf8_lossy(&e.key).to_string(),
+                        String::from_utf8_lossy(&e.value).to_string(),
+                    )
+                })
+                .collect(),
+        })
+    }
 
-		let bucket_info = self.head_bucket(bucket).await?;
+    /// Delete an object from a bucket.
+    pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<()> {
+        info!("Deleting object: {}/{}", bucket, key);
 
-		self.substrate_client
-			.delete_object_metadata(bucket_info.s3_bucket_id, key)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        let bucket_info = self.head_bucket(bucket).await?;
 
-		info!("Object deleted: {}/{}", bucket, key);
-		Ok(())
-	}
+        self.substrate_client
+            .delete_object_metadata(bucket_info.s3_bucket_id, key)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-	/// Copy an object from one location to another.
-	pub async fn copy_object(
-		&self,
-		src_bucket: &str,
-		src_key: &str,
-		dst_bucket: &str,
-		dst_key: &str,
-	) -> Result<PutObjectResponse> {
-		info!("Copying object: {}/{} -> {}/{}", src_bucket, src_key, dst_bucket, dst_key);
+        info!("Object deleted: {}/{}", bucket, key);
+        Ok(())
+    }
 
-		let src_bucket_info = self.head_bucket(src_bucket).await?;
-		let dst_bucket_info = self.head_bucket(dst_bucket).await?;
+    /// Copy an object from one location to another.
+    pub async fn copy_object(
+        &self,
+        src_bucket: &str,
+        src_key: &str,
+        dst_bucket: &str,
+        dst_key: &str,
+    ) -> Result<PutObjectResponse> {
+        info!(
+            "Copying object: {}/{} -> {}/{}",
+            src_bucket, src_key, dst_bucket, dst_key
+        );
 
-		let src_metadata = self
-			.substrate_client
-			.get_object_metadata(src_bucket_info.s3_bucket_id, src_key)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?
-			.ok_or_else(|| S3ClientError::ObjectNotFound {
-				bucket: src_bucket.to_string(),
-				key: src_key.to_string(),
-			})?;
+        let src_bucket_info = self.head_bucket(src_bucket).await?;
+        let dst_bucket_info = self.head_bucket(dst_bucket).await?;
 
-		self.substrate_client
-			.copy_object_metadata(
-				src_bucket_info.s3_bucket_id,
-				src_key,
-				dst_bucket_info.s3_bucket_id,
-				dst_key,
-			)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+        let src_metadata = self
+            .substrate_client
+            .get_object_metadata(src_bucket_info.s3_bucket_id, src_key)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .ok_or_else(|| S3ClientError::ObjectNotFound {
+                bucket: src_bucket.to_string(),
+                key: src_key.to_string(),
+            })?;
 
-		info!("Object copied: {}/{} -> {}/{}", src_bucket, src_key, dst_bucket, dst_key);
+        self.substrate_client
+            .copy_object_metadata(
+                src_bucket_info.s3_bucket_id,
+                src_key,
+                dst_bucket_info.s3_bucket_id,
+                dst_key,
+            )
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
-		Ok(PutObjectResponse {
-			etag: String::from_utf8_lossy(&src_metadata.etag).to_string(),
-			cid: src_metadata.cid,
-			size: src_metadata.size,
-		})
-	}
+        info!(
+            "Object copied: {}/{} -> {}/{}",
+            src_bucket, src_key, dst_bucket, dst_key
+        );
 
-	/// List objects in a bucket.
-	pub async fn list_objects_v2(
-		&self,
-		bucket: &str,
-		params: ListObjectsParams,
-	) -> Result<ListObjectsResponse> {
-		debug!("Listing objects in bucket: {}", bucket);
+        Ok(PutObjectResponse {
+            etag: String::from_utf8_lossy(&src_metadata.etag).to_string(),
+            cid: src_metadata.cid,
+            size: src_metadata.size,
+        })
+    }
 
-		let bucket_info = self.head_bucket(bucket).await?;
+    /// List objects in a bucket.
+    pub async fn list_objects_v2(
+        &self,
+        bucket: &str,
+        params: ListObjectsParams,
+    ) -> Result<ListObjectsResponse> {
+        debug!("Listing objects in bucket: {}", bucket);
 
-		self.substrate_client
-			.list_objects(bucket_info.s3_bucket_id, params)
-			.await
-			.map_err(|e| S3ClientError::ChainError(e.to_string()))
-	}
+        let bucket_info = self.head_bucket(bucket).await?;
+
+        self.substrate_client
+            .list_objects(bucket_info.s3_bucket_id, params)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn test_put_object_options_default() {
-		let options = PutObjectOptions::default();
-		assert!(options.content_type.is_none());
-		assert!(options.metadata.is_empty());
-	}
+    #[test]
+    fn test_put_object_options_default() {
+        let options = PutObjectOptions::default();
+        assert!(options.content_type.is_none());
+        assert!(options.metadata.is_empty());
+    }
 }

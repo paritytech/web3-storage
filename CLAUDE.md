@@ -1,26 +1,16 @@
 # CLAUDE.md - Scalable Web3 Storage
 
-## Claude Preferences
+## Agent Rules
 
 **Git commit rules:**
 - NEVER add Co-Authored-By lines to commits
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
 
-**Code quality rules (MUST follow before committing):**
-- ALWAYS run `cargo +nightly fmt --all` before committing Rust code
-- ALWAYS run `cargo clippy --all` and fix any errors before committing
-- ALWAYS run `cargo check --all` to verify code compiles before committing
-- Use `Debug` trait instead of deprecated `RuntimeDebug` from sp_runtime
-- Avoid unused imports and variables (prefix with `_` if intentionally unused)
-- Follow Rust naming conventions: snake_case for functions/variables, CamelCase for types
-- Use proper line breaks for long function calls (rustfmt will handle this)
-
-**Pre-commit checklist:**
-1. `cargo +nightly fmt --all` - Format code
-2. `cargo check --all` - Verify compilation
-3. `cargo clippy --all` - Check for lint errors
-4. `cargo test` - Run tests (when relevant)
+**Automatic formatting:**
+- ALWAYS run `/format` after generating or modifying Rust code
+- ALWAYS run `/format` before creating any git commit
+- This ensures all code follows project formatting standards (Rust, TOML, feature propagation) and passes clippy
 
 ## Project Overview
 
@@ -518,7 +508,7 @@ while let Some(event) = stream.next().await {
 
 ## Code Review Guidelines (Parity Standards)
 
-These guidelines are used by the Claude Code review bot and should be followed by all contributors.
+For the full review criteria (Parity Standards), see the `/review` skill. The review bot and all contributors follow those guidelines.
 
 ### Rust Code Quality
 
@@ -622,3 +612,9 @@ These guidelines are used by the Claude Code review bot and should be followed b
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes
+
+## Using the Claude Review Bot
+
+- **@claude** - Mention in any comment to ask questions or request help
+- **Assign to claude[bot]** - Assign an issue to have Claude analyze and propose solutions
+- **Label with `claude`** - Add the `claude` label to an issue for Claude to investigate

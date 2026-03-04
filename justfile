@@ -7,6 +7,8 @@
 
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
+# Zombienet version
+zombienet_version := "v1.3.138"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -17,8 +19,15 @@ polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/downlo
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
 
-# Provider port (override with: just PORT=3001 start-provider)
-PORT := "3333"
+# Network ports (override with: just PROVIDER_PORT=3001 start-provider)
+RELAY_PORT := "9900"
+CHAIN_PORT := "2222"
+PROVIDER_PORT := "3333"
+
+# Network URLs (constructed from ports)
+RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
+CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
+PROVIDER_URL := "http://127.0.0.1:" + PROVIDER_PORT
 
 # Default recipe
 default:
@@ -51,21 +60,23 @@ _download BIN URL:
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-[private]
-download-binaries: download-polkadot download-polkadot-omni-node download-chain-spec-builder download-zombienet
+download-binaries: download-polkadot-sdk-binaries download-zombienet
     @echo "All binaries downloaded to .bin/"
 
-[private]
-download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
+# Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
+download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node _download-chain-spec-builder
+
+# Download zombienet
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/download/" + zombienet_version + "/" + zombienet_asset)
 
 [private]
-download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
+_download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
 
 [private]
-download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
+_download-polkadot-omni-node: (_download "polkadot-omni-node" polkadot_sdk_base + "polkadot-omni-node" + darwin_suffix)
 
 [private]
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/latest/download/" + zombienet_asset)
+_download-chain-spec-builder: (_download "chain-spec-builder" polkadot_sdk_base + "chain-spec-builder" + darwin_suffix)
 
 [private]
 check: download-binaries
@@ -80,37 +91,37 @@ start-chain: check build-runtime
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
     echo "Web UIs (once ready):"
-    echo "  Relay chain: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222"
+    echo "  Relay chain: https://polkadot.js.org/apps/?rpc={{ RELAY_WS }}"
+    echo "  Parachain:   https://polkadot.js.org/apps/?rpc={{ CHAIN_WS }}"
     echo ""
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice" CHAIN_WS="ws://127.0.0.1:2222": build-provider
+start-provider SEED="//Alice": build-provider
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ==="
     echo ""
-    echo "Provider health: http://127.0.0.1:{{ PORT }}/health"
+    echo "Provider health: {{ PROVIDER_URL }}/health"
     echo ""
     SEED="{{SEED}}" \
-    CHAIN_RPC="{{CHAIN_WS}}" \
-    BIND_ADDR="0.0.0.0:{{ PORT }}" \
+    CHAIN_RPC="{{ CHAIN_WS }}" \
+    BIND_ADDR="0.0.0.0:{{ PROVIDER_PORT }}" \
     ./target/release/storage-provider-node
 
 # Health check for provider node
 health:
-    curl -s http://localhost:3333/health | jq .
+    curl -s {{ PROVIDER_URL }}/health | jq .
 
 # Storage stats for provider node
 stats:
-    curl -s http://localhost:3333/stats | jq .
+    curl -s {{ PROVIDER_URL }}/stats | jq .
 
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333": papi-setup
-    node examples/papi/full-flow.js "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+demo: papi-setup
+    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
 papi-setup:
@@ -270,6 +281,17 @@ fs-demo:
     echo ""
     just fs-example
 
+# File system integration test for CI
+fs-demo-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running File System CI Integration Test"
+    echo "  Chain: {{ CHAIN_WS }}"
+    echo "  Provider: {{ PROVIDER_URL }}"
+    echo ""
+    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
+
 # Build file system components only
 fs-build:
     #!/usr/bin/env bash
@@ -352,6 +374,18 @@ s3-test-all:
     cargo test -p s3-client
     echo ""
     echo "✅ All S3 tests passed!"
+
+# Run S3 CI integration test (used by CI pipeline)
+s3-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running S3 CI Integration Test"
+    echo "  Chain: {{CHAIN_WS}}"
+    echo "  Provider: {{PROVIDER_URL}}"
+    echo ""
+    cd storage-interfaces/s3/client
+    cargo run --release --example ci_integration_test "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+
 
 # Build S3 components only
 s3-build:

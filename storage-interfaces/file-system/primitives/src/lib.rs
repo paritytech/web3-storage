@@ -251,17 +251,25 @@ impl DirectoryNode {
 
     /// Find a child by name
     pub fn find_child(&self, name: &str) -> Option<&DirectoryEntry> {
-        self.children.iter().find(|e| e.name_str() == name)
+        self.children
+            .iter()
+            .find(|e| e.name.as_slice() == name.as_bytes())
     }
 
     /// Find a child by name (mutable)
     pub fn find_child_mut(&mut self, name: &str) -> Option<&mut DirectoryEntry> {
-        self.children.iter_mut().find(|e| e.name_str() == name)
+        self.children
+            .iter_mut()
+            .find(|e| e.name.as_slice() == name.as_bytes())
     }
 
     /// Remove a child by name
     pub fn remove_child(&mut self, name: &str) -> Option<DirectoryEntry> {
-        if let Some(pos) = self.children.iter().position(|e| e.name_str() == name) {
+        if let Some(pos) = self
+            .children
+            .iter()
+            .position(|e| e.name.as_slice() == name.as_bytes())
+        {
             Some(self.children.remove(pos))
         } else {
             None

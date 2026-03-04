@@ -248,11 +248,11 @@ fn test_metrics_failure_tracking() {
 
 #[test]
 fn test_metrics_provider_response_rate() {
-    let mut metrics = CheckpointMetrics::default();
-
-    // Record some providers queried
-    metrics.providers_queried = 10;
-    metrics.providers_responded = 8;
+    let metrics = CheckpointMetrics {
+        providers_queried: 10,
+        providers_responded: 8,
+        ..Default::default()
+    };
 
     assert_eq!(metrics.provider_response_rate(), 0.8);
 }
