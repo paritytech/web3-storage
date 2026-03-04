@@ -3,8 +3,6 @@
 #[cfg(feature = "zombie-tests")]
 mod common;
 #[cfg(feature = "zombie-tests")]
-mod layer0_storage;
+mod layer0;
 #[cfg(feature = "zombie-tests")]
-mod layer1_filesystem;
-#[cfg(feature = "zombie-tests")]
-mod layer2_s3;
+mod layer1;
