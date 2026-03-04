@@ -12,6 +12,11 @@ members = [
 	"storage-interfaces/file-system/client",
 	"storage-interfaces/file-system/pallet-registry",
 	"storage-interfaces/file-system/primitives",
+
+	# Storage Interfaces: S3-Compatible Interface
+	"storage-interfaces/s3/client",
+	"storage-interfaces/s3/pallet-s3-registry",
+	"storage-interfaces/s3/primitives",
 ]
 
 [workspace.package]
@@ -32,6 +37,11 @@ storage-provider-node = { path = "provider-node" }
 file-system-client = { path = "storage-interfaces/file-system/client" }
 file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
 pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
+
+# Storage Interfaces: S3-Compatible Interface
+pallet-s3-registry = { path = "storage-interfaces/s3/pallet-s3-registry", default-features = false }
+s3-client = { path = "storage-interfaces/s3/client" }
+s3-primitives = { path = "storage-interfaces/s3/primitives", default-features = false }
 
 # Substrate frame
 frame-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", rev = "c7b9c08825acc61f1adde54535a41855c04962a2", default-features = false }
