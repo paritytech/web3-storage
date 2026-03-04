@@ -2,12 +2,11 @@
 //!
 //! Tests the full file system workflow:
 //! 1. Spawn network + provider (via common helpers)
-//! 2. Register provider on-chain
-//! 3. Create a drive (which sets up bucket + agreement internally)
-//! 4. Create directories
-//! 5. Upload files
-//! 6. List and verify directories
-//! 7. Download and verify file contents
+//! 2. Create a drive (which sets up bucket + agreement internally)
+//! 3. Create directories
+//! 4. Upload files
+//! 5. List and verify directories
+//! 6. Download and verify file contents
 
 use crate::common::{config::*, setup::TestEnvironment};
 use anyhow::{Context, Result};
@@ -59,8 +58,8 @@ async fn filesystem_integration_test() -> Result<()> {
         .context("Failed to set dev signer on FileSystemClient")?;
     log::info!("Client connected successfully");
 
-    // Step 3: Create a drive
-    log::info!("Step 3: Creating drive...");
+    // Step 2: Create a drive
+    log::info!("Step 2: Creating drive...");
     let drive_id = fs_client
         .create_drive(
             Some("Zombienet SDK Test Drive"),
@@ -80,8 +79,8 @@ async fn filesystem_integration_test() -> Result<()> {
         .context("Failed to get bucket ID for drive")?;
     log::info!("Associated bucket: ID = {bucket_id}");
 
-    // Step 4: Create directories
-    log::info!("Step 4: Creating directories...");
+    // Step 3: Create directories
+    log::info!("Step 3: Creating directories...");
     fs_client
         .create_directory(drive_id, "/test-dir", bucket_id)
         .await
@@ -94,8 +93,8 @@ async fn filesystem_integration_test() -> Result<()> {
         .context("Failed to create /test-dir/subdir")?;
     log::info!("Created /test-dir/subdir");
 
-    // Step 5: Upload files
-    log::info!("Step 5: Uploading files...");
+    // Step 4: Upload files
+    log::info!("Step 4: Uploading files...");
 
     let test_content_1 = b"Hello from zombienet-sdk integration test!";
     fs_client
@@ -122,8 +121,8 @@ async fn filesystem_integration_test() -> Result<()> {
         test_content_2.len()
     );
 
-    // Step 6: List directories
-    log::info!("Step 6: Listing directories...");
+    // Step 5: List directories
+    log::info!("Step 5: Listing directories...");
 
     let root_entries = list_and_verify(&mut fs_client, drive_id, "/", 1).await?;
     assert!(
@@ -139,8 +138,8 @@ async fn filesystem_integration_test() -> Result<()> {
     list_and_verify(&mut fs_client, drive_id, "/test-dir", 2).await?;
     list_and_verify(&mut fs_client, drive_id, "/test-dir/subdir", 1).await?;
 
-    // Step 7: Download and verify files
-    log::info!("Step 7: Downloading and verifying files...");
+    // Step 6: Download and verify files
+    log::info!("Step 6: Downloading and verifying files...");
 
     let downloaded_1 = fs_client
         .download_file(drive_id, "/test-dir/hello.txt")

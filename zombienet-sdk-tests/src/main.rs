@@ -23,7 +23,9 @@ async fn main() -> anyhow::Result<()> {
     log::info!("=== Network Ready ===");
     log::info!("Relay WS: ws://127.0.0.1:{relay_rpc_port}");
     log::info!("Parachain WS: ws://127.0.0.1:{chain_rpc_port}");
-    log::info!("Polkadot.js: https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A{chain_rpc_port}");
+    log::info!(
+        "Polkadot.js: https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A{chain_rpc_port}"
+    );
     if provider.is_some() {
         log::info!("Provider HTTP: http://127.0.0.1:{provider_port}");
         log::info!("Provider health: http://127.0.0.1:{provider_port}/health");

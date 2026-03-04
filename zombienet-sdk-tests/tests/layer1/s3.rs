@@ -2,12 +2,11 @@
 //!
 //! Tests the full S3 workflow:
 //! 1. Spawn network + provider (via common helpers)
-//! 2. Register provider on-chain
-//! 3. Create an S3 bucket
-//! 4. Upload objects with metadata
-//! 5. Download and verify objects
-//! 6. Copy objects
-//! 7. Delete objects and bucket
+//! 2. Create an S3 bucket
+//! 3. Upload objects with metadata
+//! 4. Download and verify objects
+//! 5. Copy objects
+//! 6. Delete objects and bucket
 
 use crate::common::setup::TestEnvironment;
 use anyhow::{Context, Result};
@@ -27,8 +26,8 @@ async fn s3_integration_test() -> Result<()> {
         .context("Failed to create S3Client")?;
     log::info!("Client connected successfully");
 
-    // Step 3: Create an S3 bucket
-    log::info!("Step 3: Creating S3 bucket...");
+    // Step 2: Create an S3 bucket
+    log::info!("Step 2: Creating S3 bucket...");
     let bucket_name = format!(
         "zombie-test-{}",
         std::time::SystemTime::now()
@@ -44,8 +43,8 @@ async fn s3_integration_test() -> Result<()> {
     log::info!("S3 Bucket ID: {}", bucket.s3_bucket_id);
     log::info!("Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
 
-    // Step 4: Upload objects
-    log::info!("Step 4: Uploading objects...");
+    // Step 3: Upload objects
+    log::info!("Step 3: Uploading objects...");
 
     let content_1 = b"Hello from zombienet-sdk S3 integration test!";
     let mut metadata_1 = HashMap::new();
@@ -87,8 +86,8 @@ async fn s3_integration_test() -> Result<()> {
         put_result_2.etag
     );
 
-    // Step 5: Verify bucket info
-    log::info!("Step 5: Verifying bucket info...");
+    // Step 4: Verify bucket info
+    log::info!("Step 4: Verifying bucket info...");
     let bucket_info = client
         .head_bucket(&bucket_name)
         .await
@@ -97,8 +96,8 @@ async fn s3_integration_test() -> Result<()> {
     log::info!("Total size: {} bytes", bucket_info.total_size);
     assert_eq!(bucket_info.object_count, 2, "Expected 2 objects in bucket");
 
-    // Step 6: Download and verify objects
-    log::info!("Step 6: Downloading and verifying objects...");
+    // Step 5: Download and verify objects
+    log::info!("Step 5: Downloading and verifying objects...");
 
     let get_result_1 = client
         .get_object(&bucket_name, "hello.txt")
@@ -132,8 +131,8 @@ async fn s3_integration_test() -> Result<()> {
     );
     log::info!("Content verified!");
 
-    // Step 7: Copy object
-    log::info!("Step 7: Copying object...");
+    // Step 6: Copy object
+    log::info!("Step 6: Copying object...");
     let copy_result = client
         .copy_object(&bucket_name, "hello.txt", &bucket_name, "hello-copy.txt")
         .await
@@ -154,8 +153,8 @@ async fn s3_integration_test() -> Result<()> {
     );
     log::info!("Copy content verified!");
 
-    // Step 8: Clean up
-    log::info!("Step 8: Cleaning up...");
+    // Step 7: Clean up
+    log::info!("Step 7: Cleaning up...");
     client
         .delete_object(&bucket_name, "hello.txt")
         .await
