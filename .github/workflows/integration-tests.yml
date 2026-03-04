@@ -90,7 +90,7 @@ jobs:
       - name: Generate test matrix from zombie-tests.yml
         id: set-matrix
         run: |
-          MATRIX=$(yq -o=json '.tests' .github/zombie-tests.yml)
+          MATRIX=$(yq -o=json -I=0 '.tests' .github/zombie-tests.yml)
           echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
 
   test:
