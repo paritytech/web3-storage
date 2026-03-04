@@ -186,16 +186,8 @@ impl S3Client {
             return Err(S3ClientError::InvalidBucketName(name.to_string()));
         }
 
-        if self
-            .substrate_client
-            .get_bucket_id_by_name(name)
-            .await?
-            .is_some()
-        {
-            return Err(S3ClientError::BucketAlreadyExists(name.to_string()));
-        }
-
         // Create S3 bucket (Layer 0 bucket is created internally by the pallet)
+        // The pallet validates name uniqueness, so no need to pre-check.
         let s3_bucket_id = self
             .substrate_client
             .create_s3_bucket(name, min_providers)
@@ -406,18 +398,8 @@ impl S3Client {
             src_bucket, src_key, dst_bucket, dst_key
         );
 
-        let src_bucket_info = self.head_bucket(src_bucket).await?;
-        let dst_bucket_info = self.head_bucket(dst_bucket).await?;
-
-        let src_metadata = self
-            .substrate_client
-            .get_object_metadata(src_bucket_info.s3_bucket_id, src_key)
-            .await
-            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
-            .ok_or_else(|| S3ClientError::ObjectNotFound {
-                bucket: src_bucket.to_string(),
-                key: src_key.to_string(),
-            })?;
+        let (src_bucket_info, dst_bucket_info) =
+            tokio::try_join!(self.head_bucket(src_bucket), self.head_bucket(dst_bucket))?;
 
         self.substrate_client
             .copy_object_metadata(
@@ -429,15 +411,26 @@ impl S3Client {
             .await
             .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
+        // Read the copied object's metadata from the destination
+        let dst_metadata = self
+            .substrate_client
+            .get_object_metadata(dst_bucket_info.s3_bucket_id, dst_key)
+            .await
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?
+            .ok_or_else(|| S3ClientError::ObjectNotFound {
+                bucket: dst_bucket.to_string(),
+                key: dst_key.to_string(),
+            })?;
+
         info!(
             "Object copied: {}/{} -> {}/{}",
             src_bucket, src_key, dst_bucket, dst_key
         );
 
         Ok(PutObjectResponse {
-            etag: String::from_utf8_lossy(&src_metadata.etag).to_string(),
-            cid: src_metadata.cid,
-            size: src_metadata.size,
+            etag: String::from_utf8_lossy(&dst_metadata.etag).to_string(),
+            cid: dst_metadata.cid,
+            size: dst_metadata.size,
         })
     }
 

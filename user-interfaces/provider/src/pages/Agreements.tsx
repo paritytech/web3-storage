@@ -9,35 +9,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table'
-import { useAgreements, useIsRegistered } from '@/state/provider.state'
-import { useSelectedAccount } from '@/state/wallet.state'
+import { useAgreements } from '@/state/provider.state'
+import { RequireProvider } from '@/components/RequireProvider'
 import { formatAddress, formatBytes, formatTokens, formatBlockNumber } from '@/utils/format'
 
 export function Agreements() {
-  const selectedAccount = useSelectedAccount()
-  const isRegistered = useIsRegistered()
+  return (
+    <RequireProvider icon={FileText} pageName="agreements">
+      <AgreementsContent />
+    </RequireProvider>
+  )
+}
+
+function AgreementsContent() {
   const agreements = useAgreements()
-
-  if (!selectedAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <FileText className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to view your agreements</p>
-      </div>
-    )
-  }
-
-  if (!isRegistered) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <FileText className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Not Registered</h2>
-        <p className="text-gray-500">Register as a provider to view agreements</p>
-      </div>
-    )
-  }
-
   const activeAgreements = agreements.filter((a) => a.status === 'active')
   const expiredAgreements = agreements.filter((a) => a.status !== 'active')
 

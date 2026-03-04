@@ -71,18 +71,6 @@ export async function connectToChain(endpoint: string): Promise<PolkadotClient> 
     clearTimeout(timeoutId)
     console.log('@polkadot/api connected to', endpoint)
 
-    // Subscribe to best blocks
-    client.bestBlocks$.subscribe({
-      next: (blocks) => {
-        if (blocks.length > 0) {
-          blockNumber$.next(blocks[0]!.number)
-        }
-      },
-      error: (err) => {
-        console.error('Block subscription error:', err)
-      },
-    })
-
     clientReady$.next(true)
     return client
   } catch (error) {
@@ -135,15 +123,20 @@ export function getUnsafeApi(): any {
 // Signer Helpers for @polkadot/api
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Known dev account URIs
-const DEV_ACCOUNT_URIS: Record<string, string> = {
-  '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY': '//Alice',
-  '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty': '//Bob',
-  '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y': '//Charlie',
-  '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy': '//Dave',
-  '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw': '//Eve',
-  '5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL': '//Ferdie',
+// Well-known dev accounts: name -> SS58 address
+export const DEV_ACCOUNTS: Record<string, string> = {
+  Alice: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
+  Bob: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
+  Charlie: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
+  Dave: '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy',
+  Eve: '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
+  Ferdie: '5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL',
 }
+
+// Reverse map: address -> URI (derived from DEV_ACCOUNTS)
+const DEV_ACCOUNT_URIS: Record<string, string> = Object.fromEntries(
+  Object.entries(DEV_ACCOUNTS).map(([name, addr]) => [addr, `//${name}`])
+)
 
 /**
  * Get a KeyringPair for dev accounts, or create a custom signer for extension accounts
@@ -404,59 +397,48 @@ export async function isProviderRegistered(address: string): Promise<boolean> {
 }
 
 /**
- * Get provider info from chain
+ * Get provider info and settings from chain in a single query.
+ * Both are stored in the same Providers storage entry.
  */
-export async function getProviderInfo(address: string): Promise<OnChainProviderInfo | null> {
+export async function getProviderData(
+  address: string
+): Promise<{ info: OnChainProviderInfo; settings: OnChainProviderSettings } | null> {
   if (!client || !unsafeApi) throw new Error('Not connected to chain')
 
   try {
     const provider = await unsafeApi.query.StorageProvider.Providers.getValue(address)
     if (!provider) return null
 
-    console.log('Provider info:', provider)
+    console.log('Provider data:', provider)
 
-    return {
+    const info: OnChainProviderInfo = {
       stake: BigInt(provider.stake?.toString() || '0'),
       capacity: provider.capacity ? BigInt(provider.capacity.toString()) : undefined,
       usedCapacity: provider.used_capacity ? BigInt(provider.used_capacity.toString()) : undefined,
       activeBuckets: provider.active_buckets || 0,
       registeredAt: provider.registered_at || 0,
     }
+
+    const settings: OnChainProviderSettings | null = provider.settings
+      ? {
+          minDuration: provider.settings.min_duration || 0,
+          maxDuration: provider.settings.max_duration || 0,
+          pricePerByte: BigInt(provider.settings.price_per_byte?.toString() || '0'),
+          acceptingPrimary: provider.settings.accepting_primary ?? false,
+          acceptingReplica: provider.settings.accepting_replica ?? false,
+          replicaSyncPrice: provider.settings.replica_sync_price
+            ? BigInt(provider.settings.replica_sync_price.toString())
+            : null,
+          acceptingExtensions: provider.settings.accepting_extensions ?? false,
+          maxCapacity: BigInt(provider.settings.max_capacity?.toString() || '0'),
+        }
+      : null
+
+    if (!settings) return null
+
+    return { info, settings }
   } catch (error) {
-    console.error('Error fetching provider info:', error)
-    return null
-  }
-}
-
-/**
- * Get provider settings from chain
- * Settings are embedded in ProviderInfo, not a separate storage item
- */
-export async function getProviderSettings(address: string): Promise<OnChainProviderSettings | null> {
-  if (!client || !unsafeApi) throw new Error('Not connected to chain')
-
-  try {
-    // Settings are part of ProviderInfo in the Providers storage map
-    const provider = await unsafeApi.query.StorageProvider.Providers.getValue(address)
-    if (!provider || !provider.settings) return null
-
-    const settings = provider.settings
-    console.log('Provider settings:', settings)
-
-    return {
-      minDuration: settings.min_duration || 0,
-      maxDuration: settings.max_duration || 0,
-      pricePerByte: BigInt(settings.price_per_byte?.toString() || '0'),
-      acceptingPrimary: settings.accepting_primary ?? false,
-      acceptingReplica: settings.accepting_replica ?? false,
-      replicaSyncPrice: settings.replica_sync_price
-        ? BigInt(settings.replica_sync_price.toString())
-        : null,
-      acceptingExtensions: settings.accepting_extensions ?? false,
-      maxCapacity: BigInt(settings.max_capacity?.toString() || '0'),
-    }
-  } catch (error) {
-    console.error('Error fetching provider settings:', error)
+    console.error('Error fetching provider data:', error)
     return null
   }
 }

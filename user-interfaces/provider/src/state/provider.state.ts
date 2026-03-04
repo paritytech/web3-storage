@@ -8,8 +8,7 @@
 import { BehaviorSubject, map } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import {
-  getProviderInfo,
-  getProviderSettings,
+  getProviderData,
   getProviderAgreements,
   getProviderCheckpoints,
   getProviderChallenges,
@@ -135,21 +134,14 @@ export async function loadProviderData(address: string): Promise<void> {
   error$.next(null)
 
   try {
-    // Query provider info and settings in parallel
-    const [chainInfo, chainSettings] = await Promise.all([
-      getProviderInfo(address),
-      getProviderSettings(address),
-    ])
+    // Query provider info and settings in a single RPC call
+    const providerData = await getProviderData(address)
 
-    if (chainInfo) {
-      providerInfo$.next(convertProviderInfo(address, chainInfo))
+    if (providerData) {
+      providerInfo$.next(convertProviderInfo(address, providerData.info))
+      providerSettings$.next(convertProviderSettings(providerData.settings))
     } else {
       providerInfo$.next(null)
-    }
-
-    if (chainSettings) {
-      providerSettings$.next(convertProviderSettings(chainSettings))
-    } else {
       providerSettings$.next(null)
     }
 
@@ -194,7 +186,7 @@ export async function registerProvider(
   stake: bigint,
   multiaddr: string,
   settings: ProviderSettings,
-  signer: any, // InjectedPolkadotAccount
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
 ): Promise<void> {
   isLoading$.next(true)
@@ -219,7 +211,7 @@ export async function registerProvider(
  */
 export async function updateSettings(
   settings: Partial<ProviderSettings>,
-  signer: any, // InjectedPolkadotAccount
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
 ): Promise<void> {
   const current = providerSettings$.getValue()
@@ -246,7 +238,10 @@ export async function updateSettings(
 /**
  * Add stake (submits extrinsic via wallet)
  */
-export async function addStake(amount: bigint, signer: any): Promise<void> {
+export async function addStake(
+  amount: bigint,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
+): Promise<void> {
   isLoading$.next(true)
   error$.next(null)
 
@@ -276,7 +271,7 @@ export async function addStake(amount: bigint, signer: any): Promise<void> {
 export async function respondToChallenge(
   challengeId: number,
   proof: Uint8Array,
-  signer: any
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
 ): Promise<void> {
   isLoading$.next(true)
   error$.next(null)
