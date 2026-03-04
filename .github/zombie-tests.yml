@@ -1,0 +1,8 @@
+tests:
+  - name: "Layer 0: Storage"
+    filter: layer0_storage
+    timeout: 30
+
+  - name: "Layer 1: Filesystem"
+    filter: layer1_filesystem
+    timeout: 30

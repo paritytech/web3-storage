@@ -23,8 +23,8 @@ jobs:
       - id: set_image
         run: echo "CI_IMAGE=${{ env.CI_IMAGE }}" >> $GITHUB_OUTPUT
 
-  integration-tests:
-    name: Integration Tests
+  build:
+    name: Build
     runs-on: parity-large
     timeout-minutes: 60
     needs: [set-image]
@@ -62,109 +62,79 @@ jobs:
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
-      - name: Cache zombienet
-        uses: actions/cache@v4
-        id: zombienet-cache
-        with:
-          path: .bin/zombienet
-          key: zombienet-${{ env.ZOMBIENET_VERSION }}
-
-      - name: Download zombienet
-        if: steps.zombienet-cache.outputs.cache-hit != 'true'
-        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
-
       - name: Log binary versions
         run: |
-          .bin/zombienet version
           .bin/polkadot --version
           .bin/polkadot-omni-node --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
 
       - name: Build runtime and provider
         run: just build-runtime && just build-provider
 
-      - name: Start chain and wait for blocks
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          retention-days: 1
+          path: |
+            target/release/storage-provider-node
+            target/release/wbuild/
+            .bin/
+
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Generate test matrix from zombie-tests.yml
+        id: set-matrix
         run: |
-          nohup .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
-          echo "Waiting for parachain to produce finalized blocks..."
-          for i in $(seq 1 180); do
-            # Check parachain finalized head
-            RESPONSE=$(curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null) || true
-            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "$FINALIZED_HASH" ]; then
-              HEADER=$(curl -s -H "Content-Type: application/json" \
-                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
-                http://127.0.0.1:2222 2>/dev/null) || true
-              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
-              if [ -n "$BLOCK_HEX" ]; then
-                BLOCK_NUM=$((BLOCK_HEX))
-                if [ "$BLOCK_NUM" -ge 1 ]; then
-                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
-                  break
-                fi
-              fi
-            fi
-            if [ "$i" -eq 180 ]; then
-              echo "TIMEOUT: parachain did not finalize blocks"
-              exit 1
-            fi
-            sleep 5
-          done
+          MATRIX=$(yq -o=json '.tests' .github/zombie-tests.yml)
+          echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
 
-      - name: Start provider and wait for health
+  test:
+    name: ${{ matrix.name }}
+    runs-on: parity-large
+    timeout-minutes: ${{ matrix.timeout }}
+    needs: [set-image, build, generate-matrix]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: "integration-tests"
+          save-if: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+
+      - name: Restore artifact permissions
         run: |
-          SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
-            nohup ./target/release/storage-provider-node > /tmp/provider.log 2>&1 &
-          echo "Waiting for provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
+          chmod +x target/release/storage-provider-node
+          chmod +x .bin/*
 
-      - name: Run demo
-        run: just demo
-
-      - name: Run file system integration test
-        run: just fs-demo-ci
-
-      - name: Stop services
-        if: always()
+      - name: Run test
         run: |
-          pkill -f "polkadot-omni-node" 2>/dev/null || true
-          pkill -f "polkadot" 2>/dev/null || true
-          pkill -f "storage-provider-node" 2>/dev/null || true
+          cargo test --release -p zombienet-sdk-tests --features zombie-tests \
+            ${{ matrix.filter }} -- --nocapture
 
       - name: Upload logs (on failure)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-logs
+          name: logs-${{ matrix.filter }}
           path: |
-            /tmp/zombienet.log
-            /tmp/provider.log
-            /tmp/zombie-*/*.log
-            /tmp/zombie-*/**/*.log
-            /tmp/zombie-*/*-plain.json
-            /tmp/zombie-*/*-raw.json
+            /tmp/zombie-*/**

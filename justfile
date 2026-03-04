@@ -7,8 +7,8 @@
 
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
-# Zombienet version
-zombienet_version := "v1.3.138"
+# Zombienet SDK version
+zombienet_sdk_version := "v0.4.6"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -17,7 +17,7 @@ arch := `uname -m`
 # URL components
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
-zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
+zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-gnu" }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -66,8 +66,8 @@ download-binaries: download-polkadot-sdk-binaries download-zombienet
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
 download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node _download-chain-spec-builder
 
-# Download zombienet
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/download/" + zombienet_version + "/" + zombienet_asset)
+# Download zombienet CLI (zombie-cli from zombienet-sdk)
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet-sdk/releases/download/" + zombienet_sdk_version + "/" + zombienet_asset)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
@@ -117,19 +117,13 @@ health:
 stats:
     curl -s {{ PROVIDER_URL }}/stats | jq .
 
-# Demo: full integration test (PAPI-based)
-# Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
-# Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo: papi-setup
-    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# Layer 0 integration test: full storage flow (zombienet-sdk based)
+demo: build-runtime build-provider
+    cargo test --release -p zombienet-sdk-tests --features zombie-tests layer0_storage -- --nocapture
 
-# Install PAPI dependencies and generate chain descriptors (requires running chain)
-papi-setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd examples/papi
-    npm install
-    npm run papi:generate
+# Layer 1 integration test: file system flow (zombienet-sdk based)
+fs-demo-ci: build-runtime build-provider
+    cargo test --release -p zombienet-sdk-tests --features zombie-tests layer1_filesystem -- --nocapture
 
 # Generate chain spec
 generate-chain-spec: build-runtime
@@ -280,16 +274,6 @@ fs-demo:
     echo "✅ Infrastructure is running"
     echo ""
     just fs-example
-
-# File system integration test for CI
-fs-demo-ci:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Running File System CI Integration Test"
-    echo "  Chain: {{ CHAIN_WS }}"
-    echo "  Provider: {{ PROVIDER_URL }}"
-    echo ""
-    cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Build file system components only
 fs-build:
