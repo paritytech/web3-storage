@@ -138,7 +138,9 @@ jobs:
         with:
           name: logs-${{ matrix.id }}
           path: |
-            /tmp/zombie-*/**
+            /tmp/provider.log
+            /tmp/zombie-*/**/*.log
+            /tmp/zombie-*/*.json
 
   # Single status check
   integration-tests:
