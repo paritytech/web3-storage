@@ -23,7 +23,7 @@ async fn list_and_verify(
     let entries = fs_client
         .list_directory(drive_id, path)
         .await
-        .with_context(|| format!("Failed to list directory '{}'", path))?;
+        .with_context(|| format!("Failed to list directory '{path}'"))?;
 
     log::info!("  {} entries: {}", path, entries.len());
     for entry in &entries {
@@ -72,13 +72,13 @@ async fn filesystem_integration_test() -> Result<()> {
         )
         .await
         .context("Failed to create drive")?;
-    log::info!("  Drive created: ID = {}", drive_id);
+    log::info!("  Drive created: ID = {drive_id}");
 
     let bucket_id = fs_client
         .get_bucket_id(drive_id)
         .await
         .context("Failed to get bucket ID for drive")?;
-    log::info!("  Associated bucket: ID = {}", bucket_id);
+    log::info!("  Associated bucket: ID = {bucket_id}");
 
     // Step 4: Create directories
     log::info!("Step 4: Creating directories...");
@@ -174,7 +174,7 @@ async fn filesystem_integration_test() -> Result<()> {
 
     // Summary
     log::info!("=== PASSED: File System Integration Test ===");
-    log::info!("  - Created drive (ID: {})", drive_id);
+    log::info!("  - Created drive (ID: {drive_id})");
     log::info!("  - Created 2 directories");
     log::info!("  - Uploaded 2 files");
     log::info!("  - Listed 3 directories");

@@ -17,16 +17,14 @@ pub const DEFAULT_CHAIN_SPEC_COMMAND: &str = "./scripts/build-chain-spec.sh";
 // Network parameters
 pub const RELAY_CHAIN: &str = "westend-local";
 pub const PARA_ID: u32 = 4000;
-pub const PROVIDER_PORT: u16 = 3333;
+pub const DEFAULT_RELAY_RPC_PORT: u16 = 9900;
+pub const DEFAULT_CHAIN_RPC_PORT: u16 = 2222;
+pub const DEFAULT_PROVIDER_PORT: u16 = 3333;
 
 // Timeouts
 pub const PROVIDER_HEALTH_TIMEOUT_SECS: u64 = 60;
 pub const PROVIDER_HEALTH_POLL_INTERVAL_MS: u64 = 2000;
 pub const CLIENT_TIMEOUT_SECS: u64 = 60;
-
-// Provider URLs
-pub const PROVIDER_BIND_ADDR: &str = "0.0.0.0:3333";
-pub const PROVIDER_MULTIADDR: &str = "/ip4/127.0.0.1/tcp/3333";
 
 // Well-known dev accounts (SS58)
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -95,6 +93,36 @@ pub fn get_provider_binary_path() -> String {
     ))
 }
 
+fn env_port(var: &str, default: u16) -> u16 {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+pub fn relay_rpc_port() -> u16 {
+    env_port("RELAY_RPC_PORT", DEFAULT_RELAY_RPC_PORT)
+}
+
+pub fn chain_rpc_port() -> u16 {
+    env_port("CHAIN_RPC_PORT", DEFAULT_CHAIN_RPC_PORT)
+}
+
+pub fn provider_port() -> u16 {
+    env_port("PROVIDER_PORT", DEFAULT_PROVIDER_PORT)
+}
+
 pub fn provider_url() -> String {
-    format!("http://127.0.0.1:{PROVIDER_PORT}")
+    let port = provider_port();
+    format!("http://127.0.0.1:{port}")
+}
+
+pub fn provider_bind_addr() -> String {
+    let port = provider_port();
+    format!("0.0.0.0:{port}")
+}
+
+pub fn provider_multiaddr() -> String {
+    let port = provider_port();
+    format!("/ip4/127.0.0.1/tcp/{port}")
 }

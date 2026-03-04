@@ -8,9 +8,8 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
 
-# Detect OS and architecture
+# Detect OS
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
-arch := `uname -m`
 
 # URL components
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
@@ -133,6 +132,16 @@ setup: download-binaries build
 # File System (Layer 1) Commands
 # ============================================================
 
+# Run the file system basic usage example (assumes infrastructure is running)
+fs-example:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🚀 Running File System Client Example"
+    echo "Prerequisites: blockchain and provider must be running"
+    echo ""
+    cd storage-interfaces/file-system/client
+    RUST_LOG=info cargo run --example basic_usage
+
 # Test file system client (unit tests)
 fs-test:
     cargo test -p file-system-client
@@ -196,7 +205,7 @@ fs-docs:
 # S3-Compatible Interface (Layer 1) Commands
 # ============================================================
 
-# Run the S3 client basic usage example
+# Run the S3 client basic usage example (assumes infrastructure is running)
 s3-example:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -16,19 +16,19 @@ path = "tests/tests.rs"
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
 env_logger = "0.11"
 log = { workspace = true }
 reqwest = { workspace = true }
+tokio = { workspace = true }
+zombienet-sdk = "0.4.6"
+
+[dev-dependencies]
+base64 = "0.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
-tokio = { workspace = true }
 
-# Zombienet SDK
-zombienet-sdk = "0.4.6"
-
-# Internal crates (reuse existing client SDKs)
+# Internal crates (test-only: used by integration tests, not the smoke binary)
 file-system-client = { workspace = true }
 file-system-primitives = { workspace = true }
 s3-client = { workspace = true }

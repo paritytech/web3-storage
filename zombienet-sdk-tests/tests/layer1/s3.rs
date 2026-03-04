@@ -40,7 +40,7 @@ async fn s3_integration_test() -> Result<()> {
         .create_bucket(&bucket_name)
         .await
         .context("Failed to create S3 bucket")?;
-    log::info!("  Bucket created: {}", bucket_name);
+    log::info!("  Bucket created: {bucket_name}");
     log::info!("  S3 Bucket ID: {}", bucket.s3_bucket_id);
     log::info!("  Layer 0 Bucket ID: {}", bucket.layer0_bucket_id);
 
@@ -178,11 +178,11 @@ async fn s3_integration_test() -> Result<()> {
         .delete_bucket(&bucket_name)
         .await
         .context("Failed to delete bucket")?;
-    log::info!("  Deleted bucket: {}", bucket_name);
+    log::info!("  Deleted bucket: {bucket_name}");
 
     // Summary
     log::info!("=== PASSED: S3-Compatible Interface Integration Test ===");
-    log::info!("  - Created S3 bucket ({})", bucket_name);
+    log::info!("  - Created S3 bucket ({bucket_name})");
     log::info!("  - Uploaded 2 objects with metadata");
     log::info!("  - Verified bucket info");
     log::info!("  - Downloaded and verified 2 objects");

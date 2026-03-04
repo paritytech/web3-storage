@@ -92,7 +92,7 @@ async fn fetch_mmr_proof(
     leaf_index: u64,
 ) -> Result<MmrProofResponse> {
     let resp = http
-        .get(format!("{}/mmr_proof", base_url))
+        .get(format!("{base_url}/mmr_proof"))
         .query(&[
             ("bucket_id", bucket_id.to_string()),
             ("leaf_index", leaf_index.to_string()),
@@ -113,7 +113,7 @@ async fn fetch_chunk_proof(
     chunk_index: u64,
 ) -> Result<ChunkProofResponse> {
     let resp = http
-        .get(format!("{}/chunk_proof", base_url))
+        .get(format!("{base_url}/chunk_proof"))
         .query(&[
             ("data_root", data_root.to_string()),
             ("chunk_index", chunk_index.to_string()),
@@ -135,7 +135,7 @@ async fn fetch_checkpoint_signature(
     bucket_id: u64,
 ) -> Result<CheckpointSignatureResp> {
     let resp = http
-        .get(format!("{}/checkpoint-signature", base_url))
+        .get(format!("{base_url}/checkpoint-signature"))
         .query(&[("bucket_id", bucket_id.to_string())])
         .send()
         .await
@@ -272,7 +272,7 @@ async fn storage_full_flow_test() -> Result<()> {
         .create_bucket(1)
         .await
         .context("create_bucket failed")?;
-    log::info!("  Bucket created (ID: {})", BUCKET_ID);
+    log::info!("  Bucket created (ID: {BUCKET_ID})");
 
     // Request agreement (Bob)
     log::info!("  Requesting agreement (Bob)...");
@@ -314,7 +314,7 @@ async fn storage_full_flow_test() -> Result<()> {
         .upload(BUCKET_ID, data_bytes, Default::default())
         .await
         .context("upload failed")?;
-    log::info!("  Data root: {:?}", data_root);
+    log::info!("  Data root: {data_root:?}");
 
     log::info!("  Committing to MMR...");
     let commit_resp = storage_client

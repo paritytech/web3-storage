@@ -24,7 +24,11 @@ pub fn build_network_config() -> Result<NetworkConfig> {
         .with_relaychain(|rc| {
             rc.with_chain(RELAY_CHAIN)
                 .with_default_command(polkadot_bin.as_str())
-                .with_validator(|n| n.with_name("alice").with_args(relay_args))
+                .with_validator(|n| {
+                    n.with_name("alice")
+                        .with_args(relay_args)
+                        .with_rpc_port(relay_rpc_port())
+                })
                 .with_validator(|n| n.with_name("bob").with_args(relay_args2))
         })
         .with_parachain(|pc| {
@@ -36,6 +40,7 @@ pub fn build_network_config() -> Result<NetworkConfig> {
                         .validator(true)
                         .with_command(omni_node_bin.as_str())
                         .with_args(para_args)
+                        .with_rpc_port(chain_rpc_port())
                 })
         })
         .with_global_settings(|gs| match std::env::var("ZOMBIENET_SDK_BASE_DIR") {
@@ -60,16 +65,9 @@ pub async fn spawn_network(config: NetworkConfig) -> Result<Network<LocalFileSys
 }
 
 /// Get the WebSocket URI for a collator node.
-pub async fn wait_for_collator_ws(
-    network: &Network<LocalFileSystem>,
-    name: &str,
-) -> Result<String> {
+pub fn get_collator_ws(network: &Network<LocalFileSystem>, name: &str) -> Result<String> {
     let collator = network.get_node(name)?;
-
-    log::info!("Waiting for {name} to be ready...");
-
     let ws_uri = collator.ws_uri().to_string();
-    log::info!("{name} ready at: {ws_uri}");
-
+    log::info!("{name} WS endpoint: {ws_uri}");
     Ok(ws_uri)
 }

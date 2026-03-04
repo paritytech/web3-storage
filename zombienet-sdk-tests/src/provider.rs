@@ -18,17 +18,20 @@ impl ProviderProcess {
     /// Spawn the storage provider node.
     ///
     /// `chain_ws` is the parachain WebSocket endpoint the provider connects to.
-    pub async fn spawn(chain_ws: &str) -> Result<Self> {
+    /// `seed` is the key derivation path (e.g. `"//Alice"`).
+    pub async fn spawn(chain_ws: &str, seed: &str) -> Result<Self> {
         let provider_bin = get_provider_binary_path();
+        let bind_addr = provider_bind_addr();
+
         log::info!("Starting provider: {provider_bin}");
-        log::info!("  SEED=//Alice");
+        log::info!("  SEED={seed}");
         log::info!("  CHAIN_RPC={chain_ws}");
-        log::info!("  BIND_ADDR={PROVIDER_BIND_ADDR}");
+        log::info!("  BIND_ADDR={bind_addr}");
 
         let child = Command::new(&provider_bin)
-            .env("SEED", "//Alice")
+            .env("SEED", seed)
             .env("CHAIN_RPC", chain_ws)
-            .env("BIND_ADDR", PROVIDER_BIND_ADDR)
+            .env("BIND_ADDR", &bind_addr)
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| anyhow!("Failed to start provider '{provider_bin}': {e}"))?;
@@ -74,7 +77,6 @@ impl ProviderProcess {
 
 impl Drop for ProviderProcess {
     fn drop(&mut self) {
-        // kill_on_drop is set, but let's be explicit about logging
         log::info!("Stopping provider process");
     }
 }
