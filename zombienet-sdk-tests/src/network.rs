@@ -1,6 +1,6 @@
 //! Network configuration builders and spawning utilities.
 
-use super::config::*;
+use crate::config::*;
 use anyhow::{anyhow, Result};
 use zombienet_sdk::{
     LocalFileSystem, Network, NetworkConfig, NetworkConfigBuilder, NetworkConfigExt,
@@ -12,9 +12,9 @@ pub fn build_network_config() -> Result<NetworkConfig> {
     let omni_node_bin = get_omni_node_binary_path();
     let chain_spec_cmd = get_chain_spec_command();
 
-    log::info!("Polkadot binary: {}", polkadot_bin);
-    log::info!("Omni-node binary: {}", omni_node_bin);
-    log::info!("Chain spec command: {}", chain_spec_cmd);
+    log::info!("Polkadot binary: {polkadot_bin}");
+    log::info!("Omni-node binary: {omni_node_bin}");
+    log::info!("Chain spec command: {chain_spec_cmd}");
 
     let relay_args = vec!["-lruntime=info".into()];
     let relay_args2 = relay_args.clone();
@@ -66,10 +66,10 @@ pub async fn wait_for_collator_ws(
 ) -> Result<String> {
     let collator = network.get_node(name)?;
 
-    log::info!("Waiting for {} to be ready...", name);
+    log::info!("Waiting for {name} to be ready...");
 
     let ws_uri = collator.ws_uri().to_string();
-    log::info!("{} ready at: {}", name, ws_uri);
+    log::info!("{name} ready at: {ws_uri}");
 
     Ok(ws_uri)
 }

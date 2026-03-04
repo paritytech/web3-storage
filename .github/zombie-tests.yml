@@ -1,12 +1,15 @@
 tests:
   - name: "Layer 0: Storage"
+    id: layer0
     filter: layer0
     timeout: 30
 
   - name: "Layer 1: Filesystem"
+    id: layer1-filesystem
     filter: "layer1::filesystem"
     timeout: 30
 
   - name: "Layer 1: S3"
+    id: layer1-s3
     filter: "layer1::s3"
     timeout: 30

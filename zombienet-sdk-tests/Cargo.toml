@@ -6,6 +6,10 @@ edition.workspace = true
 publish = false
 autotests = false
 
+[[bin]]
+name = "smoke"
+path = "src/main.rs"
+
 [[test]]
 name = "tests"
 path = "tests/tests.rs"

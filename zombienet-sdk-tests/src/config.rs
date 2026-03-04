@@ -96,5 +96,5 @@ pub fn get_provider_binary_path() -> String {
 }
 
 pub fn provider_url() -> String {
-    format!("http://127.0.0.1:{}", PROVIDER_PORT)
+    format!("http://127.0.0.1:{PROVIDER_PORT}")
 }

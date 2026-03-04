@@ -7,8 +7,6 @@
 
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
-# Zombienet SDK version
-zombienet_sdk_version := "v0.4.6"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -17,7 +15,6 @@ arch := `uname -m`
 # URL components
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
-zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-gnu" }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -60,14 +57,11 @@ _download BIN URL:
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-download-binaries: download-polkadot-sdk-binaries download-zombienet
+download-binaries: download-polkadot-sdk-binaries
     @echo "All binaries downloaded to .bin/"
 
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
 download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node _download-chain-spec-builder
-
-# Download zombienet CLI (zombie-cli from zombienet-sdk)
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet-sdk/releases/download/" + zombienet_sdk_version + "/" + zombienet_asset)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
@@ -86,15 +80,11 @@ check: download-binaries
 
 # Start the blockchain (relay chain + parachain)
 start-chain: check build-runtime
-    #!/usr/bin/env bash
-    echo ""
-    echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
-    echo ""
-    echo "Web UIs (once ready):"
-    echo "  Relay chain: https://polkadot.js.org/apps/?rpc={{ RELAY_WS }}"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc={{ CHAIN_WS }}"
-    echo ""
-    .bin/zombienet spawn zombienet.toml
+    cargo run --release -p zombienet-sdk-tests --bin smoke
+
+# Start the blockchain + storage provider
+start-all: check build-runtime build-provider
+    cargo run --release -p zombienet-sdk-tests --bin smoke -- --with-provider
 
 # Start the storage provider node
 start-provider SEED="//Alice": build-provider
@@ -137,23 +127,11 @@ generate-chain-spec: build-runtime
 # Setup development environment (download binaries + build)
 setup: download-binaries build
     @echo ""
-    @echo "Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network."
+    @echo "Setup complete! Run 'just start-chain' to start the local network."
 
 # ============================================================
 # File System (Layer 1) Commands
 # ============================================================
-
-# Run the file system basic usage example
-fs-example:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "🚀 Running File System Client Example"
-    echo "Prerequisites: blockchain and provider must be running"
-    echo "  - Parachain: ws://127.0.0.1:9944"
-    echo "  - Provider: http://localhost:3000"
-    echo ""
-    cd storage-interfaces/file-system/client
-    RUST_LOG=info cargo run --example basic_usage
 
 # Test file system client (unit tests)
 fs-test:
@@ -177,107 +155,6 @@ fs-test-all:
     cargo test -p file-system-client
     echo ""
     echo "✅ All file system tests passed!"
-
-# Start infrastructure and run file system example (full integration test)
-fs-integration-test:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    echo ""
-    echo "=== File System Integration Test ==="
-    echo ""
-    echo "This will:"
-    echo "  1. Start relay chain + parachain"
-    echo "  2. Start provider node"
-    echo "  3. Verify on-chain setup"
-    echo "  4. Run file system example"
-    echo ""
-
-    # Check if zombienet is already running
-    if lsof -i :9944 > /dev/null 2>&1; then
-        echo "⚠️  Parachain already running on port 9944"
-        echo "Skipping blockchain startup..."
-    else
-        echo "Starting blockchain network..."
-        .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
-        ZOMBIENET_PID=$!
-        trap "kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
-
-        echo "Waiting for parachain to be ready..."
-        until curl -s -o /dev/null http://127.0.0.1:9944; do
-            sleep 2
-        done
-        echo "✅ Blockchain ready!"
-    fi
-
-    # Check if provider is already running
-    if lsof -i :3000 > /dev/null 2>&1; then
-        echo "⚠️  Provider already running on port 3000"
-        echo "Skipping provider startup..."
-    else
-        echo ""
-        echo "Starting provider node..."
-        PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
-        CHAIN_RPC=ws://127.0.0.1:9944 \
-        cargo run --release -p storage-provider-node > /tmp/provider.log 2>&1 &
-        PROVIDER_PID=$!
-        trap "kill $PROVIDER_PID 2>/dev/null || true; kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
-
-        # Wait for provider to be ready
-        echo "Waiting for provider to be ready..."
-        for i in {1..30}; do
-            if curl -s http://localhost:3000/health > /dev/null 2>&1; then
-                echo "✅ Provider ready!"
-                break
-            fi
-            if [ $i -eq 30 ]; then
-                echo "❌ Provider failed to start"
-                exit 1
-            fi
-            sleep 1
-        done
-    fi
-
-    echo ""
-    echo "Verifying on-chain setup..."
-    bash scripts/verify-setup.sh || {
-        echo ""
-        echo "⚠️  Setup verification failed"
-        echo "You may need to run the setup manually. See:"
-        echo "  docs/getting-started/QUICKSTART.md"
-        echo ""
-        echo "Continuing anyway to test drive creation..."
-    }
-
-    echo ""
-    echo "=== Running File System Example ==="
-    echo ""
-    just fs-example
-
-    echo ""
-    echo "✅ Integration test complete!"
-
-# Quick file system demo (assumes infrastructure is running)
-fs-demo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Check prerequisites
-    if ! curl -s http://localhost:3000/health > /dev/null 2>&1; then
-        echo "❌ Provider not running on http://localhost:3000"
-        echo "Run: just start-services"
-        exit 1
-    fi
-
-    if ! curl -s -o /dev/null http://127.0.0.1:9944; then
-        echo "❌ Parachain not running on ws://127.0.0.1:9944"
-        echo "Run: just start-chain"
-        exit 1
-    fi
-
-    echo "✅ Infrastructure is running"
-    echo ""
-    just fs-example
 
 # Build file system components only
 fs-build:

@@ -2,7 +2,7 @@
 //!
 //! Spawns the storage provider as a child process and waits for it to become healthy.
 
-use super::config::*;
+use crate::config::*;
 use anyhow::{anyhow, Result};
 use std::time::Duration;
 use tokio::process::{Child, Command};
@@ -20,10 +20,10 @@ impl ProviderProcess {
     /// `chain_ws` is the parachain WebSocket endpoint the provider connects to.
     pub async fn spawn(chain_ws: &str) -> Result<Self> {
         let provider_bin = get_provider_binary_path();
-        log::info!("Starting provider: {}", provider_bin);
+        log::info!("Starting provider: {provider_bin}");
         log::info!("  SEED=//Alice");
-        log::info!("  CHAIN_RPC={}", chain_ws);
-        log::info!("  BIND_ADDR={}", PROVIDER_BIND_ADDR);
+        log::info!("  CHAIN_RPC={chain_ws}");
+        log::info!("  BIND_ADDR={PROVIDER_BIND_ADDR}");
 
         let child = Command::new(&provider_bin)
             .env("SEED", "//Alice")
@@ -31,7 +31,7 @@ impl ProviderProcess {
             .env("BIND_ADDR", PROVIDER_BIND_ADDR)
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| anyhow!("Failed to start provider '{}': {}", provider_bin, e))?;
+            .map_err(|e| anyhow!("Failed to start provider '{provider_bin}': {e}"))?;
 
         let mut provider = Self { child };
         provider.wait_healthy().await?;
@@ -44,19 +44,19 @@ impl ProviderProcess {
         let url = format!("{}/health", provider_url());
         let client = reqwest::Client::new();
 
-        log::info!("Waiting for provider health at {}", url);
+        log::info!("Waiting for provider health at {url}");
 
         for attempt in
             1..=(PROVIDER_HEALTH_TIMEOUT_SECS * 1000 / PROVIDER_HEALTH_POLL_INTERVAL_MS) as u32
         {
             // Check the process hasn't exited
             if let Some(status) = self.child.try_wait()? {
-                anyhow::bail!("Provider exited early with status: {}", status);
+                anyhow::bail!("Provider exited early with status: {status}");
             }
 
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    log::info!("Provider is healthy (attempt {})", attempt);
+                    log::info!("Provider is healthy (attempt {attempt})");
                     return Ok(());
                 }
                 _ => {
@@ -67,8 +67,7 @@ impl ProviderProcess {
         }
 
         anyhow::bail!(
-            "Provider did not become healthy within {} seconds",
-            PROVIDER_HEALTH_TIMEOUT_SECS
+            "Provider did not become healthy within {PROVIDER_HEALTH_TIMEOUT_SECS} seconds",
         );
     }
 }
