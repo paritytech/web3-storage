@@ -125,6 +125,10 @@ demo: build-runtime build-provider
 fs-demo-ci: build-runtime build-provider
     cargo test --release -p zombienet-sdk-tests --features zombie-tests layer1_filesystem -- --nocapture
 
+# Layer 1 integration test: S3 flow (zombienet-sdk based)
+s3-demo-ci: build-runtime build-provider
+    cargo test --release -p zombienet-sdk-tests --features zombie-tests layer2_s3 -- --nocapture
+
 # Generate chain spec
 generate-chain-spec: build-runtime
     ./scripts/build-chain-spec.sh > chain-spec.json
@@ -310,3 +314,67 @@ fs-docs:
     @echo ""
     @echo "Client SDK:"
     @echo "  storage-interfaces/file-system/client/README.md"
+
+# ============================================================
+# S3-Compatible Interface (Layer 1) Commands
+# ============================================================
+
+# Run the S3 client basic usage example
+s3-example:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🚀 Running S3 Client Example"
+    echo "Prerequisites: blockchain and provider must be running"
+    echo "  - Parachain: ws://127.0.0.1:2222"
+    echo "  - Provider: http://localhost:3333"
+    echo ""
+    cd storage-interfaces/s3/client
+    RUST_LOG=info cargo run --example basic_usage
+
+# Test S3 primitives
+s3-test-primitives:
+    cargo test -p s3-primitives
+
+# Test S3 registry pallet
+s3-test-pallet:
+    cargo test -p pallet-s3-registry
+
+# Test S3 client (unit tests)
+s3-test:
+    cargo test -p s3-client
+
+# Test S3 client with logs
+s3-test-verbose:
+    RUST_LOG=debug cargo test -p s3-client -- --nocapture
+
+# Test all S3 components (primitives + pallet + client)
+s3-test-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Testing S3 primitives..."
+    cargo test -p s3-primitives
+    echo ""
+    echo "Testing S3 registry pallet..."
+    cargo test -p pallet-s3-registry
+    echo ""
+    echo "Testing S3 client..."
+    cargo test -p s3-client
+    echo ""
+    echo "✅ All S3 tests passed!"
+
+# Build S3 components only
+s3-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building S3 components..."
+    cargo build --release \
+        -p s3-primitives \
+        -p pallet-s3-registry \
+        -p s3-client
+    echo "✅ S3 components built!"
+
+# Clean S3 build artifacts
+s3-clean:
+    cargo clean -p s3-primitives
+    cargo clean -p pallet-s3-registry
+    cargo clean -p s3-client

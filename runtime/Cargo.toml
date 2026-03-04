@@ -13,6 +13,8 @@ storage-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
 file-system-primitives = { workspace = true }
 pallet-drive-registry = { workspace = true }
+s3-primitives = { workspace = true }
+pallet-s3-registry = { workspace = true }
 
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
@@ -80,7 +82,9 @@ std = [
 	"codec/std",
 	"file-system-primitives/std",
 	"pallet-drive-registry/std",
+	"pallet-s3-registry/std",
 	"pallet-storage-provider/std",
+	"s3-primitives/std",
 	"scale-info/std",
 	"storage-primitives/std",
 	# Substrate
@@ -145,6 +149,7 @@ runtime-benchmarks = [
 	"pallet-balances/runtime-benchmarks",
 	"pallet-collator-selection/runtime-benchmarks",
 	"pallet-message-queue/runtime-benchmarks",
+	"pallet-s3-registry/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",
 	"pallet-storage-provider/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
@@ -174,6 +179,7 @@ try-runtime = [
 	"pallet-balances/try-runtime",
 	"pallet-collator-selection/try-runtime",
 	"pallet-message-queue/try-runtime",
+	"pallet-s3-registry/try-runtime",
 	"pallet-session/try-runtime",
 	"pallet-storage-provider/try-runtime",
 	"pallet-sudo/try-runtime",

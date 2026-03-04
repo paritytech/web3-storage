@@ -6,3 +6,7 @@ tests:
   - name: "Layer 1: Filesystem"
     filter: layer1_filesystem
     timeout: 30
+
+  - name: "Layer 1: S3"
+    filter: layer2_s3
+    timeout: 30

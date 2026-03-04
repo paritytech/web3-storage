@@ -27,6 +27,7 @@ zombienet-sdk = "0.4.6"
 # Internal crates (reuse existing client SDKs)
 file-system-client = { workspace = true }
 file-system-primitives = { workspace = true }
+s3-client = { workspace = true }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
 
