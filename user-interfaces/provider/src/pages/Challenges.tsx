@@ -15,15 +15,22 @@ import {
 import {
   useChallenges,
   usePendingChallenges,
-  useIsRegistered,
   respondToChallenge,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
+import { RequireProvider } from '@/components/RequireProvider'
 import { formatAddress, formatBlockNumber } from '@/utils/format'
 
 export function Challenges() {
+  return (
+    <RequireProvider icon={Shield} pageName="challenges">
+      <ChallengesContent />
+    </RequireProvider>
+  )
+}
+
+function ChallengesContent() {
   const selectedAccount = useSelectedAccount()
-  const isRegistered = useIsRegistered()
   const challenges = useChallenges()
   const pendingChallenges = usePendingChallenges()
   const [respondingTo, setRespondingTo] = useState<number | null>(null)
@@ -33,7 +40,6 @@ export function Challenges() {
 
     setRespondingTo(challengeId)
     try {
-      // In a real implementation, this would fetch the proof from the provider node
       const mockProof = new Uint8Array(64)
       await respondToChallenge(challengeId, mockProof, selectedAccount)
     } catch (error) {
@@ -41,26 +47,6 @@ export function Challenges() {
     } finally {
       setRespondingTo(null)
     }
-  }
-
-  if (!selectedAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Shield className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to view challenges</p>
-      </div>
-    )
-  }
-
-  if (!isRegistered) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Shield className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Not Registered</h2>
-        <p className="text-gray-500">Register as a provider to view challenges</p>
-      </div>
-    )
   }
 
   const getStatusIcon = (status: string) => {

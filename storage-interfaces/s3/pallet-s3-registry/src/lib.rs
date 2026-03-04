@@ -314,16 +314,15 @@ pub mod pallet {
             let timestamp = frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
 
             // Check if this is an update or new object
-            let is_new = !Objects::<T>::contains_key(s3_bucket_id, &bounded_key);
-            if is_new {
-                ensure!(
-                    bucket_info.object_count < T::MaxObjectsPerBucket::get() as u64,
-                    Error::<T>::TooManyObjects
-                );
-                bucket_info.object_count = bucket_info.object_count.saturating_add(1);
-            } else {
-                // Subtract old size
-                if let Some(old_metadata) = Objects::<T>::get(s3_bucket_id, &bounded_key) {
+            match Objects::<T>::get(s3_bucket_id, &bounded_key) {
+                None => {
+                    ensure!(
+                        bucket_info.object_count < T::MaxObjectsPerBucket::get() as u64,
+                        Error::<T>::TooManyObjects
+                    );
+                    bucket_info.object_count = bucket_info.object_count.saturating_add(1);
+                }
+                Some(old_metadata) => {
                     bucket_info.total_size =
                         bucket_info.total_size.saturating_sub(old_metadata.size);
                 }
@@ -409,7 +408,7 @@ pub mod pallet {
             ensure!(src_bucket.owner == who, Error::<T>::NotBucketOwner);
 
             // Verify destination bucket ownership
-            let mut dst_bucket =
+            let dst_bucket =
                 S3Buckets::<T>::get(dst_bucket_id).ok_or(Error::<T>::BucketNotFound)?;
             ensure!(dst_bucket.owner == who, Error::<T>::NotBucketOwner);
 
@@ -431,16 +430,21 @@ pub mod pallet {
             metadata.last_modified =
                 frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
 
-            // Check if destination exists (for stats update)
-            let dst_is_new = !Objects::<T>::contains_key(dst_bucket_id, &bounded_dst_key);
-            if dst_is_new {
-                ensure!(
-                    dst_bucket.object_count < T::MaxObjectsPerBucket::get() as u64,
-                    Error::<T>::TooManyObjects
-                );
-                dst_bucket.object_count = dst_bucket.object_count.saturating_add(1);
-            } else if let Some(old) = Objects::<T>::get(dst_bucket_id, &bounded_dst_key) {
-                dst_bucket.total_size = dst_bucket.total_size.saturating_sub(old.size);
+            // Update destination bucket stats (re-read if same bucket since src was read separately)
+            let mut dst_bucket =
+                S3Buckets::<T>::get(dst_bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+
+            match Objects::<T>::get(dst_bucket_id, &bounded_dst_key) {
+                None => {
+                    ensure!(
+                        dst_bucket.object_count < T::MaxObjectsPerBucket::get() as u64,
+                        Error::<T>::TooManyObjects
+                    );
+                    dst_bucket.object_count = dst_bucket.object_count.saturating_add(1);
+                }
+                Some(old) => {
+                    dst_bucket.total_size = dst_bucket.total_size.saturating_sub(old.size);
+                }
             }
 
             dst_bucket.total_size = dst_bucket.total_size.saturating_add(metadata.size);

@@ -9,6 +9,9 @@ use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
 use tracing::{debug, info};
 
+/// Pallet name in the runtime configuration.
+const PALLET_NAME: &str = "S3Registry";
+
 /// Object metadata from chain storage.
 #[derive(Clone, Debug)]
 pub struct ChainObjectMetadata {
@@ -89,6 +92,22 @@ impl SubstrateClient {
             .ok_or_else(|| "No signer configured".to_string())
     }
 
+    /// Sign, submit, and wait for a transaction to finalize successfully.
+    async fn submit_and_finalize(
+        &self,
+        tx: subxt::tx::DefaultPayload<Composite<()>>,
+    ) -> std::result::Result<subxt::blocks::ExtrinsicEvents<PolkadotConfig>, String> {
+        let signer = self.signer()?;
+        self.client
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| format!("Failed to submit tx: {e}"))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| format!("Transaction failed: {e}"))
+    }
+
     /// Create an S3 bucket.
     ///
     /// This creates both the Layer 0 bucket and the S3 bucket in a single transaction.
@@ -104,7 +123,7 @@ impl SubstrateClient {
         );
 
         let tx = subxt::dynamic::tx(
-            "S3Registry",
+            PALLET_NAME,
             "create_s3_bucket",
             vec![
                 Value::from_bytes(name.as_bytes()),
@@ -112,22 +131,11 @@ impl SubstrateClient {
             ],
         );
 
-        let signer = self.signer()?;
-        let progress = self
-            .client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?;
-
-        let events = progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))?;
+        let events = self.submit_and_finalize(tx).await?;
 
         // Try to extract bucket ID from event
         for event in events.iter().flatten() {
-            if event.pallet_name() == "S3Registry" && event.variant_name() == "S3BucketCreated" {
+            if event.pallet_name() == PALLET_NAME && event.variant_name() == "S3BucketCreated" {
                 if let Ok(values) = event.field_values() {
                     if let Some(id) = values.at("s3_bucket_id").and_then(|v| v.as_u128()) {
                         return Ok(id as u64);
@@ -148,24 +156,12 @@ impl SubstrateClient {
         debug!("Deleting S3 bucket: {}", bucket_id);
 
         let tx = subxt::dynamic::tx(
-            "S3Registry",
+            PALLET_NAME,
             "delete_s3_bucket",
             vec![Value::u128(bucket_id as u128)],
         );
 
-        let signer = self.signer()?;
-        let progress = self
-            .client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?;
-
-        progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))?;
-
+        self.submit_and_finalize(tx).await?;
         Ok(())
     }
 
@@ -188,7 +184,7 @@ impl SubstrateClient {
             .collect();
 
         let tx = subxt::dynamic::tx(
-            "S3Registry",
+            PALLET_NAME,
             "put_object_metadata",
             vec![
                 Value::u128(bucket_id as u128),
@@ -200,19 +196,7 @@ impl SubstrateClient {
             ],
         );
 
-        let signer = self.signer()?;
-        let progress = self
-            .client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?;
-
-        progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))?;
-
+        self.submit_and_finalize(tx).await?;
         Ok(())
     }
 
@@ -228,7 +212,7 @@ impl SubstrateClient {
         );
 
         let tx = subxt::dynamic::tx(
-            "S3Registry",
+            PALLET_NAME,
             "delete_object_metadata",
             vec![
                 Value::u128(bucket_id as u128),
@@ -236,19 +220,7 @@ impl SubstrateClient {
             ],
         );
 
-        let signer = self.signer()?;
-        let progress = self
-            .client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?;
-
-        progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))?;
-
+        self.submit_and_finalize(tx).await?;
         Ok(())
     }
 
@@ -266,7 +238,7 @@ impl SubstrateClient {
         );
 
         let tx = subxt::dynamic::tx(
-            "S3Registry",
+            PALLET_NAME,
             "copy_object_metadata",
             vec![
                 Value::u128(src_bucket_id as u128),
@@ -276,19 +248,7 @@ impl SubstrateClient {
             ],
         );
 
-        let signer = self.signer()?;
-        let progress = self
-            .client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?;
-
-        progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))?;
-
+        self.submit_and_finalize(tx).await?;
         Ok(())
     }
 
@@ -298,7 +258,7 @@ impl SubstrateClient {
         name: &str,
     ) -> std::result::Result<Option<S3BucketId>, S3ClientError> {
         let storage_query = subxt::dynamic::storage(
-            "S3Registry",
+            PALLET_NAME,
             "BucketNameToId",
             vec![Value::from_bytes(name.as_bytes())],
         );
@@ -322,7 +282,7 @@ impl SubstrateClient {
         bucket_id: S3BucketId,
     ) -> std::result::Result<Option<BucketInfo>, String> {
         let storage_query = subxt::dynamic::storage(
-            "S3Registry",
+            PALLET_NAME,
             "S3Buckets",
             vec![Value::u128(bucket_id as u128)],
         );
@@ -367,7 +327,7 @@ impl SubstrateClient {
         key: &str,
     ) -> std::result::Result<Option<ChainObjectMetadata>, String> {
         let storage_query = subxt::dynamic::storage(
-            "S3Registry",
+            PALLET_NAME,
             "Objects",
             vec![
                 Value::u128(bucket_id as u128),
@@ -419,7 +379,7 @@ impl SubstrateClient {
     /// List user's buckets.
     pub async fn list_user_buckets(&self) -> std::result::Result<Vec<BucketInfo>, String> {
         let storage_query = subxt::dynamic::storage(
-            "S3Registry",
+            PALLET_NAME,
             "UserBuckets",
             vec![Value::from_bytes(self.account_id)],
         );
