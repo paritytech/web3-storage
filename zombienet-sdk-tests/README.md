@@ -26,8 +26,8 @@ just start-all            # same + storage provider
 
 ```bash
 just demo                 # Layer 0: full storage flow
-just fs-demo-ci           # Layer 1: file system
-just s3-demo-ci           # Layer 1: S3-compatible
+just fs-demo           # Layer 1: file system
+just s3-demo           # Layer 1: S3-compatible
 ```
 
 Or directly:

@@ -111,11 +111,11 @@ demo: build-runtime build-provider
     cargo test --release -p zombienet-sdk-tests --features zombie-tests layer0 -- --nocapture
 
 # Layer 1 integration test: file system flow (zombienet-sdk based)
-fs-demo-ci: build-runtime build-provider
+fs-demo: build-runtime build-provider
     cargo test --release -p zombienet-sdk-tests --features zombie-tests layer1::filesystem -- --nocapture
 
 # Layer 1 integration test: S3 flow (zombienet-sdk based)
-s3-demo-ci: build-runtime build-provider
+s3-demo: build-runtime build-provider
     cargo test --release -p zombienet-sdk-tests --features zombie-tests layer1::s3 -- --nocapture
 
 # Generate chain spec

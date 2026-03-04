@@ -10,7 +10,7 @@
 //!
 //! Usage: cargo run --example ci_integration_test <chain_ws> <provider_url>
 //!
-//! Run via justfile (recommended): just fs-demo-ci
+//! Run via justfile (recommended): just fs-demo
 
 use file_system_client::FileSystemClient;
 use file_system_primitives::{CommitStrategy, DirectoryEntry};
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} <chain_ws> <provider_url>", args[0]);
-        eprintln!("  Run via justfile: just fs-demo-ci");
+        eprintln!("  Run via justfile: just fs-demo");
         std::process::exit(1);
     }
     let chain_ws = &args[1];
