@@ -139,3 +139,19 @@ jobs:
           name: logs-${{ matrix.id }}
           path: |
             /tmp/zombie-*/**
+
+  # Single status check
+  integration-tests:
+    name: Integration Tests
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - name: Check test results
+        run: |
+          if [[ "${{ needs.test.result }}" == "success" ]]; then
+            echo "All integration tests passed"
+          else
+            echo "Integration tests failed: ${{ needs.test.result }}"
+            exit 1
+          fi
