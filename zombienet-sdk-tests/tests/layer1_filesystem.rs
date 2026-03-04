@@ -9,12 +9,7 @@
 //! 6. List and verify directories
 //! 7. Download and verify file contents
 
-use crate::common::{
-    config::*,
-    network::{build_network_config, spawn_network, wait_for_collator_ws},
-    provider::ProviderProcess,
-    setup::register_alice_provider,
-};
+use crate::common::{config::*, setup::TestEnvironment};
 use anyhow::{Context, Result};
 use file_system_client::FileSystemClient;
 use file_system_primitives::{CommitStrategy, DirectoryEntry};
@@ -50,29 +45,13 @@ async fn list_and_verify(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn filesystem_integration_test() -> Result<()> {
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
-
     log::info!("=== Layer 1: File System Integration Test ===");
 
-    // Step 0: Spawn network + provider
-    log::info!("Step 0: Spawning network and provider...");
-    let config = build_network_config()?;
-    let network = spawn_network(config).await?;
-    let chain_ws = wait_for_collator_ws(&network, "collator-alice").await?;
-    let _provider = ProviderProcess::spawn(&chain_ws).await?;
-    let provider_url = provider_url();
+    let env = TestEnvironment::spawn().await?;
 
-    log::info!("  Chain: {}", chain_ws);
-    log::info!("  Provider: {}", provider_url);
-
-    // Step 1: Register provider on-chain (required before create_drive can find providers)
-    log::info!("Step 1: Registering provider on-chain...");
-    let _ = register_alice_provider(&chain_ws, &provider_url).await?;
-
-    // Step 2: Create the file system client
-    log::info!("Step 2: Creating file system client...");
-    let mut fs_client = FileSystemClient::new(&chain_ws, &provider_url)
+    // Step 1: Create the file system client
+    log::info!("Step 1: Creating file system client...");
+    let mut fs_client = FileSystemClient::new(&env.chain_ws, &env.provider_url)
         .await
         .context("Failed to create FileSystemClient")?
         .with_dev_signer("alice")

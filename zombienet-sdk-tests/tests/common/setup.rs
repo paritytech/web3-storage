@@ -1,8 +1,61 @@
 //! Shared setup helpers to reduce duplication across test files.
 
 use super::config::*;
+use super::network::{build_network_config, spawn_network, wait_for_collator_ws};
+use super::provider::ProviderProcess;
 use anyhow::{anyhow, Result};
 use storage_client::{ClientConfig, ProviderClient};
+use zombienet_sdk::{LocalFileSystem, Network};
+
+/// A running test environment: network + provider, kept alive via RAII.
+///
+/// All tests share the same setup: spawn a relay+parachain network, start a
+/// storage-provider-node, and register Alice as the provider on-chain.
+/// Use [`TestEnvironment::spawn`] at the top of each test instead of
+/// duplicating the boilerplate.
+pub struct TestEnvironment {
+    pub chain_ws: String,
+    pub provider_url: String,
+    /// The registered provider client (Alice). Layer 0 tests use this directly;
+    /// higher-layer tests can ignore it.
+    pub alice_provider: ProviderClient,
+    // Hold these to keep the processes alive for the test's lifetime.
+    _network: Network<LocalFileSystem>,
+    _provider: ProviderProcess,
+}
+
+impl TestEnvironment {
+    /// Spin up a complete test environment:
+    /// 1. Init env_logger
+    /// 2. Build & spawn zombienet network (relay chain + parachain)
+    /// 3. Start the storage provider node
+    /// 4. Register Alice as provider on-chain
+    pub async fn spawn() -> Result<Self> {
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .try_init();
+
+        log::info!("Spawning network and provider...");
+        let config = build_network_config()?;
+        let network = spawn_network(config).await?;
+        let chain_ws = wait_for_collator_ws(&network, "collator-alice").await?;
+        let provider = ProviderProcess::spawn(&chain_ws).await?;
+        let provider_url = provider_url();
+
+        log::info!("  Chain: {}", chain_ws);
+        log::info!("  Provider: {}", provider_url);
+
+        log::info!("Registering provider on-chain...");
+        let alice_provider = register_alice_provider(&chain_ws, &provider_url).await?;
+
+        Ok(Self {
+            chain_ws,
+            provider_url,
+            alice_provider,
+            _network: network,
+            _provider: provider,
+        })
+    }
+}
 
 /// Build a [`ClientConfig`] pointing at the given endpoints.
 pub fn client_config(chain_ws: &str, provider_url: &str) -> ClientConfig {

@@ -14,9 +14,7 @@
 
 use crate::common::{
     config::*,
-    network::{build_network_config, spawn_network, wait_for_collator_ws},
-    provider::ProviderProcess,
-    setup::{client_config, hex_to_bytes, register_alice_provider},
+    setup::{client_config, hex_to_bytes, TestEnvironment},
 };
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -236,32 +234,16 @@ async fn respond_to_challenge(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn storage_full_flow_test() -> Result<()> {
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
-
     log::info!("=== Layer 0: Storage Full Flow Test ===");
 
-    // Step 0: Spawn network + provider
-    log::info!("Step 0: Spawning network and provider...");
-    let config = build_network_config()?;
-    let network = spawn_network(config).await?;
-    let chain_ws = wait_for_collator_ws(&network, "collator-alice").await?;
-    let _provider = ProviderProcess::spawn(&chain_ws).await?;
-    let provider_url = provider_url();
-
-    log::info!("  Chain: {}", chain_ws);
-    log::info!("  Provider: {}", provider_url);
-
-    let config = client_config(&chain_ws, &provider_url);
+    let env = TestEnvironment::spawn().await?;
+    let config = client_config(&env.chain_ws, &env.provider_url);
+    let alice_provider = env.alice_provider;
 
     // ═══════════════════════════════════════════════════════════════════
-    // Step 1: Setup - register provider, create bucket, create agreement
+    // Step 1: Setup - create bucket, create agreement
     // ═══════════════════════════════════════════════════════════════════
     log::info!("\n=== Step 1: Setup ===");
-
-    // Alice = provider (register via shared helper)
-    log::info!("  Registering provider (Alice)...");
-    let alice_provider = register_alice_provider(&chain_ws, &provider_url).await?;
 
     // Bob = bucket admin / challenger
     let mut bob_admin = AdminClient::new(config.clone(), BOB_SS58.to_string())
@@ -320,7 +302,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     log::info!("\n=== Step 2: Upload data ===");
 
-    let storage_client = StorageClient::new(&provider_url);
+    let storage_client = StorageClient::new(&env.provider_url);
     let data = format!(
         "Hello, Web3 Storage! [zombienet-sdk test at {}]",
         unix_timestamp()
@@ -396,7 +378,7 @@ async fn storage_full_flow_test() -> Result<()> {
     respond_to_challenge(
         &alice_provider,
         &http,
-        &provider_url,
+        &env.provider_url,
         challenge_id_1,
         BUCKET_ID,
         leaf_index,
@@ -410,7 +392,7 @@ async fn storage_full_flow_test() -> Result<()> {
     // ═══════════════════════════════════════════════════════════════════
     log::info!("\n=== Step 5: Submit checkpoint ===");
 
-    let checkpoint_sig = fetch_checkpoint_signature(&http, &provider_url, BUCKET_ID).await?;
+    let checkpoint_sig = fetch_checkpoint_signature(&http, &env.provider_url, BUCKET_ID).await?;
     log::info!("  Checkpoint MMR root: {}", checkpoint_sig.mmr_root);
     log::info!("  Checkpoint leaf_count: {}", checkpoint_sig.leaf_count);
 
@@ -457,7 +439,7 @@ async fn storage_full_flow_test() -> Result<()> {
     respond_to_challenge(
         &alice_provider,
         &http,
-        &provider_url,
+        &env.provider_url,
         challenge_id_2,
         BUCKET_ID,
         leaf_index,
