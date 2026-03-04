@@ -75,6 +75,7 @@ jobs:
         with:
           name: build-artifacts
           retention-days: 1
+          include-hidden-files: true
           path: |
             target/release/storage-provider-node
             target/release/wbuild/
