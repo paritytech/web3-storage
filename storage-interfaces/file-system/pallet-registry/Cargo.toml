@@ -19,7 +19,6 @@ pallet-balances = { workspace = true }
 
 # Local dependencies
 file-system-primitives = { workspace = true }
-storage-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
 
 [features]
@@ -35,5 +34,4 @@ std = [
 	"sp-core/std",
 	"sp-io/std",
 	"sp-runtime/std",
-	"storage-primitives/std",
 ]
