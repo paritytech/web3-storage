@@ -125,10 +125,10 @@ jobs:
             sleep 5
           done
 
-      - name: Start provider and wait for health
+      - name: Start provider (inmemory) and wait for health
         run: |
           SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
-            nohup ./target/release/storage-provider-node > /tmp/provider.log 2>&1 &
+            nohup ./target/release/storage-provider-node --storage-mode inmemory > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
@@ -143,8 +143,29 @@ jobs:
             sleep 2
           done
 
-      - name: Run demo
+      - name: Run demo (inmemory provider)
         run: just demo
+
+      - name: Start provider (disk) and wait for health
+        run: |
+          SEED="//Charlie" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3334" \
+            nohup ./target/release/storage-provider-node --storage-mode disk --storage-path /tmp/provider-data > /tmp/provider-disk.log 2>&1 &
+          echo "Waiting for disk provider HTTP server..."
+          for i in $(seq 1 60); do
+            if curl -s http://127.0.0.1:3334/health | jq -e '.status' > /dev/null 2>&1; then
+              echo "Disk provider is healthy (attempt $i)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout: disk provider did not become healthy"
+              cat /tmp/provider-disk.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run demo (disk provider)
+        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
         run: just fs-demo-ci
@@ -167,6 +188,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
+            /tmp/provider-disk.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/*-plain.json

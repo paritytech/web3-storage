@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use storage_primitives::{blake2_256, hash_children, BucketId, MmrLeaf};
 
 /// A stored node (chunk or internal node).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredNode {
     /// The raw data
     pub data: Vec<u8>,
@@ -317,99 +317,6 @@ impl Storage {
         })
     }
 
-    /// Get chunk data and Merkle proof at the given index from a data root.
-    pub fn get_chunk_at_index(
-        &self,
-        data_root: H256,
-        chunk_index: u64,
-    ) -> Result<(Vec<u8>, storage_primitives::MerkleProof), Error> {
-        // Collect all leaf chunk hashes under data_root (in order)
-        let chunk_hashes = self.collect_chunk_hashes(data_root);
-
-        if chunk_index as usize >= chunk_hashes.len() {
-            return Err(Error::NodeNotFound(format!("chunk_{chunk_index}")));
-        }
-
-        // Get the actual chunk data
-        let chunk_hash = chunk_hashes[chunk_index as usize];
-        let chunk_data = self
-            .nodes
-            .get(&chunk_hash)
-            .ok_or_else(|| Error::NodeNotFound(format!("chunk_data_{chunk_index}")))?
-            .data
-            .clone();
-
-        // Build Merkle proof (padded to power of 2 for balanced tree)
-        let proof = Self::build_merkle_proof(&chunk_hashes, chunk_index as usize);
-
-        Ok((chunk_data, proof))
-    }
-
-    /// Collect leaf chunk hashes under a data root (DFS, in order).
-    fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
-        let mut hashes = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if hash == H256::zero() {
-                continue; // Skip padding nodes
-            }
-            if let Some(node) = self.nodes.get(&hash) {
-                if let Some(ref children) = node.children {
-                    // Internal node - push children in reverse for correct order
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                } else {
-                    // Leaf chunk
-                    hashes.push(hash);
-                }
-            }
-        }
-
-        hashes
-    }
-
-    /// Build a Merkle proof for a leaf at the given index in a balanced (padded) tree.
-    ///
-    /// Pads the leaf hashes to the next power of 2 with H256::zero() so that
-    /// the standard index-based verification in `verify_merkle_proof` works.
-    fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> storage_primitives::MerkleProof {
-        if leaf_hashes.len() <= 1 {
-            return storage_primitives::MerkleProof {
-                siblings: vec![],
-                path: vec![],
-            };
-        }
-
-        // Pad to next power of 2 for a balanced tree
-        let padded_len = leaf_hashes.len().next_power_of_two();
-        let mut current_level = leaf_hashes.to_vec();
-        current_level.resize(padded_len, H256::zero());
-
-        let mut siblings = Vec::new();
-        let mut path = Vec::new();
-        let mut idx = index;
-
-        while current_level.len() > 1 {
-            let is_right = idx % 2 == 1;
-            let sibling_idx = if is_right { idx - 1 } else { idx + 1 };
-            siblings.push(current_level[sibling_idx]);
-            path.push(is_right);
-
-            // Build next level
-            let mut next_level = Vec::new();
-            for pair in current_level.chunks(2) {
-                next_level.push(hash_children(pair[0], pair[1]));
-            }
-
-            idx /= 2;
-            current_level = next_level;
-        }
-
-        storage_primitives::MerkleProof { siblings, path }
-    }
-
     /// Collect all leaf chunks under a root.
     #[allow(dead_code)]
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
@@ -478,6 +385,84 @@ impl Default for Storage {
     }
 }
 
+impl crate::StorageBackend for Storage {
+    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), crate::Error> {
+        self.init_bucket(bucket_id, max_bytes);
+        Ok(())
+    }
+
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<crate::BucketInfo> {
+        let buckets = self.buckets.read();
+        buckets.get(&bucket_id).map(|state| crate::BucketInfo {
+            mmr_root: state.mmr_root,
+            start_seq: state.start_seq,
+            leaf_count: state.leaf_count(),
+        })
+    }
+
+    fn list_buckets(&self) -> Vec<crate::types::BucketSummary> {
+        self.list_buckets()
+    }
+
+    fn get_bucket_stats(&self) -> Vec<crate::types::BucketStats> {
+        self.get_bucket_stats()
+    }
+
+    fn total_nodes(&self) -> u64 {
+        self.total_nodes()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes()
+    }
+
+    fn store_node(
+        &self,
+        bucket_id: BucketId,
+        expected_hash: H256,
+        data: Vec<u8>,
+        children: Option<Vec<H256>>,
+    ) -> Result<(), crate::Error> {
+        self.store_node(bucket_id, expected_hash, data, children)
+    }
+
+    fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+        self.get_node(hash)
+    }
+
+    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
+        self.check_exists(bucket_id, hashes)
+    }
+
+    fn commit(
+        &self,
+        bucket_id: BucketId,
+        data_roots: Vec<H256>,
+    ) -> Result<(H256, u64, Vec<u64>), crate::Error> {
+        self.commit(bucket_id, data_roots)
+    }
+
+    fn delete_before(
+        &self,
+        bucket_id: BucketId,
+        new_start_seq: u64,
+    ) -> Result<(H256, u64, u64), crate::Error> {
+        self.delete_before(bucket_id, new_start_seq)
+    }
+
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, crate::Error> {
+        self.get_mmr_proof(bucket_id, leaf_index)
+    }
+
+    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), crate::Error> {
+        self.get_mmr_peaks(bucket_id)
+    }
+}
+
 /// Hex encoding utility (simple implementation).
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {
@@ -502,6 +487,7 @@ pub use hex::{decode as hex_decode, encode as hex_encode};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StorageBackend;
     use storage_primitives::{verify_merkle_proof, verify_mmr_proof};
 
     /// Helper: create a storage, upload chunks, build a padded Merkle tree, and commit.

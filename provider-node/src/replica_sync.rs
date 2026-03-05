@@ -6,7 +6,7 @@
 //! 3. On-chain sync confirmation
 
 use crate::error::Error;
-use crate::storage::Storage;
+use crate::StorageBackend;
 use base64::Engine;
 use reqwest::Client;
 use sp_core::H256;
@@ -15,12 +15,12 @@ use storage_primitives::BucketId;
 
 /// Replica synchronization manager.
 pub struct ReplicaSync {
-    storage: Arc<Storage>,
+    storage: Arc<dyn StorageBackend>,
     http: Client,
 }
 
 impl ReplicaSync {
-    pub fn new(storage: Arc<Storage>) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             storage,
             http: Client::new(),
@@ -63,7 +63,9 @@ impl ReplicaSync {
             .map_err(|e| Error::Serialization(e.to_string()))?;
 
         // Initialize bucket if needed
-        self.storage.init_bucket(bucket_id, u64::MAX);
+        self.storage
+            .init_bucket(bucket_id, u64::MAX)
+            .map_err(|e| Error::Storage(format!("Failed to init bucket: {e}")))?;
 
         // Get local state
         let local_bucket = self.storage.get_bucket(bucket_id);
