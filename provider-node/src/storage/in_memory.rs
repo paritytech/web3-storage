@@ -17,22 +17,17 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 /// Bucket state managed by this provider.
 #[derive(Debug, Clone)]
 struct BucketState {
-    /// Current MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// MMR leaves
-    pub leaves: Vec<MmrLeaf>,
+    mmr_root: H256,
+    start_seq: u64,
+    leaves: Vec<MmrLeaf>,
     /// The actual MMR structure for proof generation
-    pub mmr: Mmr,
-    /// Quota used in bytes
-    pub used_bytes: u64,
-    /// Maximum quota for this bucket
-    pub max_bytes: u64,
+    mmr: Mmr,
+    used_bytes: u64,
+    max_bytes: u64,
 }
 
 impl BucketState {
-    pub fn new(max_bytes: u64) -> Self {
+    fn new(max_bytes: u64) -> Self {
         Self {
             mmr_root: H256::zero(),
             start_seq: 0,
@@ -43,7 +38,7 @@ impl BucketState {
         }
     }
 
-    pub fn leaf_count(&self) -> u64 {
+    fn leaf_count(&self) -> u64 {
         self.leaves.len() as u64
     }
 }
@@ -54,8 +49,6 @@ pub struct Storage {
     nodes: DashMap<H256, StoredNode>,
     /// Bucket states
     buckets: RwLock<HashMap<BucketId, BucketState>>,
-    /// Mapping from data_root to bucket_id for lookups
-    root_to_bucket: DashMap<H256, BucketId>,
 }
 
 impl Storage {
@@ -64,7 +57,6 @@ impl Storage {
         Self {
             nodes: DashMap::new(),
             buckets: RwLock::new(HashMap::new()),
-            root_to_bucket: DashMap::new(),
         }
     }
 
@@ -74,11 +66,6 @@ impl Storage {
         buckets
             .entry(bucket_id)
             .or_insert_with(|| BucketState::new(max_bytes));
-    }
-
-    /// Get bucket state.
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
-        self.buckets.read().get(&bucket_id).cloned()
     }
 
     /// List all buckets.
@@ -249,35 +236,12 @@ impl Storage {
             // Push the SCALE-encoded leaf hash into the MMR (matches pallet's verify_mmr_proof)
             bucket.mmr.push(blake2_256(&leaf.encode()));
             bucket.leaves.push(leaf);
-
-            // Track root -> bucket mapping
-            self.root_to_bucket.insert(*root, bucket_id);
         }
 
         // Derive MMR root from the actual MMR structure
         bucket.mmr_root = bucket.mmr.root();
 
         Ok((bucket.mmr_root, bucket.start_seq, leaf_indices))
-    }
-
-    /// Calculate the size of a content tree.
-    fn calculate_tree_size(&self, root: H256) -> u64 {
-        let mut size = 0u64;
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.nodes.get(&hash) {
-                if let Some(ref children) = node.children {
-                    // Internal node - traverse children
-                    stack.extend(children.iter().cloned());
-                } else {
-                    // Leaf chunk - add size
-                    size = size.saturating_add(node.data.len() as u64);
-                }
-            }
-        }
-
-        size
     }
 
     /// Get MMR proof for a leaf, suitable for on-chain verification.
@@ -307,29 +271,6 @@ impl Storage {
             leaf,
             leaf_proof: storage_primitives::MerkleProof { siblings, path },
         })
-    }
-
-    /// Collect all leaf chunks under a root.
-    #[allow(dead_code)]
-    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
-        let mut chunks = Vec::new();
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.nodes.get(&hash) {
-                if let Some(ref children) = node.children {
-                    // Internal node - push children in reverse order
-                    for child in children.iter().rev() {
-                        stack.push(*child);
-                    }
-                } else {
-                    // Leaf chunk
-                    chunks.push(node.data.clone());
-                }
-            }
-        }
-
-        chunks
     }
 
     /// Delete data before a sequence number.

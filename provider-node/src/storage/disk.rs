@@ -21,20 +21,15 @@ const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 /// Bucket state managed by this provider (serialized to disk).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BucketState {
-    /// Current MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// MMR leaves
-    pub leaves: Vec<MmrLeaf>,
-    /// Quota used in bytes
-    pub used_bytes: u64,
-    /// Maximum quota for this bucket
-    pub max_bytes: u64,
+    mmr_root: H256,
+    start_seq: u64,
+    leaves: Vec<MmrLeaf>,
+    used_bytes: u64,
+    max_bytes: u64,
 }
 
 impl BucketState {
-    pub fn new(max_bytes: u64) -> Self {
+    fn new(max_bytes: u64) -> Self {
         Self {
             mmr_root: H256::zero(),
             start_seq: 0,
@@ -44,7 +39,7 @@ impl BucketState {
         }
     }
 
-    pub fn leaf_count(&self) -> u64 {
+    fn leaf_count(&self) -> u64 {
         self.leaves.len() as u64
     }
 }
@@ -295,24 +290,6 @@ impl DiskStorage {
                 None
             }
         }
-    }
-
-    /// Calculate the size of a content tree by traversing stored nodes.
-    fn calculate_tree_size(&self, root: H256) -> u64 {
-        let mut size = 0u64;
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    stack.extend(children.iter().copied());
-                } else {
-                    size = size.saturating_add(node.data.len() as u64);
-                }
-            }
-        }
-
-        size
     }
 
     /// Check which hashes exist.

@@ -183,6 +183,24 @@ pub trait StorageBackend: Send + Sync {
 
     /// Get MMR peaks.
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error>;
+
+    /// Calculate the total data size of a content tree by traversing stored nodes.
+    fn calculate_tree_size(&self, root: H256) -> u64 {
+        let mut size = 0u64;
+        let mut stack = vec![root];
+
+        while let Some(hash) = stack.pop() {
+            if let Some(node) = self.get_node(&hash) {
+                if let Some(ref children) = node.children {
+                    stack.extend(children.iter().copied());
+                } else {
+                    size = size.saturating_add(node.data.len() as u64);
+                }
+            }
+        }
+
+        size
+    }
 }
 
 /// Hex encoding utility (simple implementation).
