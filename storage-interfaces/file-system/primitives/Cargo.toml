@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 # Serialization (std only - for protobuf)
 prost = { version = "0.13", optional = true }
-prost-types = { version = "0.13", optional = true }
 
 # Substrate/Polkadot primitives
 codec = { workspace = true }
@@ -38,7 +37,6 @@ std = [
 	"codec/std",
 	"hex/std",
 	"prost",
-	"prost-types",
 	"scale-info/std",
 	"serde/std",
 	"sp-core/std",

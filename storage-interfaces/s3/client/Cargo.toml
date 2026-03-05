@@ -12,12 +12,8 @@ description = "S3-compatible client SDK for web3-storage"
 s3-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 
-# Codec
-codec = { workspace = true, features = ["std"] }
-
 # Substrate primitives
 sp-core = { workspace = true, features = ["std"] }
-sp-runtime = { workspace = true, features = ["std"] }
 
 # Async/HTTP
 reqwest = { workspace = true }
