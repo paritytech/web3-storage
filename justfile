@@ -97,17 +97,24 @@ start-chain: check build-runtime
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice": build-provider
+# Examples:
+#   just start-provider                                       # inmemory, //Alice, port 3333
+#   just start-provider //Charlie disk 3334 ./provider-data    # disk storage on port 3334
+start-provider SEED="//Alice" MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data": build-provider
     #!/usr/bin/env bash
     echo ""
-    echo "=== Starting Storage Provider Node ==="
+    echo "=== Starting Storage Provider Node ({{MODE}}) ==="
     echo ""
-    echo "Provider health: {{ PROVIDER_URL }}/health"
+    echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
+    EXTRA_ARGS=""
+    if [ "{{MODE}}" = "disk" ]; then
+        EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
+    fi
     SEED="{{SEED}}" \
     CHAIN_RPC="{{ CHAIN_WS }}" \
-    BIND_ADDR="0.0.0.0:{{ PROVIDER_PORT }}" \
-    ./target/release/storage-provider-node
+    BIND_ADDR="0.0.0.0:{{PORT}}" \
+    ./target/release/storage-provider-node --storage-mode "{{MODE}}" $EXTRA_ARGS
 
 # Health check for provider node
 health:
@@ -120,8 +127,11 @@ stats:
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo: papi-setup
-    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# Examples:
+#   just demo                                                       # default: Alice provider, Bob client
+#   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
+demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
 papi-setup:

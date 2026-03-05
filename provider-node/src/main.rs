@@ -2,6 +2,10 @@
 //!
 //! Run with: cargo run -p storage-provider-node
 //!
+//! CLI arguments:
+//!   --storage-mode <inmemory|disk>  Storage backend (default: inmemory)
+//!   --storage-path <path>            Disk storage data directory (default: ./provider-data)
+//!
 //! Environment variables:
 //! - SEED: Seed phrase or derivation path for signing (e.g., "//Alice")
 //! - PROVIDER_ID: Provider account ID (only used if SEED is not set, no signing)
@@ -13,13 +17,36 @@
 //! - REPLICA_SYNC_TIMEOUT: Seconds before sync timeout (default: 300)
 //! - REPLICA_MAX_CONCURRENT: Max concurrent bucket syncs (default: 3)
 
+use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_provider_node::{
-    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage,
+    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, DiskStorage, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, StorageBackend,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+/// Storage mode for the provider node.
+#[derive(Clone, Debug, clap::ValueEnum)]
+enum StorageMode {
+    /// In-memory storage (data lost on restart)
+    Inmemory,
+    /// Persistent disk storage (currently backed by RocksDB, implementation may change)
+    Disk,
+}
+
+/// Storage Provider Node - Off-chain storage server for Web3 Storage.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// Storage backend to use
+    #[arg(long, value_enum, default_value_t = StorageMode::Inmemory)]
+    storage_mode: StorageMode,
+
+    /// Path for persistent data (only used with --storage-mode disk)
+    #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
+    storage_path: String,
+}
 
 #[tokio::main]
 async fn main() {
@@ -32,8 +59,25 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Create storage backend
-    let storage = Arc::new(Storage::new());
+    let cli = Cli::parse();
+
+    // Create storage backend based on CLI argument
+    let storage: Arc<dyn StorageBackend> = match cli.storage_mode {
+        StorageMode::Inmemory => {
+            tracing::info!("Using in-memory storage (data will be lost on restart)");
+            Arc::new(Storage::new())
+        }
+        StorageMode::Disk => {
+            tracing::info!("Using persistent disk storage at: {}", cli.storage_path);
+            match DiskStorage::new(&cli.storage_path) {
+                Ok(disk) => Arc::new(disk),
+                Err(e) => {
+                    tracing::error!("Failed to open disk storage at {}: {}", cli.storage_path, e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    };
 
     // Create provider state - prefer SEED over PROVIDER_ID
     let state = if let Ok(seed) = std::env::var("SEED") {
