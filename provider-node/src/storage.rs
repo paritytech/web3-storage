@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use sp_core::H256;
 use std::collections::HashMap;
-use storage_primitives::{blake2_256, hash_children, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 
 /// A stored node (chunk or internal node).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -488,7 +488,7 @@ pub use hex::{decode as hex_decode, encode as hex_encode};
 mod tests {
     use super::*;
     use crate::StorageBackend;
-    use storage_primitives::{verify_merkle_proof, verify_mmr_proof};
+    use storage_primitives::{hash_children, verify_merkle_proof, verify_mmr_proof};
 
     /// Helper: create a storage, upload chunks, build a padded Merkle tree, and commit.
     fn setup_bucket_with_chunks(chunk_data: &[&[u8]]) -> (Storage, BucketId, H256, H256) {

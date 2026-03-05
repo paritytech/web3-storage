@@ -143,9 +143,6 @@ jobs:
             sleep 2
           done
 
-      - name: Run demo (inmemory provider)
-        run: just demo
-
       - name: Start provider (disk) and wait for health
         run: |
           SEED="//Charlie" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3334" \
@@ -164,7 +161,10 @@ jobs:
             sleep 2
           done
 
-      - name: Run demo (disk provider)
+      - name: Run L0 demo (inmemory provider)
+        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run L0 demo (disk provider)
         run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
