@@ -1,8 +1,9 @@
-//! Storage backend for the provider node.
+//! In-memory storage backend for the provider node.
 //!
 //! This provides a simple in-memory storage implementation.
 //! Production implementations would use disk-based storage.
 
+use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::mmr::Mmr;
 use crate::types::*;
@@ -13,18 +14,9 @@ use sp_core::H256;
 use std::collections::HashMap;
 use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 
-/// A stored node (chunk or internal node).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredNode {
-    /// The raw data
-    pub data: Vec<u8>,
-    /// Child hashes for internal nodes
-    pub children: Option<Vec<H256>>,
-}
-
 /// Bucket state managed by this provider.
 #[derive(Debug, Clone)]
-pub struct BucketState {
+struct BucketState {
     /// Current MMR root
     pub mmr_root: H256,
     /// Start sequence number
@@ -85,7 +77,7 @@ impl Storage {
     }
 
     /// Get bucket state.
-    pub fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
         self.buckets.read().get(&bucket_id).cloned()
     }
 
@@ -385,26 +377,26 @@ impl Default for Storage {
     }
 }
 
-impl crate::StorageBackend for Storage {
-    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), crate::Error> {
+impl StorageBackend for Storage {
+    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         self.init_bucket(bucket_id, max_bytes);
         Ok(())
     }
 
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<crate::BucketInfo> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
         let buckets = self.buckets.read();
-        buckets.get(&bucket_id).map(|state| crate::BucketInfo {
+        buckets.get(&bucket_id).map(|state| BucketInfo {
             mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
         })
     }
 
-    fn list_buckets(&self) -> Vec<crate::types::BucketSummary> {
+    fn list_buckets(&self) -> Vec<BucketSummary> {
         self.list_buckets()
     }
 
-    fn get_bucket_stats(&self) -> Vec<crate::types::BucketStats> {
+    fn get_bucket_stats(&self) -> Vec<BucketStats> {
         self.get_bucket_stats()
     }
 
@@ -422,7 +414,7 @@ impl crate::StorageBackend for Storage {
         expected_hash: H256,
         data: Vec<u8>,
         children: Option<Vec<H256>>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         self.store_node(bucket_id, expected_hash, data, children)
     }
 
@@ -438,7 +430,7 @@ impl crate::StorageBackend for Storage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), crate::Error> {
+    ) -> Result<(H256, u64, Vec<u64>), Error> {
         self.commit(bucket_id, data_roots)
     }
 
@@ -446,7 +438,7 @@ impl crate::StorageBackend for Storage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), crate::Error> {
+    ) -> Result<(H256, u64, u64), Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 
@@ -454,40 +446,18 @@ impl crate::StorageBackend for Storage {
         &self,
         bucket_id: BucketId,
         leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, crate::Error> {
+    ) -> Result<storage_primitives::MmrProof, Error> {
         self.get_mmr_proof(bucket_id, leaf_index)
     }
 
-    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), crate::Error> {
+    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
 }
 
-/// Hex encoding utility (simple implementation).
-mod hex {
-    pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    pub fn decode(s: &str) -> Result<Vec<u8>, &'static str> {
-        let s = s.strip_prefix("0x").unwrap_or(s);
-        if s.len() % 2 != 0 {
-            return Err("invalid hex length");
-        }
-
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "invalid hex"))
-            .collect()
-    }
-}
-
-pub use hex::{decode as hex_decode, encode as hex_encode};
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StorageBackend;
     use storage_primitives::{hash_children, verify_merkle_proof, verify_mmr_proof};
 
     /// Helper: create a storage, upload chunks, build a padded Merkle tree, and commit.

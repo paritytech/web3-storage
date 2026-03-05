@@ -3,8 +3,8 @@
 //! This provides the same interface as the in-memory storage but persists
 //! all data to disk for production use.
 
+use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::storage::StoredNode;
 use crate::types::*;
 use codec::Encode;
 use rocksdb::{Options, DB};
@@ -20,7 +20,7 @@ const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 
 /// Bucket state managed by this provider (serialized to disk).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BucketState {
+struct BucketState {
     /// Current MMR root
     pub mmr_root: H256,
     /// Start sequence number
@@ -99,7 +99,7 @@ impl DiskStorage {
     }
 
     /// Get bucket state (internal, returns full BucketState).
-    pub fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
@@ -487,14 +487,14 @@ impl DiskStorage {
     }
 }
 
-impl crate::StorageBackend for DiskStorage {
-    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), crate::Error> {
+impl StorageBackend for DiskStorage {
+    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
         self.init_bucket(bucket_id, max_bytes)
     }
 
-    fn get_bucket(&self, bucket_id: BucketId) -> Option<crate::BucketInfo> {
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
         let state = DiskStorage::get_bucket(self, bucket_id)?;
-        Some(crate::BucketInfo {
+        Some(BucketInfo {
             mmr_root: state.mmr_root,
             start_seq: state.start_seq,
             leaf_count: state.leaf_count(),
@@ -523,7 +523,7 @@ impl crate::StorageBackend for DiskStorage {
         expected_hash: H256,
         data: Vec<u8>,
         children: Option<Vec<H256>>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         self.store_node(bucket_id, expected_hash, data, children)
     }
 
@@ -539,7 +539,7 @@ impl crate::StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), crate::Error> {
+    ) -> Result<(H256, u64, Vec<u64>), Error> {
         self.commit(bucket_id, data_roots)
     }
 
@@ -547,7 +547,7 @@ impl crate::StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), crate::Error> {
+    ) -> Result<(H256, u64, u64), Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 
@@ -555,11 +555,11 @@ impl crate::StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         leaf_index: u64,
-    ) -> Result<storage_primitives::MmrProof, crate::Error> {
+    ) -> Result<storage_primitives::MmrProof, Error> {
         self.get_mmr_proof(bucket_id, leaf_index)
     }
 
-    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), crate::Error> {
+    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
 }
