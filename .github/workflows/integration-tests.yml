@@ -127,8 +127,10 @@ jobs:
 
       - name: Start provider (inmemory) and wait for health
         run: |
-          SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
-            nohup ./target/release/storage-provider-node --storage-mode inmemory > /tmp/provider.log 2>&1 &
+          nohup ./target/release/storage-provider-node \
+            --dev --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
@@ -145,8 +147,11 @@ jobs:
 
       - name: Start provider (disk) and wait for health
         run: |
-          SEED="//Charlie" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3334" \
-            nohup ./target/release/storage-provider-node --storage-mode disk --storage-path /tmp/provider-data > /tmp/provider-disk.log 2>&1 &
+          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/charlie-key --storage-mode disk --storage-path /tmp/provider-data \
+            --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
+            > /tmp/provider-disk.log 2>&1 &
           echo "Waiting for disk provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3334/health | jq -e '.status' > /dev/null 2>&1; then
