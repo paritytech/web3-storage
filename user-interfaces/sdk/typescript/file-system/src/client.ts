@@ -249,8 +249,6 @@ export class FileSystemClient {
    * Download a file
    */
   async downloadFile(driveId: bigint, path: string): Promise<DownloadResult> {
-    const bucketId = await this.getBucketId(driveId);
-
     // In a full implementation, we would:
     // 1. Look up the file's CID from the directory tree
     // 2. Download by CID

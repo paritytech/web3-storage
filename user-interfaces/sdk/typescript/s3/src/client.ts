@@ -123,7 +123,6 @@ export class S3Client {
       throw new Error("S3BucketCreated event not found");
     }
 
-    const bucketId = events[0].s3_bucket_id;
     return this.headBucket(name);
   }
 
@@ -376,7 +375,7 @@ export class S3Client {
   ): Promise<ListObjectsResponse> {
     this.ensureConnected();
 
-    const bucketInfo = await this.headBucket(bucket);
+    await this.headBucket(bucket);
 
     // In a full implementation, we would iterate over the Objects storage map
     // with prefix filtering. For now, return a simplified response.

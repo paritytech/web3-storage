@@ -18,6 +18,7 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
+use codec::Encode;
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
 use frame_support::{
@@ -46,7 +47,6 @@ use sp_runtime::{
     ApplyExtrinsicResult, MultiSignature, SaturatedConversion,
 };
 use sp_version::RuntimeVersion;
-use codec::Encode;
 
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
