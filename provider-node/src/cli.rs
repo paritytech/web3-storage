@@ -1,17 +1,10 @@
 //! CLI argument parsing for the storage provider node.
-//!
-//! Follows polkadot-sdk style: parameter groups as separate structs composed
-//! via `#[clap(flatten)]`.
 
-use crate::{
-    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, DiskStorage, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, StorageBackend,
-};
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+/// Placeholder provider ID used when no identity is configured.
+pub const DEFAULT_PROVIDER_ID: &str = "0x0000000000000000000000000000000000000000";
 
 /// Storage backend mode.
 #[derive(Clone, Debug, clap::ValueEnum)]
@@ -51,7 +44,7 @@ pub struct StorageParams {
 
     /// Path for persistent data (only used with --storage-mode disk).
     #[arg(long, default_value = "./provider-data", env = "STORAGE_PATH")]
-    pub storage_path: String,
+    pub storage_path: PathBuf,
 }
 
 /// Parameters for network endpoints.
@@ -100,7 +93,7 @@ impl KeyParams {
     ///
     /// Priority:
     /// 1. `--dev` returns `"//Alice"`
-    /// 2. `--keyfile` reads the file contents
+    /// 2. `--keyfile` reads the file contents (with permission checks)
     /// 3. Neither returns `None` (provider-id mode without signing)
     pub fn load_seed(&self) -> Result<Option<String>, String> {
         if self.dev {
@@ -111,36 +104,49 @@ impl KeyParams {
             return Ok(None);
         };
 
-        if !path.exists() {
-            return Err(format!("Keyfile not found: {}", path.display()));
-        }
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(path)
-                .map_err(|e| format!("Cannot read keyfile metadata: {e}"))?;
-            let mode = metadata.permissions().mode();
-            if mode & 0o077 != 0 {
-                return Err(format!(
-                    "Keyfile {} has insecure permissions {:o}. Run: chmod 600 {}",
-                    path.display(),
-                    mode & 0o777,
-                    path.display(),
-                ));
-            }
-        }
-
-        let contents = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read keyfile {}: {e}", path.display()))?;
-        let seed = contents.trim().to_string();
-
-        if seed.is_empty() {
-            return Err(format!("Keyfile {} is empty", path.display()));
-        }
-
-        Ok(Some(seed))
+        read_secret_file(path).map(Some)
     }
+}
+
+/// Read a secret from a file, rejecting insecure permissions on Unix.
+///
+/// Opens the file, checks permissions on the open handle (Unix), and then
+/// reads and trims the contents, and rejects empty files.
+fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open keyfile {}: {e}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = file
+            .metadata()
+            .map_err(|e| format!("Cannot read keyfile metadata: {e}"))?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "Keyfile {} has insecure permissions {:o}. Run: chmod 600 {}",
+                path.display(),
+                mode & 0o777,
+                path.display(),
+            ));
+        }
+    }
+
+    let mut contents = String::new();
+    std::io::BufReader::new(file)
+        .read_to_string(&mut contents)
+        .map_err(|e| format!("Failed to read keyfile {}: {e}", path.display()))?;
+
+    let seed = contents.trim().to_string();
+    if seed.is_empty() {
+        return Err(format!("Keyfile {} is empty", path.display()));
+    }
+
+    Ok(seed)
 }
 
 /// Parameters for the checkpoint coordinator.
@@ -186,144 +192,14 @@ pub struct ReplicaSyncParams {
     pub replica_max_concurrent: usize,
 }
 
-/// Parse CLI arguments, initialize the node, and run the server.
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "storage_provider_node=debug,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
-    let cli = Cli::parse();
-
-    // Create storage backend
-    let storage: Arc<dyn StorageBackend> = match cli.storage.storage_mode {
-        StorageMode::Inmemory => {
-            tracing::info!("Using in-memory storage (data will be lost on restart)");
-            Arc::new(Storage::new())
-        }
-        StorageMode::Disk => {
-            tracing::info!(
-                "Using persistent disk storage at: {}",
-                cli.storage.storage_path
-            );
-            Arc::new(DiskStorage::new(&cli.storage.storage_path)?)
-        }
-    };
-
-    // Resolve provider identity
-    let state = match cli.key.load_seed()? {
-        Some(seed) => {
-            let state = ProviderState::with_seed(storage, &seed)?;
-            tracing::info!("Signing enabled for account: {}", state.provider_id);
-            Arc::new(state)
-        }
-        None => {
-            let provider_id = cli
-                .key
-                .provider_id
-                .clone()
-                .unwrap_or_else(|| "0x0000000000000000000000000000000000000000".to_string());
-            tracing::warn!(
-                "No --keyfile or --dev set, using --provider-id without signing: {}",
-                provider_id
-            );
-            Arc::new(ProviderState::new(storage, provider_id))
-        }
-    };
-
-    let _checkpoint_handle = start_checkpoint_coordinator(&cli, state.clone()).await;
-    let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
-
-    tracing::info!("Starting storage provider node on {}", cli.rpc.bind_addr);
-
-    let listener = tokio::net::TcpListener::bind(&cli.rpc.bind_addr).await?;
-    let app = create_router(state.clone());
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-
-async fn start_checkpoint_coordinator(
-    cli: &Cli,
-    state: Arc<ProviderState>,
-) -> Option<crate::CheckpointCoordinatorHandle> {
-    if !cli.checkpoint.enable_checkpoint_coordinator {
-        return None;
-    }
-
-    let config = CheckpointCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        ..Default::default()
-    };
-
-    let mut coordinator = CheckpointCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Checkpoint coordinator connected to chain");
-
-    match coordinator.start(None).await {
-        Ok(handle) => {
-            tracing::info!("Checkpoint coordinator started");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::error!("Failed to start checkpoint coordinator: {}", e);
-            None
-        }
-    }
-}
-
-async fn start_replica_sync_coordinator(
-    cli: &Cli,
-    state: Arc<ProviderState>,
-) -> Option<crate::ReplicaSyncCoordinatorHandle> {
-    if !cli.replica_sync.enable_replica_sync {
-        return None;
-    }
-
-    let config = ReplicaSyncCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        poll_interval: Duration::from_secs(cli.replica_sync.replica_poll_interval),
-        sync_timeout: Duration::from_secs(cli.replica_sync.replica_sync_timeout),
-        max_concurrent_syncs: cli.replica_sync.replica_max_concurrent,
-        auto_confirm: true,
-    };
-
-    let mut coordinator = ReplicaSyncCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect replica sync coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Replica sync coordinator connected to chain");
-
-    match coordinator.start(None).await {
-        Ok(handle) => {
-            tracing::info!("Replica sync coordinator started");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::error!("Failed to start replica sync coordinator: {}", e);
-            None
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn default_values() {
         let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
         assert!(matches!(cli.storage.storage_mode, StorageMode::Inmemory));
-        assert_eq!(cli.storage.storage_path, "./provider-data");
+        assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
         assert!(!cli.key.dev);
@@ -362,7 +238,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(cli.storage.storage_mode, StorageMode::Disk));
-        assert_eq!(cli.storage.storage_path, "/data");
+        assert_eq!(cli.storage.storage_path, PathBuf::from("/data"));
         assert_eq!(cli.rpc.bind_addr, "127.0.0.1:4444");
         assert_eq!(cli.rpc.chain_rpc, "ws://example.com:9944");
         assert_eq!(
@@ -398,14 +274,12 @@ mod tests {
             dev: false,
         };
         let err = params.load_seed().unwrap_err();
-        assert!(err.contains("not found"), "unexpected error: {err}");
+        assert!(err.contains("Failed to open"), "unexpected error: {err}");
     }
 
     #[test]
     fn load_seed_empty_file() {
-        let dir = std::env::temp_dir().join("provider-cli-test-empty");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("empty-keyfile");
+        let path = std::env::temp_dir().join("cli-test-empty-keyfile");
         std::fs::write(&path, "  \n").unwrap();
 
         #[cfg(unix)]
@@ -415,21 +289,17 @@ mod tests {
         }
 
         let params = KeyParams {
-            keyfile: Some(path.clone()),
+            keyfile: Some(path),
             provider_id: None,
             dev: false,
         };
         let err = params.load_seed().unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn load_seed_from_keyfile() {
-        let dir = std::env::temp_dir().join("provider-cli-test-read");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test-keyfile");
+        let path = std::env::temp_dir().join("cli-test-keyfile");
         std::fs::write(&path, "//Charlie\n").unwrap();
 
         #[cfg(unix)]
@@ -439,13 +309,11 @@ mod tests {
         }
 
         let params = KeyParams {
-            keyfile: Some(path.clone()),
+            keyfile: Some(path),
             provider_id: None,
             dev: false,
         };
         assert_eq!(params.load_seed().unwrap(), Some("//Charlie".to_string()));
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(unix)]
@@ -453,14 +321,12 @@ mod tests {
     fn load_seed_rejects_world_readable() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join("provider-cli-test-perms");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("insecure-keyfile");
+        let path = std::env::temp_dir().join("cli-test-insecure-keyfile");
         std::fs::write(&path, "//Alice").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         let params = KeyParams {
-            keyfile: Some(path.clone()),
+            keyfile: Some(path),
             provider_id: None,
             dev: false,
         };
@@ -469,8 +335,6 @@ mod tests {
             err.contains("insecure permissions"),
             "unexpected error: {err}"
         );
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

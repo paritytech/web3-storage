@@ -12,6 +12,7 @@ pub mod api;
 pub mod challenge_responder;
 pub mod checkpoint_coordinator;
 pub mod cli;
+pub mod command;
 pub mod error;
 pub mod mmr;
 pub mod replica_sync;
