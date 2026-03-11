@@ -158,7 +158,7 @@ pub struct ReplicaSyncParams {
     /// Seconds between replica sync poll checks.
     #[arg(
         long,
-        value_name = "SECS",
+        value_name = "SECONDS",
         default_value_t = 12,
         env = "REPLICA_POLL_INTERVAL"
     )]
@@ -167,7 +167,7 @@ pub struct ReplicaSyncParams {
     /// Seconds before a replica sync operation times out.
     #[arg(
         long,
-        value_name = "SECS",
+        value_name = "SECONDS",
         default_value_t = 300,
         env = "REPLICA_SYNC_TIMEOUT"
     )]
