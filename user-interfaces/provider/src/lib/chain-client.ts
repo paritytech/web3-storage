@@ -361,6 +361,16 @@ export interface OnChainAgreement {
   endBlock: number
   isPrimary: boolean
   status: 'active' | 'expired' | 'terminated'
+  paymentLocked: bigint
+}
+
+export interface OnChainAgreementRequest {
+  bucketId: number
+  requester: string
+  maxBytes: bigint
+  paymentLocked: bigint
+  duration: number
+  expiresAt: number
 }
 
 export interface OnChainCheckpoint {
@@ -417,10 +427,10 @@ export async function getProviderInfo(address: string): Promise<OnChainProviderI
 
     return {
       stake: BigInt(provider.stake?.toString() || '0'),
-      capacity: provider.capacity ? BigInt(provider.capacity.toString()) : undefined,
-      usedCapacity: provider.used_capacity ? BigInt(provider.used_capacity.toString()) : undefined,
-      activeBuckets: provider.active_buckets || 0,
-      registeredAt: provider.registered_at || 0,
+      capacity: provider.settings?.max_capacity ? BigInt(provider.settings.max_capacity.toString()) : undefined,
+      usedCapacity: provider.committed_bytes ? BigInt(provider.committed_bytes.toString()) : undefined,
+      activeBuckets: provider.stats?.agreements_total || 0,
+      registeredAt: provider.stats?.registered_at || 0,
     }
   } catch (error) {
     console.error('Error fetching provider info:', error)
@@ -496,50 +506,109 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
   if (!client || !unsafeApi) throw new Error('Not connected to chain')
 
   try {
-    // Query agreements from storage
-    // The storage structure depends on the pallet design
     const agreements: OnChainAgreement[] = []
 
-    // Try to get agreements from Agreements storage map
     try {
-      const entries = await unsafeApi.query.StorageProvider.Agreements.getEntries()
+      // StorageAgreements is DoubleMap<BucketId, AccountId, StorageAgreement>
+      const entries = await unsafeApi.query.StorageProvider.StorageAgreements.getEntries()
       const currentBlock = blockNumber$.getValue() || 0
 
-      for (const [key, value] of entries) {
+      console.log('[agreements] Got', entries.length, 'StorageAgreements entries, filtering for', address)
+
+      for (const entry of entries) {
+        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
+        console.log('[agreements] Entry key:', JSON.stringify(key, (_, v) => typeof v === 'bigint' ? v.toString() : v), 'value:', JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v))
         if (!value) continue
 
-        // Check if this agreement involves our provider
-        const agreementProvider = value.provider?.toString()
-        if (agreementProvider !== address) continue
+        // key: [bucketId, provider]
+        const bucketId = Number(key[0]) || 0
+        const provider = key[1]?.toString() || ''
 
-        const endBlock = value.end_block || 0
+        // Filter by our provider
+        if (provider !== address) continue
+
+        const expiresAt = value.expires_at || 0
         let status: 'active' | 'expired' | 'terminated' = 'active'
-        if (value.terminated) {
+        if (value.extensions_blocked) {
           status = 'terminated'
-        } else if (currentBlock > endBlock) {
+        } else if (currentBlock > expiresAt && expiresAt > 0) {
           status = 'expired'
         }
 
+        // Determine if primary from role enum
+        const role = value.role
+        const isPrimary = role?.type === 'Primary' || role?.tag === 'Primary' ||
+          (typeof role === 'string' && role === 'Primary') ||
+          (!role?.type && !role?.tag) // default to primary if unknown
+
         agreements.push({
-          id: key[0] || 0,
-          bucketId: value.bucket_id || 0,
-          provider: agreementProvider,
-          user: value.user?.toString() || '',
+          id: bucketId,
+          bucketId,
+          provider,
+          user: value.owner?.toString() || '',
           maxBytes: BigInt(value.max_bytes?.toString() || '0'),
           pricePerByte: BigInt(value.price_per_byte?.toString() || '0'),
-          startBlock: value.start_block || 0,
-          endBlock,
-          isPrimary: value.is_primary ?? true,
+          paymentLocked: BigInt(value.payment_locked?.toString() || '0'),
+          startBlock: value.started_at || 0,
+          endBlock: expiresAt,
+          isPrimary,
           status,
         })
       }
     } catch (e) {
-      console.warn('Could not query agreements:', e)
+      console.warn('Could not query StorageAgreements:', e)
     }
 
     return agreements
   } catch (error) {
     console.error('Error fetching provider agreements:', error)
+    return []
+  }
+}
+
+/**
+ * Get pending agreement requests for a provider
+ */
+export async function getAgreementRequests(address: string): Promise<OnChainAgreementRequest[]> {
+  if (!client || !unsafeApi) throw new Error('Not connected to chain')
+
+  try {
+    const requests: OnChainAgreementRequest[] = []
+
+    try {
+      // AgreementRequests is a DoubleMap: provider -> bucket_id -> request
+      // Fetch all entries and filter by provider, same pattern as getProviderAgreements
+      const entries = await unsafeApi.query.StorageProvider.AgreementRequests.getEntries()
+
+      console.log('[agreementRequests] Got', entries.length, 'AgreementRequests entries, filtering for', address)
+
+      for (const entry of entries) {
+        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
+        console.log('[agreementRequests] Entry key:', JSON.stringify(key, (_, v) => typeof v === 'bigint' ? v.toString() : v), 'value:', JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v))
+        if (!value) continue
+
+        // key structure for full getEntries(): [provider, bucketId]
+        const provider = key[0]?.toString()
+        if (provider !== address) continue
+
+        const bucketId = Number(key[1]) || 0
+
+        requests.push({
+          bucketId,
+          requester: value.requester?.toString() || '',
+          maxBytes: BigInt(value.max_bytes?.toString() || '0'),
+          paymentLocked: BigInt(value.payment_locked?.toString() || '0'),
+          duration: value.duration || 0,
+          expiresAt: value.expires_at || 0,
+        })
+      }
+    } catch (e) {
+      console.warn('Could not query agreement requests:', e)
+    }
+
+    return requests
+  } catch (error) {
+    console.error('Error fetching agreement requests:', error)
     return []
   }
 }
@@ -596,7 +665,8 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       const entries = await unsafeApi.query.StorageProvider.Challenges.getEntries()
       const currentBlock = blockNumber$.getValue() || 0
 
-      for (const [key, value] of entries) {
+      for (const entry of entries) {
+        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
         if (!value) continue
 
         const challengeProvider = value.provider?.toString()
@@ -613,7 +683,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
         }
 
         challenges.push({
-          id: key[0] || 0,
+          id: Number(key[0]) || 0,
           bucketId: value.bucket_id || 0,
           challenger: value.challenger?.toString() || '',
           provider: challengeProvider,

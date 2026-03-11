@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { FileText } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -9,14 +10,23 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table'
-import { useAgreements, useIsRegistered } from '@/state/provider.state'
+import { useAgreements, useAgreementRequests, useIsRegistered, loadProviderData } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
+import { useBlockNumber } from '@/state/chain.state'
 import { formatAddress, formatBytes, formatTokens, formatBlockNumber } from '@/utils/format'
 
 export function Agreements() {
   const selectedAccount = useSelectedAccount()
   const isRegistered = useIsRegistered()
   const agreements = useAgreements()
+  const agreementRequests = useAgreementRequests()
+  const currentBlock = useBlockNumber()
+
+  useEffect(() => {
+    if (selectedAccount?.address) {
+      loadProviderData(selectedAccount.address)
+    }
+  }, [selectedAccount?.address])
 
   if (!selectedAccount) {
     return (
@@ -49,13 +59,21 @@ export function Agreements() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-gray-400">Active</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{activeAgreements.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-400">Pending Requests</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{agreementRequests.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -86,6 +104,57 @@ export function Agreements() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pending Requests */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Pending Requests</CardTitle>
+          <CardDescription>Agreement requests awaiting acceptance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {agreementRequests.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">No pending requests</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bucket</TableHead>
+                  <TableHead>Requester</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Payment</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {agreementRequests.map((req) => {
+                  const isExpired = currentBlock > 0 && req.expiresAt > 0 && currentBlock > req.expiresAt
+                  return (
+                    <TableRow key={`req-${req.bucketId}`}>
+                      <TableCell className="font-mono">#{req.bucketId}</TableCell>
+                      <TableCell>
+                        <span className="font-mono">{formatAddress(req.requester)}</span>
+                      </TableCell>
+                      <TableCell>{formatBytes(Number(req.maxBytes))}</TableCell>
+                      <TableCell>{formatTokens(req.paymentLocked)}</TableCell>
+                      <TableCell>{formatBlockNumber(req.duration)} blocks</TableCell>
+                      <TableCell>#{formatBlockNumber(req.expiresAt)}</TableCell>
+                      <TableCell>
+                        {isExpired ? (
+                          <Badge variant="destructive">Expired</Badge>
+                        ) : (
+                          <Badge variant="warning">Pending</Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Active Agreements */}
       <Card>

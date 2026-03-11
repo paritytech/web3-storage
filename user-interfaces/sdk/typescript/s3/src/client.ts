@@ -2,6 +2,8 @@
  * S3-Compatible Client SDK
  *
  * TypeScript client for the Web3 Storage S3-Compatible Interface.
+ * Bucket operations go through the chain. Object operations go through
+ * the provider's S3 HTTP API.
  */
 
 import { createClient, PolkadotClient } from "polkadot-api";
@@ -100,7 +102,7 @@ export class S3Client {
     }
   }
 
-  // --- Bucket Operations ---
+  // --- Bucket Operations (chain) ---
 
   /**
    * Create a new S3 bucket
@@ -127,7 +129,7 @@ export class S3Client {
   }
 
   /**
-   * Delete an S3 bucket (must be empty)
+   * Delete an S3 bucket
    */
   async deleteBucket(name: string): Promise<void> {
     this.ensureConnected();
@@ -165,8 +167,6 @@ export class S3Client {
       layer0BucketId: bucket.layer0_bucket_id,
       owner: bucket.owner,
       createdAt: bucket.created_at,
-      objectCount: bucket.object_count,
-      totalSize: bucket.total_size,
     };
   }
 
@@ -192,18 +192,16 @@ export class S3Client {
           layer0BucketId: bucket.layer0_bucket_id,
           owner: bucket.owner,
           createdAt: bucket.created_at,
-          objectCount: bucket.object_count,
-          totalSize: bucket.total_size,
         });
       }
     }
     return buckets;
   }
 
-  // --- Object Operations ---
+  // --- Object Operations (provider HTTP API) ---
 
   /**
-   * Upload an object
+   * Upload an object via the provider's S3 HTTP API
    */
   async putObject(
     bucket: string,
@@ -211,141 +209,113 @@ export class S3Client {
     data: Uint8Array,
     options?: PutObjectOptions
   ): Promise<PutObjectResponse> {
-    this.ensureConnected();
     this.validateObjectKey(key);
 
     const bucketInfo = await this.headBucket(bucket);
 
-    // Calculate content hash (CID)
-    const hash = blake2AsU8a(data);
-    const cid = this.toHex(hash);
-    const etag = cid.slice(2, 34); // First 16 bytes as hex
+    const contentType = options?.contentType || "application/octet-stream";
+    const headers: Record<string, string> = {
+      "Content-Type": contentType,
+    };
+    if (options?.metadata) {
+      for (const [k, v] of Object.entries(options.metadata)) {
+        headers[`x-amz-meta-${k}`] = v;
+      }
+    }
 
-    // Upload to provider
-    const response = await fetch(`${this.config.providerUrl}/node`, {
+    const url = `${this.config.providerUrl}/s3/${bucketInfo.layer0BucketId}/object?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketInfo.layer0BucketId),
-        hash: cid,
-        data: this.toBase64(data),
-        children: null,
-      }),
+      headers,
+      body: data,
     });
 
     if (!response.ok) {
       throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
     }
 
-    // Commit to MMR
-    await fetch(`${this.config.providerUrl}/commit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketInfo.layer0BucketId),
-        data_roots: [cid],
-      }),
-    });
-
-    // Update metadata on-chain
-    const contentType = options?.contentType || "application/octet-stream";
-    const metadata: Array<[Uint8Array, Uint8Array]> = [];
-    if (options?.metadata) {
-      for (const [k, v] of Object.entries(options.metadata)) {
-        metadata.push([
-          new TextEncoder().encode(k),
-          new TextEncoder().encode(v),
-        ]);
-      }
-    }
-
-    await this.api!.tx.S3Registry.put_object_metadata({
-      s3_bucket_id: bucketInfo.s3BucketId,
-      key: Binary.fromBytes(new TextEncoder().encode(key)),
-      cid: Binary.fromBytes(hash),
-      size: BigInt(data.length),
-      content_type: Binary.fromBytes(new TextEncoder().encode(contentType)),
-      user_metadata: metadata.map(([k, v]) => [Binary.fromBytes(k), Binary.fromBytes(v)]),
-    }).signAndSubmit(this.signer!);
-
-    return { cid, etag, size: data.length };
+    const result = await response.json();
+    return {
+      cid: result.data_root || result.etag,
+      etag: result.etag,
+      size: result.size || data.length,
+    };
   }
 
   /**
-   * Download an object
+   * Download an object via the provider's S3 HTTP API
    */
   async getObject(bucket: string, key: string): Promise<GetObjectResponse> {
-    this.ensureConnected();
-
-    const metadata = await this.headObject(bucket, key);
     const bucketInfo = await this.headBucket(bucket);
 
-    // Download from provider
-    const response = await fetch(
-      `${this.config.providerUrl}/node?hash=${metadata.cid}&bucket_id=${bucketInfo.layer0BucketId}`
-    );
+    const url = `${this.config.providerUrl}/s3/${bucketInfo.layer0BucketId}/object?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url);
 
+    if (response.status === 404) {
+      throw new Error(`Object not found: ${bucket}/${key}`);
+    }
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status}`);
     }
 
-    const json = await response.json();
-    const data = this.fromBase64(json.data);
+    const data = new Uint8Array(await response.arrayBuffer());
+
+    const metadata: ObjectMetadata = {
+      key,
+      cid: response.headers.get("etag") || "",
+      size: data.length,
+      lastModified: BigInt(response.headers.get("last-modified") || "0"),
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+      etag: response.headers.get("etag") || "",
+      metadata: this.extractAmzMetadata(response.headers),
+    };
 
     return { data, metadata };
   }
 
   /**
-   * Get object metadata without downloading
+   * Get object metadata without downloading (HEAD request)
    */
   async headObject(bucket: string, key: string): Promise<ObjectMetadata> {
-    this.ensureConnected();
-
     const bucketInfo = await this.headBucket(bucket);
 
-    const metadata = await this.api!.query.S3Registry.Objects.getValue(
-      bucketInfo.s3BucketId,
-      Binary.fromBytes(new TextEncoder().encode(key))
-    );
+    const url = `${this.config.providerUrl}/s3/${bucketInfo.layer0BucketId}/object?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url, { method: "HEAD" });
 
-    if (!metadata) {
+    if (response.status === 404) {
       throw new Error(`Object not found: ${bucket}/${key}`);
     }
-
-    const userMetadata: Record<string, string> = {};
-    for (const [k, v] of metadata.user_metadata) {
-      userMetadata[new TextDecoder().decode(k.asBytes())] = new TextDecoder().decode(
-        v.asBytes()
-      );
+    if (!response.ok) {
+      throw new Error(`HEAD failed: ${response.status}`);
     }
 
     return {
       key,
-      cid: this.toHex(metadata.cid.asBytes()),
-      size: Number(metadata.size),
-      lastModified: metadata.last_modified,
-      contentType: new TextDecoder().decode(metadata.content_type.asBytes()),
-      etag: this.toHex(metadata.etag.asBytes()),
-      metadata: userMetadata,
+      cid: response.headers.get("x-amz-data-root") || response.headers.get("etag") || "",
+      size: Number(response.headers.get("content-length") || "0"),
+      lastModified: BigInt(response.headers.get("last-modified") || "0"),
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+      etag: response.headers.get("etag") || "",
+      metadata: this.extractAmzMetadata(response.headers),
     };
   }
 
   /**
-   * Delete an object
+   * Delete an object via the provider's S3 HTTP API
    */
   async deleteObject(bucket: string, key: string): Promise<void> {
-    this.ensureConnected();
-
     const bucketInfo = await this.headBucket(bucket);
 
-    await this.api!.tx.S3Registry.delete_object_metadata({
-      s3_bucket_id: bucketInfo.s3BucketId,
-      key: Binary.fromBytes(new TextEncoder().encode(key)),
-    }).signAndSubmit(this.signer!);
+    const url = `${this.config.providerUrl}/s3/${bucketInfo.layer0BucketId}/object?key=${encodeURIComponent(key)}`;
+    const response = await fetch(url, { method: "DELETE" });
+
+    if (!response.ok) {
+      throw new Error(`Delete failed: ${response.status}`);
+    }
   }
 
   /**
-   * Copy an object
+   * Copy an object (download + re-upload via provider HTTP)
    */
   async copyObject(
     srcBucket: string,
@@ -353,45 +323,51 @@ export class S3Client {
     dstBucket: string,
     dstKey: string
   ): Promise<void> {
-    this.ensureConnected();
-
-    const srcBucketInfo = await this.headBucket(srcBucket);
-    const dstBucketInfo = await this.headBucket(dstBucket);
-
-    await this.api!.tx.S3Registry.copy_object_metadata({
-      src_bucket_id: srcBucketInfo.s3BucketId,
-      src_key: Binary.fromBytes(new TextEncoder().encode(srcKey)),
-      dst_bucket_id: dstBucketInfo.s3BucketId,
-      dst_key: Binary.fromBytes(new TextEncoder().encode(dstKey)),
-    }).signAndSubmit(this.signer!);
+    const srcObj = await this.getObject(srcBucket, srcKey);
+    await this.putObject(dstBucket, dstKey, srcObj.data, {
+      contentType: srcObj.metadata.contentType || undefined,
+      metadata: srcObj.metadata.metadata,
+    });
   }
 
   /**
-   * List objects in a bucket
+   * List objects in a bucket via the provider's S3 HTTP API
    */
   async listObjectsV2(
     bucket: string,
     params?: ListObjectsParams
   ): Promise<ListObjectsResponse> {
-    this.ensureConnected();
+    const bucketInfo = await this.headBucket(bucket);
 
-    await this.headBucket(bucket);
+    const urlParams = new URLSearchParams();
+    if (params?.prefix) urlParams.set("prefix", params.prefix);
+    if (params?.delimiter) urlParams.set("delimiter", params.delimiter);
+    if (params?.maxKeys) urlParams.set("max_keys", params.maxKeys.toString());
+    if (params?.continuationToken) urlParams.set("continuation_token", params.continuationToken);
 
-    // In a full implementation, we would iterate over the Objects storage map
-    // with prefix filtering. For now, return a simplified response.
-    // This would require enumerating the StorageDoubleMap entries.
+    const qs = urlParams.toString();
+    const url = `${this.config.providerUrl}/s3/${bucketInfo.layer0BucketId}/objects${qs ? `?${qs}` : ""}`;
+    const response = await fetch(url);
 
-    const contents: ObjectSummary[] = [];
-    const commonPrefixes: string[] = [];
+    if (!response.ok) {
+      throw new Error(`List failed: ${response.status}`);
+    }
 
-    // Note: Full implementation would iterate Objects storage map
-    // and apply prefix/delimiter filtering
+    const result = await response.json();
+
+    const contents: ObjectSummary[] = (result.objects || []).map((obj: any) => ({
+      key: obj.key,
+      size: obj.size,
+      lastModified: BigInt(obj.last_modified || 0),
+      etag: obj.etag || "",
+    }));
 
     return {
       contents,
-      commonPrefixes,
-      isTruncated: false,
-      keyCount: contents.length,
+      commonPrefixes: result.common_prefixes || [],
+      isTruncated: result.is_truncated || false,
+      keyCount: result.key_count || contents.length,
+      nextContinuationToken: result.next_continuation_token,
     };
   }
 
@@ -421,6 +397,17 @@ export class S3Client {
     if (key.length === 0 || key.length > 1024) {
       throw new Error("Object key must be 1-1024 characters");
     }
+  }
+
+  private extractAmzMetadata(headers: Headers): Record<string, string> {
+    const metadata: Record<string, string> = {};
+    headers.forEach((value, name) => {
+      const lower = name.toLowerCase();
+      if (lower.startsWith("x-amz-meta-")) {
+        metadata[lower.slice("x-amz-meta-".length)] = value;
+      }
+    });
+    return metadata;
   }
 
   private toHex(bytes: Uint8Array): string {

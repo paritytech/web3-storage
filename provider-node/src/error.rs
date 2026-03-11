@@ -42,6 +42,12 @@ pub enum Error {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Object not found: bucket {bucket_id}, key {key}")]
+    ObjectNotFound { bucket_id: u64, key: String },
+
+    #[error("Invalid object key: {0}")]
+    InvalidObjectKey(String),
 }
 
 #[derive(Serialize)]
@@ -125,6 +131,20 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "serialization_error".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::ObjectNotFound { bucket_id, key } => (
+                StatusCode::NOT_FOUND,
+                ErrorResponse {
+                    error: "object_not_found".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "key": key })),
+                },
+            ),
+            Error::InvalidObjectKey(key) => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "invalid_object_key".to_string(),
+                    details: Some(serde_json::json!({ "key": key })),
                 },
             ),
         };

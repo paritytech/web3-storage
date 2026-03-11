@@ -14,11 +14,48 @@ export function formatBalance(balance: bigint, decimals = 12): string {
     return whole.toLocaleString()
   }
 
-  const fractionStr = fraction.toString().padStart(decimals, '0').slice(0, 4)
-  return `${whole.toLocaleString()}.${fractionStr.replace(/0+$/, '')}`
+  const fullFraction = fraction.toString().padStart(decimals, '0')
+  const maxDecimals = whole > 0n ? 4 : decimals
+  const display = fullFraction.slice(0, maxDecimals).replace(/0+$/, '')
+
+  if (!display) {
+    return whole.toLocaleString()
+  }
+
+  return `${whole.toLocaleString()}.${display}`
 }
 
+// SI prefixes for sub-unit amounts (12-decimal token)
+const SI_PREFIXES: { threshold: bigint; divisor: bigint; label: string }[] = [
+  { threshold: 1_000_000_000n, divisor: 1_000_000_000n, label: 'milli' },  // 10^9
+  { threshold: 1_000_000n,     divisor: 1_000_000n,     label: 'micro' },  // 10^6
+  { threshold: 1_000n,         divisor: 1_000n,         label: 'nano' },   // 10^3
+  { threshold: 1n,             divisor: 1n,             label: 'pico' },   // 10^0
+]
+
 export function formatTokens(balance: bigint): string {
+  if (balance === 0n) return '0 UNIT'
+
+  // >= 1 UNIT: use standard decimal format
+  if (balance >= UNIT) {
+    return `${formatBalance(balance)} UNIT`
+  }
+
+  // < 1 UNIT: pick the best SI prefix
+  for (const { threshold, divisor, label } of SI_PREFIXES) {
+    if (balance >= threshold) {
+      const whole = balance / divisor
+      const fraction = balance % divisor
+      if (fraction === 0n) {
+        return `${whole.toLocaleString()} ${label} UNIT`
+      }
+      // Show up to 4 significant fractional digits
+      const fracDigits = Math.log10(Number(divisor)) || 1
+      const fracStr = fraction.toString().padStart(fracDigits, '0').replace(/0+$/, '').slice(0, 4)
+      return `${whole.toLocaleString()}.${fracStr} ${label} UNIT`
+    }
+  }
+
   return `${formatBalance(balance)} UNIT`
 }
 

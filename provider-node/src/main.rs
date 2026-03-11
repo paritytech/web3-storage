@@ -6,18 +6,22 @@
 //! - SEED: Seed phrase or derivation path for signing (e.g., "//Alice")
 //! - PROVIDER_ID: Provider account ID (only used if SEED is not set, no signing)
 //! - BIND_ADDR: Address to bind to (default: 0.0.0.0:3333)
+//! - DATA_DIR: Directory for persistent data (S3 indices, etc.)
 //! - CHAIN_RPC: WebSocket URL for the parachain (default: ws://127.0.0.1:2222)
 //! - ENABLE_CHECKPOINT_COORDINATOR: Set to "true" to enable checkpoint coordination
 //! - ENABLE_REPLICA_SYNC: Set to "true" to enable autonomous replica sync
+//! - DISABLE_AUTO_ACCEPT: Set to "true" to disable auto-accepting agreement requests
 //! - REPLICA_POLL_INTERVAL: Seconds between sync checks (default: 12)
 //! - REPLICA_SYNC_TIMEOUT: Seconds before sync timeout (default: 300)
 //! - REPLICA_MAX_CONCURRENT: Max concurrent bucket syncs (default: 3)
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_provider_node::{
-    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage,
+    create_router, AgreementCoordinator, AgreementCoordinatorConfig, CheckpointCoordinator,
+    CheckpointCoordinatorConfig, ProviderState, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, S3IndexManager, Storage,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -35,9 +39,41 @@ async fn main() {
     // Create storage backend
     let storage = Arc::new(Storage::new());
 
+    // Create S3 index manager with optional persistence
+    let s3_index = if let Ok(data_dir) = std::env::var("DATA_DIR") {
+        let path = PathBuf::from(&data_dir);
+        match S3IndexManager::with_persistence(&path) {
+            Ok(manager) => {
+                match manager.load_from_disk() {
+                    Ok(count) => {
+                        if count > 0 {
+                            tracing::info!("Loaded {} S3 bucket indices from disk", count);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load S3 indices from disk: {}", e);
+                    }
+                }
+                tracing::info!("S3 index persistence enabled at {}", data_dir);
+                manager
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create S3 index persistence at {}: {}",
+                    data_dir,
+                    e
+                );
+                S3IndexManager::new()
+            }
+        }
+    } else {
+        tracing::info!("No DATA_DIR set, S3 indices will be in-memory only");
+        S3IndexManager::new()
+    };
+
     // Create provider state - prefer SEED over PROVIDER_ID
     let state = if let Ok(seed) = std::env::var("SEED") {
-        match ProviderState::with_seed(storage, &seed) {
+        match ProviderState::with_seed_and_index(storage, &seed, s3_index) {
             Ok(state) => {
                 tracing::info!("Signing enabled for account: {}", state.provider_id);
                 Arc::new(state)
@@ -54,7 +90,11 @@ async fn main() {
             "No SEED set, using PROVIDER_ID without signing capability: {}",
             provider_id
         );
-        Arc::new(ProviderState::new(storage, provider_id))
+        Arc::new(ProviderState::new_with_index(
+            storage,
+            provider_id,
+            s3_index,
+        ))
     };
 
     // Build router
@@ -147,6 +187,48 @@ async fn main() {
             }
             Err(e) => {
                 tracing::error!("Failed to connect replica sync coordinator: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Start agreement coordinator by default when SEED is set (signing available)
+    // Disable with DISABLE_AUTO_ACCEPT=true
+    let _agreement_handle = if state.keypair.is_some()
+        && !std::env::var("DISABLE_AUTO_ACCEPT")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false)
+    {
+        let chain_rpc =
+            std::env::var("CHAIN_RPC").unwrap_or_else(|_| "ws://127.0.0.1:2222".to_string());
+        let seed = std::env::var("SEED").ok();
+
+        let config = AgreementCoordinatorConfig {
+            chain_ws_url: chain_rpc,
+            seed,
+            ..Default::default()
+        };
+
+        let mut coordinator = AgreementCoordinator::new(config, state.clone());
+
+        match coordinator.connect().await {
+            Ok(()) => {
+                tracing::info!("Agreement coordinator connected to chain");
+                match coordinator.start().await {
+                    Ok(handle) => {
+                        tracing::info!("Agreement coordinator started");
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to start agreement coordinator: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to connect agreement coordinator: {}", e);
                 None
             }
         }

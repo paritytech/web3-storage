@@ -11,14 +11,17 @@ import {
   getProviderInfo,
   getProviderSettings,
   getProviderAgreements,
+  getAgreementRequests,
   getProviderCheckpoints,
   getProviderChallenges,
   OnChainProviderInfo,
   OnChainProviderSettings,
   OnChainAgreement,
+  OnChainAgreementRequest,
   OnChainCheckpoint,
   OnChainChallenge,
 } from '@/lib/chain-client'
+import { getProviderHttp } from '@/state/network.state'
 
 // Types (matching chain types with some UI additions)
 export interface ProviderInfo {
@@ -74,6 +77,15 @@ export interface Challenge {
   deadline: number
 }
 
+export interface AgreementRequest {
+  bucketId: number
+  requester: string
+  maxBytes: bigint
+  paymentLocked: bigint
+  duration: number
+  expiresAt: number
+}
+
 export interface EarningsSummary {
   totalEarned: bigint
   pendingPayouts: bigint
@@ -84,6 +96,7 @@ export interface EarningsSummary {
 // State subjects
 const providerInfo$ = new BehaviorSubject<ProviderInfo | null>(null)
 const providerSettings$ = new BehaviorSubject<ProviderSettings | null>(null)
+const agreementRequests$ = new BehaviorSubject<AgreementRequest[]>([])
 const agreements$ = new BehaviorSubject<Agreement[]>([])
 const checkpoints$ = new BehaviorSubject<Checkpoint[]>([])
 const challenges$ = new BehaviorSubject<Challenge[]>([])
@@ -112,6 +125,7 @@ const capacityUsage$ = providerInfo$.pipe(
 // React hooks
 export const [useProviderInfo] = bind(providerInfo$, null)
 export const [useProviderSettings] = bind(providerSettings$, null)
+export const [useAgreementRequests] = bind(agreementRequests$, [])
 export const [useAgreements] = bind(agreements$, [])
 export const [useActiveAgreements] = bind(activeAgreements$, [])
 export const [useCheckpoints] = bind(checkpoints$, [])
@@ -153,16 +167,34 @@ export async function loadProviderData(address: string): Promise<void> {
       providerSettings$.next(null)
     }
 
-    // Query agreements, checkpoints, challenges in parallel
-    const [chainAgreements, chainCheckpoints, chainChallenges] = await Promise.all([
+    // Query agreements, requests, checkpoints, challenges in parallel
+    const [chainAgreements, chainRequests, chainCheckpoints, chainChallenges] = await Promise.all([
       getProviderAgreements(address),
+      getAgreementRequests(address),
       getProviderCheckpoints(address),
       getProviderChallenges(address),
     ])
 
     agreements$.next(chainAgreements.map(convertAgreement))
+    agreementRequests$.next(chainRequests.map(convertAgreementRequest))
     checkpoints$.next(chainCheckpoints.map(convertCheckpoint))
     challenges$.next(chainChallenges.map(convertChallenge))
+
+    // Fetch real storage usage from provider node /stats endpoint
+    try {
+      const providerHttp = getProviderHttp()
+      const statsRes = await fetch(`${providerHttp}/stats`)
+      if (statsRes.ok) {
+        const stats = await statsRes.json()
+        if (chainInfo) {
+          const info = convertProviderInfo(address, chainInfo)
+          info.usedCapacity = BigInt(stats.total_bytes || 0)
+          providerInfo$.next(info)
+        }
+      }
+    } catch {
+      // Provider node may not be reachable — ignore
+    }
 
     // Calculate earnings from agreements
     const activeAgreements = chainAgreements.filter((a) => a.status === 'active')
@@ -303,6 +335,7 @@ export async function respondToChallenge(
 export function clearProviderState(): void {
   providerInfo$.next(null)
   providerSettings$.next(null)
+  agreementRequests$.next([])
   agreements$.next([])
   checkpoints$.next([])
   challenges$.next([])
@@ -335,6 +368,17 @@ function convertProviderSettings(chain: OnChainProviderSettings): ProviderSettin
     replicaSyncPrice: chain.replicaSyncPrice,
     acceptingExtensions: chain.acceptingExtensions,
     maxCapacity: chain.maxCapacity,
+  }
+}
+
+function convertAgreementRequest(chain: OnChainAgreementRequest): AgreementRequest {
+  return {
+    bucketId: chain.bucketId,
+    requester: chain.requester,
+    maxBytes: chain.maxBytes,
+    paymentLocked: chain.paymentLocked,
+    duration: chain.duration,
+    expiresAt: chain.expiresAt,
   }
 }
 

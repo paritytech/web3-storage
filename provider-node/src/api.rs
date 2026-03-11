@@ -4,12 +4,13 @@ use crate::checkpoint_coordinator::{
     CheckpointDutyQuery, CheckpointDutyResponse, SignProposalRequest, SignProposalResponse,
 };
 use crate::error::Error;
+use crate::s3_api;
 use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
-    extract::{Query, State},
-    routing::{get, post},
+    extract::{DefaultBodyLimit, Query, State},
+    routing::{get, post, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -51,6 +52,17 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
+        // S3-compatible object storage (key passed as ?key= query param)
+        .route(
+            "/s3/:bucket_id/object",
+            put(s3_api::s3_put_object)
+                .get(s3_api::s3_get_object)
+                .head(s3_api::s3_head_object)
+                .delete(s3_api::s3_delete_object),
+        )
+        .route("/s3/:bucket_id/objects", get(s3_api::s3_list_objects))
+        .route("/s3/:bucket_id/index_root", get(s3_api::s3_index_root))
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)

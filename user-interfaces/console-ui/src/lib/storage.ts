@@ -11,6 +11,13 @@ import { cryptoWaitReady, blake2AsU8a } from "@polkadot/util-crypto";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary } from "polkadot-api";
 
+// Transaction result from best-block watching
+interface TxResult {
+  blockHash: string;
+  blockNumber: number;
+  events: any[];
+}
+
 // Types
 export interface DriveInfo {
   driveId: bigint;
@@ -28,8 +35,6 @@ export interface BucketInfo {
   layer0BucketId: bigint;
   owner: string;
   createdAt: bigint;
-  objectCount: bigint;
-  totalSize: bigint;
 }
 
 export interface UploadResult {
@@ -55,6 +60,13 @@ export interface PutObjectOptions {
   metadata?: Record<string, string>;
 }
 
+export interface S3ObjectInfo {
+  key: string;
+  size: number;
+  lastModified: number;
+  etag: string;
+}
+
 type ParachainApi = TypedApi<typeof parachain>;
 
 /**
@@ -75,9 +87,17 @@ export class StorageClient {
   }
 
   async connect(): Promise<void> {
+    console.log("[StorageClient] Connecting to chain:", this.chainWs);
     await cryptoWaitReady();
     this.client = createClient(getWsProvider(this.chainWs));
-    this.api = this.client.getTypedApi(parachain);
+    console.log("[StorageClient] Client created, getting typed API with parachain descriptor...");
+    try {
+      this.api = this.client.getTypedApi(parachain);
+      console.log("[StorageClient] Typed API ready");
+    } catch (err) {
+      console.error("[StorageClient] Failed to get typed API (descriptor mismatch?):", err);
+      throw err;
+    }
   }
 
   async setSigner(seed: string): Promise<string> {
@@ -116,6 +136,61 @@ export class StorageClient {
     if (!this.signer) throw new Error("Signer not set. Call setSigner() first.");
   }
 
+  /**
+   * Submit a transaction and resolve on best-block inclusion (~6s)
+   * instead of finalization (~12-24s). Matches the Bulletin Chain pattern.
+   */
+  private submitAndWatchBestBlock(tx: any): Promise<TxResult> {
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const handleEvent = (ev: any) => {
+        console.log("[StorageClient] Tx event:", ev.type, ev);
+        if (ev.type === "txBestBlocksState" && ev.found && !resolved) {
+          resolved = true;
+          subscription.unsubscribe();
+          console.log("[StorageClient] Tx included in block:", ev.block.number,
+            "events:", ev.events?.length ?? 0);
+          if (ev.events) {
+            for (const event of ev.events) {
+              console.log("[StorageClient]   Event:", event.type, event.value?.type, event.value?.value);
+            }
+          }
+          resolve({
+            blockHash: ev.block.hash,
+            blockNumber: ev.block.number,
+            events: ev.events || [],
+          });
+        }
+      };
+
+      const handleError = (err: any) => {
+        console.error("[StorageClient] Tx error:", err);
+        console.error("[StorageClient] Tx error details:", JSON.stringify(err, null, 2));
+        if (!resolved) {
+          resolved = true;
+          subscription?.unsubscribe();
+          reject(err);
+        }
+      };
+
+      console.log("[StorageClient] Signing and submitting tx...");
+      const subscription = tx.signSubmitAndWatch(this.signer!).subscribe({
+        next: handleEvent,
+        error: handleError,
+      });
+
+      // Timeout after 2 minutes
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          subscription?.unsubscribe();
+          reject(new Error("Transaction timed out"));
+        }
+      }, 120000);
+    });
+  }
+
   // --- File System (Drive) Operations ---
 
   async createDrive(options: CreateDriveOptions): Promise<bigint> {
@@ -128,7 +203,7 @@ export class StorageClient {
       max_price_per_byte: options.maxPayment,
     });
 
-    const bucketResult = await bucketTx.signAndSubmit(this.signer!);
+    const bucketResult = await this.submitAndWatchBestBlock(bucketTx);
 
     // Extract bucket ID from events
     let bucketId: bigint | null = null;
@@ -153,7 +228,7 @@ export class StorageClient {
       name: options.name ? Binary.fromText(options.name) : undefined,
     });
 
-    const driveResult = await driveTx.signAndSubmit(this.signer!);
+    const driveResult = await this.submitAndWatchBestBlock(driveTx);
 
     // Extract drive ID from events
     for (const event of driveResult.events) {
@@ -225,9 +300,11 @@ export class StorageClient {
   async deleteDrive(driveId: bigint): Promise<void> {
     this.ensureConnected();
 
-    await this.api!.tx.DriveRegistry.delete_drive({
-      drive_id: driveId,
-    }).signAndSubmit(this.signer!);
+    await this.submitAndWatchBestBlock(
+      this.api!.tx.DriveRegistry.delete_drive({
+        drive_id: driveId,
+      })
+    );
   }
 
   async uploadToDrive(
@@ -287,18 +364,48 @@ export class StorageClient {
 
   // --- S3 Operations ---
 
-  async createBucket(name: string, _options: CreateBucketOptions): Promise<BucketInfo> {
+  async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
 
-    // S3 bucket creation only requires name and min_providers
-    // The pallet creates a Layer 0 bucket internally
-    const tx = this.api!.tx.S3Registry.create_s3_bucket({
-      name: Binary.fromText(name),
-      min_providers: 1,
+    console.log("[StorageClient] createBucket:", name, {
+      capacity: options.capacity.toString(),
+      duration: options.duration,
+      maxPayment: options.maxPayment.toString(),
     });
 
-    const result = await tx.signAndSubmit(this.signer!);
+    // S3 bucket creation with automatic provider matching
+    // The pallet creates a Layer 0 bucket and requests agreements with providers
+    const txEntry = this.api!.tx.S3Registry.create_s3_bucket;
+
+    // Check compatibility level before attempting submission
+    try {
+      const level = await txEntry.getCompatibilityLevel();
+      console.log("[StorageClient] S3Registry.create_s3_bucket compatibility level:", level);
+    } catch (err) {
+      console.warn("[StorageClient] Could not check compatibility level:", err);
+    }
+
+    const txArgs = {
+      name: Binary.fromText(name),
+      min_providers: 1, // 1 for local/testnet
+      max_capacity: options.capacity,
+      storage_period: options.duration,
+      max_payment: options.maxPayment,
+    };
+
+    let tx;
+    try {
+      tx = txEntry(txArgs);
+      console.log("[StorageClient] Tx built successfully");
+    } catch (err) {
+      console.error("[StorageClient] Failed to build S3Registry.create_s3_bucket tx:", err);
+      console.error("[StorageClient] This usually means the runtime descriptor is out of date.");
+      console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
+      throw err;
+    }
+
+    const result = await this.submitAndWatchBestBlock(tx);
 
     // Extract bucket ID from events
     let s3BucketId: bigint | null = null;
@@ -322,8 +429,6 @@ export class StorageClient {
       layer0BucketId: layer0BucketId ?? 0n,
       owner: this.signerAddress!,
       createdAt: BigInt(Date.now()),
-      objectCount: 0n,
-      totalSize: 0n,
     };
   }
 
@@ -349,8 +454,6 @@ export class StorageClient {
           layer0BucketId: BigInt(bucket.layer0_bucket_id),
           owner: bucket.owner,
           createdAt: BigInt(bucket.created_at),
-          objectCount: BigInt(bucket.object_count),
-          totalSize: BigInt(bucket.total_size),
         });
       }
     }
@@ -378,8 +481,6 @@ export class StorageClient {
       layer0BucketId: BigInt(bucket.layer0_bucket_id),
       owner: bucket.owner,
       createdAt: BigInt(bucket.created_at),
-      objectCount: BigInt(bucket.object_count),
-      totalSize: BigInt(bucket.total_size),
     };
   }
 
@@ -394,13 +495,15 @@ export class StorageClient {
       throw new Error(`Bucket not found: ${name}`);
     }
 
-    await this.api!.tx.S3Registry.delete_s3_bucket({
-      s3_bucket_id: bucketId,
-    }).signAndSubmit(this.signer!);
+    await this.submitAndWatchBestBlock(
+      this.api!.tx.S3Registry.delete_s3_bucket({
+        s3_bucket_id: bucketId,
+      })
+    );
   }
 
   async putObject(
-    bucketName: string,
+    _bucketName: string,
     key: string,
     data: Uint8Array,
     bucketId: bigint,
@@ -409,63 +512,53 @@ export class StorageClient {
     this.ensureConnected();
     this.validateObjectKey(key);
 
-    const hash = blake2AsU8a(data);
-    const cid = this.toHex(hash);
+    // Upload via S3 endpoint which handles chunking, Merkle tree, MMR commit,
+    // and S3 index update in a single request.
+    const headers: Record<string, string> = {
+      "Content-Type": options?.contentType || "application/octet-stream",
+    };
+    if (options?.metadata) {
+      for (const [k, v] of Object.entries(options.metadata)) {
+        headers[`x-amz-meta-${k}`] = v;
+      }
+    }
 
-    // Upload to provider
-    const response = await fetch(`${this.providerUrl}/node`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketId),
-        hash: cid,
-        data: this.toBase64(data),
-        children: null,
-      }),
-    });
+    const response = await fetch(
+      `${this.providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
+      { method: "PUT", headers, body: data },
+    );
 
     if (!response.ok) {
       throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
     }
 
-    // Commit to MMR
-    await fetch(`${this.providerUrl}/commit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketId),
-        data_roots: [cid],
-      }),
-    });
-
-    // Update metadata on-chain
-    const s3Bucket = await this.headBucket(bucketName);
-    if (!s3Bucket) {
-      throw new Error(`S3 bucket not found: ${bucketName}`);
-    }
-
-    const contentType = options?.contentType || "application/octet-stream";
-    const userMetadata: Array<[Binary, Binary]> = [];
-    if (options?.metadata) {
-      for (const [k, v] of Object.entries(options.metadata)) {
-        userMetadata.push([Binary.fromText(k), Binary.fromText(v)]);
-      }
-    }
-
-    await this.api!.tx.S3Registry.put_object_metadata({
-      s3_bucket_id: s3Bucket.s3BucketId,
-      key: Binary.fromText(key),
-      cid: Binary.fromBytes(hash),
-      size: BigInt(data.length),
-      content_type: Binary.fromText(contentType),
-      user_metadata: userMetadata,
-    }).signAndSubmit(this.signer!);
-
-    return { cid, size: data.length };
+    const result = await response.json();
+    return { cid: result.data_root || result.etag, size: data.length };
   }
 
   async getObject(bucketId: bigint, cid: string): Promise<Uint8Array> {
     return this.downloadByCid(bucketId, cid);
+  }
+
+  async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
+    const params = new URLSearchParams();
+    if (prefix) params.set("prefix", prefix);
+
+    const response = await fetch(
+      `${this.providerUrl}/s3/${Number(bucketId)}/objects?${params.toString()}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`List objects failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return (result.contents || []).map((obj: any) => ({
+      key: obj.key,
+      size: obj.size,
+      lastModified: obj.last_modified * 1000, // Unix seconds → JS millis
+      etag: obj.etag,
+    }));
   }
 
   // --- Provider Health ---

@@ -109,7 +109,6 @@ impl pallet_storage_provider::Config for Test {
 
 impl pallet_s3_registry::Config for Test {
     type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<10000>;
 }
 
 /// Build test externalities.

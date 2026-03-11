@@ -10,14 +10,9 @@ description = "S3-compatible client SDK for web3-storage"
 [dependencies]
 # Internal
 s3-primitives = { workspace = true, features = ["std"] }
-storage-client = { workspace = true }
-
-# Codec
-codec = { workspace = true, features = ["std"] }
 
 # Substrate primitives
 sp-core = { workspace = true, features = ["std"] }
-sp-runtime = { workspace = true, features = ["std"] }
 
 # Async/HTTP
 reqwest = { workspace = true }
@@ -30,8 +25,10 @@ bip39 = "2.0"
 
 # Utilities
 hex = "0.4"
+serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
+urlencoding = "2.1"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "macros"] }

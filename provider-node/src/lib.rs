@@ -8,6 +8,7 @@
 //! - Syncing data between providers (for replicas)
 //! - Coordinating provider-initiated checkpoints
 
+pub mod agreement_coordinator;
 pub mod api;
 pub mod challenge_responder;
 pub mod checkpoint_coordinator;
@@ -16,9 +17,14 @@ pub mod error;
 pub mod mmr;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
+pub mod s3_api;
+pub mod s3_index;
 pub mod storage;
 pub mod types;
 
+pub use agreement_coordinator::{
+    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+};
 pub use api::create_router;
 pub use challenge_responder::{
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
@@ -35,6 +41,7 @@ pub use replica_sync_coordinator::{
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
     SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
+pub use s3_index::S3IndexManager;
 pub use storage::Storage;
 pub use types::*;
 
@@ -49,6 +56,8 @@ pub struct ProviderState {
     pub provider_id: String,
     /// Signing keypair (optional, for dev/testing)
     pub keypair: Option<sr25519::Pair>,
+    /// S3 metadata index
+    pub s3_index: S3IndexManager,
 }
 
 impl ProviderState {
@@ -57,6 +66,21 @@ impl ProviderState {
             storage,
             provider_id,
             keypair: None,
+            s3_index: S3IndexManager::new(),
+        }
+    }
+
+    /// Create with an S3 index manager (for persistence support).
+    pub fn new_with_index(
+        storage: Arc<Storage>,
+        provider_id: String,
+        s3_index: S3IndexManager,
+    ) -> Self {
+        Self {
+            storage,
+            provider_id,
+            keypair: None,
+            s3_index,
         }
     }
 
@@ -71,6 +95,26 @@ impl ProviderState {
             storage,
             provider_id,
             keypair: Some(keypair),
+            s3_index: S3IndexManager::new(),
+        })
+    }
+
+    /// Create with a seed and an S3 index manager.
+    pub fn with_seed_and_index(
+        storage: Arc<Storage>,
+        seed: &str,
+        s3_index: S3IndexManager,
+    ) -> Result<Self, String> {
+        let keypair = sr25519::Pair::from_string(seed, None)
+            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
+
+        let provider_id = keypair.public().to_ss58check();
+
+        Ok(Self {
+            storage,
+            provider_id,
+            keypair: Some(keypair),
+            s3_index,
         })
     }
 

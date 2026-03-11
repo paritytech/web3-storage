@@ -14,10 +14,6 @@ export interface BucketInfo {
   owner: string;
   /** Block number when created */
   createdAt: bigint;
-  /** Number of objects in the bucket */
-  objectCount: bigint;
-  /** Total size of all objects */
-  totalSize: bigint;
 }
 
 /** S3 Object metadata */

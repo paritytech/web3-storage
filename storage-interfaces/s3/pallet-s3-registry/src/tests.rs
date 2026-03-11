@@ -1,14 +1,18 @@
 //! Tests for S3 Registry pallet.
 
-use crate::{mock::*, Error, Objects, S3Buckets};
+use crate::{mock::*, Error, S3Buckets};
 use frame_support::{assert_noop, assert_ok, BoundedVec};
-use s3_primitives::MaxObjectKeyLen;
-use sp_core::H256;
 
-/// Helper to register a provider.
+/// Default test parameters for bucket creation.
+const DEFAULT_CAPACITY: u64 = 1_000_000_000; // 1 GB
+const DEFAULT_PERIOD: u64 = 100; // blocks
+const DEFAULT_PAYMENT: u128 = 1_000_000_000_000_000; // generous budget
+
+/// Helper to register a provider with a unique multiaddr.
 fn register_provider(who: u64) {
+    let addr = format!("/ip4/127.0.0.1/tcp/{}", 3000 + who);
     let multiaddr: BoundedVec<u8, frame_support::traits::ConstU32<128>> =
-        b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap();
+        addr.into_bytes().try_into().unwrap();
     let public_key: BoundedVec<u8, frame_support::traits::ConstU32<64>> =
         b"01234567890123456789012345678901"
             .to_vec()
@@ -37,35 +41,144 @@ fn register_provider(who: u64) {
 #[test]
 fn create_s3_bucket_works() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        register_provider(2);
 
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
             1, // min_providers
+            DEFAULT_CAPACITY,
+            DEFAULT_PERIOD,
+            DEFAULT_PAYMENT,
         ));
 
         let bucket = S3Buckets::<Test>::get(0).unwrap();
         assert_eq!(bucket.name.as_slice(), b"my-bucket");
         assert_eq!(bucket.owner, 1);
-        assert_eq!(bucket.object_count, 0);
         // Layer 0 bucket should have been created automatically
         assert!(pallet_storage_provider::Buckets::<Test>::get(bucket.layer0_bucket_id).is_some());
     });
 }
 
 #[test]
-fn create_s3_bucket_fails_invalid_name() {
+fn create_s3_bucket_auto_requests_agreement() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        register_provider(2);
+
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"my-bucket".to_vec(),
+            1,
+            DEFAULT_CAPACITY,
+            DEFAULT_PERIOD,
+            DEFAULT_PAYMENT,
+        ));
+
+        let bucket = S3Buckets::<Test>::get(0).unwrap();
+        // Provider 2 should have a pending agreement request for this bucket
+        assert!(pallet_storage_provider::AgreementRequests::<Test>::get(
+            2,
+            bucket.layer0_bucket_id
+        )
+        .is_some());
+    });
+}
+
+#[test]
+fn create_s3_bucket_with_multiple_providers() {
+    new_test_ext().execute_with(|| {
+        // Register 2 providers on accounts that have balance (2 and 3)
+        register_provider(2);
+        register_provider(3);
+
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"multi-provider-bucket".to_vec(),
+            2, // min_providers
+            DEFAULT_CAPACITY,
+            DEFAULT_PERIOD,
+            DEFAULT_PAYMENT,
+        ));
+
+        let bucket = S3Buckets::<Test>::get(0).unwrap();
+        // Both providers should have pending agreement requests for this bucket
+        assert!(pallet_storage_provider::AgreementRequests::<Test>::get(
+            2,
+            bucket.layer0_bucket_id
+        )
+        .is_some());
+        assert!(pallet_storage_provider::AgreementRequests::<Test>::get(
+            3,
+            bucket.layer0_bucket_id
+        )
+        .is_some());
+    });
+}
+
+#[test]
+fn create_s3_bucket_fails_no_providers() {
+    new_test_ext().execute_with(|| {
+        // No providers registered
+        assert_noop!(
+            S3Registry::create_s3_bucket(
+                RuntimeOrigin::signed(1),
+                b"my-bucket".to_vec(),
+                1,
+                DEFAULT_CAPACITY,
+                DEFAULT_PERIOD,
+                DEFAULT_PAYMENT,
+            ),
+            Error::<Test>::NoProvidersAvailable
+        );
+    });
+}
+
+#[test]
+fn create_s3_bucket_fails_insufficient_providers() {
+    new_test_ext().execute_with(|| {
+        // Only 1 provider registered, but requesting 3
+        register_provider(2);
 
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"ab".to_vec(), 1),
+            S3Registry::create_s3_bucket(
+                RuntimeOrigin::signed(1),
+                b"my-bucket".to_vec(),
+                3, // requesting 3 providers
+                DEFAULT_CAPACITY,
+                DEFAULT_PERIOD,
+                DEFAULT_PAYMENT,
+            ),
+            Error::<Test>::InsufficientProviders
+        );
+    });
+}
+
+#[test]
+fn create_s3_bucket_fails_invalid_name() {
+    new_test_ext().execute_with(|| {
+        register_provider(2);
+
+        assert_noop!(
+            S3Registry::create_s3_bucket(
+                RuntimeOrigin::signed(1),
+                b"ab".to_vec(),
+                1,
+                DEFAULT_CAPACITY,
+                DEFAULT_PERIOD,
+                DEFAULT_PAYMENT,
+            ),
             Error::<Test>::InvalidBucketName
         );
 
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"MyBucket".to_vec(), 1),
+            S3Registry::create_s3_bucket(
+                RuntimeOrigin::signed(1),
+                b"MyBucket".to_vec(),
+                1,
+                DEFAULT_CAPACITY,
+                DEFAULT_PERIOD,
+                DEFAULT_PAYMENT,
+            ),
             Error::<Test>::InvalidBucketName
         );
     });
@@ -74,16 +187,26 @@ fn create_s3_bucket_fails_invalid_name() {
 #[test]
 fn create_s3_bucket_fails_duplicate_name() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        register_provider(2);
 
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
             1,
+            DEFAULT_CAPACITY,
+            DEFAULT_PERIOD,
+            DEFAULT_PAYMENT,
         ));
 
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"my-bucket".to_vec(), 1),
+            S3Registry::create_s3_bucket(
+                RuntimeOrigin::signed(1),
+                b"my-bucket".to_vec(),
+                1,
+                DEFAULT_CAPACITY,
+                DEFAULT_PERIOD,
+                DEFAULT_PAYMENT,
+            ),
             Error::<Test>::BucketNameExists
         );
     });
@@ -92,158 +215,19 @@ fn create_s3_bucket_fails_duplicate_name() {
 #[test]
 fn delete_s3_bucket_works() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        register_provider(2);
 
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
             1,
+            DEFAULT_CAPACITY,
+            DEFAULT_PERIOD,
+            DEFAULT_PAYMENT,
         ));
 
         assert_ok!(S3Registry::delete_s3_bucket(RuntimeOrigin::signed(1), 0));
 
         assert!(S3Buckets::<Test>::get(0).is_none());
-    });
-}
-
-#[test]
-fn delete_s3_bucket_fails_not_empty() {
-    new_test_ext().execute_with(|| {
-        register_provider(1);
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"my-bucket".to_vec(),
-            1,
-        ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"test.txt".to_vec(),
-            cid,
-            100,
-            b"text/plain".to_vec(),
-            vec![],
-        ));
-
-        assert_noop!(
-            S3Registry::delete_s3_bucket(RuntimeOrigin::signed(1), 0),
-            Error::<Test>::BucketNotEmpty
-        );
-    });
-}
-
-#[test]
-fn put_object_metadata_works() {
-    new_test_ext().execute_with(|| {
-        register_provider(1);
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"my-bucket".to_vec(),
-            1,
-        ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"folder/test.txt".to_vec(),
-            cid,
-            1234,
-            b"text/plain".to_vec(),
-            vec![(b"x-custom".to_vec(), b"value".to_vec())],
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"folder/test.txt".to_vec().try_into().unwrap();
-        let metadata = Objects::<Test>::get(0, &key).unwrap();
-        assert_eq!(metadata.cid, cid);
-        assert_eq!(metadata.size, 1234);
-
-        let bucket = S3Buckets::<Test>::get(0).unwrap();
-        assert_eq!(bucket.object_count, 1);
-        assert_eq!(bucket.total_size, 1234);
-    });
-}
-
-#[test]
-fn delete_object_metadata_works() {
-    new_test_ext().execute_with(|| {
-        register_provider(1);
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"my-bucket".to_vec(),
-            1,
-        ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"test.txt".to_vec(),
-            cid,
-            100,
-            b"text/plain".to_vec(),
-            vec![],
-        ));
-
-        assert_ok!(S3Registry::delete_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"test.txt".to_vec(),
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"test.txt".to_vec().try_into().unwrap();
-        assert!(Objects::<Test>::get(0, &key).is_none());
-
-        let bucket = S3Buckets::<Test>::get(0).unwrap();
-        assert_eq!(bucket.object_count, 0);
-        assert_eq!(bucket.total_size, 0);
-    });
-}
-
-#[test]
-fn copy_object_metadata_works() {
-    new_test_ext().execute_with(|| {
-        register_provider(1);
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"bucket1".to_vec(),
-            1,
-        ));
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"bucket2".to_vec(),
-            1,
-        ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"source.txt".to_vec(),
-            cid,
-            100,
-            b"text/plain".to_vec(),
-            vec![],
-        ));
-
-        assert_ok!(S3Registry::copy_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"source.txt".to_vec(),
-            1,
-            b"copy.txt".to_vec(),
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"copy.txt".to_vec().try_into().unwrap();
-        let metadata = Objects::<Test>::get(1, &key).unwrap();
-        assert_eq!(metadata.cid, cid);
-        assert_eq!(metadata.size, 100);
     });
 }

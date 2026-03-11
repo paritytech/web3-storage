@@ -80,9 +80,6 @@ const eventStyles: Record<string, { icon: typeof Activity; color: string; bg: st
   // S3Registry events
   S3BucketCreated: { icon: Archive, color: "text-cyan-500", bg: "bg-cyan-500/10" },
   S3BucketDeleted: { icon: Archive, color: "text-red-500", bg: "bg-red-500/10" },
-  ObjectPut: { icon: Database, color: "text-blue-500", bg: "bg-blue-500/10" },
-  ObjectDeleted: { icon: Database, color: "text-red-500", bg: "bg-red-500/10" },
-  ObjectCopied: { icon: Database, color: "text-purple-500", bg: "bg-purple-500/10" },
 };
 
 const defaultStyle = { icon: Activity, color: "text-gray-500", bg: "bg-gray-500/10" };

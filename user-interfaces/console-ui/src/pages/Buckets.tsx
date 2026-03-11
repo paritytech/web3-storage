@@ -21,15 +21,7 @@ import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes } from "@/lib/utils";
-import type { BucketInfo } from "@/lib/storage";
-
-interface S3Object {
-  key: string;
-  size: number;
-  lastModified: number;
-  etag: string;
-  cid: string;
-}
+import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
 
 export default function Buckets() {
   const { connected } = useChain();
@@ -40,16 +32,18 @@ export default function Buckets() {
     createBucket,
     refreshBuckets,
     deleteBucket: sdkDeleteBucket,
+    listObjects,
   } = useStorage();
 
   const [buckets, setBuckets] = useState<BucketInfo[]>([]);
   const [newBucketName, setNewBucketName] = useState("");
   const [capacity, setCapacity] = useState("1000000000"); // 1 GB default
-  const [duration, setDuration] = useState("500");
+  const [duration, setDuration] = useState("10000");
   const [maxPayment, setMaxPayment] = useState("1000000000000000"); // 1000 tokens
   const [creating, setCreating] = useState(false);
   const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
-  const [objects, setObjects] = useState<S3Object[]>([]);
+  const [objects, setObjects] = useState<S3ObjectInfo[]>([]);
+  const [loadingObjects, setLoadingObjects] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Sync chain buckets to local state
@@ -101,13 +95,12 @@ export default function Buckets() {
 
     setCreating(true);
     try {
-      const bucket = await createBucket(newBucketName, {
+      await createBucket(newBucketName, {
         capacity: BigInt(capacity),
         duration: parseInt(duration, 10),
         maxPayment: BigInt(maxPayment),
       });
 
-      setBuckets([...buckets, bucket]);
       setNewBucketName("");
       toast({ title: "Success", description: `Bucket "${newBucketName}" created` });
     } catch (err) {
@@ -141,8 +134,16 @@ export default function Buckets() {
 
   const handleSelectBucket = async (bucket: BucketInfo) => {
     setSelectedBucket(bucket);
-    // TODO: Load objects from SDK
-    setObjects([]);
+    setLoadingObjects(true);
+    try {
+      const objs = await listObjects(bucket.layer0BucketId);
+      setObjects(objs);
+    } catch (err) {
+      console.error("Failed to list objects:", err);
+      setObjects([]);
+    } finally {
+      setLoadingObjects(false);
+    }
   };
 
   if (!connected) {
@@ -254,7 +255,7 @@ export default function Buckets() {
                   type="number"
                   value={duration}
                   onChange={(e) => setDuration(e.target.value)}
-                  placeholder="500"
+                  placeholder="10000"
                 />
               </div>
               <div className="space-y-2">
@@ -311,19 +312,7 @@ export default function Buckets() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Objects</p>
-                    <p className="font-medium">{bucket.objectCount.toString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Size</p>
-                    <p className="font-medium">
-                      {formatBytes(Number(bucket.totalSize))}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   <p>S3 ID: {bucket.s3BucketId.toString()}</p>
                   <p>Layer0 ID: {bucket.layer0BucketId.toString()}</p>
                 </div>
@@ -346,7 +335,12 @@ export default function Buckets() {
             <CardDescription>Browse objects in this bucket</CardDescription>
           </CardHeader>
           <CardContent>
-            {objects.length === 0 ? (
+            {loadingObjects ? (
+              <div className="rounded-lg border p-4 text-center text-muted-foreground">
+                <RefreshCw className="mx-auto h-8 w-8 mb-2 animate-spin opacity-50" />
+                <p>Loading objects...</p>
+              </div>
+            ) : objects.length === 0 ? (
               <div className="rounded-lg border p-4 text-center text-muted-foreground">
                 <File className="mx-auto h-8 w-8 mb-2 opacity-50" />
                 <p>This bucket is empty</p>

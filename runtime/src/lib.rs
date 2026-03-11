@@ -502,7 +502,6 @@ impl pallet_drive_registry::Config for Runtime {
 
 impl pallet_s3_registry::Config for Runtime {
     type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<100000>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

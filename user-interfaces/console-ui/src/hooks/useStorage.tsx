@@ -14,6 +14,7 @@ import {
   type CreateBucketOptions,
   type UploadResult,
   type PutObjectOptions,
+  type S3ObjectInfo,
 } from "@/lib/storage";
 import { useChain } from "./useChain";
 
@@ -41,6 +42,7 @@ interface StorageState {
   deleteBucket: (name: string) => Promise<void>;
   putObject: (bucketName: string, key: string, data: Uint8Array, bucketId: bigint, options?: PutObjectOptions) => Promise<UploadResult>;
   getObject: (bucketId: bigint, cid: string) => Promise<Uint8Array>;
+  listObjects: (bucketId: bigint, prefix?: string) => Promise<S3ObjectInfo[]>;
 
   // Provider
   checkProviderHealth: () => Promise<boolean>;
@@ -60,10 +62,13 @@ export function StorageProvider({ children }: { children: ReactNode }) {
   // Initialize client when chain is connected
   useEffect(() => {
     if (connected && chainEndpoint && providerEndpoint) {
+      console.log("[useStorage] Initializing client:", { chainEndpoint, providerEndpoint });
       const newClient = new StorageClient(chainEndpoint, providerEndpoint);
       newClient.connect().then(() => {
+        console.log("[useStorage] Client connected successfully");
         setClient(newClient);
       }).catch((err) => {
+        console.error("[useStorage] Client connection failed:", err);
         setError(err instanceof Error ? err.message : "Failed to connect storage client");
       });
     } else {
@@ -102,7 +107,8 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const driveId = await client.createDrive(options);
-      await refreshDrives();
+      // Skip refreshDrives — caller already has the driveId from events.
+      // Refresh happens on next page visit via useEffect.
       return driveId;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create drive");
@@ -185,11 +191,22 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
+      console.log("[useStorage] createBucket:", name, options);
       const bucket = await client.createBucket(name, options);
-      await refreshBuckets();
+      console.log("[useStorage] createBucket success:", bucket);
+      // Skip refreshBuckets — caller already has BucketInfo from events.
+      // Add to local state directly for immediate UI update.
+      setBuckets((prev) => [...prev, bucket]);
       return bucket;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create bucket");
+      console.error("[useStorage] createBucket failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[useStorage] Error message:", msg);
+      if (msg.includes("incompatible") || msg.includes("runtime")) {
+        console.error("[useStorage] HINT: Runtime descriptor mismatch. The chain runtime may have changed.");
+        console.error("[useStorage] Fix: cd user-interfaces/console-ui && npx papi update");
+      }
+      setError(msg || "Failed to create bucket");
       throw err;
     } finally {
       setLoading(false);
@@ -261,6 +278,11 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
   }, [client]);
 
+  const listObjects = useCallback(async (bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> => {
+    if (!client) throw new Error("Client not connected");
+    return client.listObjects(bucketId, prefix);
+  }, [client]);
+
   // --- Provider Health ---
 
   const checkProviderHealth = useCallback(async (): Promise<boolean> => {
@@ -288,6 +310,7 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         deleteBucket,
         putObject,
         getObject,
+        listObjects,
         checkProviderHealth,
       }}
     >
