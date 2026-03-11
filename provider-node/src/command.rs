@@ -52,7 +52,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_string());
             tracing::warn!(
-                "No --keyfile or --dev set, using --provider-id without signing: {}",
+                "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
             Arc::new(ProviderState::new(storage, provider_id))

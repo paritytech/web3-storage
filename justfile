@@ -98,7 +98,7 @@ start-chain: check build-runtime
 
 # Start the storage provider node
 # Examples:
-#   just start-provider                                       # inmemory, dev key (//Alice), port 3333
+#   just start-provider                                       # inmemory, //Alice key, port 3333
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
 start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
@@ -112,9 +112,13 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
     fi
-    KEY_ARGS="--dev"
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"
+    else
+        ALICE_KEY=$(mktemp)
+        echo "//Alice" > "$ALICE_KEY" && chmod 600 "$ALICE_KEY"
+        KEY_ARGS="--keyfile $ALICE_KEY"
+        trap "rm -f $ALICE_KEY" EXIT
     fi
     ./target/release/storage-provider-node \
         $KEY_ARGS \

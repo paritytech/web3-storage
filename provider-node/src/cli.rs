@@ -82,24 +82,15 @@ pub struct KeyParams {
     /// signing capability.
     #[arg(long, value_name = "ACCOUNT", env = "PROVIDER_ID")]
     pub provider_id: Option<String>,
-
-    /// Use a development key (equivalent to --keyfile containing "//Alice").
-    #[arg(long, conflicts_with = "keyfile")]
-    pub dev: bool,
 }
 
 impl KeyParams {
     /// Resolve the signing seed from CLI parameters.
     ///
     /// Priority:
-    /// 1. `--dev` returns `"//Alice"`
-    /// 2. `--keyfile` reads the file contents (with permission checks)
-    /// 3. Neither returns `None` (provider-id mode without signing)
+    /// 1. `--keyfile` reads the file contents (with permission checks)
+    /// 2. No keyfile returns `None` (provider-id mode without signing)
     pub fn load_seed(&self) -> Result<Option<String>, String> {
-        if self.dev {
-            return Ok(Some("//Alice".to_string()));
-        }
-
         let Some(ref path) = self.keyfile else {
             return Ok(None);
         };
@@ -202,7 +193,6 @@ mod tests {
         assert_eq!(cli.storage.storage_path, PathBuf::from("./provider-data"));
         assert_eq!(cli.rpc.bind_addr, "0.0.0.0:3333");
         assert_eq!(cli.rpc.chain_rpc, "ws://127.0.0.1:2222");
-        assert!(!cli.key.dev);
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.checkpoint.enable_checkpoint_coordinator);
@@ -253,25 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn dev_flag() {
-        let cli = Cli::try_parse_from(["storage-provider-node", "--dev"]).unwrap();
-        assert!(cli.key.dev);
-        assert_eq!(cli.key.load_seed().unwrap(), Some("//Alice".to_string()));
-    }
-
-    #[test]
-    fn dev_conflicts_with_keyfile() {
-        let result =
-            Cli::try_parse_from(["storage-provider-node", "--dev", "--keyfile", "/tmp/key"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn load_seed_missing_file() {
         let params = KeyParams {
             keyfile: Some(PathBuf::from("/nonexistent/path/to/keyfile")),
             provider_id: None,
-            dev: false,
         };
         let err = params.load_seed().unwrap_err();
         assert!(err.contains("Failed to open"), "unexpected error: {err}");
@@ -291,7 +266,6 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
-            dev: false,
         };
         let err = params.load_seed().unwrap_err();
         assert!(err.contains("empty"), "unexpected error: {err}");
@@ -311,7 +285,6 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
-            dev: false,
         };
         assert_eq!(params.load_seed().unwrap(), Some("//Charlie".to_string()));
     }
@@ -328,7 +301,6 @@ mod tests {
         let params = KeyParams {
             keyfile: Some(path),
             provider_id: None,
-            dev: false,
         };
         let err = params.load_seed().unwrap_err();
         assert!(
@@ -338,11 +310,10 @@ mod tests {
     }
 
     #[test]
-    fn load_seed_none_without_keyfile_or_dev() {
+    fn load_seed_none_without_keyfile() {
         let params = KeyParams {
             keyfile: None,
             provider_id: None,
-            dev: false,
         };
         assert_eq!(params.load_seed().unwrap(), None);
     }
