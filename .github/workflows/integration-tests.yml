@@ -89,7 +89,7 @@ jobs:
 
       - name: Start chain and wait for blocks
         run: |
-          nohup .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
+          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml > /tmp/zombienet.log 2>&1 &
           ZOMBIE_PID=$!
           echo "Waiting for zombienet to set up nodes..."
           sleep 15
