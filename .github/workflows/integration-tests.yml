@@ -125,10 +125,13 @@ jobs:
             sleep 5
           done
 
-      - name: Start provider and wait for health
+      - name: Start provider (inmemory) and wait for health
         run: |
-          SEED="//Alice" CHAIN_RPC="ws://127.0.0.1:2222" BIND_ADDR="0.0.0.0:3333" \
-            nohup ./target/release/storage-provider-node > /tmp/provider.log 2>&1 &
+          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/alice-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
@@ -143,17 +146,35 @@ jobs:
             sleep 2
           done
 
-      - name: Run demo
-        run: just demo
+      - name: Start provider (disk) and wait for health
+        run: |
+          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/charlie-key --storage-mode disk --storage-path /tmp/provider-data \
+            --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
+            > /tmp/provider-disk.log 2>&1 &
+          echo "Waiting for disk provider HTTP server..."
+          for i in $(seq 1 60); do
+            if curl -s http://127.0.0.1:3334/health | jq -e '.status' > /dev/null 2>&1; then
+              echo "Disk provider is healthy (attempt $i)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout: disk provider did not become healthy"
+              cat /tmp/provider-disk.log || true
+              exit 1
+            fi
+            sleep 2
+          done
 
-      - name: Build file system client
-        run: cargo build --release -p file-system-client --examples
+      - name: Run L0 demo (inmemory provider)
+        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run L0 demo (disk provider)
+        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
         run: just fs-demo-ci
-
-      - name: Build S3 client
-        run: cargo build --release -p s3-client --examples
 
       - name: Run S3 integration test
         run: just s3-demo-ci
@@ -173,6 +194,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
+            /tmp/provider-disk.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/*-plain.json

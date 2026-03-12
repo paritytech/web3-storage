@@ -9,34 +9,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table'
-import { useCheckpoints, useIsRegistered } from '@/state/provider.state'
-import { useSelectedAccount } from '@/state/wallet.state'
+import { useCheckpoints } from '@/state/provider.state'
+import { RequireProvider } from '@/components/RequireProvider'
 import { formatBlockNumber, formatRelativeTime, formatAddress } from '@/utils/format'
 
 export function Checkpoints() {
-  const selectedAccount = useSelectedAccount()
-  const isRegistered = useIsRegistered()
+  return (
+    <RequireProvider icon={CheckCircle} pageName="checkpoints">
+      <CheckpointsContent />
+    </RequireProvider>
+  )
+}
+
+function CheckpointsContent() {
   const checkpoints = useCheckpoints()
-
-  if (!selectedAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <CheckCircle className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to view checkpoints</p>
-      </div>
-    )
-  }
-
-  if (!isRegistered) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <CheckCircle className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Not Registered</h2>
-        <p className="text-gray-500">Register as a provider to view checkpoints</p>
-      </div>
-    )
-  }
 
   // Group checkpoints by bucket
   const checkpointsByBucket = checkpoints.reduce((acc, cp) => {

@@ -323,7 +323,7 @@ impl CheckpointCoordinator {
             window: 0, // Would calculate from current block
             mmr_root: bucket.mmr_root,
             start_seq: bucket.start_seq,
-            leaf_count: bucket.leaf_count(),
+            leaf_count: bucket.leaf_count,
             is_leader: true, // Would calculate based on window and provider index
             peer_endpoints: vec![], // Would get from chain
             interval: 100,

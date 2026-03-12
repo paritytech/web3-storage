@@ -5,40 +5,25 @@ import { Progress } from '@/components/ui/Progress'
 import {
   useEarnings,
   useActiveAgreements,
-  useIsRegistered,
   useProviderInfo,
 } from '@/state/provider.state'
-import { useSelectedAccount } from '@/state/wallet.state'
+import { RequireProvider } from '@/components/RequireProvider'
 import { useBlockNumber } from '@/state/chain.state'
 import { formatTokens, formatBytes, formatBlockNumber } from '@/utils/format'
 
 export function Earnings() {
-  const selectedAccount = useSelectedAccount()
-  const isRegistered = useIsRegistered()
+  return (
+    <RequireProvider icon={Coins} pageName="earnings">
+      <EarningsContent />
+    </RequireProvider>
+  )
+}
+
+function EarningsContent() {
   const earnings = useEarnings()
   const activeAgreements = useActiveAgreements()
   const providerInfo = useProviderInfo()
   const currentBlock = useBlockNumber()
-
-  if (!selectedAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Coins className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to view your earnings</p>
-      </div>
-    )
-  }
-
-  if (!isRegistered) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Coins className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Not Registered</h2>
-        <p className="text-gray-500">Register as a provider to view earnings</p>
-      </div>
-    )
-  }
 
   // Calculate agreement progress for each active agreement
   const agreementProgress = activeAgreements.map((agreement) => {

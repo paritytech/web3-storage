@@ -168,7 +168,7 @@ async fn upload_node(
         .transpose()?;
 
     // Initialize bucket if needed
-    state.storage.init_bucket(request.bucket_id, u64::MAX);
+    state.storage.init_bucket(request.bucket_id, u64::MAX)?;
 
     // Store node
     state
@@ -305,7 +305,7 @@ async fn get_commitment(
         bucket_id: query.bucket_id,
         mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
-        leaf_count: bucket.leaf_count(),
+        leaf_count: bucket.leaf_count,
         provider_signature: signature,
     }))
 }
@@ -324,7 +324,7 @@ async fn get_checkpoint_signature(
         .get_bucket(query.bucket_id)
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
-    let leaf_count = bucket.leaf_count();
+    let leaf_count = bucket.leaf_count;
 
     // Sign with real leaf_count for on-chain checkpoint verification
     let payload = CommitmentPayload::new(
@@ -536,7 +536,7 @@ async fn sign_checkpoint_proposal(
     // We agree if MMR roots match and sequence numbers are compatible
     let agreed = bucket.mmr_root == proposed_root
         && bucket.start_seq == request.start_seq
-        && bucket.leaf_count() == request.leaf_count;
+        && bucket.leaf_count == request.leaf_count;
 
     if !agreed {
         return Ok(Json(SignProposalResponse {
@@ -589,13 +589,13 @@ async fn get_checkpoint_duty(
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
     // We're ready if we have data committed
-    let ready = bucket.leaf_count() > 0;
+    let ready = bucket.leaf_count > 0;
 
     Ok(Json(CheckpointDutyResponse {
         bucket_id: query.bucket_id,
         mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
-        leaf_count: bucket.leaf_count(),
+        leaf_count: bucket.leaf_count,
         ready,
     }))
 }
@@ -648,7 +648,7 @@ async fn get_replica_sync_status(
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
         local_mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
-        local_leaf_count: bucket.leaf_count(),
+        local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
         syncing: false,        // Would check coordinator state
     }))

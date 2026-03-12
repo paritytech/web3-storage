@@ -11,9 +11,7 @@ description = "Parachain runtime for scalable Web3 storage"
 # Internal
 storage-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
-file-system-primitives = { workspace = true }
 pallet-drive-registry = { workspace = true }
-s3-primitives = { workspace = true }
 pallet-s3-registry = { workspace = true }
 
 # Parity codec
@@ -80,11 +78,9 @@ substrate-wasm-builder = { workspace = true, optional = true }
 default = ["std"]
 std = [
 	"codec/std",
-	"file-system-primitives/std",
 	"pallet-drive-registry/std",
 	"pallet-s3-registry/std",
 	"pallet-storage-provider/std",
-	"s3-primitives/std",
 	"scale-info/std",
 	"storage-primitives/std",
 	# Substrate

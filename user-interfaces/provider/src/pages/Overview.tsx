@@ -12,10 +12,10 @@ import {
   useEarnings,
   useCapacityUsage,
   useIsProviderLoading,
-  useIsRegistered,
   loadProviderData,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
+import { RequireProvider } from '@/components/RequireProvider'
 import { formatBytes, formatTokens, formatDuration } from '@/utils/format'
 
 function StatCard({
@@ -54,14 +54,6 @@ function StatCard({
 
 export function Overview() {
   const selectedAccount = useSelectedAccount()
-  const providerInfo = useProviderInfo()
-  const settings = useProviderSettings()
-  const activeAgreements = useActiveAgreements()
-  const pendingChallenges = usePendingChallenges()
-  const earnings = useEarnings()
-  const capacityUsage = useCapacityUsage()
-  const isLoading = useIsProviderLoading()
-  const isRegistered = useIsRegistered()
 
   useEffect(() => {
     if (selectedAccount?.address) {
@@ -69,38 +61,26 @@ export function Overview() {
     }
   }, [selectedAccount?.address])
 
-  if (!selectedAccount) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Server className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-500">Connect a wallet to view your provider dashboard</p>
-      </div>
-    )
-  }
+  return (
+    <RequireProvider icon={Server} pageName="your provider dashboard">
+      <OverviewContent />
+    </RequireProvider>
+  )
+}
+
+function OverviewContent() {
+  const providerInfo = useProviderInfo()
+  const settings = useProviderSettings()
+  const activeAgreements = useActiveAgreements()
+  const pendingChallenges = usePendingChallenges()
+  const earnings = useEarnings()
+  const capacityUsage = useCapacityUsage()
+  const isLoading = useIsProviderLoading()
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
         <Spinner size="lg" />
-      </div>
-    )
-  }
-
-  if (!isRegistered) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <Server className="h-16 w-16 text-gray-600 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300 mb-2">Not Registered</h2>
-        <p className="text-gray-500 mb-4">
-          This account is not registered as a storage provider
-        </p>
-        <a
-          href="/registration"
-          className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
-        >
-          Register as Provider
-        </a>
       </div>
     )
   }

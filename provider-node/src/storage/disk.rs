@@ -3,6 +3,7 @@
 //! This provides the same interface as the in-memory storage but persists
 //! all data to disk for production use.
 
+use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::types::*;
 use codec::Encode;
@@ -17,32 +18,18 @@ const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
 
-/// A stored node (chunk or internal node).
+/// Bucket state managed by this provider (serialized to disk).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredNode {
-    /// The raw data
-    pub data: Vec<u8>,
-    /// Child hashes for internal nodes
-    pub children: Option<Vec<H256>>,
-}
-
-/// Bucket state managed by this provider.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BucketState {
-    /// Current MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// MMR leaves
-    pub leaves: Vec<MmrLeaf>,
-    /// Quota used in bytes
-    pub used_bytes: u64,
-    /// Maximum quota for this bucket
-    pub max_bytes: u64,
+struct BucketState {
+    mmr_root: H256,
+    start_seq: u64,
+    leaves: Vec<MmrLeaf>,
+    used_bytes: u64,
+    max_bytes: u64,
 }
 
 impl BucketState {
-    pub fn new(max_bytes: u64) -> Self {
+    fn new(max_bytes: u64) -> Self {
         Self {
             mmr_root: H256::zero(),
             start_seq: 0,
@@ -52,7 +39,7 @@ impl BucketState {
         }
     }
 
-    pub fn leaf_count(&self) -> u64 {
+    fn leaf_count(&self) -> u64 {
         self.leaves.len() as u64
     }
 }
@@ -106,12 +93,18 @@ impl DiskStorage {
         Ok(())
     }
 
-    /// Get bucket state.
-    pub fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
+    /// Get bucket state (internal, returns full BucketState).
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketState> {
         let cf = self.db.cf_handle(CF_BUCKETS)?;
         let key = bucket_id.to_le_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        bincode::deserialize(&value).ok()
+        match bincode::deserialize(&value) {
+            Ok(state) => Some(state),
+            Err(e) => {
+                tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
+                None
+            }
+        }
     }
 
     /// Update bucket state.
@@ -131,31 +124,72 @@ impl DiskStorage {
         Ok(())
     }
 
-    /// List all buckets.
-    pub fn list_buckets(&self) -> Vec<BucketSummary> {
+    /// Iterate over all buckets, applying a mapping function to each.
+    fn iter_buckets<T>(&self, f: impl Fn(BucketId, &BucketState) -> T) -> Vec<T> {
         let cf = match self.db.cf_handle(CF_BUCKETS) {
             Some(cf) => cf,
             None => return vec![],
         };
 
-        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
-        let mut summaries = Vec::new();
-
-        for (key, value) in iter.flatten() {
-            if key.len() == 8 {
-                let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
-                if let Ok(state) = bincode::deserialize::<BucketState>(&value) {
-                    summaries.push(BucketSummary {
-                        bucket_id,
-                        mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
-                        start_seq: state.start_seq,
-                        leaf_count: state.leaf_count(),
-                    });
+        self.db
+            .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+            .flatten()
+            .filter_map(|(key, value)| {
+                if key.len() != 8 {
+                    return None;
                 }
-            }
-        }
+                let bucket_id = u64::from_le_bytes(key[..8].try_into().unwrap());
+                match bincode::deserialize::<BucketState>(&value) {
+                    Ok(state) => Some(f(bucket_id, &state)),
+                    Err(e) => {
+                        tracing::warn!(bucket_id, error = %e, "Failed to deserialize bucket state");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
 
-        summaries
+    /// List all buckets.
+    pub fn list_buckets(&self) -> Vec<BucketSummary> {
+        self.iter_buckets(|bucket_id, state| BucketSummary {
+            bucket_id,
+            mmr_root: format!("0x{}", hex::encode(state.mmr_root.as_bytes())),
+            start_seq: state.start_seq,
+            leaf_count: state.leaf_count(),
+        })
+    }
+
+    /// Get storage statistics per bucket.
+    pub fn get_bucket_stats(&self) -> Vec<BucketStats> {
+        self.iter_buckets(|bucket_id, state| BucketStats {
+            bucket_id,
+            leaf_count: state.leaf_count(),
+            node_count: 0, // Would need per-bucket tracking
+            bytes_stored: state.used_bytes,
+        })
+    }
+
+    /// Get total node count.
+    pub fn total_nodes(&self) -> u64 {
+        let cf = match self.db.cf_handle(CF_NODES) {
+            Some(cf) => cf,
+            None => return 0,
+        };
+        self.db
+            .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+            .flatten()
+            .count() as u64
+    }
+
+    /// Get total bytes stored across all buckets.
+    ///
+    /// Sums per-bucket `used_bytes` from CF_BUCKETS instead of scanning all nodes,
+    /// since each bucket already tracks its byte usage.
+    pub fn total_bytes(&self) -> u64 {
+        self.iter_buckets(|_, state| state.used_bytes)
+            .into_iter()
+            .sum()
     }
 
     /// Store a node (chunk or internal node).
@@ -182,19 +216,22 @@ impl DiskStorage {
                 .cf_handle(CF_NODES)
                 .ok_or_else(|| Error::Storage("Nodes CF not found".to_string()))?;
 
-            for child_hash in child_hashes {
-                let key = child_hash.as_bytes();
-                if self
-                    .db
-                    .get_cf(&cf_nodes, key)
-                    .map_err(|e| Error::Storage(e.to_string()))?
-                    .is_none()
-                {
-                    return Err(Error::ChildrenMissing(vec![format!(
-                        "0x{}",
-                        hex::encode(child_hash.as_bytes())
-                    )]));
-                }
+            let missing: Vec<String> = child_hashes
+                .iter()
+                .filter(|h| {
+                    **h != H256::zero()
+                        && self
+                            .db
+                            .get_cf(&cf_nodes, h.as_bytes())
+                            .ok()
+                            .flatten()
+                            .is_none()
+                })
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
+                .collect();
+
+            if !missing.is_empty() {
+                return Err(Error::ChildrenMissing(missing));
             }
         }
 
@@ -246,25 +283,13 @@ impl DiskStorage {
         let cf = self.db.cf_handle(CF_NODES)?;
         let key = hash.as_bytes();
         let value = self.db.get_cf(&cf, key).ok()??;
-        bincode::deserialize(&value).ok()
-    }
-
-    /// Calculate the size of a content tree by traversing stored nodes.
-    fn calculate_tree_size(&self, root: H256) -> u64 {
-        let mut size = 0u64;
-        let mut stack = vec![root];
-
-        while let Some(hash) = stack.pop() {
-            if let Some(node) = self.get_node(&hash) {
-                if let Some(ref children) = node.children {
-                    stack.extend(children.iter().copied());
-                } else {
-                    size = size.saturating_add(node.data.len() as u64);
-                }
+        match bincode::deserialize(&value) {
+            Ok(node) => Some(node),
+            Err(e) => {
+                tracing::warn!(hash = %format!("0x{}", hex::encode(hash.as_bytes())), error = %e, "Failed to deserialize node");
+                None
             }
         }
-
-        size
     }
 
     /// Check which hashes exist.
@@ -362,16 +387,6 @@ impl DiskStorage {
         Ok((bucket.mmr_root, start_seq, leaf_indices))
     }
 
-    /// Get chunk at a specific index within a data root.
-    pub fn get_chunk_at_index(
-        &self,
-        _data_root: H256,
-        _chunk_index: u64,
-    ) -> Result<(Vec<u8>, Vec<H256>), Error> {
-        // Simplified implementation
-        Err(Error::Storage("Not implemented".to_string()))
-    }
-
     /// Delete data before a given sequence number.
     pub fn delete_before(
         &self,
@@ -406,7 +421,7 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         leaf_index: u64,
-    ) -> Result<(MmrLeaf, Vec<H256>), Error> {
+    ) -> Result<storage_primitives::MmrProof, Error> {
         let bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
@@ -414,7 +429,8 @@ impl DiskStorage {
         let leaf = bucket
             .leaves
             .get(leaf_index as usize)
-            .ok_or(Error::Storage("Leaf not found".to_string()))?;
+            .ok_or(Error::NodeNotFound(format!("leaf_{leaf_index}")))?
+            .clone();
 
         // Build MMR and generate proof
         let mut mmr = crate::mmr::Mmr::new();
@@ -422,11 +438,15 @@ impl DiskStorage {
             mmr.push(blake2_256(&l.encode()));
         }
 
-        let proof = mmr
-            .proof(leaf_index)
-            .ok_or(Error::Storage("Failed to generate proof".to_string()))?;
+        let (siblings, path, peaks) = mmr
+            .proof_with_path(leaf_index)
+            .ok_or(Error::NodeNotFound(format!("mmr_proof_{leaf_index}")))?;
 
-        Ok((leaf.clone(), proof.peaks))
+        Ok(storage_primitives::MmrProof {
+            peaks,
+            leaf,
+            leaf_proof: storage_primitives::MerkleProof { siblings, path },
+        })
     }
 
     /// Get MMR peaks.
@@ -441,5 +461,82 @@ impl DiskStorage {
         }
 
         Ok((mmr.root(), mmr.peaks()))
+    }
+}
+
+impl StorageBackend for DiskStorage {
+    fn init_bucket(&self, bucket_id: BucketId, max_bytes: u64) -> Result<(), Error> {
+        self.init_bucket(bucket_id, max_bytes)
+    }
+
+    fn get_bucket(&self, bucket_id: BucketId) -> Option<BucketInfo> {
+        let state = DiskStorage::get_bucket(self, bucket_id)?;
+        Some(BucketInfo {
+            mmr_root: state.mmr_root,
+            start_seq: state.start_seq,
+            leaf_count: state.leaf_count(),
+        })
+    }
+
+    fn list_buckets(&self) -> Vec<BucketSummary> {
+        self.list_buckets()
+    }
+
+    fn get_bucket_stats(&self) -> Vec<BucketStats> {
+        self.get_bucket_stats()
+    }
+
+    fn total_nodes(&self) -> u64 {
+        self.total_nodes()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes()
+    }
+
+    fn store_node(
+        &self,
+        bucket_id: BucketId,
+        expected_hash: H256,
+        data: Vec<u8>,
+        children: Option<Vec<H256>>,
+    ) -> Result<(), Error> {
+        self.store_node(bucket_id, expected_hash, data, children)
+    }
+
+    fn get_node(&self, hash: &H256) -> Option<StoredNode> {
+        self.get_node(hash)
+    }
+
+    fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>) {
+        self.check_exists(bucket_id, hashes)
+    }
+
+    fn commit(
+        &self,
+        bucket_id: BucketId,
+        data_roots: Vec<H256>,
+    ) -> Result<(H256, u64, Vec<u64>), Error> {
+        self.commit(bucket_id, data_roots)
+    }
+
+    fn delete_before(
+        &self,
+        bucket_id: BucketId,
+        new_start_seq: u64,
+    ) -> Result<(H256, u64, u64), Error> {
+        self.delete_before(bucket_id, new_start_seq)
+    }
+
+    fn get_mmr_proof(
+        &self,
+        bucket_id: BucketId,
+        leaf_index: u64,
+    ) -> Result<storage_primitives::MmrProof, Error> {
+        self.get_mmr_proof(bucket_id, leaf_index)
+    }
+
+    fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
+        self.get_mmr_peaks(bucket_id)
     }
 }
