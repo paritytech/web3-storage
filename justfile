@@ -97,17 +97,35 @@ start-chain: check build-runtime
     .bin/zombienet spawn zombienet.toml
 
 # Start the storage provider node
-start-provider SEED="//Alice": build-provider
+# Examples:
+#   just start-provider                                       # inmemory, //Alice key, port 3333
+#   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
+#   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     echo ""
-    echo "=== Starting Storage Provider Node ==="
+    echo "=== Starting Storage Provider Node ({{MODE}}) ==="
     echo ""
-    echo "Provider health: {{ PROVIDER_URL }}/health"
+    echo "Provider health: http://127.0.0.1:{{PORT}}/health"
     echo ""
-    SEED="{{SEED}}" \
-    CHAIN_RPC="{{ CHAIN_WS }}" \
-    BIND_ADDR="0.0.0.0:{{ PROVIDER_PORT }}" \
-    ./target/release/storage-provider-node
+    EXTRA_ARGS=""
+    if [ "{{MODE}}" = "disk" ]; then
+        EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
+    fi
+    if [ -n "{{KEYFILE}}" ]; then
+        KEY_ARGS="--keyfile {{KEYFILE}}"
+    else
+        ALICE_KEY=$(mktemp)
+        echo "//Alice" > "$ALICE_KEY" && chmod 600 "$ALICE_KEY"
+        KEY_ARGS="--keyfile $ALICE_KEY"
+        trap "rm -f $ALICE_KEY" EXIT
+    fi
+    ./target/release/storage-provider-node \
+        $KEY_ARGS \
+        --storage-mode "{{MODE}}" \
+        --bind-addr "0.0.0.0:{{PORT}}" \
+        --chain-rpc "{{ CHAIN_WS }}" \
+        $EXTRA_ARGS
 
 # Health check for provider node
 health:
@@ -120,8 +138,11 @@ stats:
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.
 # Requires: npm install in examples/papi/ and descriptors generated (just papi-setup).
-demo: papi-setup
-    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# Examples:
+#   just demo                                                       # default: Alice provider, Bob client
+#   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
+demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
 papi-setup:
@@ -219,9 +240,10 @@ fs-integration-test:
     else
         echo ""
         echo "Starting provider node..."
-        PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
-        CHAIN_RPC=ws://127.0.0.1:9944 \
-        cargo run --release -p storage-provider-node > /tmp/provider.log 2>&1 &
+        cargo run --release -p storage-provider-node -- \
+            --provider-id 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --chain-rpc ws://127.0.0.1:9944 \
+            > /tmp/provider.log 2>&1 &
         PROVIDER_PID=$!
         trap "kill $PROVIDER_PID 2>/dev/null || true; kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
 
@@ -376,15 +398,14 @@ s3-test-all:
     echo "✅ All S3 tests passed!"
 
 # Run S3 CI integration test (used by CI pipeline)
-s3-demo-ci CHAIN_WS="ws://127.0.0.1:2222" PROVIDER_URL="http://127.0.0.1:3333":
+s3-demo-ci:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running S3 CI Integration Test"
-    echo "  Chain: {{CHAIN_WS}}"
-    echo "  Provider: {{PROVIDER_URL}}"
+    echo "  Chain: {{ CHAIN_WS }}"
+    echo "  Provider: {{ PROVIDER_URL }}"
     echo ""
-    cd storage-interfaces/s3/client
-    cargo run --release --example ci_integration_test "{{CHAIN_WS}}" "{{PROVIDER_URL}}"
+    cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 
 # Build S3 components only

@@ -9,10 +9,16 @@
  *
  * Prerequisites:
  *   - Parachain running at ws://127.0.0.1:2222
- *   - Provider node running at http://127.0.0.1:3333
+ *   - Provider node running at the specified URL
  *   - Descriptors generated: npm run papi:generate
  *
- * Usage: node full-flow.js [chain_ws] [provider_url]
+ * Usage: node full-flow.js [chain_ws] [provider_url] [provider_seed] [client_seed]
+ *
+ * Arguments:
+ *   chain_ws       - WebSocket URL for parachain (default: ws://127.0.0.1:2222)
+ *   provider_url   - HTTP URL for provider node (default: http://127.0.0.1:3333)
+ *   provider_seed  - Provider identity seed (default: //Alice)
+ *   client_seed    - Client/challenger identity seed (default: //Bob)
  */
 
 import { createClient } from "polkadot-api";
@@ -30,7 +36,8 @@ import assert from "node:assert";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const BUCKET_ID = 0n; // First bucket ID (auto-incremented from 0)
+const PROVIDER_SEED = process.argv[4] || "//Alice";
+const CLIENT_SEED = process.argv[5] || "//Bob";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,73 +92,78 @@ async function providerFetch(path, opts = {}) {
 // Steps
 // ---------------------------------------------------------------------------
 
-async function registerProvider(api, alice) {
-  const existing = await api.query.StorageProvider.Providers.getValue(alice.address);
+async function registerProvider(api, provider) {
+  const existing = await api.query.StorageProvider.Providers.getValue(provider.address);
   if (existing) {
     console.log("  Provider already registered");
     return;
   }
-  console.log("  Registering provider (Alice)...");
-  const multiaddr = new TextEncoder().encode("/ip4/127.0.0.1/tcp/3333");
+  console.log("  Registering provider (%s)...", PROVIDER_SEED);
+  // Use the provider URL port as part of the multiaddr
+  const providerUrlObj = new URL(PROVIDER_URL);
+  const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${providerUrlObj.port}`);
   await api.tx.StorageProvider.register_provider({
     multiaddr: Binary.fromBytes(multiaddr),
-    public_key: Binary.fromBytes(alice.publicKey),
+    public_key: Binary.fromBytes(provider.publicKey),
     stake: 1_000_000_000_000_000n, // 1000 tokens
-  }).signAndSubmit(alice.signer);
+  }).signAndSubmit(provider.signer);
   console.log("  Provider registered");
 }
 
-async function createBucket(api, bob) {
-  const existing = await api.query.StorageProvider.Buckets.getValue(BUCKET_ID);
-  if (existing) {
-    console.log("  Bucket already exists");
-    return;
-  }
+async function createBucket(api, client) {
   console.log("  Creating bucket...");
-  await api.tx.StorageProvider.create_bucket({
+  const result = await api.tx.StorageProvider.create_bucket({
     min_providers: 1,
-  }).signAndSubmit(bob.signer);
-  console.log("  Bucket created");
+  }).signAndSubmit(client.signer);
+
+  // Extract bucket ID from BucketCreated event
+  const events = api.event.StorageProvider.BucketCreated.filter(result.events);
+  if (events.length === 0) {
+    throw new Error("No BucketCreated event found");
+  }
+  const bucketId = events[0].bucket_id;
+  console.log("  Bucket created with ID:", bucketId);
+  return bucketId;
 }
 
-async function createAgreement(api, alice, bob) {
+async function createAgreement(api, provider, client, bucketId) {
   const existing = await api.query.StorageProvider.StorageAgreements.getValue(
-    BUCKET_ID,
-    alice.address
+    bucketId,
+    provider.address
   );
   if (existing) {
     console.log("  Agreement already exists");
     return;
   }
-  console.log("  Requesting agreement (Bob)...");
+  console.log("  Requesting agreement (%s)...", CLIENT_SEED);
   await api.tx.StorageProvider.request_primary_agreement({
-    bucket_id: BUCKET_ID,
-    provider: alice.address,
+    bucket_id: bucketId,
+    provider: provider.address,
     max_bytes: 1073741824n, // 1 GB
     duration: 100_000,
     max_payment: 100_000_000_000n,
-  }).signAndSubmit(bob.signer);
+  }).signAndSubmit(client.signer);
   console.log("  Agreement requested");
 
-  console.log("  Accepting agreement (Alice)...");
+  console.log("  Accepting agreement (%s)...", PROVIDER_SEED);
   await api.tx.StorageProvider.accept_agreement({
-    bucket_id: BUCKET_ID,
-  }).signAndSubmit(alice.signer);
+    bucket_id: bucketId,
+  }).signAndSubmit(provider.signer);
   console.log("  Agreement accepted");
 }
 
-async function uploadData(api) {
+async function uploadData(api, bucketId) {
   const data = new TextEncoder().encode(
-    `Hello, Web3 Storage! [${new Date().toISOString()}]`
+    `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`
   );
   const chunkHash = blake2AsU8a(data);
   const chunkHashHex = toHex(chunkHash);
 
-  console.log("  Uploading chunk (%d bytes)...", data.length);
+  console.log("  Uploading chunk (%d bytes) to bucket %s...", data.length, bucketId);
   await providerFetch("/node", {
     method: "PUT",
     body: {
-      bucket_id: Number(BUCKET_ID),
+      bucket_id: Number(bucketId),
       hash: chunkHashHex,
       data: Buffer.from(data).toString("base64"),
       children: null,
@@ -162,7 +174,7 @@ async function uploadData(api) {
   const commitResp = await providerFetch("/commit", {
     method: "POST",
     body: {
-      bucket_id: Number(BUCKET_ID),
+      bucket_id: Number(bucketId),
       data_roots: [chunkHashHex],
     },
   });
@@ -189,24 +201,24 @@ async function uploadData(api) {
   };
 }
 
-async function challengeOffchain(api, alice, bob, upload) {
+async function challengeOffchain(api, provider, client, upload, bucketId) {
   console.log("  Submitting challenge_offchain with:");
-  console.log("    bucket_id:", BUCKET_ID);
-  console.log("    provider:", alice.address);
+  console.log("    bucket_id:", bucketId);
+  console.log("    provider:", provider.address);
   console.log("    mmr_root:", upload.mmrRoot);
   console.log("    start_seq:", upload.startSeq);
   console.log("    leaf_index:", upload.leafIndex);
   console.log("    provider_signature:", upload.providerSignature.slice(0, 20) + "...");
 
   const result = await api.tx.StorageProvider.challenge_offchain({
-    bucket_id: BUCKET_ID,
-    provider: alice.address,
+    bucket_id: bucketId,
+    provider: provider.address,
     mmr_root: Binary.fromBytes(hexToBytes(upload.mmrRoot)),
     start_seq: BigInt(upload.startSeq),
     leaf_index: BigInt(upload.leafIndex),
     chunk_index: 0n,
     provider_signature: Enum("Sr25519", Binary.fromBytes(hexToBytes(upload.providerSignature))),
-  }).signAndSubmit(bob.signer);
+  }).signAndSubmit(client.signer);
 
   // Check for extrinsic failure
   const failedEvents = api.event.System.ExtrinsicFailed.filter(result.events);
@@ -224,32 +236,32 @@ async function challengeOffchain(api, alice, bob, upload) {
   return challengeId;
 }
 
-async function submitCheckpoint(api, alice, bob) {
+async function submitCheckpoint(api, provider, client, bucketId) {
   const checkpointSig = await providerFetch("/checkpoint-signature", {
-    params: { bucket_id: Number(BUCKET_ID) },
+    params: { bucket_id: Number(bucketId) },
   });
   console.log("  Checkpoint mmr_root:", checkpointSig.mmr_root);
   console.log("  Checkpoint leaf_count:", checkpointSig.leaf_count);
 
   await api.tx.StorageProvider.checkpoint({
-    bucket_id: BUCKET_ID,
+    bucket_id: bucketId,
     mmr_root: Binary.fromBytes(hexToBytes(checkpointSig.mmr_root)),
     start_seq: BigInt(checkpointSig.start_seq),
     leaf_count: BigInt(checkpointSig.leaf_count),
     signatures: [
-      [alice.address, Enum("Sr25519", Binary.fromBytes(hexToBytes(checkpointSig.provider_signature)))],
+      [provider.address, Enum("Sr25519", Binary.fromBytes(hexToBytes(checkpointSig.provider_signature)))],
     ],
-  }).signAndSubmit(bob.signer);
+  }).signAndSubmit(client.signer);
   console.log("  Checkpoint submitted");
 }
 
-async function challengeCheckpoint(api, alice, bob, leafIndex) {
+async function challengeCheckpoint(api, provider, client, leafIndex, bucketId) {
   const result = await api.tx.StorageProvider.challenge_checkpoint({
-    bucket_id: BUCKET_ID,
-    provider: alice.address,
+    bucket_id: bucketId,
+    provider: provider.address,
     leaf_index: BigInt(leafIndex),
     chunk_index: 0n,
-  }).signAndSubmit(bob.signer);
+  }).signAndSubmit(client.signer);
 
   const events = api.event.StorageProvider.ChallengeCreated.filter(result.events);
   assert.strictEqual(events.length, 1, "Expected 1 ChallengeCreated from checkpoint challenge");
@@ -258,7 +270,7 @@ async function challengeCheckpoint(api, alice, bob, leafIndex) {
   return challengeId;
 }
 
-async function respondToChallenge(api, provider, challengeId) {
+async function respondToChallenge(api, provider, challengeId, bucketId) {
   const challenges = await api.query.StorageProvider.Challenges.getValue(
     challengeId.deadline
   );
@@ -267,12 +279,12 @@ async function respondToChallenge(api, provider, challengeId) {
   const challenge = challenges[challengeId.index];
   if (!challenge) throw new Error("Challenge index not found: " + challengeId.index);
 
-  const bucketId = challenge.bucket_id;
+  const challengeBucketId = challenge.bucket_id;
   const leafIdx = challenge.leaf_index;
   const chunkIdx = challenge.chunk_index;
 
   const mmrProofResp = await providerFetch("/mmr_proof", {
-    params: { bucket_id: Number(bucketId), leaf_index: Number(leafIdx) },
+    params: { bucket_id: Number(challengeBucketId), leaf_index: Number(leafIdx) },
   });
 
   const chunkProofResp = await providerFetch("/chunk_proof", {
@@ -310,14 +322,16 @@ async function respondToChallenge(api, provider, challengeId) {
 async function main() {
   await cryptoWaitReady();
 
-  const alice = makeSigner("//Alice"); // provider
-  const bob = makeSigner("//Bob"); // client / challenger
+  const provider = makeSigner(PROVIDER_SEED);
+  const client = makeSigner(CLIENT_SEED);
 
   console.log("Connecting to chain:", CHAIN_WS);
   console.log("Provider URL:", PROVIDER_URL);
+  console.log("Provider seed:", PROVIDER_SEED, "=>", provider.address);
+  console.log("Client seed:", CLIENT_SEED, "=>", client.address);
 
-  const client = createClient(getWsProvider(CHAIN_WS));
-  const api = client.getTypedApi(parachain);
+  const papi = createClient(getWsProvider(CHAIN_WS));
+  const api = papi.getTypedApi(parachain);
 
   const defendedEvents = [];
   const eventSub = api.event.StorageProvider.ChallengeDefended.watch().subscribe(
@@ -332,28 +346,28 @@ async function main() {
 
   try {
     console.log("\n=== Step 1: Setup ===");
-    await registerProvider(api, alice);
-    await createBucket(api, bob);
-    await createAgreement(api, alice, bob);
+    await registerProvider(api, provider);
+    const bucketId = await createBucket(api, client);
+    await createAgreement(api, provider, client, bucketId);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadData(api);
+    const upload = await uploadData(api, bucketId);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
-    const challengeId1 = await challengeOffchain(api, alice, bob, upload);
+    const challengeId1 = await challengeOffchain(api, provider, client, upload, bucketId);
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
-    await respondToChallenge(api, alice, challengeId1);
+    await respondToChallenge(api, provider, challengeId1, bucketId);
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    await submitCheckpoint(api, alice, bob);
+    await submitCheckpoint(api, provider, client, bucketId);
 
     console.log("\n=== Step 6: On-chain checkpoint challenge ===");
-    const challengeId2 = await challengeCheckpoint(api, alice, bob, upload.leafIndex);
+    const challengeId2 = await challengeCheckpoint(api, provider, client, upload.leafIndex, bucketId);
 
     console.log("\n=== Step 7: Respond to checkpoint challenge ===");
-    await respondToChallenge(api, alice, challengeId2);
+    await respondToChallenge(api, provider, challengeId2, bucketId);
     console.log("  Challenge defended");
 
     console.log("\n=== Verifying results ===");
@@ -371,7 +385,7 @@ async function main() {
     process.exitCode = 1;
   } finally {
     eventSub.unsubscribe();
-    client.destroy();
+    papi.destroy();
   }
 }
 

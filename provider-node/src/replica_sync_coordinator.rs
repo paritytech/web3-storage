@@ -1024,7 +1024,7 @@ impl ReplicaSyncCoordinator {
                 if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
                     return Ok(BucketSnapshot {
                         mmr_root: bucket.mmr_root,
-                        leaf_count: bucket.leaf_count(),
+                        leaf_count: bucket.leaf_count,
                     });
                 }
                 Ok(BucketSnapshot {
@@ -1038,7 +1038,7 @@ impl ReplicaSyncCoordinator {
                 if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
                     return Ok(BucketSnapshot {
                         mmr_root: bucket.mmr_root,
-                        leaf_count: bucket.leaf_count(),
+                        leaf_count: bucket.leaf_count,
                     });
                 }
                 Ok(BucketSnapshot {
@@ -1081,7 +1081,7 @@ impl ReplicaSyncCoordinator {
         if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
             return Ok(BucketSnapshot {
                 mmr_root: bucket.mmr_root,
-                leaf_count: bucket.leaf_count(),
+                leaf_count: bucket.leaf_count,
             });
         }
 

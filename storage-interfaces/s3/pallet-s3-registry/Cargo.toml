@@ -11,7 +11,6 @@ description = "S3 bucket and object registry pallet for web3-storage"
 # Internal
 s3-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
-storage-primitives = { workspace = true }
 
 # Parity codec
 codec = { workspace = true }
@@ -22,9 +21,6 @@ frame-support = { workspace = true }
 frame-system = { workspace = true }
 sp-core = { workspace = true }
 sp-runtime = { workspace = true }
-
-# Utilities
-log = { workspace = true }
 
 [dev-dependencies]
 pallet-balances = { workspace = true, features = ["std"] }
@@ -37,7 +33,6 @@ std = [
 	"codec/std",
 	"frame-support/std",
 	"frame-system/std",
-	"log/std",
 	"pallet-balances/std",
 	"pallet-storage-provider/std",
 	"pallet-timestamp/std",
@@ -46,7 +41,6 @@ std = [
 	"sp-core/std",
 	"sp-io/std",
 	"sp-runtime/std",
-	"storage-primitives/std",
 ]
 runtime-benchmarks = [
 	"frame-support/runtime-benchmarks",

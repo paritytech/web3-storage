@@ -10,23 +10,14 @@ description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage
 # Internal dependencies
 file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
-storage-primitives = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
 reqwest = { workspace = true }
 
-# Serialization
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-
-# Codec
-codec = { workspace = true }
-
 # Substrate/Polkadot
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
-frame-support = { workspace = true, features = ["std"] }
 subxt = "0.37"
 subxt-signer = "0.37"
 
@@ -34,7 +25,6 @@ subxt-signer = "0.37"
 log = { workspace = true }
 thiserror = "2.0"
 hex = "0.4"
-futures = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"

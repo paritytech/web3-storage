@@ -12,7 +12,8 @@ pub mod agreement_coordinator;
 pub mod api;
 pub mod challenge_responder;
 pub mod checkpoint_coordinator;
-pub mod disk_storage;
+pub mod cli;
+pub mod command;
 pub mod error;
 pub mod fs_api;
 pub mod fs_index;
@@ -24,9 +25,6 @@ pub mod s3_index;
 pub mod storage;
 pub mod types;
 
-pub use agreement_coordinator::{
-    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
-};
 pub use api::create_router;
 pub use challenge_responder::{
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
@@ -36,7 +34,6 @@ pub use checkpoint_coordinator::{
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
     CheckpointDuty, CheckpointResult, CoordinatorCommand,
 };
-pub use disk_storage::DiskStorage;
 pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use replica_sync::ReplicaSync;
@@ -45,7 +42,10 @@ pub use replica_sync_coordinator::{
     SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use s3_index::S3IndexManager;
-pub use storage::Storage;
+pub use storage::{
+    build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo, DiskStorage,
+    Storage, StorageBackend, StoredNode,
+};
 pub use types::*;
 
 use sp_core::{crypto::Ss58Codec, sr25519, Pair};
@@ -54,46 +54,30 @@ use std::sync::Arc;
 /// Provider node state shared across handlers.
 pub struct ProviderState {
     /// Local storage backend
-    pub storage: Arc<Storage>,
+    pub storage: Arc<dyn StorageBackend>,
     /// Provider account ID (SS58 encoded)
     pub provider_id: String,
     /// Signing keypair (optional, for dev/testing)
     pub keypair: Option<sr25519::Pair>,
-    /// S3 metadata index
+    /// S3-compatible object index
     pub s3_index: S3IndexManager,
-    /// File system metadata index
+    /// File system drive index
     pub fs_index: FsIndexManager,
 }
 
 impl ProviderState {
-    pub fn new(storage: Arc<Storage>, provider_id: String) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
         Self {
             storage,
             provider_id,
             keypair: None,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
-        }
-    }
-
-    /// Create with index managers (for persistence support).
-    pub fn new_with_index(
-        storage: Arc<Storage>,
-        provider_id: String,
-        s3_index: S3IndexManager,
-        fs_index: FsIndexManager,
-    ) -> Self {
-        Self {
-            storage,
-            provider_id,
-            keypair: None,
-            s3_index,
-            fs_index,
         }
     }
 
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
-    pub fn with_seed(storage: Arc<Storage>, seed: &str) -> Result<Self, String> {
+    pub fn with_seed(storage: Arc<dyn StorageBackend>, seed: &str) -> Result<Self, String> {
         let keypair = sr25519::Pair::from_string(seed, None)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
 
@@ -105,27 +89,6 @@ impl ProviderState {
             keypair: Some(keypair),
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
-        })
-    }
-
-    /// Create with a seed and index managers.
-    pub fn with_seed_and_index(
-        storage: Arc<Storage>,
-        seed: &str,
-        s3_index: S3IndexManager,
-        fs_index: FsIndexManager,
-    ) -> Result<Self, String> {
-        let keypair = sr25519::Pair::from_string(seed, None)
-            .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
-
-        let provider_id = keypair.public().to_ss58check();
-
-        Ok(Self {
-            storage,
-            provider_id,
-            keypair: Some(keypair),
-            s3_index,
-            fs_index,
         })
     }
 

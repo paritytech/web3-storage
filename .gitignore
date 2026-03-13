@@ -28,3 +28,6 @@ Thumbs.db
 node_modules/
 package-lock.json
 .papi/
+
+# Generated chain specs
+zombienet/storage-local-spec.json

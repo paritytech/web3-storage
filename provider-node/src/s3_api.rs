@@ -71,7 +71,7 @@ pub async fn s3_put_object(
         .collect::<Result<Vec<_>, Error>>()?;
 
     // 3. Build balanced Merkle tree
-    let data_root = build_padded_merkle_tree(&state.storage, bucket_id, &chunk_hashes);
+    let data_root = build_padded_merkle_tree(&*state.storage, bucket_id, &chunk_hashes);
 
     // 4. Commit data_root to MMR
     let (_mmr_root, _start_seq, leaf_indices) = state.storage.commit(bucket_id, vec![data_root])?;

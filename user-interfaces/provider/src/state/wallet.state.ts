@@ -24,7 +24,7 @@ import {
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
 import { getPolkadotSigner } from 'polkadot-api/signer'
-import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
+import { getAccountBalance, isProviderRegistered, DEV_ACCOUNTS } from '@/lib/chain-client'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -94,14 +94,7 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
     const miniSecret = entropyToMiniSecret(entropy)
     const derive = sr25519CreateDerive(miniSecret)
 
-    const knownAddresses: Record<string, string> = {
-      Alice: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
-      Bob: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
-      Charlie: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
-      Dave: '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy',
-      Eve: '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
-      Ferdie: '5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL',
-    }
+    const knownAddresses = DEV_ACCOUNTS
 
     return DEV_ACCOUNTS.map(({ name, path }) => {
       const keypair = derive(path)
