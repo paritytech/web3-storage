@@ -16,9 +16,8 @@ interface ChainState {
   connecting: boolean;
   error: string | null;
   chainEndpoint: string;
-  providerEndpoint: string;
   blockNumber: number;
-  connect: (chainWs: string, providerUrl: string) => Promise<void>;
+  connect: (chainWs: string) => Promise<void>;
   disconnect: () => void;
 }
 
@@ -28,7 +27,6 @@ const defaultState: ChainState = {
   connecting: false,
   error: null,
   chainEndpoint: "ws://127.0.0.1:2222",
-  providerEndpoint: "http://127.0.0.1:3333",
   blockNumber: 0,
   connect: async () => {},
   disconnect: () => {},
@@ -44,19 +42,15 @@ export function ChainProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chainEndpoint, setChainEndpoint] = useState("ws://127.0.0.1:2222");
-  const [providerEndpoint, setProviderEndpoint] = useState(
-    "http://127.0.0.1:3333"
-  );
   const [blockNumber, setBlockNumber] = useState(0);
 
   const connect = useCallback(
-    async (chainWs: string, providerUrl: string) => {
+    async (chainWs: string) => {
       if (connecting || connected) return;
 
       setConnecting(true);
       setError(null);
       setChainEndpoint(chainWs);
-      setProviderEndpoint(providerUrl);
 
       try {
         const provider = getWsProvider(chainWs);
@@ -112,7 +106,6 @@ export function ChainProvider({ children }: { children: ReactNode }) {
         connecting,
         error,
         chainEndpoint,
-        providerEndpoint,
         blockNumber,
         connect,
         disconnect,

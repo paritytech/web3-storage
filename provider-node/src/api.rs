@@ -4,6 +4,7 @@ use crate::checkpoint_coordinator::{
     CheckpointDutyQuery, CheckpointDutyResponse, SignProposalRequest, SignProposalResponse,
 };
 use crate::error::Error;
+use crate::fs_api;
 use crate::s3_api;
 use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
@@ -62,6 +63,16 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         )
         .route("/s3/:bucket_id/objects", get(s3_api::s3_list_objects))
         .route("/s3/:bucket_id/index_root", get(s3_api::s3_index_root))
+        // File system endpoints (path passed as ?path= query param)
+        .route(
+            "/fs/:bucket_id/file",
+            put(fs_api::fs_put_file)
+                .get(fs_api::fs_get_file)
+                .delete(fs_api::fs_delete_file),
+        )
+        .route("/fs/:bucket_id/mkdir", post(fs_api::fs_mkdir))
+        .route("/fs/:bucket_id/ls", get(fs_api::fs_list_dir))
+        .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())

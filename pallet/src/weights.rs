@@ -105,8 +105,8 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
     // Bucket management
     fn create_bucket() -> Weight {
         Weight::from_parts(45_000_000, 4500)
-            .saturating_add(T::DbWeight::get().reads(1_u64))
-            .saturating_add(T::DbWeight::get().writes(2_u64))
+            .saturating_add(T::DbWeight::get().reads(2_u64))
+            .saturating_add(T::DbWeight::get().writes(3_u64))
     }
 
     fn create_bucket_with_storage() -> Weight {
@@ -124,14 +124,14 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 
     fn set_bucket_member() -> Weight {
         Weight::from_parts(30_000_000, 3000)
-            .saturating_add(T::DbWeight::get().reads(1_u64))
-            .saturating_add(T::DbWeight::get().writes(1_u64))
+            .saturating_add(T::DbWeight::get().reads(2_u64))
+            .saturating_add(T::DbWeight::get().writes(2_u64))
     }
 
     fn remove_bucket_member() -> Weight {
         Weight::from_parts(28_000_000, 2800)
-            .saturating_add(T::DbWeight::get().reads(1_u64))
-            .saturating_add(T::DbWeight::get().writes(1_u64))
+            .saturating_add(T::DbWeight::get().reads(2_u64))
+            .saturating_add(T::DbWeight::get().writes(2_u64))
     }
 
     fn freeze_bucket() -> Weight {

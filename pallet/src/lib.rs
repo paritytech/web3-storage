@@ -134,6 +134,10 @@ pub mod pallet {
         #[pallet::constant]
         type CheckpointMissPenalty: Get<BalanceOf<Self>>;
 
+        /// Maximum number of buckets a single account can be a member of.
+        #[pallet::constant]
+        type MaxBucketsPerMember: Get<u32>;
+
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: crate::weights::WeightInfo;
     }
@@ -227,6 +231,16 @@ pub mod pallet {
     #[pallet::storage]
     pub type CheckpointPool<T: Config> =
         StorageMap<_, Blake2_128Concat, BucketId, BalanceOf<T>, ValueQuery>;
+
+    /// Reverse index: account → bucket IDs they are a member of.
+    #[pallet::storage]
+    pub type MemberBuckets<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        T::AccountId,
+        BoundedVec<BucketId, T::MaxBucketsPerMember>,
+        ValueQuery,
+    >;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Genesis Config
@@ -492,6 +506,9 @@ pub mod pallet {
             total_stake: BalanceOf<T>,
         },
         ProviderSettingsUpdated {
+            provider: T::AccountId,
+        },
+        ProviderMultiaddrUpdated {
             provider: T::AccountId,
         },
         ExtensionsBlocked {
@@ -773,6 +790,10 @@ pub mod pallet {
         /// No rewards to claim.
         NoRewardsToClaim,
 
+        // Reverse index errors
+        /// Account is a member of too many buckets.
+        TooManyBucketsForMember,
+
         // Auto-matching errors
         /// No provider found matching the storage requirements.
         NoMatchingProvider,
@@ -943,6 +964,29 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Update the provider's multiaddr (network endpoint).
+        #[pallet::call_index(5)]
+        #[pallet::weight(T::WeightInfo::update_provider_multiaddr())]
+        pub fn update_provider_multiaddr(
+            origin: OriginFor<T>,
+            multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
+                let provider = maybe_provider
+                    .as_mut()
+                    .ok_or(Error::<T>::ProviderNotFound)?;
+
+                provider.multiaddr = multiaddr;
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::ProviderMultiaddrUpdated { provider: who });
+
+            Ok(())
+        }
+
         /// Block or unblock extensions for a specific bucket.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::block_extensions())]
@@ -1014,6 +1058,13 @@ pub mod pallet {
 
             Buckets::<T>::insert(bucket_id, bucket);
 
+            // Update reverse index for creator
+            MemberBuckets::<T>::try_mutate(&who, |buckets| {
+                buckets
+                    .try_push(bucket_id)
+                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
+            })?;
+
             Self::deposit_event(Event::BucketCreated {
                 bucket_id,
                 admin: who,
@@ -1084,6 +1135,13 @@ pub mod pallet {
             };
 
             Buckets::<T>::insert(bucket_id, bucket);
+
+            // Update reverse index for creator
+            MemberBuckets::<T>::try_mutate(&who, |buckets| {
+                buckets
+                    .try_push(bucket_id)
+                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
+            })?;
 
             // Create the agreement
             let current_block = frame_system::Pallet::<T>::block_number();
@@ -1225,6 +1283,17 @@ pub mod pallet {
                         .members
                         .try_push(new_member)
                         .map_err(|_| Error::<T>::MaxMembersReached)?;
+
+                    // Update reverse index for new member
+                    MemberBuckets::<T>::try_mutate(&member, |buckets| {
+                        if !buckets.contains(&bucket_id) {
+                            buckets
+                                .try_push(bucket_id)
+                                .map_err(|_| Error::<T>::TooManyBucketsForMember)
+                        } else {
+                            Ok(())
+                        }
+                    })?;
                 }
 
                 Self::deposit_event(Event::MemberSet {
@@ -1264,6 +1333,11 @@ pub mod pallet {
                 }
 
                 bucket.members.remove(member_idx);
+
+                // Update reverse index: remove bucket from member's list
+                MemberBuckets::<T>::mutate(&member, |buckets| {
+                    buckets.retain(|id| *id != bucket_id);
+                });
 
                 Self::deposit_event(Event::MemberRemoved { bucket_id, member });
 
@@ -3299,6 +3373,13 @@ pub mod pallet {
                 });
             }
 
+            // Clean up reverse index for all members
+            for member in &bucket.members {
+                MemberBuckets::<T>::mutate(&member.account, |buckets| {
+                    buckets.retain(|id| *id != bucket_id);
+                });
+            }
+
             // Remove the bucket itself
             Buckets::<T>::remove(bucket_id);
 
@@ -3867,6 +3948,13 @@ pub mod pallet {
             };
 
             Buckets::<T>::insert(bucket_id, bucket);
+
+            // Update reverse index for creator
+            MemberBuckets::<T>::try_mutate(admin, |buckets| {
+                buckets
+                    .try_push(bucket_id)
+                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
+            })?;
 
             Self::deposit_event(Event::BucketCreated {
                 bucket_id,

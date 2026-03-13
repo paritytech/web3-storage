@@ -8,11 +8,10 @@ import { useChain } from "@/hooks/useChain";
 export default function ConnectDialog() {
   const { connect, connecting, error } = useChain();
   const [chainWs, setChainWs] = useState("ws://127.0.0.1:2222");
-  const [providerUrl, setProviderUrl] = useState("http://127.0.0.1:3333");
   const [open, setOpen] = useState(false);
 
   const handleConnect = async () => {
-    await connect(chainWs, providerUrl);
+    await connect(chainWs);
     setOpen(false);
   };
 
@@ -30,8 +29,8 @@ export default function ConnectDialog() {
             Connect to Network
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-            Enter the WebSocket endpoint for the parachain and the HTTP endpoint
-            for the storage provider.
+            Enter the WebSocket endpoint for the parachain. Provider endpoints
+            are resolved automatically from on-chain data.
           </Dialog.Description>
 
           <div className="mt-4 space-y-4">
@@ -41,15 +40,6 @@ export default function ConnectDialog() {
                 value={chainWs}
                 onChange={(e) => setChainWs(e.target.value)}
                 placeholder="ws://127.0.0.1:2222"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Provider URL</label>
-              <Input
-                value={providerUrl}
-                onChange={(e) => setProviderUrl(e.target.value)}
-                placeholder="http://127.0.0.1:3333"
               />
             </div>
 

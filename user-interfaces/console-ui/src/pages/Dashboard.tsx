@@ -17,7 +17,7 @@ import {
 import { useChain } from "@/hooks/useChain";
 
 export default function Dashboard() {
-  const { connected, blockNumber, chainEndpoint, providerEndpoint } = useChain();
+  const { connected, blockNumber, chainEndpoint } = useChain();
 
   const stats = [
     {
@@ -69,14 +69,10 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           {connected ? (
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <p className="text-sm text-muted-foreground">Chain Endpoint</p>
                 <p className="font-mono text-sm">{chainEndpoint}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Provider Endpoint</p>
-                <p className="font-mono text-sm">{providerEndpoint}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Latest Block</p>

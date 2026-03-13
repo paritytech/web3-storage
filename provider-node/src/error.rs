@@ -48,6 +48,15 @@ pub enum Error {
 
     #[error("Invalid object key: {0}")]
     InvalidObjectKey(String),
+
+    #[error("File not found: bucket {bucket_id}, path {path}")]
+    FileNotFound { bucket_id: u64, path: String },
+
+    #[error("Not a file: bucket {bucket_id}, path {path}")]
+    NotAFile { bucket_id: u64, path: String },
+
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
 }
 
 #[derive(Serialize)]
@@ -145,6 +154,27 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_object_key".to_string(),
                     details: Some(serde_json::json!({ "key": key })),
+                },
+            ),
+            Error::FileNotFound { bucket_id, path } => (
+                StatusCode::NOT_FOUND,
+                ErrorResponse {
+                    error: "file_not_found".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
+                },
+            ),
+            Error::NotAFile { bucket_id, path } => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "not_a_file".to_string(),
+                    details: Some(serde_json::json!({ "bucket_id": bucket_id, "path": path })),
+                },
+            ),
+            Error::InvalidPath(msg) => (
+                StatusCode::BAD_REQUEST,
+                ErrorResponse {
+                    error: "invalid_path".to_string(),
+                    details: Some(serde_json::json!({ "message": msg })),
                 },
             ),
         };

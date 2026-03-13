@@ -14,6 +14,8 @@ pub mod challenge_responder;
 pub mod checkpoint_coordinator;
 pub mod disk_storage;
 pub mod error;
+pub mod fs_api;
+pub mod fs_index;
 pub mod mmr;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
@@ -36,6 +38,7 @@ pub use checkpoint_coordinator::{
 };
 pub use disk_storage::DiskStorage;
 pub use error::Error;
+pub use fs_index::FsIndexManager;
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
@@ -58,6 +61,8 @@ pub struct ProviderState {
     pub keypair: Option<sr25519::Pair>,
     /// S3 metadata index
     pub s3_index: S3IndexManager,
+    /// File system metadata index
+    pub fs_index: FsIndexManager,
 }
 
 impl ProviderState {
@@ -67,20 +72,23 @@ impl ProviderState {
             provider_id,
             keypair: None,
             s3_index: S3IndexManager::new(),
+            fs_index: FsIndexManager::new(),
         }
     }
 
-    /// Create with an S3 index manager (for persistence support).
+    /// Create with index managers (for persistence support).
     pub fn new_with_index(
         storage: Arc<Storage>,
         provider_id: String,
         s3_index: S3IndexManager,
+        fs_index: FsIndexManager,
     ) -> Self {
         Self {
             storage,
             provider_id,
             keypair: None,
             s3_index,
+            fs_index,
         }
     }
 
@@ -96,14 +104,16 @@ impl ProviderState {
             provider_id,
             keypair: Some(keypair),
             s3_index: S3IndexManager::new(),
+            fs_index: FsIndexManager::new(),
         })
     }
 
-    /// Create with a seed and an S3 index manager.
+    /// Create with a seed and index managers.
     pub fn with_seed_and_index(
         storage: Arc<Storage>,
         seed: &str,
         s3_index: S3IndexManager,
+        fs_index: FsIndexManager,
     ) -> Result<Self, String> {
         let keypair = sr25519::Pair::from_string(seed, None)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
@@ -115,6 +125,7 @@ impl ProviderState {
             provider_id,
             keypair: Some(keypair),
             s3_index,
+            fs_index,
         })
     }
 

@@ -22,3 +22,11 @@ export function truncateHash(hash: string, startChars = 6, endChars = 4): string
 export function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleString();
 }
+
+export function formatTokens(units: bigint, decimals = 12): string {
+  const divisor = 10n ** BigInt(decimals);
+  const whole = units / divisor;
+  const frac = units % divisor;
+  const fracStr = frac.toString().padStart(decimals, "0").slice(0, 2);
+  return `${whole.toLocaleString()}.${fracStr}`;
+}
