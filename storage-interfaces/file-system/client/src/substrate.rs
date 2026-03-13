@@ -3,7 +3,7 @@
 //! This module provides blockchain interaction using subxt with dynamic dispatch.
 
 use crate::FsClientError;
-use file_system_primitives::{Cid, CommitStrategy, DriveId};
+use file_system_primitives::DriveId;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -100,30 +100,13 @@ pub mod extrinsics {
     use subxt::tx::Payload;
 
     /// Create a drive extrinsic.
-    #[allow(clippy::too_many_arguments)]
     pub fn create_drive(
         name: Option<Vec<u8>>,
         max_capacity: u64,
         storage_period: u64,
         payment: u128,
         min_providers: Option<u8>,
-        commit_strategy: CommitStrategy,
     ) -> impl Payload {
-        // Encode CommitStrategy
-        let strategy_value = match commit_strategy {
-            CommitStrategy::Immediate => {
-                subxt::dynamic::Value::unnamed_variant("Immediate", vec![])
-            }
-            CommitStrategy::Batched { interval } => subxt::dynamic::Value::unnamed_variant(
-                "Batched",
-                vec![subxt::dynamic::Value::named_composite(vec![(
-                    "interval",
-                    subxt::dynamic::Value::u128(interval as u128),
-                )])],
-            ),
-            CommitStrategy::Manual => subxt::dynamic::Value::unnamed_variant("Manual", vec![]),
-        };
-
         subxt::dynamic::tx(
             "DriveRegistry",
             "create_drive",
@@ -147,31 +130,7 @@ pub mod extrinsics {
                         )
                     })
                     .unwrap_or_else(|| subxt::dynamic::Value::unnamed_variant("None", vec![])),
-                // commit_strategy: CommitStrategy
-                strategy_value,
             ],
-        )
-    }
-
-    /// Update root CID extrinsic.
-    pub fn update_root_cid(drive_id: DriveId, new_root_cid: Cid) -> impl Payload {
-        subxt::dynamic::tx(
-            "DriveRegistry",
-            "update_root_cid",
-            vec![
-                subxt::dynamic::Value::u128(drive_id as u128),
-                subxt::dynamic::Value::from_bytes(new_root_cid.as_bytes()),
-            ],
-        )
-    }
-
-    /// Clear drive extrinsic.
-    #[allow(dead_code)]
-    pub fn clear_drive(drive_id: DriveId) -> impl Payload {
-        subxt::dynamic::tx(
-            "DriveRegistry",
-            "clear_drive",
-            vec![subxt::dynamic::Value::u128(drive_id as u128)],
         )
     }
 
@@ -182,21 +141,6 @@ pub mod extrinsics {
             "DriveRegistry",
             "delete_drive",
             vec![subxt::dynamic::Value::u128(drive_id as u128)],
-        )
-    }
-
-    /// Update drive name extrinsic.
-    #[allow(dead_code)]
-    pub fn update_drive_name(drive_id: DriveId, name: Option<Vec<u8>>) -> impl Payload {
-        subxt::dynamic::tx(
-            "DriveRegistry",
-            "update_drive_name",
-            vec![
-                subxt::dynamic::Value::u128(drive_id as u128),
-                name.map(|n| subxt::dynamic::Value::from_bytes(&n))
-                    .map(|v| subxt::dynamic::Value::unnamed_variant("Some", vec![v]))
-                    .unwrap_or_else(|| subxt::dynamic::Value::unnamed_variant("None", vec![])),
-            ],
         )
     }
 }

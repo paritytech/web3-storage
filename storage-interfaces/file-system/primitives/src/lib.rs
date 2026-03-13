@@ -603,73 +603,10 @@ pub enum FileSystemError {
     NotAFile,
 }
 
-// ============================================================================
-// Commit strategy and drive configuration
-// ============================================================================
-
-/// Strategy for committing changes to the on-chain root CID
-#[derive(
-    Clone,
-    Copy,
-    Encode,
-    Decode,
-    DecodeWithMemTracking,
-    Eq,
-    PartialEq,
-    Debug,
-    TypeInfo,
-    MaxEncodedLen,
-)]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-pub enum CommitStrategy {
-    /// Commit every change immediately (expensive, real-time)
-    #[codec(index = 0)]
-    Immediate,
-    /// Commit changes in batches after N blocks
-    #[codec(index = 1)]
-    Batched { interval: u32 },
-    /// User manually triggers commits
-    #[codec(index = 2)]
-    Manual,
-}
-
-impl Default for CommitStrategy {
-    fn default() -> Self {
-        // Default to batched commits every 100 blocks (~10 minutes)
-        Self::Batched { interval: 100 }
-    }
-}
-
-/// Configuration for creating a drive with storage
-#[cfg(feature = "std")]
-#[derive(Clone, Debug)]
-pub struct DriveConfig<AccountId> {
-    /// Total storage size in bytes
-    pub storage_size: u64,
-    /// Budget for storage agreements (total across all providers)
-    pub budget: u128,
-    /// Number of storage providers (1 primary + N-1 replicas)
-    pub num_providers: u8,
-    /// Preferred providers (optional)
-    pub preferred_providers: Vec<AccountId>,
-    /// When to commit changes on-chain
-    pub commit_strategy: CommitStrategy,
-}
-
-#[cfg(feature = "std")]
-impl<AccountId> Default for DriveConfig<AccountId> {
-    fn default() -> Self {
-        Self {
-            storage_size: 10 * 1024 * 1024 * 1024, // 10 GB
-            budget: 100_000_000_000_000,           // 100 tokens (assuming 12 decimals)
-            num_providers: 3,                      // 1 primary + 2 replicas
-            preferred_providers: Vec::new(),
-            commit_strategy: CommitStrategy::default(),
-        }
-    }
-}
-
 /// Drive information stored on-chain (user's virtual drive)
+///
+/// File/directory metadata is managed off-chain by the provider node (fs_index).
+/// Only drive lifecycle (create/delete) and storage parameters live on-chain.
 #[derive(Clone, Encode, Decode, Eq, PartialEq, Debug, TypeInfo, MaxEncodedLen)]
 #[scale_info(skip_type_params(MaxNameLength, Balance))]
 #[codec(mel_bound())]
@@ -683,17 +620,8 @@ pub struct DriveInfo<
     pub owner: AccountId,
     /// Layer 0 bucket ID this drive uses
     pub bucket_id: u64,
-    /// Current committed root CID (on-chain, visible to all)
-    pub root_cid: Cid,
-    /// Pending root CID (not yet committed, only in local state)
-    /// This is stored as an option - None means no pending changes
-    pub pending_root_cid: Option<Cid>,
-    /// Strategy for committing changes
-    pub commit_strategy: CommitStrategy,
     /// Block number when drive was created
     pub created_at: BlockNumber,
-    /// Block number when root_cid was last committed
-    pub last_committed_at: BlockNumber,
     /// Optional human-readable name (bounded)
     pub name: Option<BoundedVec<u8, MaxNameLength>>,
     /// Maximum storage capacity in bytes
