@@ -98,9 +98,10 @@ start-chain: check build-runtime
 
 # Start the storage provider node
 # Examples:
-#   just start-provider                                       # inmemory, //Alice, port 3333
-#   just start-provider //Charlie disk 3334 ./provider-data    # disk storage on port 3334
-start-provider SEED="//Alice" MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data": build-provider
+#   just start-provider                                       # inmemory, //Alice key, port 3333
+#   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
+#   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     echo ""
     echo "=== Starting Storage Provider Node ({{MODE}}) ==="
@@ -111,10 +112,20 @@ start-provider SEED="//Alice" MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH=".
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
     fi
-    SEED="{{SEED}}" \
-    CHAIN_RPC="{{ CHAIN_WS }}" \
-    BIND_ADDR="0.0.0.0:{{PORT}}" \
-    ./target/release/storage-provider-node --storage-mode "{{MODE}}" $EXTRA_ARGS
+    if [ -n "{{KEYFILE}}" ]; then
+        KEY_ARGS="--keyfile {{KEYFILE}}"
+    else
+        ALICE_KEY=$(mktemp)
+        echo "//Alice" > "$ALICE_KEY" && chmod 600 "$ALICE_KEY"
+        KEY_ARGS="--keyfile $ALICE_KEY"
+        trap "rm -f $ALICE_KEY" EXIT
+    fi
+    ./target/release/storage-provider-node \
+        $KEY_ARGS \
+        --storage-mode "{{MODE}}" \
+        --bind-addr "0.0.0.0:{{PORT}}" \
+        --chain-rpc "{{ CHAIN_WS }}" \
+        $EXTRA_ARGS
 
 # Health check for provider node
 health:
@@ -229,9 +240,10 @@ fs-integration-test:
     else
         echo ""
         echo "Starting provider node..."
-        PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
-        CHAIN_RPC=ws://127.0.0.1:9944 \
-        cargo run --release -p storage-provider-node > /tmp/provider.log 2>&1 &
+        cargo run --release -p storage-provider-node -- \
+            --provider-id 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
+            --chain-rpc ws://127.0.0.1:9944 \
+            > /tmp/provider.log 2>&1 &
         PROVIDER_PID=$!
         trap "kill $PROVIDER_PID 2>/dev/null || true; kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
 
