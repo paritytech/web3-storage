@@ -8,7 +8,7 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
 # Zombienet version
-zombienet_version := "v0.4.6"
+zombienet_version := "v0.4.8"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -17,7 +17,7 @@ arch := `uname -m`
 # URL components
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
-zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-gnu" }
+zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-musl" }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
