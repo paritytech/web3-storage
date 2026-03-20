@@ -75,7 +75,7 @@ jobs:
 
       - name: Log binary versions
         run: |
-          .bin/zombienet version
+          .bin/zombienet --version
           .bin/polkadot --version
           .bin/polkadot-omni-node --version
 
