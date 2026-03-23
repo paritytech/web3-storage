@@ -57,6 +57,15 @@ pub enum Error {
 
     #[error("Invalid path: {0}")]
     InvalidPath(String),
+
+    #[error("Authentication required")]
+    AuthRequired,
+
+    #[error("Timestamp expired or too far in the future")]
+    TimestampExpired,
+
+    #[error("Insufficient role for this operation")]
+    InsufficientRole,
 }
 
 #[derive(Serialize)]
@@ -175,6 +184,20 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "invalid_path".to_string(),
                     details: Some(serde_json::json!({ "message": msg })),
+                },
+            ),
+            Error::AuthRequired | Error::TimestampExpired => (
+                StatusCode::UNAUTHORIZED,
+                ErrorResponse {
+                    error: "auth_required".to_string(),
+                    details: Some(serde_json::json!({ "message": self.to_string() })),
+                },
+            ),
+            Error::InsufficientRole => (
+                StatusCode::FORBIDDEN,
+                ErrorResponse {
+                    error: "insufficient_role".to_string(),
+                    details: None,
                 },
             ),
         };

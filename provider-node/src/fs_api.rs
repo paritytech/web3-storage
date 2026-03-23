@@ -6,6 +6,8 @@
 //! File path is passed as a `?path=` query parameter on file/directory endpoints.
 //! Example: `PUT /fs/1/file?path=/docs/report.pdf`
 
+use crate::api::check_role;
+use crate::auth::RequiredRole;
 use crate::error::Error;
 use crate::fs_index::FsEntryMeta;
 use crate::storage::{build_padded_merkle_tree, hex_encode};
@@ -52,6 +54,7 @@ pub async fn fs_put_file(
     headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Result<Json<PutFileResponse>, Error> {
+    check_role(&state, &headers, "PUT", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
     if path.is_empty() || !path.starts_with('/') {
         return Err(Error::InvalidPath("path must start with '/'".to_string()));
@@ -61,7 +64,7 @@ pub async fn fs_put_file(
     let size = data.len() as u64;
 
     // Initialize bucket if needed
-    state.storage.init_bucket(bucket_id, u64::MAX);
+    let _ = state.storage.init_bucket(bucket_id, u64::MAX);
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
@@ -128,7 +131,9 @@ pub async fn fs_get_file(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<FilePathParam>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Response, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let path = params.path;
     let meta = state
         .fs_index
@@ -176,7 +181,9 @@ pub async fn fs_delete_file(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<FilePathParam>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<DeleteFileResponse>, Error> {
+    check_role(&state, &headers, "DELETE", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
     let deleted = state.fs_index.delete_entry(bucket_id, &path).is_some();
 
@@ -190,7 +197,9 @@ pub async fn fs_mkdir(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<FilePathParam>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<MkdirResponse>, Error> {
+    check_role(&state, &headers, "POST", bucket_id, RequiredRole::Writer).await?;
     let path = params.path;
     if path.is_empty() || !path.starts_with('/') {
         return Err(Error::InvalidPath("path must start with '/'".to_string()));
@@ -211,14 +220,16 @@ pub async fn fs_list_dir(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<ListDirParam>,
-) -> Json<ListDirResponse> {
+    headers: axum::http::HeaderMap,
+) -> Result<Json<ListDirResponse>, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let entries = state
         .fs_index
         .list_dir(bucket_id, &params.path, params.recursive);
 
     let (file_count, dir_count, total_size) = state.fs_index.drive_stats(bucket_id);
 
-    Json(ListDirResponse {
+    Ok(Json(ListDirResponse {
         path: params.path,
         entries: entries
             .into_iter()
@@ -233,7 +244,7 @@ pub async fn fs_list_dir(
         file_count,
         dir_count,
         total_size,
-    })
+    }))
 }
 
 /// GET /fs/:bucket_id/index_root
@@ -242,17 +253,19 @@ pub async fn fs_list_dir(
 pub async fn fs_index_root(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
-) -> Json<FsIndexRootResponse> {
+    headers: axum::http::HeaderMap,
+) -> Result<Json<FsIndexRootResponse>, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let root = state.fs_index.metadata_merkle_root(bucket_id);
     let (file_count, dir_count, total_size) = state.fs_index.drive_stats(bucket_id);
 
-    Json(FsIndexRootResponse {
+    Ok(Json(FsIndexRootResponse {
         bucket_id,
         metadata_merkle_root: format!("0x{}", hex_encode(root.as_bytes())),
         file_count,
         dir_count,
         total_size,
-    })
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

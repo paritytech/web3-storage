@@ -30,6 +30,7 @@ export interface ProviderInfo {
   usedCapacity: bigint
   bucketCount: number
   registeredAt: number
+  multiaddr?: string
 }
 
 export interface ProviderSettings {
@@ -268,6 +269,34 @@ export async function updateSettings(
 }
 
 /**
+ * Update provider multiaddr (submits extrinsic via wallet)
+ */
+export async function updateMultiaddr(
+  multiaddr: string,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitUpdateMultiaddr } = await import('@/lib/chain-client')
+    await submitUpdateMultiaddr(multiaddr, signer, onProgress)
+
+    // Update local state optimistically
+    const current = providerInfo$.getValue()
+    if (current) {
+      providerInfo$.next({ ...current, multiaddr })
+    }
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'Update multiaddr failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
  * Add stake (submits extrinsic via wallet)
  */
 export async function addStake(
@@ -350,6 +379,7 @@ function convertProviderInfo(address: string, chain: OnChainProviderInfo): Provi
     usedCapacity: chain.usedCapacity ?? 0n,
     bucketCount: chain.activeBuckets,
     registeredAt: chain.registeredAt,
+    multiaddr: chain.multiaddr,
   }
 }
 
@@ -421,6 +451,7 @@ export const providerActions = {
   loadProviderData,
   registerProvider,
   updateSettings,
+  updateMultiaddr,
   addStake,
   respondToChallenge,
   clearProviderState,

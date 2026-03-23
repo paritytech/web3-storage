@@ -4660,6 +4660,7 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-runtime",
+ "storage-primitives",
 ]
 
 [[package]]

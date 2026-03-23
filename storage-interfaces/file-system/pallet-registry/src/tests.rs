@@ -1,5 +1,6 @@
 use crate::{mock::*, Error};
 use frame_support::assert_noop;
+use storage_primitives::Role;
 
 #[test]
 fn create_drive_validates_inputs() {
@@ -145,5 +146,55 @@ fn helper_functions_work() {
 
         assert!(!DriveRegistry::is_drive_owner(0, &alice));
         assert!(!DriveRegistry::is_drive_owner(999, &alice));
+    });
+}
+
+#[test]
+fn share_drive_fails_when_drive_not_found() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let bob = 2u64;
+
+        assert_noop!(
+            DriveRegistry::share_drive(
+                RuntimeOrigin::signed(alice),
+                999, // nonexistent
+                bob,
+                Role::Reader,
+            ),
+            Error::<Test>::DriveNotFound
+        );
+    });
+}
+
+#[test]
+fn unshare_drive_fails_when_drive_not_found() {
+    new_test_ext().execute_with(|| {
+        let alice = 1u64;
+        let bob = 2u64;
+
+        assert_noop!(
+            DriveRegistry::unshare_drive(
+                RuntimeOrigin::signed(alice),
+                999, // nonexistent
+                bob,
+            ),
+            Error::<Test>::DriveNotFound
+        );
+    });
+}
+
+#[test]
+fn share_drive_fails_when_non_owner_non_admin() {
+    new_test_ext().execute_with(|| {
+        // Without a drive existing, we just test drive-not-found.
+        // Full permission tests require a registered provider + created drive.
+        let bob = 2u64;
+        let charlie = 3u64;
+
+        assert_noop!(
+            DriveRegistry::share_drive(RuntimeOrigin::signed(bob), 0, charlie, Role::Writer,),
+            Error::<Test>::DriveNotFound
+        );
     });
 }

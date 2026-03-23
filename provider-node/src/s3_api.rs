@@ -6,6 +6,8 @@
 //! Object key is passed as a `?key=` query parameter on all object endpoints.
 //! Example: `PUT /s3/1/object?key=photos/cat.jpg`
 
+use crate::api::check_role;
+use crate::auth::RequiredRole;
 use crate::error::Error;
 use crate::s3_index::{ListResult, ObjectMeta};
 use crate::storage::{build_padded_merkle_tree, hex_encode};
@@ -39,6 +41,7 @@ pub async fn s3_put_object(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<PutObjectResponse>, Error> {
+    check_role(&state, &headers, "PUT", bucket_id, RequiredRole::Writer).await?;
     let key = params.key;
     if key.is_empty() {
         return Err(Error::InvalidObjectKey("empty key".to_string()));
@@ -48,7 +51,7 @@ pub async fn s3_put_object(
     let size = data.len() as u64;
 
     // Initialize bucket if needed
-    state.storage.init_bucket(bucket_id, u64::MAX);
+    let _ = state.storage.init_bucket(bucket_id, u64::MAX);
 
     // 1. Split into chunks (256 KiB)
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
@@ -134,7 +137,9 @@ pub async fn s3_get_object(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<ObjectKeyParam>,
+    headers: HeaderMap,
 ) -> Result<Response, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let key = params.key;
     let meta = state
         .s3_index
@@ -198,7 +203,9 @@ pub async fn s3_head_object(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<ObjectKeyParam>,
+    headers: HeaderMap,
 ) -> Result<Response, Error> {
+    check_role(&state, &headers, "HEAD", bucket_id, RequiredRole::Reader).await?;
     let key = params.key;
     let meta = state
         .s3_index
@@ -258,7 +265,9 @@ pub async fn s3_delete_object(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<ObjectKeyParam>,
+    headers: HeaderMap,
 ) -> Result<Json<DeleteObjectResponse>, Error> {
+    check_role(&state, &headers, "DELETE", bucket_id, RequiredRole::Writer).await?;
     let key = params.key;
     let deleted = state.s3_index.delete_object(bucket_id, &key).is_some();
 
@@ -272,7 +281,9 @@ pub async fn s3_list_objects(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
     Query(params): Query<ListObjectsParams>,
-) -> Json<ListResult> {
+    headers: HeaderMap,
+) -> Result<Json<ListResult>, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let result = state.s3_index.list_objects(
         bucket_id,
         params.prefix.as_deref(),
@@ -282,7 +293,7 @@ pub async fn s3_list_objects(
         params.max_keys.unwrap_or(1000),
     );
 
-    Json(result)
+    Ok(Json(result))
 }
 
 /// GET /s3/:bucket_id/index_root
@@ -291,16 +302,18 @@ pub async fn s3_list_objects(
 pub async fn s3_index_root(
     State(state): State<Arc<ProviderState>>,
     Path(bucket_id): Path<BucketId>,
-) -> Json<IndexRootResponse> {
+    headers: HeaderMap,
+) -> Result<Json<IndexRootResponse>, Error> {
+    check_role(&state, &headers, "GET", bucket_id, RequiredRole::Reader).await?;
     let root = state.s3_index.metadata_merkle_root(bucket_id);
     let (object_count, total_size) = state.s3_index.bucket_stats(bucket_id);
 
-    Json(IndexRootResponse {
+    Ok(Json(IndexRootResponse {
         bucket_id,
         metadata_merkle_root: format!("0x{}", hex_encode(root.as_bytes())),
         object_count,
         total_size,
-    })
+    }))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

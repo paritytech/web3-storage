@@ -330,6 +330,7 @@ export interface OnChainProviderInfo {
   usedCapacity?: bigint
   activeBuckets: number
   registeredAt: number
+  multiaddr?: string
 }
 
 export interface OnChainProviderSettings {
@@ -421,12 +422,26 @@ export async function getProviderData(
 
     console.log('Provider data:', provider)
 
+    // Decode multiaddr bytes to string
+    let multiaddr: string | undefined
+    if (provider.multiaddr) {
+      try {
+        const bytes = provider.multiaddr instanceof Uint8Array
+          ? provider.multiaddr
+          : new Uint8Array(provider.multiaddr)
+        multiaddr = new TextDecoder().decode(bytes)
+      } catch {
+        // Ignore decode errors
+      }
+    }
+
     const info: OnChainProviderInfo = {
       stake: BigInt(provider.stake?.toString() || '0'),
       capacity: provider.settings?.max_capacity ? BigInt(provider.settings.max_capacity.toString()) : undefined,
       usedCapacity: provider.committed_bytes ? BigInt(provider.committed_bytes.toString()) : undefined,
       activeBuckets: provider.stats?.agreements_total || 0,
       registeredAt: provider.stats?.registered_at || 0,
+      multiaddr,
     }
 
     const settings: OnChainProviderSettings | null = provider.settings
@@ -780,6 +795,29 @@ export async function submitUpdateSettings(
   await signAndSubmitTx(tx, signer, 'Update settings', onProgress)
 
   console.log('Settings updated successfully')
+}
+
+/**
+ * Submit update_provider_multiaddr extrinsic using @polkadot/api
+ */
+export async function submitUpdateMultiaddr(
+  multiaddr: string,
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback
+): Promise<void> {
+  if (!polkadotApi) throw new Error('Not connected to chain')
+
+  const multiaddrBytes = new TextEncoder().encode(multiaddr)
+
+  console.log('Submitting update_provider_multiaddr with @polkadot/api:', multiaddr)
+
+  const tx = polkadotApi.tx.storageProvider.updateProviderMultiaddr(
+    Array.from(multiaddrBytes)
+  )
+
+  await signAndSubmitTx(tx, signer, 'Update multiaddr', onProgress)
+
+  console.log('Multiaddr updated successfully')
 }
 
 /**

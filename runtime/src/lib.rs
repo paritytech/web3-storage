@@ -18,7 +18,6 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
-use codec::Encode;
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
 use frame_support::{
@@ -509,6 +508,7 @@ impl pallet_drive_registry::Config for Runtime {
 
 impl pallet_s3_registry::Config for Runtime {
     type MaxBucketsPerUser = ConstU32<100>;
+    type MaxObjectsPerBucket = ConstU32<10000>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
@@ -670,8 +670,8 @@ impl_runtime_apis! {
     }
 
     impl sp_session::SessionKeys<Block> for Runtime {
-        fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
-            SessionKeys::generate(seed).encode()
+        fn generate_session_keys(owner: Vec<u8>, seed: Option<Vec<u8>>) -> sp_session::OpaqueGeneratedSessionKeys {
+            SessionKeys::generate(&owner, seed).into()
         }
 
         fn decode_session_keys(

@@ -8,16 +8,14 @@ import {
 } from "react";
 import {
   StorageClient,
-  type DriveInfo,
   type BucketInfo,
   type BucketMember,
   type ProviderEndpointInfo,
-  type CreateDriveOptions,
+  type AvailableProvider,
   type CreateBucketOptions,
   type UploadResult,
   type PutObjectOptions,
   type S3ObjectInfo,
-  type FsEntryInfo,
   type CheckpointStatus,
 } from "@/lib/storage";
 import { useChain } from "./useChain";
@@ -26,7 +24,6 @@ interface StorageState {
   client: StorageClient | null;
   signerAddress: string | null;
   signerName: string | null;
-  drives: DriveInfo[];
   buckets: BucketInfo[];
   loading: boolean;
   error: string | null;
@@ -36,34 +33,29 @@ interface StorageState {
   // Account
   setSigner: (seed: string) => Promise<void>;
 
-  // Drives (File System)
-  createDrive: (options: CreateDriveOptions) => Promise<bigint>;
-  refreshDrives: () => Promise<void>;
-  deleteDrive: (driveId: bigint) => Promise<void>;
-  uploadToDrive: (driveId: bigint, bucketId: bigint, path: string, data: Uint8Array) => Promise<UploadResult>;
-  downloadFromDrive: (bucketId: bigint, cid: string) => Promise<Uint8Array>;
-  listDriveFiles: (bucketId: bigint, path?: string) => Promise<FsEntryInfo[]>;
-  createDirectory: (bucketId: bigint, path: string) => Promise<void>;
-  deleteFile: (bucketId: bigint, path: string) => Promise<void>;
-
   // Buckets (S3)
   createBucket: (name: string, options: CreateBucketOptions) => Promise<BucketInfo>;
   refreshBuckets: () => Promise<void>;
   deleteBucket: (name: string) => Promise<void>;
   putObject: (bucketName: string, key: string, data: Uint8Array, bucketId: bigint, options?: PutObjectOptions) => Promise<UploadResult>;
-  getObject: (bucketId: bigint, cid: string) => Promise<Uint8Array>;
+  downloadS3Object: (bucketId: bigint, key: string) => Promise<Blob>;
   listObjects: (bucketId: bigint, prefix?: string) => Promise<S3ObjectInfo[]>;
   deleteObject: (bucketId: bigint, key: string) => Promise<void>;
 
   // Provider
   checkProviderHealth: (bucketId: bigint) => Promise<boolean>;
-  waitForProvider: (bucketId: bigint, onProgress?: (status: string, attempt: number, total: number) => void) => Promise<string>;
+  waitForProvider: (bucketId: bigint, onProgress?: (status: string, elapsedMs: number, attempt: number) => void) => Promise<string>;
+  listAvailableProviders: () => Promise<AvailableProvider[]>;
+  requestAgreementWithProvider: (bucketId: bigint, providerAccount: string, maxBytes: bigint, duration: number, maxPayment: bigint) => Promise<void>;
 
   // Bucket Members & Permissions
   fetchBucketMembers: (bucketId: bigint) => Promise<BucketMember[]>;
   addBucketMember: (bucketId: bigint, account: string, role: 'Admin' | 'Writer' | 'Reader') => Promise<void>;
   removeBucketMember: (bucketId: bigint, account: string) => Promise<void>;
   fetchBucketProviders: (bucketId: bigint) => Promise<ProviderEndpointInfo[]>;
+
+  // Shared Drives
+  listAccessibleBucketIds: () => Promise<bigint[]>;
 
   // Checkpoints
   fetchCheckpointStatus: (bucketId: bigint) => Promise<CheckpointStatus | null>;
@@ -80,7 +72,6 @@ export function StorageProvider({ children }: { children: ReactNode }) {
   const [client, setClient] = useState<StorageClient | null>(null);
   const [signerAddress, setSignerAddress] = useState<string | null>(null);
   const [signerName, setSignerName] = useState<string | null>(null);
-  const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [buckets, setBuckets] = useState<BucketInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +97,6 @@ export function StorageProvider({ children }: { children: ReactNode }) {
       setClient(null);
       setSignerAddress(null);
       setSignerName(null);
-      setDrives([]);
       setBuckets([]);
     }
   }, [connected, chainEndpoint]);
@@ -155,100 +145,6 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     } else {
       setProviderCapacity(null);
     }
-  }, [client]);
-
-  // --- Drive Operations ---
-
-  const createDrive = useCallback(async (options: CreateDriveOptions): Promise<bigint> => {
-    if (!client) throw new Error("Client not connected");
-    if (!signerAddress) throw new Error("Signer not set");
-
-    setLoading(true);
-    setError(null);
-    try {
-      const driveId = await client.createDrive(options);
-      // Skip refreshDrives — caller already has the driveId from events.
-      // Refresh happens on next page visit via useEffect.
-      return driveId;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create drive");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [client, signerAddress]);
-
-  const refreshDrives = useCallback(async () => {
-    if (!client) return;
-    setLoading(true);
-    try {
-      const driveList = await client.listDrives();
-      setDrives(driveList);
-    } catch (err) {
-      console.error("Failed to refresh drives:", err);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("incompatible") || msg.includes("decode") || msg.includes("runtime")) {
-        setError("Failed to list drives — runtime descriptor mismatch. Run: cd user-interfaces/console-ui && npx papi update");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [client]);
-
-  const deleteDrive = useCallback(async (driveId: bigint) => {
-    if (!client) throw new Error("Client not connected");
-
-    setLoading(true);
-    setError(null);
-    try {
-      await client.deleteDrive(driveId);
-      await refreshDrives();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete drive");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [client, refreshDrives]);
-
-  const uploadToDrive = useCallback(async (
-    driveId: bigint,
-    bucketId: bigint,
-    path: string,
-    data: Uint8Array
-  ): Promise<UploadResult> => {
-    if (!client) throw new Error("Client not connected");
-
-    setLoading(true);
-    setError(null);
-    try {
-      return await client.uploadToDrive(driveId, bucketId, path, data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [client]);
-
-  const downloadFromDrive = useCallback(async (bucketId: bigint, cid: string): Promise<Uint8Array> => {
-    if (!client) throw new Error("Client not connected");
-
-    setLoading(true);
-    setError(null);
-    try {
-      return await client.downloadByCid(bucketId, cid);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Download failed");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [client]);
-
-  const listDriveFiles = useCallback(async (bucketId: bigint, path?: string): Promise<FsEntryInfo[]> => {
-    if (!client) throw new Error("Client not connected");
-    return client.listDriveFiles(bucketId, path);
   }, [client]);
 
   // --- Bucket Operations ---
@@ -336,36 +232,14 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
   }, [client]);
 
-  const getObject = useCallback(async (bucketId: bigint, cid: string): Promise<Uint8Array> => {
+  const downloadS3Object = useCallback(async (bucketId: bigint, key: string): Promise<Blob> => {
     if (!client) throw new Error("Client not connected");
-
-    setLoading(true);
-    setError(null);
-    try {
-      return await client.getObject(bucketId, cid);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Download failed");
-      throw err;
-    } finally {
-      setLoading(false);
-    }
+    return client.downloadS3Object(bucketId, key);
   }, [client]);
 
   const listObjects = useCallback(async (bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> => {
     if (!client) throw new Error("Client not connected");
     return client.listObjects(bucketId, prefix);
-  }, [client]);
-
-  // --- Additional FS/S3 Operations ---
-
-  const createDirectory = useCallback(async (bucketId: bigint, path: string): Promise<void> => {
-    if (!client) throw new Error("Client not connected");
-    await client.createDirectory(bucketId, path);
-  }, [client]);
-
-  const deleteFile = useCallback(async (bucketId: bigint, path: string): Promise<void> => {
-    if (!client) throw new Error("Client not connected");
-    await client.deleteFile(bucketId, path);
   }, [client]);
 
   const deleteObject = useCallback(async (bucketId: bigint, key: string): Promise<void> => {
@@ -382,10 +256,33 @@ export function StorageProvider({ children }: { children: ReactNode }) {
 
   const waitForProvider = useCallback(async (
     bucketId: bigint,
-    onProgress?: (status: string, attempt: number, total: number) => void,
+    onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
   ): Promise<string> => {
     if (!client) throw new Error("Client not connected");
     return client.waitForProvider(bucketId, onProgress);
+  }, [client]);
+
+  const listAvailableProviders = useCallback(async (): Promise<AvailableProvider[]> => {
+    if (!client) throw new Error("Client not connected");
+    return client.listAvailableProviders();
+  }, [client]);
+
+  const requestAgreementWithProvider = useCallback(async (
+    bucketId: bigint,
+    providerAccount: string,
+    maxBytes: bigint,
+    duration: number,
+    maxPayment: bigint,
+  ): Promise<void> => {
+    if (!client) throw new Error("Client not connected");
+    setError(null);
+    try {
+      await client.requestAgreementWithProvider(bucketId, providerAccount, maxBytes, duration, maxPayment);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to request agreement";
+      setError(msg);
+      throw err;
+    }
   }, [client]);
 
   // --- Bucket Members & Permissions ---
@@ -424,6 +321,13 @@ export function StorageProvider({ children }: { children: ReactNode }) {
   const fetchBucketProviders = useCallback(async (bucketId: bigint): Promise<ProviderEndpointInfo[]> => {
     if (!client) throw new Error("Client not connected");
     return client.getBucketProviders(bucketId);
+  }, [client]);
+
+  // --- Shared Drives ---
+
+  const listAccessibleBucketIds = useCallback(async (): Promise<bigint[]> => {
+    if (!client) return [];
+    return client.listAccessibleBucketIds();
   }, [client]);
 
   // --- Checkpoint Operations ---
@@ -494,34 +398,28 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         client,
         signerAddress,
         signerName,
-        drives,
         buckets,
         loading,
         error,
         balance,
         providerCapacity,
         setSigner,
-        createDrive,
-        refreshDrives,
-        deleteDrive,
-        uploadToDrive,
-        downloadFromDrive,
-        listDriveFiles,
-        createDirectory,
-        deleteFile,
         createBucket,
         refreshBuckets,
         deleteBucket,
         putObject,
-        getObject,
+        downloadS3Object,
         listObjects,
         deleteObject,
         checkProviderHealth,
         waitForProvider,
+        listAvailableProviders,
+        requestAgreementWithProvider,
         fetchBucketMembers,
         addBucketMember,
         removeBucketMember,
         fetchBucketProviders,
+        listAccessibleBucketIds,
         fetchCheckpointStatus,
         submitCheckpoint,
         configureCheckpointWindow,

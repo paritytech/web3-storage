@@ -51,6 +51,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use pallet_storage_provider;
     use sp_runtime::BoundedVec;
+    use storage_primitives::Role;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -124,6 +125,17 @@ pub mod pallet {
             bucket_id: u64,
             refunded: BalanceOf<T>,
         },
+        /// Drive was shared with a member
+        DriveShared {
+            drive_id: DriveId,
+            member: T::AccountId,
+            role: Role,
+        },
+        /// Member was removed from a shared drive
+        DriveUnshared {
+            drive_id: DriveId,
+            member: T::AccountId,
+        },
     }
 
     /// Errors
@@ -155,6 +167,10 @@ pub mod pallet {
         NoProvidersAvailable,
         /// Insufficient replica providers available
         InsufficientReplicaProviders,
+        /// Not authorized to share this drive (must be owner or bucket admin)
+        NotAuthorizedToShare,
+        /// Failed to update bucket membership in Layer 0
+        MembershipUpdateFailed,
     }
 
     #[pallet::call]
@@ -297,6 +313,80 @@ pub mod pallet {
                 bucket_id: drive.bucket_id,
                 refunded: total_refunded,
             });
+
+            Ok(())
+        }
+
+        /// Share a drive with another account by adding them as a member of
+        /// the underlying Layer 0 bucket.
+        ///
+        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        ///
+        /// Parameters:
+        /// - `drive_id`: The drive to share
+        /// - `member`: Account to add
+        /// - `role`: Role to assign (Admin, Writer, or Reader)
+        #[pallet::call_index(3)]
+        #[pallet::weight(10_000)]
+        pub fn share_drive(
+            origin: OriginFor<T>,
+            drive_id: DriveId,
+            member: T::AccountId,
+            role: Role,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            let drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
+
+            // Drive owner always has permission; non-owners must be bucket Admin
+            if drive.owner != who {
+                // Delegate the admin check to set_member_internal which calls ensure_admin
+                // If the caller isn't an admin, set_member_internal will return NotBucketAdmin
+            }
+
+            pallet_storage_provider::Pallet::<T>::set_member_internal(
+                &who,
+                drive.bucket_id,
+                member.clone(),
+                role,
+            )
+            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+
+            Self::deposit_event(Event::DriveShared {
+                drive_id,
+                member,
+                role,
+            });
+
+            Ok(())
+        }
+
+        /// Remove a member's access to a shared drive.
+        ///
+        /// The caller must be the drive owner or an Admin of the underlying bucket.
+        ///
+        /// Parameters:
+        /// - `drive_id`: The drive to unshare
+        /// - `member`: Account to remove
+        #[pallet::call_index(4)]
+        #[pallet::weight(10_000)]
+        pub fn unshare_drive(
+            origin: OriginFor<T>,
+            drive_id: DriveId,
+            member: T::AccountId,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            let drive = Drives::<T>::get(drive_id).ok_or(Error::<T>::DriveNotFound)?;
+
+            pallet_storage_provider::Pallet::<T>::remove_member_internal(
+                &who,
+                drive.bucket_id,
+                member.clone(),
+            )
+            .map_err(|_| Error::<T>::MembershipUpdateFailed)?;
+
+            Self::deposit_event(Event::DriveUnshared { drive_id, member });
 
             Ok(())
         }

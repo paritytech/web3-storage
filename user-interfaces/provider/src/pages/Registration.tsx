@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   AlertCircle,
   ExternalLink,
+  Globe,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -38,9 +39,11 @@ import {
 } from '@/state/wallet.state'
 import { useIsConnected, connect as connectChain } from '@/state/chain.state'
 import {
+  useProviderInfo,
   useProviderSettings,
   useIsProviderLoading,
   updateSettings,
+  updateMultiaddr,
   loadProviderData,
   registerProvider,
   type ProviderSettings,
@@ -652,6 +655,7 @@ export function Registration() {
 
 function SettingsManager() {
   const selectedAccount = useSelectedAccount()
+  const providerInfo = useProviderInfo()
   const currentSettings = useProviderSettings()
   const isLoading = useIsProviderLoading()
 
@@ -661,12 +665,58 @@ function SettingsManager() {
   const [success, setSuccess] = useState(false)
   const [progressStatus, setProgressStatus] = useState<string | null>(null)
 
+  // Multiaddr update state
+  const [multiaddrValue, setMultiaddrValue] = useState('')
+  const [isMultiaddrSubmitting, setIsMultiaddrSubmitting] = useState(false)
+  const [multiaddrError, setMultiaddrError] = useState<string | null>(null)
+  const [multiaddrSuccess, setMultiaddrSuccess] = useState(false)
+  const [multiaddrProgress, setMultiaddrProgress] = useState<string | null>(null)
+
   // Initialize form with current settings
   useEffect(() => {
     if (currentSettings) {
       setSettings(currentSettings)
     }
   }, [currentSettings])
+
+  // Initialize multiaddr from provider info
+  useEffect(() => {
+    if (providerInfo?.multiaddr) {
+      setMultiaddrValue(providerInfo.multiaddr)
+    }
+  }, [providerInfo?.multiaddr])
+
+  const isMultiaddrValid = (addr: string) => {
+    return (addr.startsWith('/ip4/') || addr.startsWith('/dns4/')) && addr.includes('/tcp/')
+  }
+
+  const handleUpdateMultiaddr = async () => {
+    if (!selectedAccount || !multiaddrValue) return
+
+    if (!isMultiaddrValid(multiaddrValue)) {
+      setMultiaddrError('Multiaddr must start with /ip4/ or /dns4/ and contain /tcp/')
+      return
+    }
+
+    setIsMultiaddrSubmitting(true)
+    setMultiaddrError(null)
+    setMultiaddrSuccess(false)
+    setMultiaddrProgress('Preparing transaction...')
+
+    try {
+      await updateMultiaddr(multiaddrValue, selectedAccount, (status: TxStatus) => {
+        setMultiaddrProgress(status.message)
+      })
+      setMultiaddrSuccess(true)
+      setMultiaddrProgress(null)
+      setTimeout(() => setMultiaddrSuccess(false), 3000)
+    } catch (err) {
+      setMultiaddrError(err instanceof Error ? err.message : 'Update failed')
+      setMultiaddrProgress(null)
+    } finally {
+      setIsMultiaddrSubmitting(false)
+    }
+  }
 
   const handleUpdate = async () => {
     if (!settings || !selectedAccount) return
@@ -723,6 +773,63 @@ function SettingsManager() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Globe className="h-5 w-5" />
+            Node Address
+          </CardTitle>
+          <CardDescription>
+            The multiaddr where your provider node accepts connections
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {multiaddrError && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/30">
+              <AlertCircle className="h-4 w-4 text-red-500" />
+              <p className="text-sm text-red-400">{multiaddrError}</p>
+            </div>
+          )}
+
+          {multiaddrSuccess && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-green-500/10 border border-green-500/30">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <p className="text-sm text-green-400">Multiaddr updated successfully!</p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="multiaddr">Multiaddr</Label>
+            <div className="flex gap-3">
+              <Input
+                id="multiaddr"
+                type="text"
+                value={multiaddrValue}
+                onChange={(e) => setMultiaddrValue(e.target.value)}
+                placeholder="/ip4/127.0.0.1/tcp/3000"
+                className="flex-1"
+              />
+              <Button
+                onClick={handleUpdateMultiaddr}
+                disabled={isMultiaddrSubmitting || !multiaddrValue || multiaddrValue === providerInfo?.multiaddr}
+              >
+                {isMultiaddrSubmitting ? (
+                  <>
+                    <Spinner size="sm" className="mr-2" />
+                    {multiaddrProgress || 'Updating...'}
+                  </>
+                ) : (
+                  'Update'
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Must start with /ip4/ or /dns4/ and contain /tcp/ (e.g., /ip4/127.0.0.1/tcp/3000)
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

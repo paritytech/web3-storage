@@ -4,7 +4,6 @@ import {
   Activity,
   Box,
   Database,
-  HardDrive,
   Archive,
   RefreshCw,
   ChevronDown,
@@ -16,7 +15,6 @@ import {
   CheckCircle,
   Clock,
   User,
-  Hash,
 } from "lucide-react";
 import {
   Card,
@@ -32,7 +30,7 @@ import { parachain } from "@polkadot-api/descriptors";
 import { truncateHash } from "@/lib/utils";
 
 // Event types we care about
-type PalletFilter = "all" | "StorageProvider" | "DriveRegistry" | "S3Registry";
+type PalletFilter = "all" | "StorageProvider" | "S3Registry";
 
 interface BlockEvent {
   blockNumber: number;
@@ -70,13 +68,6 @@ const eventStyles: Record<string, { icon: typeof Activity; color: string; bg: st
   ChallengeDefended: { icon: Shield, color: "text-green-500", bg: "bg-green-500/10" },
   ChallengeSlashed: { icon: Zap, color: "text-red-500", bg: "bg-red-500/10" },
   ProviderCheckpointSubmitted: { icon: CheckCircle, color: "text-blue-500", bg: "bg-blue-500/10" },
-  // DriveRegistry events
-  DriveCreated: { icon: HardDrive, color: "text-purple-500", bg: "bg-purple-500/10" },
-  DriveCreatedOnBucket: { icon: HardDrive, color: "text-purple-500", bg: "bg-purple-500/10" },
-  DriveCreatedWithStorage: { icon: HardDrive, color: "text-purple-500", bg: "bg-purple-500/10" },
-  DriveDeleted: { icon: HardDrive, color: "text-red-500", bg: "bg-red-500/10" },
-  RootCIDUpdated: { icon: Hash, color: "text-blue-500", bg: "bg-blue-500/10" },
-  ChangesCommitted: { icon: CheckCircle, color: "text-green-500", bg: "bg-green-500/10" },
   // S3Registry events
   S3BucketCreated: { icon: Archive, color: "text-cyan-500", bg: "bg-cyan-500/10" },
   S3BucketDeleted: { icon: Archive, color: "text-red-500", bg: "bg-red-500/10" },
@@ -97,7 +88,7 @@ export default function Explorer() {
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
 
   // Layer 0 pallets we care about
-  const layer0Pallets = ["StorageProvider", "DriveRegistry", "S3Registry"];
+  const layer0Pallets = ["StorageProvider", "S3Registry"];
 
   // Parse events from event records
   const parseEventRecords = useCallback((eventsAtBlock: unknown[], currentBlockNumber: number, blockHash: string = ""): BlockEvent[] => {
@@ -374,7 +365,7 @@ export default function Explorer() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -400,18 +391,6 @@ export default function Explorer() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              DriveRegistry
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-500">
-              {events.filter(e => e.pallet === "DriveRegistry").length}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
               S3Registry
             </CardTitle>
           </CardHeader>
@@ -431,10 +410,10 @@ export default function Explorer() {
               <Activity className="mx-auto h-8 w-8 mb-2 opacity-50" />
               <p className="font-medium">Waiting for Layer 0 events...</p>
               <p className="text-sm mt-1">
-                Events from StorageProvider, DriveRegistry, and S3Registry pallets will appear here.
+                Events from StorageProvider and S3Registry pallets will appear here.
               </p>
               <p className="text-sm mt-2">
-                Try creating a drive, bucket, or uploading a file to see events.
+                Try creating a bucket or uploading a file to see events.
               </p>
             </div>
           </CardContent>
@@ -452,7 +431,7 @@ export default function Explorer() {
               </CardTitle>
               <div className="flex items-center gap-2">
                 <div className="flex gap-1">
-                  {(["all", "StorageProvider", "DriveRegistry", "S3Registry"] as PalletFilter[]).map(
+                  {(["all", "StorageProvider", "S3Registry"] as PalletFilter[]).map(
                     (filter) => (
                       <Button
                         key={filter}

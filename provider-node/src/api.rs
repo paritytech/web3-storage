@@ -1,5 +1,6 @@
 //! HTTP API handlers for the provider node.
 
+use crate::auth::{self, RequiredRole};
 use crate::checkpoint_coordinator::{
     CheckpointDutyQuery, CheckpointDutyResponse, SignProposalRequest, SignProposalResponse,
 };
@@ -50,6 +51,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Checkpoint coordination
         .route("/checkpoint/sign", post(sign_checkpoint_proposal))
         .route("/checkpoint/duty", get(get_checkpoint_duty))
+        .route("/checkpoint/trigger", post(trigger_checkpoint))
         // Replica sync status
         .route("/replica/historical_roots", get(get_historical_roots))
         .route("/replica/sync_status", get(get_replica_sync_status))
@@ -77,6 +79,32 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// Extract the Authorization header value from a header map.
+pub(crate) fn auth_header(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+}
+
+/// Convenience wrapper around `auth::require_role` using request headers.
+pub(crate) async fn check_role(
+    state: &ProviderState,
+    headers: &axum::http::HeaderMap,
+    method: &str,
+    bucket_id: u64,
+    required: RequiredRole,
+) -> Result<(), Error> {
+    auth::require_role(
+        state,
+        auth_header(headers),
+        method,
+        bucket_id,
+        required,
+        state.auth_max_skew,
+    )
+    .await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -584,6 +612,72 @@ async fn sign_checkpoint_proposal(
         signature,
         agreed: true,
         local_mmr_root: Some(local_mmr_root),
+    }))
+}
+
+/// Trigger checkpoint submission for a bucket.
+///
+/// Sends a ForceCheckpoint command to the checkpoint coordinator,
+/// which handles leader election, signature collection, and on-chain submission.
+async fn trigger_checkpoint(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<CheckpointDutyQuery>,
+) -> Result<Json<TriggerCheckpointResponse>, Error> {
+    tracing::info!(
+        "Checkpoint trigger requested for bucket {}",
+        query.bucket_id
+    );
+
+    // Verify bucket has data locally
+    let bucket = state.storage.get_bucket(query.bucket_id);
+    if bucket.is_none() {
+        return Err(Error::Internal(format!(
+            "Bucket {} not found in local storage. Upload data first.",
+            query.bucket_id
+        )));
+    }
+    let bucket = bucket.unwrap();
+    if bucket.leaf_count == 0 {
+        return Err(Error::Internal(format!(
+            "Bucket {} has no committed data (leaf_count=0). Upload and commit data first.",
+            query.bucket_id
+        )));
+    }
+
+    let sender = state
+        .checkpoint_cmd_tx
+        .lock()
+        .map_err(|_| Error::Internal("Lock poisoned".to_string()))?
+        .clone();
+
+    let sender = sender.ok_or_else(|| {
+        Error::Internal(
+            "Checkpoint coordinator not running. Start provider with --enable-checkpoint-coordinator"
+                .to_string(),
+        )
+    })?;
+
+    sender
+        .send(crate::checkpoint_coordinator::CoordinatorCommand::ForceCheckpoint(query.bucket_id))
+        .await
+        .map_err(|_| Error::Internal(
+            "Coordinator channel closed — the coordinator task may have crashed. Check provider logs and restart.".to_string(),
+        ))?;
+
+    tracing::info!(
+        "ForceCheckpoint command sent for bucket {} (leaves={}, mmr_root=0x{})",
+        query.bucket_id,
+        bucket.leaf_count,
+        hex_encode(&bucket.mmr_root.as_bytes()[..4])
+    );
+
+    Ok(Json(TriggerCheckpointResponse {
+        bucket_id: query.bucket_id,
+        triggered: true,
+        message: format!(
+            "Checkpoint triggered for bucket {} with {} leaves. The coordinator will handle submission.",
+            query.bucket_id, bucket.leaf_count
+        ),
     }))
 }
 

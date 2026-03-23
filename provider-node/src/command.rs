@@ -1,14 +1,17 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    auth::{ChainMembershipResolver, MembershipCache},
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
-    DiskStorage, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
+    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
 };
 use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
+use subxt::dynamic::At;
 use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -43,8 +46,24 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let seed = cli.key.load_seed()?;
     let state = match &seed {
         Some(seed) => {
-            let state = ProviderState::with_seed(storage, seed)?;
+            let mut state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
+
+            // Wire up auth if enabled
+            if cli.auth.enable_auth {
+                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+                let cache = MembershipCache::new(Box::new(resolver), ttl);
+                state.auth_enabled = true;
+                state.membership_cache = Some(Arc::new(cache));
+                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
+                tracing::info!(
+                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
+                    cli.auth.auth_cache_ttl,
+                    cli.auth.auth_max_skew
+                );
+            }
+
             Arc::new(state)
         }
         None => {
@@ -57,13 +76,34 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
-            Arc::new(ProviderState::new(storage, provider_id))
+
+            let mut state = ProviderState::new(storage, provider_id);
+
+            if cli.auth.enable_auth {
+                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+                let cache = MembershipCache::new(Box::new(resolver), ttl);
+                state.auth_enabled = true;
+                state.membership_cache = Some(Arc::new(cache));
+                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
+                tracing::info!(
+                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
+                    cli.auth.auth_cache_ttl,
+                    cli.auth.auth_max_skew
+                );
+            }
+
+            Arc::new(state)
         }
     };
 
     // Start optional background services (failures are non-fatal)
-    let _checkpoint_handle = start_checkpoint_coordinator(&cli, state.clone()).await;
+    let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
+    if let Some(ref handle) = checkpoint_handle {
+        state.set_checkpoint_handle(handle);
+    }
     let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
+    let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address (requires signing key)
     if let Some(seed) = &seed {
@@ -87,14 +127,24 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start_checkpoint_coordinator(
     cli: &Cli,
+    seed: &Option<String>,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
         return None;
     }
 
+    let seed = match seed {
+        Some(s) => s.clone(),
+        None => {
+            tracing::error!("Checkpoint coordinator requires --keyfile for signing. Skipping.");
+            return None;
+        }
+    };
+
     let config = CheckpointCoordinatorConfig {
         chain_ws_url: cli.rpc.chain_rpc.clone(),
+        seed: Some(seed),
         ..Default::default()
     };
 
@@ -154,6 +204,50 @@ async fn start_replica_sync_coordinator(
     }
 }
 
+async fn start_agreement_coordinator(
+    cli: &Cli,
+    seed: &Option<String>,
+    state: Arc<ProviderState>,
+) -> Option<AgreementCoordinatorHandle> {
+    if !cli.agreement.enable_agreement_coordinator {
+        return None;
+    }
+
+    let seed = match seed {
+        Some(s) => s.clone(),
+        None => {
+            tracing::error!("Agreement coordinator requires --keyfile for signing. Skipping.");
+            return None;
+        }
+    };
+
+    let config = AgreementCoordinatorConfig {
+        chain_ws_url: cli.rpc.chain_rpc.clone(),
+        poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
+        auto_accept: true,
+        seed: Some(seed),
+    };
+
+    let mut coordinator = AgreementCoordinator::new(config, state);
+
+    if let Err(e) = coordinator.connect().await {
+        tracing::error!("Failed to connect agreement coordinator: {}", e);
+        return None;
+    }
+    tracing::info!("Agreement coordinator connected to chain");
+
+    match coordinator.start().await {
+        Ok(handle) => {
+            tracing::info!("Agreement coordinator started — auto-accepting agreements");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::error!("Failed to start agreement coordinator: {}", e);
+            None
+        }
+    }
+}
+
 /// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string (e.g. "/ip4/127.0.0.1/tcp/3333").
 fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
     let parts: Vec<&str> = bind_addr.split(':').collect();
@@ -164,7 +258,7 @@ fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
     };
     // 0.0.0.0 isn't useful as a client-facing address
     let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
-    format!("/ip4/{}/tcp/{}", host, port)
+    format!("/ip4/{host}/tcp/{port}")
 }
 
 /// Ensure the on-chain multiaddr matches the actual bind address.
@@ -217,59 +311,63 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
         }
     };
 
-    // Extract multiaddr field from the ProviderInfo composite
-    let current_multiaddr = {
-        let decoded = provider_value.to_value();
-        match &decoded {
-            Ok(val) => {
-                if let subxt::ext::scale_value::ValueDef::Composite(
-                    subxt::ext::scale_value::Composite::Named(fields),
-                ) = &val.value
-                {
-                    fields
-                        .iter()
-                        .find(|(name, _)| name == "multiaddr")
-                        .and_then(|(_, v)| {
-                            if let subxt::ext::scale_value::ValueDef::Composite(
-                                subxt::ext::scale_value::Composite::Unnamed(bytes_vals),
-                            ) = &v.value
-                            {
-                                let bytes: Vec<u8> = bytes_vals
-                                    .iter()
-                                    .filter_map(|b| {
-                                        if let subxt::ext::scale_value::ValueDef::Primitive(
-                                            subxt::ext::scale_value::Primitive::U128(n),
-                                        ) = &b.value
-                                        {
-                                            Some(*n as u8)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                Some(String::from_utf8_lossy(&bytes).to_string())
-                            } else {
-                                None
-                            }
-                        })
-                } else {
-                    None
-                }
+    // Extract multiaddr from the encoded provider storage entry.
+    // Decode to scale_value and extract the "multiaddr" field bytes.
+    let current = {
+        let decoded = match provider_value.to_value() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
+                return;
             }
-            Err(_) => None,
-        }
-    };
+        };
 
-    let current = match current_multiaddr {
-        Some(m) => m,
-        None => {
-            tracing::warn!("Could not decode on-chain multiaddr, skipping sync");
-            return;
+        // Use At trait to navigate the decoded value
+        let multiaddr_val = match decoded.at("multiaddr") {
+            Some(v) => v,
+            None => {
+                tracing::warn!("No multiaddr field in provider info, skipping sync");
+                return;
+            }
+        };
+
+        // Extract bytes from the value — could be a sequence of u8 values
+        fn extract_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
+            use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
+            match &val.value {
+                // Sequence/composite of individual byte values
+                ValueDef::Composite(Composite::Unnamed(items)) => items
+                    .iter()
+                    .filter_map(|item| match &item.value {
+                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
+                        _ => None,
+                    })
+                    .collect(),
+                // Some subxt versions encode Vec<u8> as a Primitive::U256 or similar
+                ValueDef::Primitive(Primitive::U128(n)) => {
+                    // Single byte
+                    vec![*n as u8]
+                }
+                _ => vec![],
+            }
         }
+
+        let bytes = extract_bytes(multiaddr_val);
+        if bytes.is_empty() {
+            // Debug: log the actual value structure to understand the encoding
+            tracing::warn!(
+                "multiaddr decoded as empty, value structure: {:?}",
+                multiaddr_val
+            );
+        }
+        String::from_utf8_lossy(&bytes).to_string()
     };
 
     if current == expected_multiaddr {
-        tracing::info!("On-chain multiaddr matches bind address: {}", expected_multiaddr);
+        tracing::info!(
+            "On-chain multiaddr matches bind address: {}",
+            expected_multiaddr
+        );
         return;
     }
 
@@ -287,8 +385,7 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
             return;
         }
     };
-    let signer =
-        subxt_signer::sr25519::Keypair::from_uri(&uri).expect("valid keypair from seed");
+    let signer = subxt_signer::sr25519::Keypair::from_uri(&uri).expect("valid keypair from seed");
 
     let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
     let tx = subxt::dynamic::tx(

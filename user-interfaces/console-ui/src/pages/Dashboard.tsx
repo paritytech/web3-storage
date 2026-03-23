@@ -1,5 +1,4 @@
 import {
-  HardDrive,
   Archive,
   FileUp,
   FileDown,
@@ -20,12 +19,6 @@ export default function Dashboard() {
   const { connected, blockNumber, chainEndpoint } = useChain();
 
   const stats = [
-    {
-      title: "Drives",
-      value: "0",
-      description: "File System drives",
-      icon: HardDrive,
-    },
     {
       title: "S3 Buckets",
       value: "0",
@@ -89,7 +82,7 @@ export default function Dashboard() {
       </Card>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         {stats.map((stat) => (
           <Card key={stat.title}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -118,7 +111,7 @@ export default function Dashboard() {
             <Activity className="mx-auto h-12 w-12 mb-4 opacity-50" />
             <p>No recent activity</p>
             <p className="text-sm">
-              Start by creating a drive or uploading files
+              Start by creating a bucket or uploading files
             </p>
           </div>
         </CardContent>

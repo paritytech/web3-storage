@@ -1,5 +1,5 @@
 /**
- * Storage SDK - Browser-compatible wrapper for File System and S3 operations
+ * Storage SDK - Browser-compatible wrapper for S3 operations
  * Uses real chain types via polkadot-api
  */
 
@@ -7,7 +7,9 @@ import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider/web";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { Keyring } from "@polkadot/keyring";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
+import type { KeyringPair } from "@polkadot/keyring/types";
+import { cryptoWaitReady, signatureVerify } from "@polkadot/util-crypto";
+import { u8aToHex } from "@polkadot/util";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, FixedSizeBinary, Enum } from "polkadot-api";
 
@@ -19,22 +21,6 @@ interface TxResult {
 }
 
 // Types
-export interface DriveInfo {
-  driveId: bigint;
-  owner: string;
-  name: string | null;
-  bucketId: bigint;
-  createdAt: bigint;
-}
-
-export interface FsEntryInfo {
-  name: string;
-  path: string;
-  entryType: "file" | "directory";
-  size: number;
-  mtime: number;
-}
-
 export interface BucketInfo {
   s3BucketId: bigint;
   name: string;
@@ -46,13 +32,6 @@ export interface BucketInfo {
 export interface UploadResult {
   cid: string;
   size: number;
-}
-
-export interface CreateDriveOptions {
-  name?: string;
-  capacity: bigint;
-  duration: number;
-  maxPayment: bigint;
 }
 
 export interface CreateBucketOptions {
@@ -100,6 +79,19 @@ export interface ProviderEndpointInfo {
   healthy: boolean;
 }
 
+export interface AvailableProvider {
+  account: string;
+  multiaddr: string;
+  stake: bigint;
+  availableCapacity: bigint;
+  maxCapacity: bigint;
+  pricePerByte: bigint;
+  minDuration: number;
+  maxDuration: number;
+  acceptingPrimary: boolean;
+  agreementsTotal: number;
+}
+
 export interface PutObjectOptions {
   contentType?: string;
   metadata?: Record<string, string>;
@@ -124,6 +116,7 @@ export class StorageClient {
   private api: ParachainApi | null = null;
   private signer: ReturnType<typeof getPolkadotSigner> | null = null;
   private signerAddress: string | null = null;
+  private keyringPair: KeyringPair | null = null;
   private providerUrlCache: Map<string, string> = new Map();
 
   constructor(chainWs: string) {
@@ -148,6 +141,7 @@ export class StorageClient {
     await cryptoWaitReady();
     const keyring = new Keyring({ type: "sr25519" });
     const account = keyring.addFromUri(seed);
+    this.keyringPair = account;
     this.signer = getPolkadotSigner(account.publicKey, "Sr25519", (input) =>
       account.sign(input)
     );
@@ -178,6 +172,22 @@ export class StorageClient {
   private ensureConnected(): void {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
     if (!this.signer) throw new Error("Signer not set. Call setSigner() first.");
+  }
+
+  /**
+   * Produce an Authorization header for provider-node requests.
+   * Format: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+   * Signed message: web3storage:<method>:<bucketId>:<timestamp>
+   */
+  private signRequest(method: string, bucketId: bigint): Record<string, string> {
+    if (!this.keyringPair) return {};
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const message = `web3storage:${method}:${Number(bucketId)}:${timestamp}`;
+    const msgBytes = new TextEncoder().encode(message);
+    const sig = this.keyringPair.sign(msgBytes);
+    const pubHex = u8aToHex(this.keyringPair.publicKey);
+    const sigHex = u8aToHex(sig);
+    return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
   }
 
   /**
@@ -350,8 +360,10 @@ export class StorageClient {
         return url;
       } catch (err) {
         if (i === delays.length - 1) throw err;
-        // Only retry on "no primary providers" — other errors are fatal
-        if (err instanceof Error && !err.message.includes("no primary providers")) throw err;
+        // Retry on transient errors — bucket may not be visible yet or provider hasn't accepted
+        const msg = err instanceof Error ? err.message : "";
+        const retryable = msg.includes("no primary providers") || msg.includes("not found on chain");
+        if (!retryable) throw err;
       }
     }
     throw new Error(`Bucket ${bucketId} has no primary providers after waiting`);
@@ -359,15 +371,65 @@ export class StorageClient {
 
   /**
    * Wait for a bucket's provider to become available.
-   * Use after bucket/drive creation to ensure the provider has accepted the agreement.
+   * Polls for up to ~150 seconds with increasing backoff.
+   * Calls onProgress with elapsed seconds so the UI can show timing warnings.
    */
   async waitForProvider(
     bucketId: bigint,
-    onProgress?: (status: string, attempt: number, total: number) => void,
+    onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
   ): Promise<string> {
-    // Invalidate cache so we do a fresh check
     this.invalidateProviderCache(bucketId);
-    return this.getProviderUrl(bucketId, onProgress);
+
+    // Poll schedule: 20 attempts over ~150s
+    // Early: 3s intervals, then 6s, then 10s
+    const intervals = [
+      0, 3000, 3000, 3000, 3000, 3000,       // 0-15s: every 3s
+      6000, 6000, 6000, 6000, 6000,           // 15-45s: every 6s
+      10000, 10000, 10000, 10000, 10000,      // 45-95s: every 10s
+      10000, 10000, 10000, 10000, 10000,      // 95-145s: every 10s
+    ];
+    const startTime = Date.now();
+
+    for (let i = 0; i < intervals.length; i++) {
+      if (intervals[i] > 0) {
+        await new Promise(r => setTimeout(r, intervals[i]));
+      }
+
+      const elapsedMs = Date.now() - startTime;
+      const elapsedSec = Math.round(elapsedMs / 1000);
+
+      let status: string;
+      if (elapsedSec < 30) {
+        status = "Waiting for provider to accept the agreement...";
+      } else if (elapsedSec < 60) {
+        status = "Provider is processing — this typically takes about a minute...";
+      } else if (elapsedSec < 100) {
+        status = "Still waiting for provider acceptance...";
+      } else {
+        status = "Taking longer than usual — provider may be busy or offline...";
+      }
+
+      console.log(`[StorageClient] waitForProvider bucket=${bucketId} attempt=${i + 1}/${intervals.length} elapsed=${elapsedSec}s`);
+      onProgress?.(status, elapsedMs, i + 1);
+
+      try {
+        const url = await this.resolveProviderEndpoint(bucketId);
+        this.providerUrlCache.set(bucketId.toString(), url);
+        onProgress?.("Provider accepted — ready to use", Date.now() - startTime, intervals.length);
+        return url;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "";
+        const retryable = msg.includes("no primary providers") || msg.includes("not found on chain");
+        if (!retryable) throw err;
+        if (i === intervals.length - 1) {
+          throw new Error(
+            `Provider did not accept the agreement after ${Math.round((Date.now() - startTime) / 1000)}s. ` +
+            `The provider may be offline or not accepting new agreements.`
+          );
+        }
+      }
+    }
+    throw new Error("Provider did not accept the agreement");
   }
 
   /** Clear cached provider URL for a bucket (e.g. after provider changes). */
@@ -379,203 +441,41 @@ export class StorageClient {
     }
   }
 
-  // --- File System (Drive) Operations ---
-
-  async createDrive(options: CreateDriveOptions): Promise<bigint> {
-    this.ensureConnected();
-
-    // Single extrinsic: create_drive automatically creates Layer 0 bucket,
-    // selects providers, and establishes storage agreements.
-    const tx = this.api!.tx.DriveRegistry.create_drive({
-      name: options.name ? Binary.fromText(options.name) : undefined,
-      max_capacity: options.capacity,
-      storage_period: options.duration,
-      payment: options.maxPayment,
-      min_providers: undefined, // Auto-determine
-    });
-
-    const result = await this.submitAndWatchBestBlock(tx);
-
-    // Extract drive ID from DriveCreated event
-    for (const event of result.events) {
-      if (event.type === "DriveRegistry" && event.value.type === "DriveCreated") {
-        return event.value.value.drive_id;
-      }
-    }
-
-    // Fallback: if events couldn't be decoded, reload drives and return the latest
-    console.warn(
-      "[StorageClient] DriveCreated event not found in tx events (",
-      result.events.length, "events). Falling back to chain query."
-    );
-    const drives = await this.listDrives();
-    if (drives.length > 0) {
-      // Return the most recently created drive
-      const latest = drives.reduce((a, b) => a.createdAt > b.createdAt ? a : b);
-      return latest.driveId;
-    }
-    throw new Error(
-      "DriveCreated event not found and drive lookup failed. " +
-      "The runtime descriptor may be stale — run: npx papi update"
-    );
-  }
-
-  async listDrives(): Promise<DriveInfo[]> {
-    this.ensureConnected();
-
-    const driveIds = await this.api!.query.DriveRegistry.UserDrives.getValue(
-      this.signerAddress!
-    );
-
-    if (!driveIds) return [];
-
-    const drives: DriveInfo[] = [];
-    for (const driveId of driveIds) {
-      const drive = await this.getDrive(driveId);
-      if (drive) drives.push(drive);
-    }
-    return drives;
-  }
-
-  async getDrive(driveId: bigint): Promise<DriveInfo | null> {
-    this.ensureConnected();
-
-    const drive = await this.api!.query.DriveRegistry.Drives.getValue(driveId);
-    if (!drive) return null;
-
-    // Handle name - it may be an Option<BoundedVec<u8>> or Binary
-    let name: string | null = null;
-    if (drive.name) {
-      if (typeof drive.name.asBytes === 'function') {
-        name = new TextDecoder().decode(drive.name.asBytes());
-      } else if (drive.name instanceof Uint8Array) {
-        name = new TextDecoder().decode(drive.name);
-      }
-    }
-
-    return {
-      driveId,
-      owner: drive.owner,
-      name,
-      bucketId: BigInt(drive.bucket_id),
-      createdAt: BigInt(drive.created_at),
-    };
-  }
-
-  async deleteDrive(driveId: bigint): Promise<void> {
-    this.ensureConnected();
-
-    await this.submitAndWatchBestBlock(
-      this.api!.tx.DriveRegistry.delete_drive({
-        drive_id: driveId,
-      })
-    );
-  }
-
-  async uploadToDrive(
-    _driveId: bigint,
-    bucketId: bigint,
-    path: string,
-    data: Uint8Array
-  ): Promise<UploadResult> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    // Upload via FS endpoint which handles chunking, Merkle tree,
-    // MMR commit, and FS index update in a single request.
-    const response = await fetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: data,
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
-    }
-
-    const result = await response.json();
-    return { cid: result.data_root, size: data.length };
-  }
-
-  async downloadByCid(bucketId: bigint, cid: string): Promise<Uint8Array> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await fetch(
-      `${providerUrl}/node?hash=${cid}&bucket_id=${bucketId}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    const json = await response.json();
-    return this.fromBase64(json.data);
-  }
-
-  async listDriveFiles(bucketId: bigint, path?: string): Promise<FsEntryInfo[]> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams();
-    if (path) params.set("path", path);
-
-    const response = await fetch(
-      `${providerUrl}/fs/${Number(bucketId)}/ls?${params.toString()}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`List drive files failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return (result.entries || []).map((e: any) => ({
-      name: e.name,
-      path: e.path,
-      entryType: e.entry_type,
-      size: e.size,
-      mtime: e.mtime * 1000, // Unix seconds → JS millis
-    }));
-  }
-
   // --- S3 Operations ---
 
   async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
 
-    console.log("[StorageClient] createBucket:", name, {
-      capacity: options.capacity.toString(),
-      duration: options.duration,
-      maxPayment: options.maxPayment.toString(),
-    });
+    console.log("[StorageClient] createBucket:", name);
 
-    // S3 bucket creation with automatic provider matching
-    // The pallet creates a Layer 0 bucket and requests agreements with providers
-    const txEntry = this.api!.tx.S3Registry.create_s3_bucket;
-
-    // Check compatibility level before attempting submission
-    try {
-      const level = await txEntry.getCompatibilityLevel();
-      console.log("[StorageClient] S3Registry.create_s3_bucket compatibility level:", level);
-    } catch (err) {
-      console.warn("[StorageClient] Could not check compatibility level:", err);
-    }
-
-    const txArgs = {
-      name: Binary.fromText(name),
-      min_providers: 1, // 1 for local/testnet
-      max_capacity: options.capacity,
-      storage_period: options.duration,
-      max_payment: options.maxPayment,
-    };
-
+    // Try the atomic extrinsic first (bucket + agreement in one tx).
+    // Falls back to the old create_s3_bucket if the runtime doesn't have it yet.
     let tx;
+    let usedAtomicTx = false;
     try {
-      tx = txEntry(txArgs);
-      console.log("[StorageClient] Tx built successfully");
-    } catch (err) {
-      console.error("[StorageClient] Failed to build S3Registry.create_s3_bucket tx:", err);
-      console.error("[StorageClient] This usually means the runtime descriptor is out of date.");
-      console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
-      throw err;
+      tx = this.api!.tx.S3Registry.create_s3_bucket_with_storage({
+        name: Binary.fromText(name),
+        max_capacity: options.capacity,
+        duration: options.duration,
+        max_payment: options.maxPayment,
+      });
+      usedAtomicTx = true;
+      console.log("[StorageClient] Using atomic create_s3_bucket_with_storage tx");
+    } catch {
+      // Fallback: runtime doesn't have the new extrinsic yet
+      console.log("[StorageClient] Falling back to create_s3_bucket (old extrinsic)");
+      try {
+        tx = this.api!.tx.S3Registry.create_s3_bucket({
+          name: Binary.fromText(name),
+          min_providers: 1,
+        });
+      } catch (err) {
+        console.error("[StorageClient] Failed to build S3Registry tx:", err);
+        console.error("[StorageClient] The runtime descriptor may be out of date.");
+        console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
+        throw err;
+      }
     }
 
     const result = await this.submitAndWatchBestBlock(tx);
@@ -702,6 +602,7 @@ export class StorageClient {
     // and S3 index update in a single request.
     const headers: Record<string, string> = {
       "Content-Type": options?.contentType || "application/octet-stream",
+      ...this.signRequest("PUT", bucketId),
     };
     if (options?.metadata) {
       for (const [k, v] of Object.entries(options.metadata)) {
@@ -722,8 +623,20 @@ export class StorageClient {
     return { cid: result.data_root || result.etag, size: data.length };
   }
 
-  async getObject(bucketId: bigint, cid: string): Promise<Uint8Array> {
-    return this.downloadByCid(bucketId, cid);
+  /**
+   * Download an S3 object by key. Returns the raw bytes.
+   * Uses the S3 GET endpoint which reassembles chunks into the full object.
+   */
+  async downloadS3Object(bucketId: bigint, key: string): Promise<Blob> {
+    const providerUrl = await this.getProviderUrl(bucketId);
+    const response = await fetch(
+      `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
+      { headers: this.signRequest("GET", bucketId) },
+    );
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${await response.text()}`);
+    }
+    return response.blob();
   }
 
   async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
@@ -732,7 +645,8 @@ export class StorageClient {
     if (prefix) params.set("prefix", prefix);
 
     const response = await fetch(
-      `${providerUrl}/s3/${Number(bucketId)}/objects?${params.toString()}`
+      `${providerUrl}/s3/${Number(bucketId)}/objects?${params.toString()}`,
+      { headers: this.signRequest("GET", bucketId) },
     );
 
     if (!response.ok) {
@@ -748,39 +662,13 @@ export class StorageClient {
     }));
   }
 
-  // --- File System Additional Operations ---
-
-  async createDirectory(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await fetch(
-      `${providerUrl}/fs/${Number(bucketId)}/mkdir?path=${encodeURIComponent(path)}`,
-      { method: "POST" },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Create directory failed: ${response.status} ${await response.text()}`);
-    }
-  }
-
-  async deleteFile(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await fetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
-      { method: "DELETE" },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Delete file failed: ${response.status} ${await response.text()}`);
-    }
-  }
-
   // --- S3 Additional Operations ---
 
   async deleteObject(bucketId: bigint, key: string): Promise<void> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await fetch(
       `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE" },
+      { method: "DELETE", headers: this.signRequest("DELETE", bucketId) },
     );
 
     if (!response.ok) {
@@ -885,48 +773,26 @@ export class StorageClient {
     };
   }
 
-  async submitCheckpointForBucket(bucketId: bigint, currentBlock: number): Promise<void> {
-    this.ensureConnected();
+  /**
+   * Trigger checkpoint submission via the provider node.
+   *
+   * Instead of building and submitting the on-chain extrinsic directly (which
+   * requires the caller to be a provider), this tells the provider's checkpoint
+   * coordinator to handle leader election, signature collection, and on-chain
+   * submission using the provider's own signing key.
+   */
+  async submitCheckpointForBucket(bucketId: bigint, _currentBlock: number): Promise<void> {
+    const providerUrl = await this.getProviderUrl(bucketId);
 
-    // 1. Get config interval
-    const config = await this.getCheckpointConfig(bucketId);
-    const window = BigInt(Math.floor(currentBlock / config.interval));
+    const response = await fetch(
+      `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
+      { method: "POST" },
+    );
 
-    // 2. Fetch signature from provider
-    const sigInfo = await this.getCheckpointSignature(bucketId);
-
-    // 3. Get primary providers for this bucket
-    const bucket = await this.api!.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error("Bucket not found on chain");
-
-    const primaryProviders: string[] = bucket.primary_providers ?? [];
-    if (primaryProviders.length === 0) {
-      throw new Error("No primary providers found for bucket");
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Checkpoint trigger failed: ${response.status} ${text}`);
     }
-
-    // 4. Build the MMR root FixedSizeBinary<32>
-    const mmrRootHex = sigInfo.mmrRoot.startsWith("0x") ? sigInfo.mmrRoot : `0x${sigInfo.mmrRoot}`;
-    const mmrRoot = FixedSizeBinary.fromHex(mmrRootHex) as FixedSizeBinary<32>;
-
-    // 5. Build signature tuple: [providerAccount, MultiSignature::Sr25519(sig)]
-    const sigHex = sigInfo.providerSignature.startsWith("0x")
-      ? sigInfo.providerSignature
-      : `0x${sigInfo.providerSignature}`;
-    const providerAccount = primaryProviders[0];
-    const signature = Enum("Sr25519", FixedSizeBinary.fromHex(sigHex) as FixedSizeBinary<64>);
-    const signatures: Array<[string, typeof signature]> = [[providerAccount, signature]];
-
-    // 6. Submit extrinsic
-    const tx = this.api!.tx.StorageProvider.provider_checkpoint({
-      bucket_id: bucketId,
-      mmr_root: mmrRoot,
-      start_seq: BigInt(sigInfo.startSeq),
-      leaf_count: BigInt(sigInfo.leafCount),
-      window,
-      signatures,
-    });
-
-    await this.submitAndWatchBestBlock(tx);
   }
 
   async configureCheckpointWindow(
@@ -1016,7 +882,8 @@ export class StorageClient {
   async downloadFile(bucketId: bigint, path: string): Promise<Blob> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await fetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`
+      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
+      { headers: this.signRequest("GET", bucketId) },
     );
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status}`);
@@ -1129,6 +996,77 @@ export class StorageClient {
     return results;
   }
 
+  // --- Provider Discovery ---
+
+  async listAvailableProviders(): Promise<AvailableProvider[]> {
+    if (!this.api) throw new Error("Not connected. Call connect() first.");
+
+    const entries = await this.api.query.StorageProvider.Providers.getEntries();
+    const providers: AvailableProvider[] = [];
+
+    for (const entry of entries) {
+      const provider = entry.value;
+      const account = entry.keyArgs[0] as string;
+      const settings = provider.settings;
+
+      // Decode multiaddr
+      let multiaddrStr: string;
+      if (provider.multiaddr instanceof Uint8Array) {
+        multiaddrStr = new TextDecoder().decode(provider.multiaddr);
+      } else if (typeof provider.multiaddr.asBytes === "function") {
+        multiaddrStr = new TextDecoder().decode(provider.multiaddr.asBytes());
+      } else {
+        multiaddrStr = String(provider.multiaddr);
+      }
+
+      const maxCapacity = BigInt(settings.max_capacity ?? 0);
+      const committedBytes = BigInt(provider.committed_bytes ?? 0);
+      const availableCapacity = maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+      providers.push({
+        account,
+        multiaddr: multiaddrStr,
+        stake: BigInt(provider.stake ?? 0),
+        availableCapacity,
+        maxCapacity,
+        pricePerByte: BigInt(settings.price_per_byte ?? 0),
+        minDuration: settings.min_duration ?? 0,
+        maxDuration: settings.max_duration ?? 0,
+        acceptingPrimary: settings.accepting_primary ?? false,
+        agreementsTotal: (provider.stats as any)?.agreements_total ?? 0,
+      });
+    }
+
+    // Sort by available capacity descending
+    providers.sort((a, b) => {
+      if (b.availableCapacity > a.availableCapacity) return 1;
+      if (b.availableCapacity < a.availableCapacity) return -1;
+      return 0;
+    });
+
+    return providers;
+  }
+
+  async requestAgreementWithProvider(
+    bucketId: bigint,
+    providerAccount: string,
+    maxBytes: bigint,
+    duration: number,
+    maxPayment: bigint,
+  ): Promise<void> {
+    this.ensureConnected();
+
+    const tx = this.api!.tx.StorageProvider.request_primary_agreement({
+      bucket_id: bucketId,
+      provider: providerAccount,
+      max_bytes: maxBytes,
+      duration,
+      max_payment: maxPayment,
+    });
+
+    await this.submitAndWatchBestBlock(tx);
+  }
+
   // --- Helpers ---
 
   private validateBucketName(name: string): void {
@@ -1152,15 +1090,6 @@ export class StorageClient {
     }
   }
 
-  private fromBase64(str: string): Uint8Array {
-    // Browser-compatible base64 decoding
-    const binary = atob(str);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
 }
 
 // Singleton instance

@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 6: Head object
     println!();
     println!("Step 6: Checking object metadata...");
-    let head = client.head_object(&bucket_name, "hello.txt").await?;
+    let head = client.get_object(&bucket_name, "hello.txt").await?;
     println!("  hello.txt metadata:");
     println!("    Content-Type: {}", head.content_type);
     println!("    Size: {}", head.size);

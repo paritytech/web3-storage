@@ -208,10 +208,10 @@ pub mod pallet {
     >;
 
     /// Last successful checkpoint window per bucket.
-    /// Starts at 0 and increments with each successful provider checkpoint.
+    /// `None` means no checkpoint has been submitted yet.
     #[pallet::storage]
     pub type LastCheckpointWindow<T: Config> =
-        StorageMap<_, Blake2_128Concat, BucketId, u64, ValueQuery>;
+        StorageMap<_, Blake2_128Concat, BucketId, u64, OptionQuery>;
 
     /// Pending checkpoint rewards per (bucket, provider).
     /// Accumulates rewards for providers who submit or sign checkpoints.
@@ -2285,8 +2285,9 @@ pub mod pallet {
             );
 
             // Check if already submitted for this window
-            let last_window = LastCheckpointWindow::<T>::get(bucket_id);
-            ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+            if let Some(last_window) = LastCheckpointWindow::<T>::get(bucket_id) {
+                ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+            }
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
@@ -2470,8 +2471,9 @@ pub mod pallet {
             ensure!(window < current_window, Error::<T>::InvalidCheckpointWindow);
 
             // Check that window wasn't submitted
-            let last_window = LastCheckpointWindow::<T>::get(bucket_id);
-            ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+            if let Some(last_window) = LastCheckpointWindow::<T>::get(bucket_id) {
+                ensure!(window > last_window, Error::<T>::CheckpointAlreadySubmitted);
+            }
 
             // Ensure we're past the grace period of the reported window
             let window_end = Self::window_start_block(window.saturating_add(1), config.interval);
@@ -3083,6 +3085,91 @@ pub mod pallet {
                 Error::<T>::NotBucketWriter
             );
             Ok(())
+        }
+
+        /// Add or update a member's role on a bucket (callable from other pallets).
+        ///
+        /// The `caller` must be an Admin of the bucket.
+        pub fn set_member_internal(
+            caller: &T::AccountId,
+            bucket_id: BucketId,
+            member: T::AccountId,
+            role: Role,
+        ) -> DispatchResult {
+            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+
+                Self::ensure_admin(caller, bucket)?;
+
+                if let Some(existing) = bucket.members.iter_mut().find(|m| m.account == member) {
+                    if existing.role == Role::Admin && member != *caller {
+                        return Err(Error::<T>::CannotDemoteAdmin.into());
+                    }
+                    existing.role = role;
+                } else {
+                    let new_member = Member {
+                        account: member.clone(),
+                        role,
+                    };
+                    bucket
+                        .members
+                        .try_push(new_member)
+                        .map_err(|_| Error::<T>::MaxMembersReached)?;
+
+                    MemberBuckets::<T>::try_mutate(&member, |buckets| {
+                        if !buckets.contains(&bucket_id) {
+                            buckets
+                                .try_push(bucket_id)
+                                .map_err(|_| Error::<T>::TooManyBucketsForMember)
+                        } else {
+                            Ok(())
+                        }
+                    })?;
+                }
+
+                Self::deposit_event(Event::MemberSet {
+                    bucket_id,
+                    member,
+                    role,
+                });
+
+                Ok(())
+            })
+        }
+
+        /// Remove a member from a bucket (callable from other pallets).
+        ///
+        /// The `caller` must be an Admin of the bucket.
+        pub fn remove_member_internal(
+            caller: &T::AccountId,
+            bucket_id: BucketId,
+            member: T::AccountId,
+        ) -> DispatchResult {
+            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
+                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
+
+                Self::ensure_admin(caller, bucket)?;
+
+                let member_idx = bucket
+                    .members
+                    .iter()
+                    .position(|m| m.account == member)
+                    .ok_or(Error::<T>::MemberNotFound)?;
+
+                if bucket.members[member_idx].role == Role::Admin && member != *caller {
+                    return Err(Error::<T>::CannotDemoteAdmin.into());
+                }
+
+                bucket.members.remove(member_idx);
+
+                MemberBuckets::<T>::mutate(&member, |buckets| {
+                    buckets.retain(|id| *id != bucket_id);
+                });
+
+                Self::deposit_event(Event::MemberRemoved { bucket_id, member });
+
+                Ok(())
+            })
         }
 
         fn validate_duration(

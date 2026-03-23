@@ -1,19 +1,31 @@
-import { useState } from "react";
-import { HardDrive, Archive, AlertCircle, Database } from "lucide-react";
+import { useState, useEffect } from "react";
+import { AlertCircle, Database, Users } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { formatTokens, formatBytes } from "@/lib/utils";
-import FileSystemTab from "@/components/FileSystemTab";
 import S3Tab from "@/components/S3Tab";
 import BucketInfoPanel from "@/components/BucketInfoPanel";
 import CheckpointPanel from "@/components/CheckpointPanel";
 
 export default function Storage() {
   const { connected } = useChain();
-  const { signerAddress, balance, providerCapacity } = useStorage();
+  const { signerAddress, balance, providerCapacity, listAccessibleBucketIds, buckets } = useStorage();
   const [selectedLayer0BucketId, setSelectedLayer0BucketId] = useState<bigint | null>(null);
+  const [sharedBucketIds, setSharedBucketIds] = useState<bigint[]>([]);
+
+  // Fetch shared bucket IDs (buckets where user is a member but not owner)
+  useEffect(() => {
+    if (!signerAddress) {
+      setSharedBucketIds([]);
+      return;
+    }
+    listAccessibleBucketIds().then((ids) => {
+      // Filter out buckets the user owns (those are already shown in the main list)
+      const ownedIds = new Set(buckets.map((b) => b.id));
+      setSharedBucketIds(ids.filter((id) => !ownedIds.has(id)));
+    }).catch(() => setSharedBucketIds([]));
+  }, [signerAddress, buckets, listAccessibleBucketIds]);
 
   if (!connected) {
     return (
@@ -87,25 +99,36 @@ export default function Storage() {
         )}
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="filesystem" className="w-full">
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="filesystem" className="flex items-center gap-2 flex-1">
-            <HardDrive className="h-4 w-4" />
-            File System
-          </TabsTrigger>
-          <TabsTrigger value="s3" className="flex items-center gap-2 flex-1">
-            <Archive className="h-4 w-4" />
-            S3
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="filesystem">
-          <FileSystemTab onBucketSelect={setSelectedLayer0BucketId} />
-        </TabsContent>
-        <TabsContent value="s3">
-          <S3Tab onBucketSelect={setSelectedLayer0BucketId} />
-        </TabsContent>
-      </Tabs>
+      {/* S3 Storage */}
+      <S3Tab onBucketSelect={setSelectedLayer0BucketId} />
+
+      {/* Shared with me */}
+      {sharedBucketIds.length > 0 && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <h3 className="font-semibold text-sm">Shared with me</h3>
+              <span className="text-xs text-muted-foreground">({sharedBucketIds.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {sharedBucketIds.map((id) => (
+                <button
+                  key={id.toString()}
+                  className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                    selectedLayer0BucketId === id
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card hover:bg-accent border-border"
+                  }`}
+                  onClick={() => setSelectedLayer0BucketId(id)}
+                >
+                  Bucket #{id.toString()}
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {selectedLayer0BucketId && (
         <>

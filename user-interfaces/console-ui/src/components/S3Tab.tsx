@@ -23,10 +23,14 @@ import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
 import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
+import CreationStatusCard, { type CreationStatusItem } from "./CreationStatusCard";
+import ProviderPickerDialog from "./ProviderPickerDialog";
 
 interface S3TabProps {
   onBucketSelect?: (bucketId: bigint | null) => void;
 }
+
+export type UserRole = 'Admin' | 'Writer' | 'Reader' | null;
 
 export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const {
@@ -36,11 +40,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     createBucket,
     deleteBucket,
     putObject,
-    getObject,
     listObjects,
     deleteObject,
+    downloadS3Object,
     signerAddress,
     waitForProvider,
+    requestAgreementWithProvider,
+    fetchBucketMembers,
   } = useStorage();
 
   const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
@@ -58,7 +64,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const [bucketDuration, setBucketDuration] = useState("10000");
   const [bucketMaxPayment, setBucketMaxPayment] = useState("120000000000000000");
   const [creating, setCreating] = useState(false);
-  const [providerStatus, setProviderStatus] = useState<{ message: string; progress: number } | null>(null);
+
+  // Creation status tracking
+  const [creations, setCreations] = useState<CreationStatusItem[]>([]);
+  const [pickerTarget, setPickerTarget] = useState<CreationStatusItem | null>(null);
+
+  // Role-based access
+  const [userRole, setUserRole] = useState<UserRole>(null);
 
   // Upload dialog
   const [showUpload, setShowUpload] = useState(false);
@@ -78,6 +90,23 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     }
   }, [buckets, selectedBucket, onBucketSelect]);
 
+  // Determine user's role for the selected bucket
+  useEffect(() => {
+    if (!selectedBucket || !signerAddress) {
+      setUserRole(null);
+      return;
+    }
+    fetchBucketMembers(selectedBucket.layer0BucketId)
+      .then((members) => {
+        const me = members.find((m) => m.account === signerAddress);
+        setUserRole(me?.role ?? null);
+      })
+      .catch(() => setUserRole(null));
+  }, [selectedBucket, signerAddress, fetchBucketMembers]);
+
+  const canWrite = userRole === 'Admin' || userRole === 'Writer';
+  const canAdmin = userRole === 'Admin';
+
   // Fetch objects when bucket/prefix changes
   const refreshObjects = useCallback(async () => {
     if (!selectedBucket) return;
@@ -95,6 +124,15 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   useEffect(() => {
     refreshObjects();
   }, [refreshObjects]);
+
+  // Creation status helpers
+  const updateCreation = useCallback((id: string, updates: Partial<CreationStatusItem>) => {
+    setCreations(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  }, []);
+
+  const dismissCreation = useCallback((id: string) => {
+    setCreations(prev => prev.filter(c => c.id !== id));
+  }, []);
 
   // Derive folder-like prefixes from flat keys
   const deriveFolders = (): string[] => {
@@ -135,42 +173,87 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     return true;
   };
 
+  const waitAndTrack = async (creationId: string, layer0BucketId: bigint) => {
+    updateCreation(creationId, { stage: "waiting", elapsedMs: 0 });
+    try {
+      await waitForProvider(layer0BucketId, (status, elapsedMs) => {
+        updateCreation(creationId, { statusMessage: status, elapsedMs });
+      });
+      updateCreation(creationId, { stage: "ready" });
+    } catch (err) {
+      updateCreation(creationId, {
+        stage: "failed",
+        error: err instanceof Error ? err.message : "Provider did not accept. Try choosing a provider manually.",
+      });
+    }
+  };
+
   const handleCreateBucket = async () => {
     if (!newBucketName.trim() || !validateBucketName(newBucketName)) {
       toast({ title: "Error", description: "Invalid bucket name (3-63 chars, lowercase, S3 rules)", variant: "destructive" });
       return;
     }
+
+    const creationId = crypto.randomUUID();
+    const name = newBucketName;
+    setCreations(prev => [...prev, {
+      id: creationId,
+      name,
+      type: "bucket",
+      stage: "submitting",
+      elapsedMs: 0,
+      createdAt: Date.now(),
+    }]);
+    setShowCreateBucket(false);
+    setNewBucketName("");
     setCreating(true);
+
     try {
-      const bucket = await createBucket(newBucketName, {
+      const bucket = await createBucket(name, {
         capacity: BigInt(bucketCapacity),
         duration: parseInt(bucketDuration, 10),
         maxPayment: BigInt(bucketMaxPayment),
       });
-      setShowCreateBucket(false);
-      setNewBucketName("");
       setSelectedBucket(bucket);
-      toast({ title: "Bucket created", description: "Waiting for provider to accept agreement..." });
+      updateCreation(creationId, {
+        stage: "created",
+        bucketId: bucket.layer0BucketId,
+      });
 
-      // Wait for provider to accept the agreement
-      setProviderStatus({ message: "Waiting for provider...", progress: 0 });
-      try {
-        await waitForProvider(bucket.layer0BucketId, (_status, attempt, total) => {
-          setProviderStatus({
-            message: "Waiting for provider to accept agreement...",
-            progress: Math.round((attempt / total) * 100),
-          });
-        });
-        setProviderStatus(null);
-        toast({ title: "Ready", description: `Bucket "${bucket.name}" is ready to use` });
-      } catch {
-        setProviderStatus(null);
-        toast({ title: "Warning", description: "Provider not yet available. Operations may fail until the provider accepts.", variant: "destructive" });
-      }
+      // Wait for provider in background (don't await to unblock UI)
+      waitAndTrack(creationId, bucket.layer0BucketId);
     } catch (err) {
-      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
+      updateCreation(creationId, {
+        stage: "failed",
+        error: err instanceof Error ? err.message : "Failed to create bucket",
+      });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleProviderSelect = async (providerAccount: string) => {
+    const bucketId = pickerTarget?.bucketId;
+    if (!pickerTarget || !bucketId) return;
+    const itemId = pickerTarget.id;
+    setPickerTarget(null);
+
+    updateCreation(itemId, { stage: "submitting", error: undefined });
+    try {
+      await requestAgreementWithProvider(
+        bucketId,
+        providerAccount,
+        BigInt(bucketCapacity),
+        parseInt(bucketDuration, 10),
+        BigInt(bucketMaxPayment),
+      );
+      updateCreation(itemId, { stage: "created" });
+      waitAndTrack(itemId, bucketId);
+    } catch (err) {
+      updateCreation(itemId, {
+        stage: "failed",
+        error: err instanceof Error ? err.message : "Agreement request failed",
+      });
     }
   };
 
@@ -219,8 +302,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const handleDownloadObject = async (obj: S3ObjectInfo) => {
     if (!selectedBucket) return;
     try {
-      const data = await getObject(selectedBucket.layer0BucketId, obj.etag);
-      const blob = new Blob([data]);
+      const blob = await downloadS3Object(selectedBucket.layer0BucketId, obj.key);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -247,7 +329,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   };
 
   // No buckets empty state
-  if (buckets.length === 0 && !showCreateBucket) {
+  if (buckets.length === 0 && !showCreateBucket && creations.length === 0) {
     return (
       <div className="py-12 text-center">
         <Archive className="mx-auto h-12 w-12 mb-4 opacity-50" />
@@ -285,7 +367,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
           <Plus className="mr-2 h-4 w-4" />
           New Bucket
         </Button>
-        {selectedBucket && (
+        {selectedBucket && canAdmin && (
           <Button variant="ghost" size="sm" onClick={handleDeleteBucket} className="text-muted-foreground hover:text-destructive">
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -330,22 +412,25 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
         </Card>
       )}
 
-      {/* Provider waiting indicator */}
-      {providerStatus && (
-        <div className="rounded-lg border bg-card p-4">
-          <div className="flex items-center gap-3">
-            <RefreshCw className="h-4 w-4 animate-spin text-primary" />
-            <div className="flex-1">
-              <p className="text-sm font-medium">{providerStatus.message}</p>
-              <div className="mt-2 h-2 rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-500"
-                  style={{ width: `${providerStatus.progress}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Creation status cards */}
+      {creations.map(item => (
+        <CreationStatusCard
+          key={item.id}
+          item={item}
+          onDismiss={dismissCreation}
+          onChooseProvider={(item) => setPickerTarget(item)}
+        />
+      ))}
+
+      {/* Provider picker dialog */}
+      {pickerTarget && (
+        <ProviderPickerDialog
+          open={true}
+          onClose={() => setPickerTarget(null)}
+          onSelect={handleProviderSelect}
+          requiredCapacity={BigInt(bucketCapacity)}
+          requiredDuration={parseInt(bucketDuration, 10)}
+        />
       )}
 
       {selectedBucket && (
@@ -367,13 +452,18 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
 
           {/* Toolbar */}
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setShowUpload(true); setUploadKey(currentPrefix); }}>
-              <Upload className="mr-2 h-4 w-4" />
-              Upload Object
-            </Button>
+            {canWrite && (
+              <Button variant="outline" size="sm" onClick={() => { setShowUpload(true); setUploadKey(currentPrefix); }}>
+                <Upload className="mr-2 h-4 w-4" />
+                Upload Object
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={refreshObjects} disabled={loadingObjects}>
               <RefreshCw className={`h-4 w-4 ${loadingObjects ? "animate-spin" : ""}`} />
             </Button>
+            {userRole && !canAdmin && (
+              <span className="text-xs text-muted-foreground ml-2">Role: {userRole}</span>
+            )}
           </div>
 
           {/* Upload inline */}
@@ -461,9 +551,11 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDownloadObject(obj)}>
                             <Download className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteObject(obj)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                          {canWrite && (
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteObject(obj)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
