@@ -8,6 +8,7 @@
 //! - Monitoring storage health
 
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
+use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
@@ -17,6 +18,7 @@ use storage_primitives::{blake2_256, BucketId};
 pub struct StorageUserClient {
     base: BaseClient,
     verifier: ClientVerifier,
+    cipher: Option<Box<dyn Cipher>>,
 }
 
 impl StorageUserClient {
@@ -25,12 +27,29 @@ impl StorageUserClient {
         Ok(Self {
             base: BaseClient::new(config)?,
             verifier: ClientVerifier::new(),
+            cipher: None,
         })
     }
 
     /// Create with default configuration.
     pub fn with_defaults() -> ClientResult<Self> {
         Self::new(ClientConfig::default())
+    }
+
+    /// Enable client-side encryption with a custom cipher (builder pattern).
+    pub fn with_encryption(mut self, cipher: Box<dyn Cipher>) -> Self {
+        self.cipher = Some(cipher);
+        self
+    }
+
+    /// Enable client-side encryption with an XChaCha20-Poly1305 key (builder pattern).
+    pub fn with_encryption_key(self, key: &EncryptionKey) -> Self {
+        self.with_encryption(Box::new(XChaCha20Poly1305Cipher::new(key)))
+    }
+
+    /// Returns `true` if client-side encryption is enabled.
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.cipher.is_some()
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -64,8 +83,17 @@ impl StorageUserClient {
     ) -> ClientResult<H256> {
         let provider_url = self.base.get_provider_url()?;
 
+        // Encrypt data before chunking if encryption is enabled
+        let maybe_encrypted;
+        let upload_data = if let Some(cipher) = &self.cipher {
+            maybe_encrypted = cipher.encrypt(data)?;
+            &maybe_encrypted
+        } else {
+            data
+        };
+
         // Chunk the data
-        let chunks = Self::chunk_data(data, strategy);
+        let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
@@ -182,10 +210,17 @@ impl StorageUserClient {
         let chunk_size = 256 * 1024;
         let start = (offset % chunk_size) as usize;
         let end = start + length as usize;
-        if end <= data.len() {
-            Ok(data[start..end].to_vec())
+        let trimmed = if end <= data.len() {
+            data[start..end].to_vec()
         } else {
-            Ok(data[start..].to_vec())
+            data[start..].to_vec()
+        };
+
+        // Decrypt after reassembly if encryption is enabled
+        if let Some(cipher) = &self.cipher {
+            cipher.decrypt(&trimmed)
+        } else {
+            Ok(trimmed)
         }
     }
 
