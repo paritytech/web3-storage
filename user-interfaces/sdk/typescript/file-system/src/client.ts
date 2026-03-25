@@ -9,7 +9,7 @@ import { getWsProvider } from "polkadot-api/ws-provider";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { Binary } from "@polkadot-api/substrate-bindings";
 import { Keyring } from "@polkadot/keyring";
-import { cryptoWaitReady, blake2AsU8a } from "@polkadot/util-crypto";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { parachain } from "@polkadot-api/descriptors";
 
 import type {
@@ -17,6 +17,8 @@ import type {
   DriveInfo,
   CreateDriveOptions,
   DirectoryEntry,
+  DirectoryListing,
+  IndexRoot,
   UploadOptions,
   UploadResult,
   DownloadResult,
@@ -180,25 +182,26 @@ export class FileSystemClient {
     driveId: bigint,
     path: string,
     bucketId?: bigint
-  ): Promise<void> {
-    this.ensureConnected();
-
+  ): Promise<{ path: string; created: boolean }> {
     const bucket = bucketId ?? (await this.getBucketId(driveId));
 
-    // For now, directories are tracked client-side via the root CID tree
-    // This is a simplified implementation - full implementation would
-    // update the on-chain root CID with the new directory structure
-    console.log(`Creating directory ${path} in drive ${driveId} (bucket ${bucket})`);
+    const url = `${this.config.providerUrl}/fs/${bucket}/mkdir?path=${encodeURIComponent(path)}`;
+    const response = await fetch(url, { method: "POST" });
 
-    // In a full implementation, we would:
-    // 1. Fetch current directory tree from provider
-    // 2. Add new directory entry
-    // 3. Upload updated tree
-    // 4. Update root CID on chain
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create directory: ${response.status} ${await response.text()}`
+      );
+    }
+
+    return (await response.json()) as { path: string; created: boolean };
   }
 
   /**
    * Upload a file
+   *
+   * Uses the high-level `/fs/` provider endpoint which handles chunking,
+   * tree-building, MMR commit, and index update in a single request.
    */
   async uploadFile(
     driveId: bigint,
@@ -208,55 +211,47 @@ export class FileSystemClient {
   ): Promise<UploadResult> {
     const bucketId = await this.getBucketId(driveId);
 
-    // Calculate content hash (CID)
-    const hash = blake2AsU8a(data);
-    const cid = this.toHex(hash);
-
-    // Upload to provider
-    const response = await fetch(`${this.config.providerUrl}/node`, {
+    const contentType = options?.contentType || "application/octet-stream";
+    const url = `${this.config.providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`;
+    const response = await fetch(url, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketId),
-        hash: cid,
-        data: this.toBase64(data),
-        children: null,
-      }),
+      headers: { "Content-Type": contentType },
+      body: data,
     });
 
     if (!response.ok) {
       throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
     }
 
-    // Commit to MMR
-    const commitResponse = await fetch(`${this.config.providerUrl}/commit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bucket_id: Number(bucketId),
-        data_roots: [cid],
-      }),
-    });
-
-    if (!commitResponse.ok) {
-      throw new Error(`Commit failed: ${commitResponse.status}`);
-    }
-
-    return { cid, size: data.length };
+    const result = (await response.json()) as Record<string, any>;
+    return {
+      cid: result.data_root,
+      size: result.size ?? data.length,
+    };
   }
 
   /**
-   * Download a file
+   * Download a file by path
    */
   async downloadFile(driveId: bigint, path: string): Promise<DownloadResult> {
-    // In a full implementation, we would:
-    // 1. Look up the file's CID from the directory tree
-    // 2. Download by CID
+    const bucketId = await this.getBucketId(driveId);
 
-    // For now, this is a placeholder that requires knowing the CID
-    throw new Error(
-      "downloadFile requires path-to-CID resolution. Use downloadByCid() instead."
-    );
+    const url = `${this.config.providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`;
+    const response = await fetch(url);
+
+    if (response.status === 404) {
+      throw new Error(`File not found: ${path}`);
+    }
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${await response.text()}`);
+    }
+
+    const data = new Uint8Array(await response.arrayBuffer());
+    return {
+      data,
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+      size: data.length,
+    };
   }
 
   /**
@@ -271,22 +266,88 @@ export class FileSystemClient {
       throw new Error(`Download failed: ${response.status}`);
     }
 
-    const json = await response.json();
+    const json = (await response.json()) as Record<string, any>;
     return this.fromBase64(json.data);
   }
 
   /**
    * List directory contents
    */
-  async listDirectory(driveId: bigint, path: string): Promise<DirectoryEntry[]> {
-    // In a full implementation, we would:
-    // 1. Fetch the directory tree from the root CID
-    // 2. Navigate to the specified path
-    // 3. Return the entries
+  async listDirectory(
+    driveId: bigint,
+    path: string,
+    options?: { recursive?: boolean }
+  ): Promise<DirectoryListing> {
+    const bucketId = await this.getBucketId(driveId);
 
-    // Placeholder implementation
-    console.log(`Listing directory ${path} in drive ${driveId}`);
-    return [];
+    const params = new URLSearchParams({ path });
+    if (options?.recursive) params.set("recursive", "true");
+
+    const url = `${this.config.providerUrl}/fs/${bucketId}/ls?${params}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `List directory failed: ${response.status} ${await response.text()}`
+      );
+    }
+
+    const result = (await response.json()) as Record<string, any>;
+    return {
+      path: result.path,
+      entries: (result.entries || []).map((e: any) => ({
+        name: e.name,
+        path: e.path,
+        entry_type: e.entry_type,
+        size: e.size ?? 0,
+        mtime: e.mtime ?? 0,
+      })),
+      fileCount: result.file_count ?? 0,
+      dirCount: result.dir_count ?? 0,
+      totalSize: result.total_size ?? 0,
+    };
+  }
+
+  /**
+   * Delete a file
+   */
+  async deleteFile(driveId: bigint, path: string): Promise<{ deleted: boolean }> {
+    const bucketId = await this.getBucketId(driveId);
+
+    const url = `${this.config.providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`;
+    const response = await fetch(url, { method: "DELETE" });
+
+    if (!response.ok) {
+      throw new Error(
+        `Delete failed: ${response.status} ${await response.text()}`
+      );
+    }
+
+    return (await response.json()) as { deleted: boolean };
+  }
+
+  /**
+   * Get the drive's index root (merkle root, file/dir counts, total size)
+   */
+  async getIndexRoot(driveId: bigint): Promise<IndexRoot> {
+    const bucketId = await this.getBucketId(driveId);
+
+    const url = `${this.config.providerUrl}/fs/${bucketId}/index_root`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `Get index root failed: ${response.status} ${await response.text()}`
+      );
+    }
+
+    const result = (await response.json()) as Record<string, any>;
+    return {
+      metadataMerkleRoot: result.metadata_merkle_root ?? result.merkle_root ?? "",
+      fileCount: result.file_count ?? 0,
+      dirCount: result.dir_count ?? 0,
+      totalSize: result.total_size ?? 0,
+    };
   }
 
   /**

@@ -34,14 +34,40 @@ export enum CommitStrategy {
 export interface DirectoryEntry {
   /** Entry name */
   name: string;
-  /** True if this is a directory */
-  isDirectory: boolean;
+  /** Full path */
+  path: string;
+  /** Entry type: "file" or "dir" */
+  entry_type: "file" | "dir";
   /** Size in bytes (0 for directories) */
   size: number;
-  /** Content hash (CID) */
-  cid: string | null;
-  /** Content type (MIME type for files) */
-  contentType: string | null;
+  /** Last modified timestamp (unix ms) */
+  mtime: number;
+}
+
+/** Result of listing a directory */
+export interface DirectoryListing {
+  /** Directory path that was listed */
+  path: string;
+  /** Entries in the directory */
+  entries: DirectoryEntry[];
+  /** Number of files */
+  fileCount: number;
+  /** Number of subdirectories */
+  dirCount: number;
+  /** Total size of all entries in bytes */
+  totalSize: number;
+}
+
+/** Drive index/integrity information */
+export interface IndexRoot {
+  /** Merkle root of the drive metadata */
+  metadataMerkleRoot: string;
+  /** Number of files in the drive */
+  fileCount: number;
+  /** Number of directories in the drive */
+  dirCount: number;
+  /** Total size of all files in bytes */
+  totalSize: number;
 }
 
 /** Options for creating a drive */
@@ -80,8 +106,8 @@ export interface UploadResult {
 export interface DownloadResult {
   /** File data */
   data: Uint8Array;
-  /** Content type */
-  contentType: string | null;
+  /** Content type (MIME) */
+  contentType: string;
   /** Size in bytes */
   size: number;
 }

@@ -102,6 +102,12 @@ export interface ObjectSummary {
 export interface CreateBucketOptions {
   /** Minimum number of storage providers */
   minProviders?: number;
+  /** Storage capacity in bytes (for atomic bucket+agreement creation) */
+  capacity?: bigint;
+  /** Duration in blocks (for atomic bucket+agreement creation) */
+  duration?: number;
+  /** Maximum payment with 12 decimals (for atomic bucket+agreement creation) */
+  maxPayment?: bigint;
 }
 
 /** SDK configuration */

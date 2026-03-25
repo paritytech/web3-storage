@@ -4,8 +4,12 @@
  * This example demonstrates:
  * 1. Connecting to the blockchain and provider
  * 2. Creating a drive
- * 3. Uploading files
- * 4. Downloading and verifying content
+ * 3. Creating directories
+ * 4. Uploading files
+ * 5. Downloading files by path
+ * 6. Listing directory contents
+ * 7. Deleting files
+ * 8. Checking drive index root
  *
  * Prerequisites:
  *   - Parachain running at ws://127.0.0.1:2222
@@ -26,7 +30,6 @@ async function main() {
   console.log(`Chain: ${CHAIN_WS}`);
   console.log(`Provider: ${PROVIDER_URL}\n`);
 
-  // Create client
   const client = new FileSystemClient({
     chainWs: CHAIN_WS,
     providerUrl: PROVIDER_URL,
@@ -57,29 +60,62 @@ async function main() {
     console.log(`  Bucket ID: ${drive?.bucketId}`);
     console.log(`  Owner: ${drive?.owner}\n`);
 
-    // Step 4: Upload a file
-    console.log("Step 4: Uploading file...");
-    const content = new TextEncoder().encode("Hello from TypeScript SDK!");
-    const uploadResult = await client.uploadFile(
-      driveId,
-      "/hello.txt",
-      content
+    // Step 4: Create directories
+    console.log("Step 4: Creating directories...");
+    await client.createDirectory(driveId, "/documents");
+    console.log("  Created /documents");
+    await client.createDirectory(driveId, "/documents/notes");
+    console.log("  Created /documents/notes\n");
+
+    // Step 5: Upload files
+    console.log("Step 5: Uploading files...");
+    const content1 = new TextEncoder().encode("Hello from TypeScript SDK!");
+    const result1 = await client.uploadFile(driveId, "/documents/hello.txt", content1);
+    console.log(`  Uploaded /documents/hello.txt (CID: ${result1.cid}, ${result1.size} bytes)`);
+
+    const content2 = new TextEncoder().encode(
+      JSON.stringify({ message: "Hello JSON!", timestamp: Date.now() })
     );
-    console.log(`  Uploaded: CID = ${uploadResult.cid}`);
-    console.log(`  Size: ${uploadResult.size} bytes\n`);
+    const result2 = await client.uploadFile(driveId, "/documents/notes/data.json", content2, {
+      contentType: "application/json",
+    });
+    console.log(`  Uploaded /documents/notes/data.json (${result2.size} bytes)\n`);
 
-    // Step 5: Download and verify
-    console.log("Step 5: Downloading and verifying...");
-    const bucketId = await client.getBucketId(driveId);
-    const downloaded = await client.downloadByCid(bucketId, uploadResult.cid);
-    const downloadedText = new TextDecoder().decode(downloaded);
+    // Step 6: Download and verify
+    console.log("Step 6: Downloading and verifying...");
+    const downloaded = await client.downloadFile(driveId, "/documents/hello.txt");
+    const downloadedText = new TextDecoder().decode(downloaded.data);
     console.log(`  Downloaded: "${downloadedText}"`);
-
+    console.log(`  Content-Type: ${downloaded.contentType}`);
+    console.log(`  Size: ${downloaded.size} bytes`);
     const matches = downloadedText === "Hello from TypeScript SDK!";
     console.log(`  Verified: ${matches ? "OK" : "MISMATCH"}\n`);
 
-    // Step 6: List drives
-    console.log("Step 6: Listing all drives...");
+    // Step 7: List directory
+    console.log("Step 7: Listing /documents...");
+    const listing = await client.listDirectory(driveId, "/documents");
+    console.log(`  Path: ${listing.path}`);
+    console.log(`  Files: ${listing.fileCount}, Dirs: ${listing.dirCount}, Total: ${listing.totalSize} bytes`);
+    for (const entry of listing.entries) {
+      const type = entry.entry_type === "dir" ? "[DIR]" : "[FILE]";
+      console.log(`    ${type} ${entry.name} (${entry.size} bytes)`);
+    }
+    console.log();
+
+    // Step 8: Check index root
+    console.log("Step 8: Getting index root...");
+    const indexRoot = await client.getIndexRoot(driveId);
+    console.log(`  Merkle root: ${indexRoot.metadataMerkleRoot}`);
+    console.log(`  Files: ${indexRoot.fileCount}, Dirs: ${indexRoot.dirCount}`);
+    console.log(`  Total size: ${indexRoot.totalSize} bytes\n`);
+
+    // Step 9: Delete a file
+    console.log("Step 9: Deleting /documents/hello.txt...");
+    const deleteResult = await client.deleteFile(driveId, "/documents/hello.txt");
+    console.log(`  Deleted: ${deleteResult.deleted}\n`);
+
+    // Step 10: List drives
+    console.log("Step 10: Listing all drives...");
     const drives = await client.listDrives();
     console.log(`  Found ${drives.length} drive(s):`);
     for (const d of drives) {

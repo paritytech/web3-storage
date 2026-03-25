@@ -106,6 +106,11 @@ export class S3Client {
 
   /**
    * Create a new S3 bucket
+   *
+   * If `capacity`, `duration`, and `maxPayment` are provided, attempts the
+   * atomic `create_s3_bucket_with_storage` extrinsic (bucket + storage
+   * agreement in one transaction). Falls back to `create_s3_bucket` if the
+   * runtime doesn't support the atomic extrinsic.
    */
   async createBucket(
     name: string,
@@ -114,12 +119,34 @@ export class S3Client {
     this.ensureConnected();
     this.validateBucketName(name);
 
+    const nameBytes = Binary.fromBytes(new TextEncoder().encode(name));
+
+    // Try atomic extrinsic when storage options are provided
+    if (options?.capacity && options?.duration && options?.maxPayment) {
+      try {
+        const tx = this.api!.tx.S3Registry.create_s3_bucket_with_storage({
+          name: nameBytes,
+          max_capacity: options.capacity,
+          duration: options.duration,
+          max_payment: options.maxPayment,
+        });
+        const result = await tx.signAndSubmit(this.signer!);
+
+        const events = this.api!.event.S3Registry.S3BucketCreated.filter(result.events);
+        if (events.length > 0) {
+          return this.headBucket(name);
+        }
+      } catch {
+        // Atomic extrinsic not available — fall through to legacy
+      }
+    }
+
+    // Legacy: create bucket only (no storage agreement)
     const result = await this.api!.tx.S3Registry.create_s3_bucket({
-      name: Binary.fromBytes(new TextEncoder().encode(name)),
+      name: nameBytes,
       min_providers: options?.minProviders ?? 1,
     }).signAndSubmit(this.signer!);
 
-    // Extract bucket info from events
     const events = this.api!.event.S3Registry.S3BucketCreated.filter(result.events);
     if (events.length === 0) {
       throw new Error("S3BucketCreated event not found");
@@ -234,7 +261,7 @@ export class S3Client {
       throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
     }
 
-    const result = await response.json();
+    const result = (await response.json()) as Record<string, any>;
     return {
       cid: result.data_root || result.etag,
       etag: result.etag,
@@ -353,7 +380,7 @@ export class S3Client {
       throw new Error(`List failed: ${response.status}`);
     }
 
-    const result = await response.json();
+    const result = (await response.json()) as Record<string, any>;
 
     const contents: ObjectSummary[] = (result.objects || []).map((obj: any) => ({
       key: obj.key,

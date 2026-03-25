@@ -31,3 +31,15 @@ package-lock.json
 
 # Generated chain specs
 zombienet/storage-local-spec.json
+
+# Build output
+**/dist/
+
+# Lockfiles (use npm's package-lock.json)
+user-interfaces/pnpm-lock.yaml
+
+# Binary/generated docs
+*.docx
+
+# Screenshots
+Screenshot.png

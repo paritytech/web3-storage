@@ -10,6 +10,8 @@ export { FileSystemClient } from "./client.js";
 export {
   DriveInfo,
   DirectoryEntry,
+  DirectoryListing,
+  IndexRoot,
   CreateDriveOptions,
   UploadOptions,
   UploadResult,

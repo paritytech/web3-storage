@@ -3,7 +3,7 @@
  *
  * This example demonstrates:
  * 1. Connecting to the blockchain and provider
- * 2. Creating a bucket
+ * 2. Creating a bucket (with automatic storage agreement)
  * 3. Uploading objects
  * 4. Listing and downloading objects
  *
@@ -26,7 +26,6 @@ async function main() {
   console.log(`Chain: ${CHAIN_WS}`);
   console.log(`Provider: ${PROVIDER_URL}\n`);
 
-  // Create client
   const client = new S3Client({
     chainWs: CHAIN_WS,
     providerUrl: PROVIDER_URL,
@@ -39,10 +38,14 @@ async function main() {
     await client.setSigner("//Alice");
     console.log(`  Connected as: ${client.getAddress()}\n`);
 
-    // Step 2: Create a bucket
+    // Step 2: Create a bucket (with storage agreement)
     const bucketName = `test-bucket-${Date.now()}`;
     console.log(`Step 2: Creating bucket '${bucketName}'...`);
-    const bucket = await client.createBucket(bucketName);
+    const bucket = await client.createBucket(bucketName, {
+      capacity: 1_000_000_000n, // 1 GB
+      duration: 500, // 500 blocks
+      maxPayment: 1_000_000_000_000_000n, // 1000 tokens
+    });
     console.log(`  Bucket created:`);
     console.log(`    S3 Bucket ID: ${bucket.s3BucketId}`);
     console.log(`    Layer 0 Bucket ID: ${bucket.layer0BucketId}`);
@@ -93,12 +96,21 @@ async function main() {
     const matches = downloadedText === "Hello from S3 SDK!";
     console.log(`  Verified: ${matches ? "OK" : "MISMATCH"}\n`);
 
-    // Step 6: List buckets
-    console.log("Step 6: Listing all buckets...");
+    // Step 6: List objects
+    console.log("Step 6: Listing objects...");
+    const objects = await client.listObjectsV2(bucketName);
+    console.log(`  Found ${objects.keyCount} object(s):`);
+    for (const obj of objects.contents) {
+      console.log(`    - ${obj.key} (${obj.size} bytes)`);
+    }
+    console.log();
+
+    // Step 7: List buckets
+    console.log("Step 7: Listing all buckets...");
     const buckets = await client.listBuckets();
     console.log(`  Found ${buckets.length} bucket(s):`);
     for (const b of buckets) {
-      console.log(`    - ${b.name} (ID: ${b.s3BucketId}, Objects: ${b.objectCount})`);
+      console.log(`    - ${b.name} (ID: ${b.s3BucketId})`);
     }
 
     console.log("\n=== Example completed successfully! ===");
