@@ -9,6 +9,9 @@ import {
   Download,
   Upload,
   ChevronRight,
+  Lock,
+  LockOpen,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +26,7 @@ import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
 import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
+import { EncryptionKey, bytesToHex } from "@/lib/encryption";
 import CreationStatusCard, { type CreationStatusItem } from "./CreationStatusCard";
 import ProviderPickerDialog from "./ProviderPickerDialog";
 
@@ -47,6 +51,8 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     waitForProvider,
     requestAgreementWithProvider,
     fetchBucketMembers,
+    setEncryption,
+    isEncrypted,
   } = useStorage();
 
   const [selectedBucket, setSelectedBucket] = useState<BucketInfo | null>(null);
@@ -76,6 +82,10 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const [showUpload, setShowUpload] = useState(false);
   const [uploadKey, setUploadKey] = useState("");
   const [uploadFile, setUploadFile] = useState<globalThis.File | null>(null);
+
+  // Encryption
+  const [showEncryption, setShowEncryption] = useState(false);
+  const [encryptionKeyHex, setEncryptionKeyHex] = useState("");
 
   // Refresh buckets on mount
   useEffect(() => {
@@ -255,6 +265,32 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
         error: err instanceof Error ? err.message : "Agreement request failed",
       });
     }
+  };
+
+  const handleGenerateKey = async () => {
+    const { rawKey } = await EncryptionKey.generate();
+    const hex = bytesToHex(rawKey);
+    setEncryptionKeyHex(hex);
+  };
+
+  const handleEnableEncryption = async () => {
+    if (!encryptionKeyHex || encryptionKeyHex.length !== 64) {
+      toast({ title: "Error", description: "Key must be 64 hex characters (32 bytes)", variant: "destructive" });
+      return;
+    }
+    try {
+      await setEncryption(encryptionKeyHex);
+      toast({ title: "Encryption enabled", description: "Uploads will be encrypted client-side" });
+      setShowEncryption(false);
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Invalid key", variant: "destructive" });
+    }
+  };
+
+  const handleDisableEncryption = async () => {
+    await setEncryption(null);
+    setEncryptionKeyHex("");
+    toast({ title: "Encryption disabled", description: "Uploads will be sent in plaintext" });
   };
 
   const handleDeleteBucket = async () => {
@@ -458,6 +494,15 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                 Upload Object
               </Button>
             )}
+            <Button
+              variant={isEncrypted ? "default" : "outline"}
+              size="sm"
+              onClick={() => isEncrypted ? handleDisableEncryption() : setShowEncryption(!showEncryption)}
+              title={isEncrypted ? "Encryption active — click to disable" : "Enable client-side encryption"}
+            >
+              {isEncrypted ? <Lock className="mr-2 h-4 w-4" /> : <LockOpen className="mr-2 h-4 w-4" />}
+              {isEncrypted ? "Encrypted" : "Encrypt"}
+            </Button>
             <Button variant="ghost" size="sm" onClick={refreshObjects} disabled={loadingObjects}>
               <RefreshCw className={`h-4 w-4 ${loadingObjects ? "animate-spin" : ""}`} />
             </Button>
@@ -465,6 +510,46 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
               <span className="text-xs text-muted-foreground ml-2">Role: {userRole}</span>
             )}
           </div>
+
+          {/* Encryption key setup */}
+          {showEncryption && !isEncrypted && (
+            <Card>
+              <CardContent className="pt-4 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium">Encryption Key (64 hex chars = 32 bytes)</label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      placeholder="Enter or generate a 256-bit hex key"
+                      value={encryptionKeyHex}
+                      onChange={(e) => setEncryptionKeyHex(e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 64))}
+                      className="font-mono text-xs"
+                    />
+                    <Button variant="outline" size="sm" onClick={handleGenerateKey} title="Generate random key">
+                      Generate
+                    </Button>
+                    {encryptionKeyHex && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
+                        navigator.clipboard.writeText(encryptionKeyHex);
+                        toast({ title: "Copied", description: "Key copied to clipboard" });
+                      }} title="Copy key">
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Save this key securely — you need it to decrypt your files. Lost keys cannot be recovered.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleEnableEncryption} disabled={encryptionKeyHex.length !== 64}>
+                    <Lock className="mr-2 h-4 w-4" />
+                    Enable Encryption
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setShowEncryption(false)}>Cancel</Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Upload inline */}
           {showUpload && (

@@ -18,6 +18,7 @@ import {
   type S3ObjectInfo,
   type CheckpointStatus,
 } from "@/lib/storage";
+import { EncryptionKey, hexToBytes } from "@/lib/encryption";
 import { useChain } from "./useChain";
 
 interface StorageState {
@@ -63,6 +64,10 @@ interface StorageState {
   configureCheckpointWindow: (bucketId: bigint, interval: number, gracePeriod: number, enabled: boolean) => Promise<void>;
   fundCheckpointPool: (bucketId: bigint, amount: bigint) => Promise<void>;
   claimCheckpointRewards: (bucketId: bigint) => Promise<void>;
+
+  // Encryption
+  setEncryption: (keyHex: string | null) => Promise<void>;
+  isEncrypted: boolean;
 }
 
 const StorageContext = createContext<StorageState | null>(null);
@@ -77,6 +82,7 @@ export function StorageProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [balance, setBalance] = useState<{ free: bigint; reserved: bigint } | null>(null);
   const [providerCapacity, setProviderCapacity] = useState<{ max: bigint; used: bigint } | null>(null);
+  const [isEncrypted, setIsEncrypted] = useState(false);
 
   // Initialize client when chain is connected
   useEffect(() => {
@@ -330,6 +336,21 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     return client.listAccessibleBucketIds();
   }, [client]);
 
+  // --- Encryption ---
+
+  const setEncryption = useCallback(async (keyHex: string | null) => {
+    if (!client) throw new Error("Client not connected");
+    if (keyHex) {
+      const rawKey = hexToBytes(keyHex);
+      const encKey = await EncryptionKey.fromBytes(rawKey);
+      client.setEncryptionKey(encKey);
+      setIsEncrypted(true);
+    } else {
+      client.clearEncryptionKey();
+      setIsEncrypted(false);
+    }
+  }, [client]);
+
   // --- Checkpoint Operations ---
 
   const fetchCheckpointStatus = useCallback(async (bucketId: bigint): Promise<CheckpointStatus | null> => {
@@ -425,6 +446,8 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         configureCheckpointWindow,
         fundCheckpointPool,
         claimCheckpointRewards,
+        setEncryption,
+        isEncrypted,
       }}
     >
       {children}

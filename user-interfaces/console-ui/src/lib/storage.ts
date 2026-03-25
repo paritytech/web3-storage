@@ -12,6 +12,7 @@ import { cryptoWaitReady, signatureVerify } from "@polkadot/util-crypto";
 import { u8aToHex } from "@polkadot/util";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, FixedSizeBinary, Enum } from "polkadot-api";
+import { EncryptionKey } from "./encryption";
 
 // Transaction result from best-block watching
 interface TxResult {
@@ -118,6 +119,7 @@ export class StorageClient {
   private signerAddress: string | null = null;
   private keyringPair: KeyringPair | null = null;
   private providerUrlCache: Map<string, string> = new Map();
+  private encryptionKey: EncryptionKey | null = null;
 
   constructor(chainWs: string) {
     this.chainWs = chainWs;
@@ -167,6 +169,21 @@ export class StorageClient {
 
   hasSigner(): boolean {
     return this.signer !== null;
+  }
+
+  /** Enable client-side encryption with the given key. */
+  setEncryptionKey(key: EncryptionKey): void {
+    this.encryptionKey = key;
+  }
+
+  /** Disable client-side encryption. */
+  clearEncryptionKey(): void {
+    this.encryptionKey = null;
+  }
+
+  /** Returns true if client-side encryption is enabled. */
+  isEncryptionEnabled(): boolean {
+    return this.encryptionKey !== null;
   }
 
   private ensureConnected(): void {
@@ -598,6 +615,12 @@ export class StorageClient {
     this.validateObjectKey(key);
 
     const providerUrl = await this.getProviderUrl(bucketId);
+
+    // Encrypt data before upload if encryption is enabled
+    const uploadData = this.encryptionKey
+      ? await this.encryptionKey.encrypt(data)
+      : data;
+
     // Upload via S3 endpoint which handles chunking, Merkle tree, MMR commit,
     // and S3 index update in a single request.
     const headers: Record<string, string> = {
@@ -612,7 +635,7 @@ export class StorageClient {
 
     const response = await fetch(
       `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { method: "PUT", headers, body: data },
+      { method: "PUT", headers, body: uploadData },
     );
 
     if (!response.ok) {
@@ -636,6 +659,14 @@ export class StorageClient {
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${await response.text()}`);
     }
+
+    // Decrypt after download if encryption is enabled
+    if (this.encryptionKey) {
+      const encrypted = new Uint8Array(await response.arrayBuffer());
+      const decrypted = await this.encryptionKey.decrypt(encrypted);
+      return new Blob([decrypted]);
+    }
+
     return response.blob();
   }
 
