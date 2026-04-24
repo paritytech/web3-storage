@@ -93,19 +93,50 @@ impl SubstrateClient {
     }
 
     /// Sign, submit, and wait for a transaction to finalize successfully.
+    ///
+    /// Retries on stale-nonce (error 1010) which can happen when submitting
+    /// multiple transactions in quick succession — the RPC node's cached nonce
+    /// may not yet reflect the previous tx's inclusion.
     async fn submit_and_finalize(
         &self,
         tx: subxt::tx::DefaultPayload<Composite<()>>,
     ) -> std::result::Result<subxt::blocks::ExtrinsicEvents<PolkadotConfig>, String> {
         let signer = self.signer()?;
-        self.client
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| format!("Failed to submit tx: {e}"))?
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| format!("Transaction failed: {e}"))
+
+        let mut last_err = String::new();
+        for attempt in 0..3u32 {
+            match self
+                .client
+                .tx()
+                .sign_and_submit_then_watch_default(&tx, signer)
+                .await
+            {
+                Ok(progress) => {
+                    return progress
+                        .wait_for_finalized_success()
+                        .await
+                        .map_err(|e| format!("Transaction failed: {e}"));
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    // Error 1010 = InvalidTransaction::Stale (nonce already used).
+                    // Wait briefly for the RPC node state to catch up, then retry.
+                    if last_err.contains("1010") && attempt < 2 {
+                        debug!(
+                            "Stale nonce (attempt {}), retrying in {}s...",
+                            attempt + 1,
+                            attempt + 1
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs((attempt + 1) as u64))
+                            .await;
+                        continue;
+                    }
+                    return Err(format!("Failed to submit tx: {e}"));
+                }
+            }
+        }
+
+        Err(format!("Failed to submit tx after retries: {last_err}"))
     }
 
     /// Create an S3 bucket.
