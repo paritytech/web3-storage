@@ -6,7 +6,7 @@
 #   brew install just
 
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2512-2"
+polkadot_version := "polkadot-stable2603"
 # Zombienet version
 zombienet_version := "v0.4.11"
 

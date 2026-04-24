@@ -15,10 +15,5 @@ serde = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
-std = [
-	"codec/std",
-	"scale-info/std",
-	"serde/std",
-	"sp-core/std",
-]
+std = ["codec/std", "scale-info/std", "serde/std", "sp-core/std"]
 serde = ["dep:serde", "sp-core/serde"]
