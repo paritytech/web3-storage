@@ -623,18 +623,23 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     const agreements = await getProviderAgreements(address)
     const bucketIds = [...new Set(agreements.map((a) => a.bucketId))]
 
-    // Query checkpoints for each bucket
+    // Query checkpoints from bucket snapshot field (use @polkadot/api to avoid PAPI incompatibility)
     for (const bucketId of bucketIds) {
       try {
-        const snapshot = await unsafeApi.query.StorageProvider.BucketSnapshots.getValue(bucketId)
-        if (snapshot) {
+        if (!polkadotApi) continue
+        const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
+        if (bucketOpt.isNone) continue
+        const bucket = bucketOpt.unwrap()
+        const snap = (bucket as any).snapshot
+        if (snap && !snap.isNone) {
+          const s = snap.isNone === undefined ? snap : snap.unwrap()
           checkpoints.push({
             bucketId,
-            mmrRoot: snapshot.mmr_root?.toString() || '0x',
-            leafCount: snapshot.leaf_count || 0,
-            submittedAt: snapshot.submitted_at || 0,
-            blockNumber: snapshot.block_number || 0,
-            providers: snapshot.providers?.map((p: any) => p.toString()) || [],
+            mmrRoot: s.mmrRoot?.toHex?.() || s.mmr_root?.toString() || '0x',
+            leafCount: Number(s.leafCount?.toNumber?.() ?? s.leaf_count ?? 0),
+            submittedAt: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+            blockNumber: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+            providers: (bucket as any).primaryProviders?.map((p: any) => p.toString()) || [],
           })
         }
       } catch (e) {
