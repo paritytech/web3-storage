@@ -67,7 +67,7 @@ function CheckpointsContent() {
           <CardContent>
             <div className="text-2xl font-bold">
               {checkpoints.length > 0
-                ? formatRelativeTime(Math.max(...checkpoints.map((c) => c.submittedAt)))
+                ? formatBlockNumber(Math.max(...checkpoints.map((c) => c.blockNumber)))
                 : 'None'}
             </div>
           </CardContent>
@@ -146,7 +146,7 @@ function CheckpointsContent() {
                         </div>
                       </TableCell>
                       <TableCell className="text-gray-400">
-                        {formatRelativeTime(checkpoint.submittedAt)}
+                        {formatBlockNumber(checkpoint.blockNumber)}
                       </TableCell>
                     </TableRow>
                   ))}
