@@ -84,14 +84,26 @@ export function StorageProvider({ children }: { children: ReactNode }) {
   const [providerCapacity, setProviderCapacity] = useState<{ max: bigint; used: bigint } | null>(null);
   const [isEncrypted, setIsEncrypted] = useState(false);
 
-  // Initialize client when chain is connected
+  // Initialize client when chain is connected; auto-set Alice on local dev chains
   useEffect(() => {
     if (connected && chainEndpoint) {
       console.log("[useStorage] Initializing client:", { chainEndpoint });
       const newClient = new StorageClient(chainEndpoint);
-      newClient.connect().then(() => {
+      newClient.connect().then(async () => {
         console.log("[useStorage] Client connected successfully");
         setClient(newClient);
+
+        // Auto-set Alice on local dev chains so the UI is usable immediately
+        if (chainEndpoint.includes("127.0.0.1") || chainEndpoint.includes("localhost")) {
+          try {
+            const address = await newClient.setSigner("//Alice");
+            setSignerAddress(address);
+            setSignerName("Alice");
+            console.log("[useStorage] Auto-set signer to Alice:", address);
+          } catch (err) {
+            console.warn("[useStorage] Auto-signer failed (not critical):", err);
+          }
+        }
       }).catch((err) => {
         console.error("[useStorage] Client connection failed:", err);
         setError(err instanceof Error ? err.message : "Failed to connect storage client");
@@ -132,12 +144,14 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
   }, [client]);
 
-  // Fetch balance when signer changes
+  // Fetch balance and buckets when signer changes
   useEffect(() => {
     if (client && signerAddress) {
       client.getBalance(signerAddress).then(setBalance).catch(() => setBalance(null));
+      client.listBuckets().then(setBuckets).catch(() => setBuckets([]));
     } else {
       setBalance(null);
+      setBuckets([]);
     }
   }, [client, signerAddress]);
 
