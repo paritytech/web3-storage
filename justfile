@@ -8,7 +8,7 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
 # Zombienet version
-zombienet_version := "v1.3.138"
+zombienet_version := "v0.4.11"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -17,7 +17,7 @@ arch := `uname -m`
 # URL components
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
-zombienet_asset := if os == "darwin" { if arch == "arm64" { "zombienet-macos-arm64" } else { "zombienet-macos-x64" } } else { "zombienet-linux-x64" }
+zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-musl" }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -67,7 +67,7 @@ download-binaries: download-polkadot-sdk-binaries download-zombienet
 download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node _download-chain-spec-builder
 
 # Download zombienet
-download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet/releases/download/" + zombienet_version + "/" + zombienet_asset)
+download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet-sdk/releases/download/" + zombienet_version + "/" + zombienet_asset)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
@@ -94,7 +94,7 @@ start-chain: check build-runtime
     echo "  Relay chain: https://polkadot.js.org/apps/?rpc={{ RELAY_WS }}"
     echo "  Parachain:   https://polkadot.js.org/apps/?rpc={{ CHAIN_WS }}"
     echo ""
-    .bin/zombienet spawn zombienet.toml
+    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml
 
 # Start the storage provider node
 # Examples:
@@ -224,7 +224,7 @@ fs-integration-test:
         echo "Skipping blockchain startup..."
     else
         echo "Starting blockchain network..."
-        .bin/zombienet spawn zombienet.toml > /tmp/zombienet.log 2>&1 &
+        PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml > /tmp/zombienet.log 2>&1 &
         ZOMBIENET_PID=$!
         trap "kill $ZOMBIENET_PID 2>/dev/null || true" EXIT
 
