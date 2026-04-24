@@ -157,65 +157,48 @@ export default function Explorer() {
     const api = client.getTypedApi(parachain);
 
     try {
-      // Subscribe to finalized events
-      const subscription = api.query.System.Events.watchValue({ at: "finalized" }).subscribe({
-        next: (rawResult) => {
-          // PAPI watchValue returns { block, value } — unwrap to get the events array
-          const eventsAtBlock = Array.isArray(rawResult)
-            ? rawResult
-            : (rawResult as any)?.value ?? rawResult;
-          const blockInfo = (rawResult as any)?.block;
-          const blockHash: string = blockInfo?.hash ?? "";
-
-          if (!eventsAtBlock || !Array.isArray(eventsAtBlock)) {
-            console.log("[Explorer] Events not an array after unwrap:", typeof eventsAtBlock, eventsAtBlock);
-            return;
-          }
-
-          // Use block number from the event payload if available, otherwise fall back to ref
-          const currentBlock: number = blockInfo?.number ?? blockNumberRef.current;
-
-          // Log first event structure for debugging PAPI format
-          if (eventsAtBlock.length > 0) {
-            const sample = eventsAtBlock[0] as Record<string, unknown>;
-            console.log("[Explorer] Block", currentBlock, "- received", eventsAtBlock.length,
-              "events. Sample keys:", Object.keys(sample),
-              "event.type:", (sample.event as any)?.type);
-          }
-
-          const newEvents = parseEventRecords(eventsAtBlock, currentBlock, blockHash);
-
-          if (newEvents.length > 0) {
-            console.log(`Found ${newEvents.length} Layer 0 events in block ${currentBlock}`);
-
-            // Update events list
-            setEvents(prev => {
-              const combined = [...newEvents, ...prev];
-              // Keep only last 500 events
-              return combined.slice(0, 500);
+      // Subscribe to every finalized block and fetch its events individually.
+      // Using finalizedBlock$ instead of watchValue on System.Events because
+      // watchValue can skip blocks when multiple finalize in quick succession.
+      const subscription = client.finalizedBlock$.subscribe({
+        next: async (block) => {
+          try {
+            const rawResult = await api.query.System.Events.getValue({
+              at: block.hash,
             });
 
-            // Update blocks list
-            setBlocks(prev => {
-              const newBlock: BlockInfo = {
-                number: currentBlock,
-                hash: "",
-                timestamp: Date.now(),
-                eventCount: newEvents.length,
-                events: newEvents,
-              };
+            const eventsAtBlock = Array.isArray(rawResult)
+              ? rawResult
+              : (rawResult as any)?.value ?? rawResult;
 
-              // Find existing block or add new one
-              const existingIdx = prev.findIndex(b => b.number === currentBlock);
-              if (existingIdx >= 0) {
-                const updated = [...prev];
-                updated[existingIdx] = newBlock;
-                return updated;
-              }
+            if (!eventsAtBlock || !Array.isArray(eventsAtBlock)) return;
 
-              // Add new block and keep only last 50
-              return [newBlock, ...prev].slice(0, 50);
-            });
+            const newEvents = parseEventRecords(eventsAtBlock, block.number, block.hash);
+
+            if (newEvents.length > 0) {
+              setEvents(prev => [...newEvents, ...prev].slice(0, 500));
+
+              setBlocks(prev => {
+                const newBlock: BlockInfo = {
+                  number: block.number,
+                  hash: block.hash,
+                  timestamp: Date.now(),
+                  eventCount: newEvents.length,
+                  events: newEvents,
+                };
+
+                const existingIdx = prev.findIndex(b => b.number === block.number);
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = newBlock;
+                  return updated;
+                }
+
+                return [newBlock, ...prev].slice(0, 50);
+              });
+            }
+          } catch (err) {
+            console.warn("[Explorer] Failed to fetch events for block", block.number, err);
           }
         },
         error: (err) => {
