@@ -8,10 +8,10 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { Keyring } from "@polkadot/keyring";
 import type { KeyringPair } from "@polkadot/keyring/types";
-import { cryptoWaitReady, signatureVerify } from "@polkadot/util-crypto";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { u8aToHex } from "@polkadot/util";
 import { parachain } from "@polkadot-api/descriptors";
-import { Binary, FixedSizeBinary, Enum } from "polkadot-api";
+import { Binary, Enum } from "polkadot-api";
 import { EncryptionKey } from "./encryption";
 
 // Transaction result from best-block watching
@@ -460,39 +460,24 @@ export class StorageClient {
 
   // --- S3 Operations ---
 
-  async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
+  async createBucket(name: string, _options: CreateBucketOptions): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
 
     console.log("[StorageClient] createBucket:", name);
 
-    // Try the atomic extrinsic first (bucket + agreement in one tx).
-    // Falls back to the old create_s3_bucket if the runtime doesn't have it yet.
+    // Create an S3 bucket via the create_s3_bucket extrinsic
     let tx;
-    let usedAtomicTx = false;
     try {
-      tx = this.api!.tx.S3Registry.create_s3_bucket_with_storage({
+      tx = this.api!.tx.S3Registry.create_s3_bucket({
         name: Binary.fromText(name),
-        max_capacity: options.capacity,
-        duration: options.duration,
-        max_payment: options.maxPayment,
+        min_providers: 1,
       });
-      usedAtomicTx = true;
-      console.log("[StorageClient] Using atomic create_s3_bucket_with_storage tx");
-    } catch {
-      // Fallback: runtime doesn't have the new extrinsic yet
-      console.log("[StorageClient] Falling back to create_s3_bucket (old extrinsic)");
-      try {
-        tx = this.api!.tx.S3Registry.create_s3_bucket({
-          name: Binary.fromText(name),
-          min_providers: 1,
-        });
-      } catch (err) {
-        console.error("[StorageClient] Failed to build S3Registry tx:", err);
-        console.error("[StorageClient] The runtime descriptor may be out of date.");
-        console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
-        throw err;
-      }
+    } catch (err) {
+      console.error("[StorageClient] Failed to build S3Registry tx:", err);
+      console.error("[StorageClient] The runtime descriptor may be out of date.");
+      console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
+      throw err;
     }
 
     const result = await this.submitAndWatchBestBlock(tx);
