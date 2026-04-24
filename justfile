@@ -8,7 +8,7 @@
 # Polkadot SDK version (matches Cargo.toml tag)
 polkadot_version := "polkadot-stable2512-2"
 # Zombienet version
-zombienet_version := "v0.4.8"
+zombienet_version := "v0.4.11"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
