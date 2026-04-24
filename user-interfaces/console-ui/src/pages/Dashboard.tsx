@@ -14,27 +14,29 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useChain } from "@/hooks/useChain";
+import { useStorage } from "@/hooks/useStorage";
 
 export default function Dashboard() {
   const { connected, blockNumber, chainEndpoint } = useChain();
+  const { buckets, signerAddress, balance } = useStorage();
 
   const stats = [
     {
       title: "S3 Buckets",
-      value: "0",
+      value: connected && signerAddress ? String(buckets.length) : "-",
       description: "S3-compatible buckets",
       icon: Archive,
     },
     {
-      title: "Uploads",
-      value: "0",
-      description: "Total files uploaded",
+      title: "Free Balance",
+      value: connected && balance ? (balance.free / 1_000_000_000_000n).toString() : "-",
+      description: "Available tokens",
       icon: FileUp,
     },
     {
-      title: "Downloads",
-      value: "0",
-      description: "Total files downloaded",
+      title: "Reserved",
+      value: connected && balance ? (balance.reserved / 1_000_000_000_000n).toString() : "-",
+      description: "Tokens locked in agreements",
       icon: FileDown,
     },
   ];
