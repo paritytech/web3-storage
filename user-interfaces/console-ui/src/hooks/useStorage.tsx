@@ -144,15 +144,23 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
   }, [client]);
 
-  // Fetch balance and buckets when signer changes
+  // Fetch balance and buckets when signer changes, then poll every 15s
+  // so external changes (CLI tools, other clients) are reflected.
   useEffect(() => {
-    if (client && signerAddress) {
-      client.getBalance(signerAddress).then(setBalance).catch(() => setBalance(null));
-      client.listBuckets().then(setBuckets).catch(() => setBuckets([]));
-    } else {
+    if (!client || !signerAddress) {
       setBalance(null);
       setBuckets([]);
+      return;
     }
+
+    const refresh = () => {
+      client.getBalance(signerAddress).then(setBalance).catch(() => setBalance(null));
+      client.listBuckets().then(setBuckets).catch(() => setBuckets([]));
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 15_000);
+    return () => clearInterval(interval);
   }, [client, signerAddress]);
 
   // Fetch provider capacity when client connects
