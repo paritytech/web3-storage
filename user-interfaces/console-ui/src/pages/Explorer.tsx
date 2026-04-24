@@ -75,10 +75,14 @@ const eventStyles: Record<string, { icon: typeof Activity; color: string; bg: st
 
 const defaultStyle = { icon: Activity, color: "text-gray-500", bg: "bg-gray-500/10" };
 
+// Module-level cache so events survive tab switches (component unmount/remount)
+let cachedEvents: BlockEvent[] = [];
+let cachedBlocks: BlockInfo[] = [];
+
 export default function Explorer() {
   const { client, connected, blockNumber } = useChain();
-  const [blocks, setBlocks] = useState<BlockInfo[]>([]);
-  const [events, setEvents] = useState<BlockEvent[]>([]);
+  const [blocks, setBlocks] = useState<BlockInfo[]>(cachedBlocks);
+  const [events, setEvents] = useState<BlockEvent[]>(cachedEvents);
   const [loading, setLoading] = useState(false);
   const [palletFilter, setPalletFilter] = useState<PalletFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -86,6 +90,12 @@ export default function Explorer() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
+  const blockNumberRef = useRef(blockNumber);
+  blockNumberRef.current = blockNumber;
+
+  // Keep module-level cache in sync so events survive tab switches
+  useEffect(() => { cachedEvents = events; }, [events]);
+  useEffect(() => { cachedBlocks = blocks; }, [blocks]);
 
   // Layer 0 pallets we care about
   const layer0Pallets = ["StorageProvider", "S3Registry"];
@@ -148,17 +158,35 @@ export default function Explorer() {
 
     try {
       // Subscribe to finalized events
-      const subscription = api.query.System.Events.watchValue("finalized").subscribe({
-        next: (eventsAtBlock) => {
+      const subscription = api.query.System.Events.watchValue({ at: "finalized" }).subscribe({
+        next: (rawResult) => {
+          // PAPI watchValue returns { block, value } — unwrap to get the events array
+          const eventsAtBlock = Array.isArray(rawResult)
+            ? rawResult
+            : (rawResult as any)?.value ?? rawResult;
+          const blockInfo = (rawResult as any)?.block;
+          const blockHash: string = blockInfo?.hash ?? "";
+
           if (!eventsAtBlock || !Array.isArray(eventsAtBlock)) {
-            console.log("No events in block or invalid format");
+            console.log("[Explorer] Events not an array after unwrap:", typeof eventsAtBlock, eventsAtBlock);
             return;
           }
 
-          const newEvents = parseEventRecords(eventsAtBlock, blockNumber);
+          // Use block number from the event payload if available, otherwise fall back to ref
+          const currentBlock: number = blockInfo?.number ?? blockNumberRef.current;
+
+          // Log first event structure for debugging PAPI format
+          if (eventsAtBlock.length > 0) {
+            const sample = eventsAtBlock[0] as Record<string, unknown>;
+            console.log("[Explorer] Block", currentBlock, "- received", eventsAtBlock.length,
+              "events. Sample keys:", Object.keys(sample),
+              "event.type:", (sample.event as any)?.type);
+          }
+
+          const newEvents = parseEventRecords(eventsAtBlock, currentBlock, blockHash);
 
           if (newEvents.length > 0) {
-            console.log(`Found ${newEvents.length} Layer 0 events in block ${blockNumber}`);
+            console.log(`Found ${newEvents.length} Layer 0 events in block ${currentBlock}`);
 
             // Update events list
             setEvents(prev => {
@@ -170,7 +198,7 @@ export default function Explorer() {
             // Update blocks list
             setBlocks(prev => {
               const newBlock: BlockInfo = {
-                number: blockNumber,
+                number: currentBlock,
                 hash: "",
                 timestamp: Date.now(),
                 eventCount: newEvents.length,
@@ -178,7 +206,7 @@ export default function Explorer() {
               };
 
               // Find existing block or add new one
-              const existingIdx = prev.findIndex(b => b.number === blockNumber);
+              const existingIdx = prev.findIndex(b => b.number === currentBlock);
               if (existingIdx >= 0) {
                 const updated = [...prev];
                 updated[existingIdx] = newBlock;
@@ -210,7 +238,7 @@ export default function Explorer() {
         setSubscriptionActive(false);
       }
     };
-  }, [client, connected, autoRefresh, blockNumber, parseEventRecords]);
+  }, [client, connected, autoRefresh, parseEventRecords]);
 
   // Manual refresh - fetch current events
   const loadCurrentEvents = useCallback(async () => {
@@ -220,8 +248,11 @@ export default function Explorer() {
     try {
       const api = client.getTypedApi(parachain);
 
-      // Get current events
-      const eventsAtBlock = await api.query.System.Events.getValue();
+      // Get current events — getValue may return raw array or { block, value }
+      const rawResult = await api.query.System.Events.getValue();
+      const eventsAtBlock = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as any)?.value ?? rawResult;
 
       if (eventsAtBlock && Array.isArray(eventsAtBlock)) {
         const newEvents = parseEventRecords(eventsAtBlock, blockNumber);
@@ -408,12 +439,13 @@ export default function Explorer() {
           <CardContent className="py-6">
             <div className="text-center text-muted-foreground">
               <Activity className="mx-auto h-8 w-8 mb-2 opacity-50" />
-              <p className="font-medium">Waiting for Layer 0 events...</p>
+              <p className="font-medium">Listening for Layer 0 events...</p>
               <p className="text-sm mt-1">
-                Events from StorageProvider and S3Registry pallets will appear here.
+                Events from StorageProvider and S3Registry pallets will appear here in real time.
               </p>
               <p className="text-sm mt-2">
-                Try creating a bucket or uploading a file to see events.
+                This only shows <strong>new</strong> events from this point forward.
+                Try creating a bucket or running <code>just s3-demo-ci</code> now.
               </p>
             </div>
           </CardContent>
