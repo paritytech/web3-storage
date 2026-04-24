@@ -11,7 +11,7 @@
  */
 
 import { createClient, PolkadotClient } from 'polkadot-api'
-import { getWsProvider } from 'polkadot-api/ws-provider/web'
+import { getWsProvider } from 'polkadot-api/ws'
 import { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
 import { ApiPromise, WsProvider } from '@polkadot/api'

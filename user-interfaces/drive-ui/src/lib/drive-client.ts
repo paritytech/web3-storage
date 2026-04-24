@@ -4,7 +4,7 @@
  */
 
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider/web";
+import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady } from "@polkadot/util-crypto";

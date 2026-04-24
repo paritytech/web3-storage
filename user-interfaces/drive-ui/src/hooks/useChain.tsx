@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { createClient, type PolkadotClient } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider/web";
+import { getWsProvider } from "polkadot-api/ws";
 import { BehaviorSubject } from "rxjs";
 
 interface ChainState {
