@@ -10,22 +10,34 @@ import CheckpointPanel from "@/components/CheckpointPanel";
 
 export default function Storage() {
   const { connected } = useChain();
-  const { signerAddress, balance, providerCapacity, listAccessibleBucketIds, buckets } = useStorage();
+  const { signerAddress, balance, providerCapacity, listAccessibleBucketIds, fetchBucketMembers, buckets } = useStorage();
   const [selectedLayer0BucketId, setSelectedLayer0BucketId] = useState<bigint | null>(null);
   const [sharedBucketIds, setSharedBucketIds] = useState<bigint[]>([]);
 
-  // Fetch shared bucket IDs (buckets where user is a member but not owner)
+  // Fetch shared bucket IDs (buckets where user is a member but not owner).
+  // Validate each ID still exists on-chain to filter out stale references
+  // left behind after bucket deletion.
   useEffect(() => {
     if (!signerAddress) {
       setSharedBucketIds([]);
       return;
     }
-    listAccessibleBucketIds().then((ids) => {
-      // Filter out buckets the user owns (those are already shown in the main list)
-      const ownedIds = new Set(buckets.map((b) => b.id));
-      setSharedBucketIds(ids.filter((id) => !ownedIds.has(id)));
+    listAccessibleBucketIds().then(async (ids) => {
+      const ownedIds = new Set(buckets.map((b) => b.layer0BucketId));
+      const candidates = ids.filter((id) => !ownedIds.has(id));
+      // Validate buckets still exist by checking fetchBucketMembers doesn't throw
+      const valid: bigint[] = [];
+      for (const id of candidates) {
+        try {
+          await fetchBucketMembers(id);
+          valid.push(id);
+        } catch {
+          // Bucket no longer exists — skip
+        }
+      }
+      setSharedBucketIds(valid);
     }).catch(() => setSharedBucketIds([]));
-  }, [signerAddress, buckets, listAccessibleBucketIds]);
+  }, [signerAddress, buckets, listAccessibleBucketIds, fetchBucketMembers]);
 
   if (!connected) {
     return (
