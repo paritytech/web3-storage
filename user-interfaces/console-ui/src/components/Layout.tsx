@@ -4,7 +4,7 @@ import {
   Database,
   Search,
   Users,
-  Settings,
+  LogOut,
   Wifi,
   WifiOff,
   HardDrive,
@@ -96,8 +96,8 @@ export default function Layout() {
               </span>
             </div>
             {connected ? (
-              <Button variant="ghost" size="sm" onClick={disconnect}>
-                <Settings className="h-4 w-4" />
+              <Button variant="ghost" size="sm" onClick={disconnect} title="Disconnect">
+                <LogOut className="h-4 w-4" />
               </Button>
             ) : (
               <ConnectDialog />
