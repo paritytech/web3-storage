@@ -106,6 +106,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       setUserRole(null);
       return;
     }
+    // The bucket owner is always Admin (the on-chain creator is added as Admin
+    // in the pallet, but the member query can fail or return a format that
+    // doesn't match the signer address string).
+    if (selectedBucket.owner === signerAddress) {
+      setUserRole('Admin');
+      return;
+    }
     fetchBucketMembers(selectedBucket.layer0BucketId)
       .then((members) => {
         const me = members.find((m) => m.account === signerAddress);
