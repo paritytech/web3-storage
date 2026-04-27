@@ -73,6 +73,7 @@ export interface Challenge {
   provider: string
   leafIndex: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
+  challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   createdAt: number
   deadline: number
 }
@@ -93,16 +94,35 @@ export interface EarningsSummary {
   activeAgreementValue: bigint
 }
 
+// Persist challenges to localStorage so they survive page reloads
+// (responded challenges are removed from chain storage and unpinned blocks
+// can't be queried, so this is the only way to keep history).
+const CHALLENGES_STORAGE_KEY = 'provider-challenges'
+function loadPersistedChallenges(): Challenge[] {
+  try {
+    const raw = localStorage.getItem(CHALLENGES_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+function persistChallenges(challenges: Challenge[]) {
+  try {
+    localStorage.setItem(CHALLENGES_STORAGE_KEY, JSON.stringify(challenges))
+  } catch { /* ignore */ }
+}
+
 // State subjects
 const providerInfo$ = new BehaviorSubject<ProviderInfo | null>(null)
 const providerSettings$ = new BehaviorSubject<ProviderSettings | null>(null)
 const agreementRequests$ = new BehaviorSubject<AgreementRequest[]>([])
 const agreements$ = new BehaviorSubject<Agreement[]>([])
 const checkpoints$ = new BehaviorSubject<Checkpoint[]>([])
-const challenges$ = new BehaviorSubject<Challenge[]>([])
+const challenges$ = new BehaviorSubject<Challenge[]>(loadPersistedChallenges())
 const earnings$ = new BehaviorSubject<EarningsSummary | null>(null)
 const isLoading$ = new BehaviorSubject<boolean>(false)
 const error$ = new BehaviorSubject<string | null>(null)
+
+// Persist challenges whenever they change
+challenges$.subscribe(persistChallenges)
 
 // Derived state
 const isRegistered$ = providerInfo$.pipe(map((info) => info !== null))
@@ -168,10 +188,19 @@ export async function loadProviderData(address: string): Promise<void> {
       getProviderChallenges(address),
     ])
 
-    agreements$.next(chainAgreements.map(convertAgreement))
+    agreements$.next(chainAgreements.map(convertAgreement).sort((a, b) => a.bucketId - b.bucketId))
     agreementRequests$.next(chainRequests.map(convertAgreementRequest))
     checkpoints$.next(chainCheckpoints.map(convertCheckpoint))
-    challenges$.next(chainChallenges.map(convertChallenge))
+    // Merge new challenges with existing cache — don't discard responded ones
+    // that are no longer in storage or recent events.
+    const newChallenges = chainChallenges.map(convertChallenge)
+    const existing = challenges$.getValue()
+    const merged = new Map<string, Challenge>()
+    // Keep existing (may include responded/slashed from prior polls)
+    for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+    // Overlay with fresh data (updates status for ones still visible)
+    for (const c of newChallenges) merged.set(`${c.deadline}-${c.id}`, c)
+    challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 
     // Fetch real storage usage from provider node /stats endpoint
     try {
@@ -367,6 +396,28 @@ export function clearProviderState(): void {
   error$.next(null)
 }
 
+/**
+ * Add or update a challenge from a real-time event subscription.
+ * Merges with existing challenges and persists to localStorage.
+ */
+export function addChallengeFromEvent(onChainChallenge: import('@/lib/chain-client').OnChainChallenge): void {
+  const challenge = convertChallenge(onChainChallenge)
+  const key = `${challenge.deadline}-${challenge.id}`
+  const existing = challenges$.getValue()
+  const merged = new Map<string, Challenge>()
+  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+
+  const prev = merged.get(key)
+  if (prev) {
+    // Update status but keep richer data from ChallengeCreated
+    merged.set(key, { ...prev, status: challenge.status || prev.status })
+  } else {
+    merged.set(key, challenge)
+  }
+
+  challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Converters (chain types to UI types)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -441,6 +492,7 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     provider: chain.provider,
     leafIndex: chain.leafIndex,
     status: chain.status,
+    challengeType: chain.challengeType,
     createdAt: chain.createdAt,
     deadline: chain.deadline,
   }
