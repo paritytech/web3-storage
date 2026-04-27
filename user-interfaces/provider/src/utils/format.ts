@@ -80,12 +80,19 @@ export function formatBytes(bytes: number | bigint): string {
 }
 
 export function formatDuration(blocks: number): string {
+  if (blocks === 0) return '0 blocks'
+  // u32::MAX or similarly huge values = "no limit"
+  if (blocks >= 4_000_000_000) return 'no limit'
+
   // Assuming 6 second blocks
   const seconds = blocks * 6
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
 
+  if (days > 365) {
+    return `${blocks.toLocaleString()} blocks`
+  }
   if (days > 0) {
     return `${days}d ${hours % 24}h`
   }
