@@ -1,0 +1,31 @@
+[settings]
+timeout = 1000
+provider = "native"
+
+[relaychain]
+default_command = "{{PROJECT_ROOT}}/.bin/polkadot"
+chain = "westend-local"
+default_args = ["-lruntime=info"]
+
+[[relaychain.nodes]]
+name = "alice"
+validator = true
+rpc_port = 9900
+
+[[relaychain.nodes]]
+name = "bob"
+validator = true
+rpc_port = 9901
+
+# TODO(tungbui): Update Parachain id for Paseo Web3 Storage runtime
+[[parachains]]
+id = 4000
+cumulus_based = true
+chain_spec_command = "{{PROJECT_ROOT}}/scripts/build-paseo-chain-spec.sh"
+
+[[parachains.collators]]
+name = "alice"
+validator = true
+command = "{{PROJECT_ROOT}}/.bin/polkadot-omni-node"
+rpc_port = 2222
+args = ["--collator", "-lruntime=info"]

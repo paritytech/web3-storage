@@ -41,6 +41,10 @@ build:
 build-runtime:
     cargo build --release -p storage-parachain-runtime
 
+# Build only the paseo runtime
+build-paseo-runtime:
+    cargo build --release -p storage-paseo-runtime
+
 # Build only the provider node
 build-provider:
     cargo build --release -p storage-provider-node
@@ -90,11 +94,15 @@ start-chain: check build-runtime
     echo ""
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
-    echo "Web UIs (once ready):"
-    echo "  Relay chain: https://polkadot.js.org/apps/?rpc={{ RELAY_WS }}"
-    echo "  Parachain:   https://polkadot.js.org/apps/?rpc={{ CHAIN_WS }}"
-    echo ""
     PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml
+
+# Start the blockchain (relay chain + paseo storage parachain)
+start-paseo-chain: check build-paseo-runtime
+    #!/usr/bin/env bash
+    echo ""
+    echo "=== Starting Blockchain (Relay Chain + Paseo Storage Parachain) ==="
+    echo ""
+    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml
 
 # Start the storage provider node
 # Examples:

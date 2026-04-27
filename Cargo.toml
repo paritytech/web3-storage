@@ -7,6 +7,7 @@ members = [
 	"primitives",
 	"provider-node",
 	"runtime",
+	"runtimes/web3-storage-paseo",
 
 	# Storage Interfaces: File System Interface
 	"storage-interfaces/file-system/client",
