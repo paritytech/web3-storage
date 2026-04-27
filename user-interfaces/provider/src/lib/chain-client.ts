@@ -383,6 +383,7 @@ export interface OnChainChallenge {
   provider: string
   leafIndex: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
+  challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   createdAt: number
   deadline: number
 }
@@ -660,50 +661,45 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
 export async function getProviderChallenges(address: string): Promise<OnChainChallenge[]> {
   if (!client || !unsafeApi) throw new Error('Not connected to chain')
 
+  const challenges = new Map<string, OnChainChallenge>() // keyed by "deadline-index"
+  const currentBlock = blockNumber$.getValue() || 0
+
+  // Check storage for any still-pending challenges.
+  // Note: responded/slashed challenges are removed from storage — those are
+  // captured by the real-time subscribeToChallengeEvents() subscription instead.
   try {
-    const challenges: OnChainChallenge[] = []
-
-    try {
-      const entries = await unsafeApi.query.StorageProvider.Challenges.getEntries()
-      const currentBlock = blockNumber$.getValue() || 0
-
-      for (const entry of entries) {
-        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
-        if (!value) continue
-
-        const challengeProvider = value.provider?.toString()
+    const entries = await unsafeApi.query.StorageProvider.Challenges.getEntries()
+    for (const entry of entries) {
+      const { keyArgs, value: challengeVec } = entry as { keyArgs: any[]; value: any }
+      if (!challengeVec) continue
+      const deadline = Number(keyArgs[0]) || 0
+      const items = Array.isArray(challengeVec) ? challengeVec : [challengeVec]
+      for (let idx = 0; idx < items.length; idx++) {
+        const ch = items[idx]
+        if (!ch) continue
+        const challengeProvider = ch.provider?.toString()
         if (challengeProvider !== address) continue
-
-        const deadline = value.deadline || 0
-        let status: 'pending' | 'responded' | 'slashed' | 'expired' = 'pending'
-        if (value.responded) {
-          status = 'responded'
-        } else if (value.slashed) {
-          status = 'slashed'
-        } else if (currentBlock > deadline) {
-          status = 'expired'
+        const key = `${deadline}-${idx}`
+        if (!challenges.has(key)) {
+          challenges.set(key, {
+            id: idx,
+            bucketId: Number(ch.bucket_id ?? 0),
+            challenger: ch.challenger?.toString() || '',
+            provider: challengeProvider,
+            leafIndex: Number(ch.leaf_index ?? 0),
+            status: currentBlock > deadline ? 'expired' : 'pending',
+            createdAt: 0,
+            deadline,
+          })
         }
-
-        challenges.push({
-          id: Number(key[0]) || 0,
-          bucketId: value.bucket_id || 0,
-          challenger: value.challenger?.toString() || '',
-          provider: challengeProvider,
-          leafIndex: value.leaf_index || 0,
-          status,
-          createdAt: value.created_at || 0,
-          deadline,
-        })
       }
-    } catch (e) {
-      console.warn('Could not query challenges:', e)
     }
-
-    return challenges
-  } catch (error) {
-    console.error('Error fetching challenges:', error)
-    return []
+  } catch (e) {
+    console.warn('Could not query challenge storage:', e)
   }
+
+  // Sort by deadline descending (most recent first)
+  return Array.from(challenges.values()).sort((a, b) => b.deadline - a.deadline)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -906,33 +902,123 @@ export type ProviderEvent =
   | { type: 'ProviderSlashed'; provider: string; amount: bigint }
 
 /**
- * Subscribe to provider-related events
- *
- * Note: Full event parsing requires runtime metadata.
- * This is a placeholder that logs finalized blocks.
+ * Subscribe to challenge events in real-time via finalizedBlock$.
+ * Processes each finalized block's events while the block is still pinned.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToChallengeEvents(
+  address: string,
+  onChallenge: (challenge: OnChainChallenge) => void
+): () => void {
+  if (!client || !unsafeApi) {
+    console.warn('Cannot subscribe to challenge events: not connected')
+    return () => {}
+  }
+
+  const api = unsafeApi
+  const subscription = client.finalizedBlock$.subscribe({
+    next: async (block) => {
+      try {
+        const rawEvents = await api.query.System.Events.getValue({ at: block.hash })
+        const events = Array.isArray(rawEvents) ? rawEvents : (rawEvents as any)?.value ?? []
+
+        // Try to get block body for extrinsic type detection
+        let extrinsicTypes: Map<number, string> = new Map()
+        try {
+          const body = await client!.getBlockBody(block.hash)
+          for (let i = 0; i < body.length; i++) {
+            try {
+              const hex = body[i] instanceof Uint8Array
+                ? '0x' + Array.from(body[i] as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('')
+                : String(body[i])
+              // Look for known call prefixes in the hex
+              if (hex.includes('challenge_offchain') || hex.includes('6368616c6c656e67655f6f6666636861696e')) {
+                extrinsicTypes.set(i, 'offchain')
+              } else if (hex.includes('challenge_checkpoint') || hex.includes('6368616c6c656e67655f636865636b706f696e74')) {
+                extrinsicTypes.set(i, 'checkpoint')
+              }
+            } catch { /* skip */ }
+          }
+        } catch { /* body not available */ }
+
+        for (const record of events) {
+          const event = (record as any).event
+          if (!event || event.type !== 'StorageProvider') continue
+          const ev = event.value
+          if (!ev) continue
+
+          // Get extrinsic index from event phase for type detection
+          const phase = (record as any).phase
+          const extIdx = phase?.type === 'ApplyExtrinsic' ? Number(phase.value) : -1
+
+          if (ev.type === 'ChallengeCreated') {
+            const d = ev.value
+            const provider = d.provider?.toString()
+            if (provider !== address) continue
+            const cid = d.challenge_id
+            // Determine challenge type from the extrinsic that created it
+            const challengeType = extrinsicTypes.get(extIdx) as 'offchain' | 'checkpoint' | undefined
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: Number(d.bucket_id ?? 0),
+              challenger: d.challenger?.toString() || '',
+              provider,
+              leafIndex: Number(d.leaf_index ?? 0),
+              status: 'pending',
+              challengeType: challengeType || 'unknown',
+              createdAt: block.number,
+              deadline: Number(cid.deadline ?? d.respond_by ?? 0),
+            })
+          } else if (ev.type === 'ChallengeDefended') {
+            const d = ev.value
+            if (d.provider?.toString() !== address) continue
+            const cid = d.challenge_id
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: 0,
+              challenger: '',
+              provider: address,
+              leafIndex: 0,
+              status: 'responded',
+              createdAt: 0,
+              deadline: Number(cid.deadline ?? 0),
+            })
+          } else if (ev.type === 'ChallengeSlashed') {
+            const d = ev.value
+            if (d.provider?.toString() !== address) continue
+            const cid = d.challenge_id
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: 0,
+              challenger: '',
+              provider: address,
+              leafIndex: 0,
+              status: 'slashed',
+              createdAt: 0,
+              deadline: Number(cid.deadline ?? 0),
+            })
+          }
+        }
+      } catch {
+        // Block unpinned or events unavailable — skip
+      }
+    },
+    error: (err) => {
+      console.error('Challenge event subscription error:', err)
+    },
+  })
+
+  return () => subscription.unsubscribe()
+}
+
+/**
+ * Subscribe to provider-related events (stub for general events)
  */
 export function subscribeToProviderEvents(
   _address: string,
   _callback: (event: ProviderEvent) => void
 ): () => void {
-  if (!client) {
-    console.warn('Cannot subscribe to events: not connected')
-    return () => {}
-  }
-
-  // Subscribe to finalized blocks
-  // Note: Event parsing requires knowing the runtime metadata structure
-  // For now, we log the block and would need to query events separately
-  const subscription = client.finalizedBlock$.subscribe({
-    next: (block) => {
-      console.log('New finalized block:', block.number)
-      // In a full implementation, we would query events from the block
-      // and parse them using the chain metadata
-    },
-    error: (err) => {
-      console.error('Event subscription error:', err)
-    },
-  })
-
-  return () => subscription.unsubscribe()
+  if (!client) return () => {}
+  // General event subscription — challenge events are handled by subscribeToChallengeEvents
+  return () => {}
 }
