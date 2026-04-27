@@ -154,8 +154,18 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
 
     const refresh = () => {
-      client.getBalance(signerAddress).then(setBalance).catch(() => setBalance(null));
-      client.listBuckets().then(setBuckets).catch(() => setBuckets([]));
+      client.getBalance(signerAddress).then(setBalance).catch((e) => {
+        console.warn("[useStorage] getBalance failed:", e);
+        setBalance(null);
+      });
+      client.listBuckets().then((b) => {
+        console.log("[useStorage] listBuckets:", b.length, "buckets");
+        setBuckets(b);
+      }).catch((e) => {
+        // Don't clear buckets on poll failure — keep stale data rather than
+        // flashing an empty state on transient errors.
+        console.warn("[useStorage] listBuckets failed:", e);
+      });
     };
 
     refresh();
@@ -230,14 +240,15 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       await client.deleteBucket(name);
-      await refreshBuckets();
+      // Optimistically remove from state immediately so UI updates without waiting for poll
+      setBuckets(prev => prev.filter(b => b.name !== name));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete bucket");
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [client, refreshBuckets]);
+  }, [client]);
 
   const putObject = useCallback(async (
     bucketName: string,
