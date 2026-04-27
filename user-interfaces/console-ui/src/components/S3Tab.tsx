@@ -96,6 +96,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   useEffect(() => {
     if (buckets.length > 0 && !selectedBucket) {
       setSelectedBucket(buckets[0]);
+      setShowCreateBucket(false);
       onBucketSelect?.(buckets[0].layer0BucketId);
     }
   }, [buckets, selectedBucket, onBucketSelect]);
@@ -205,45 +206,35 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     }
   };
 
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const handleCreateBucket = async () => {
     if (!newBucketName.trim() || !validateBucketName(newBucketName)) {
       toast({ title: "Error", description: "Invalid bucket name (3-63 chars, lowercase, S3 rules)", variant: "destructive" });
       return;
     }
 
-    const creationId = crypto.randomUUID();
-    const name = newBucketName;
-    setCreations(prev => [...prev, {
-      id: creationId,
-      name,
-      type: "bucket",
-      stage: "submitting",
-      elapsedMs: 0,
-      createdAt: Date.now(),
-    }]);
-    setShowCreateBucket(false);
-    setNewBucketName("");
     setCreating(true);
+    setCreateError(null);
 
     try {
-      const bucket = await createBucket(name, {
+      const bucket = await createBucket(newBucketName, {
         capacity: BigInt(bucketCapacity),
         duration: parseInt(bucketDuration, 10),
         maxPayment: BigInt(bucketMaxPayment),
       });
       setSelectedBucket(bucket);
-      updateCreation(creationId, {
-        stage: "created",
-        bucketId: bucket.layer0BucketId,
-      });
-
-      // Wait for provider in background (don't await to unblock UI)
-      waitAndTrack(creationId, bucket.layer0BucketId);
+      setShowCreateBucket(false);
+      setNewBucketName("");
+      toast({ title: "Success", description: `Bucket "${bucket.name}" created` });
     } catch (err) {
-      updateCreation(creationId, {
-        stage: "failed",
-        error: err instanceof Error ? err.message : "Failed to create bucket",
-      });
+      const msg = err instanceof Error ? err.message : "Failed to create bucket";
+      // Show friendly error for common cases
+      if (msg.includes("NoProvidersAvailable")) {
+        setCreateError("No storage providers available. Make sure a provider is running and accepting agreements.");
+      } else {
+        setCreateError(msg);
+      }
     } finally {
       setCreating(false);
     }
@@ -300,8 +291,18 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     toast({ title: "Encryption disabled", description: "Uploads will be sent in plaintext" });
   };
 
+  const [deleting, setDeleting] = useState(false);
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const handleDeleteBucket = async () => {
-    if (!selectedBucket) return;
+    if (!selectedBucket || deleting) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    setDeleting(true);
     try {
       await deleteBucket(selectedBucket.name);
       setSelectedBucket(null);
@@ -310,6 +311,8 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       toast({ title: "Success", description: "Bucket deleted" });
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -371,19 +374,12 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     }
   };
 
-  // No buckets empty state
-  if (buckets.length === 0 && !showCreateBucket && creations.length === 0) {
-    return (
-      <div className="py-12 text-center">
-        <Archive className="mx-auto h-12 w-12 mb-4 opacity-50" />
-        <p className="text-muted-foreground mb-4">No S3 buckets yet. Create one to start storing objects.</p>
-        <Button onClick={() => setShowCreateBucket(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Bucket
-        </Button>
-      </div>
-    );
-  }
+  // No buckets — show create form directly instead of an empty state + extra click
+  useEffect(() => {
+    if (buckets.length === 0 && !showCreateBucket && creations.length === 0) {
+      setShowCreateBucket(true);
+    }
+  }, [buckets.length, showCreateBucket, creations.length]);
 
   return (
     <div className="space-y-4">
@@ -396,10 +392,12 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
             const bucket = buckets.find((b) => b.s3BucketId.toString() === e.target.value);
             setSelectedBucket(bucket || null);
             setCurrentPrefix("");
+            setConfirmDelete(false);
+            setShowCreateBucket(false);
             onBucketSelect?.(bucket?.layer0BucketId ?? null);
           }}
         >
-          <option value="">Select a bucket...</option>
+          {buckets.length === 0 && <option value="">No buckets</option>}
           {buckets.map((bucket) => (
             <option key={bucket.s3BucketId.toString()} value={bucket.s3BucketId.toString()}>
               {bucket.name}
@@ -411,9 +409,21 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
           New Bucket
         </Button>
         {selectedBucket && canAdmin && (
-          <Button variant="ghost" size="sm" onClick={handleDeleteBucket} className="text-muted-foreground hover:text-destructive">
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <Button variant="destructive" size="sm" onClick={handleDeleteBucket} disabled={deleting}>
+                {deleting ? <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> : null}
+                Delete
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={handleDeleteBucket} className="text-muted-foreground hover:text-destructive">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )
         )}
       </div>
 
@@ -445,11 +455,14 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                 <Input type="number" value={bucketMaxPayment} onChange={(e) => setBucketMaxPayment(e.target.value)} />
               </div>
             </div>
+            {createError && (
+              <p className="text-sm text-destructive">{createError}</p>
+            )}
             <div className="flex gap-2">
               <Button onClick={handleCreateBucket} disabled={creating || loading}>
-                {creating ? "Creating..." : "Create"}
+                {creating ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Submitting...</> : "Create"}
               </Button>
-              <Button variant="ghost" onClick={() => setShowCreateBucket(false)}>Cancel</Button>
+              <Button variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }} disabled={creating}>Cancel</Button>
             </div>
           </CardContent>
         </Card>
@@ -571,7 +584,16 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                   <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
                     {uploadFile ? uploadFile.name : "Choose File"}
                   </Button>
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { if (e.target.files?.[0]) setUploadFile(e.target.files[0]); }} />
+                  <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setUploadFile(file);
+                      // Auto-fill key from filename if key is empty or just the prefix
+                      if (!uploadKey || uploadKey === currentPrefix) {
+                        setUploadKey(currentPrefix + file.name);
+                      }
+                    }
+                  }} />
                   <Button size="sm" onClick={handleUploadObject} disabled={!uploadFile || !uploadKey}>Upload</Button>
                   <Button variant="ghost" size="sm" onClick={() => { setShowUpload(false); setUploadFile(null); }}>Cancel</Button>
                 </div>
