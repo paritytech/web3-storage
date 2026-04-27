@@ -155,18 +155,20 @@ export default function Explorer() {
     }
 
     const api = client.getTypedApi(parachain);
+    const processedBlocks = new Set<string>();
 
     try {
-      // Subscribe to every finalized block and fetch its events individually.
-      // Using finalizedBlock$ instead of watchValue on System.Events because
-      // watchValue can skip blocks when multiple finalize in quick succession.
+      // Subscribe to finalized blocks and fetch events for each one.
+      // Note: GRANDPA batch finalization means finalizedBlock$ may skip
+      // intermediate blocks — this is a PAPI/chainHead limitation.
+      // We can only query pinned blocks; old ones have state discarded.
       const subscription = client.finalizedBlock$.subscribe({
         next: async (block) => {
-          try {
-            const rawResult = await api.query.System.Events.getValue({
-              at: block.hash,
-            });
+          if (processedBlocks.has(block.hash)) return;
+          processedBlocks.add(block.hash);
 
+          try {
+            const rawResult = await api.query.System.Events.getValue({ at: block.hash });
             const eventsAtBlock = Array.isArray(rawResult)
               ? rawResult
               : (rawResult as any)?.value ?? rawResult;
@@ -174,31 +176,31 @@ export default function Explorer() {
             if (!eventsAtBlock || !Array.isArray(eventsAtBlock)) return;
 
             const newEvents = parseEventRecords(eventsAtBlock, block.number, block.hash);
+            if (newEvents.length === 0) return;
 
-            if (newEvents.length > 0) {
-              setEvents(prev => [...newEvents, ...prev].slice(0, 500));
-
-              setBlocks(prev => {
-                const newBlock: BlockInfo = {
-                  number: block.number,
-                  hash: block.hash,
-                  timestamp: Date.now(),
-                  eventCount: newEvents.length,
-                  events: newEvents,
-                };
-
-                const existingIdx = prev.findIndex(b => b.number === block.number);
-                if (existingIdx >= 0) {
-                  const updated = [...prev];
-                  updated[existingIdx] = newBlock;
-                  return updated;
-                }
-
-                return [newBlock, ...prev].slice(0, 50);
-              });
-            }
+            setEvents(prev => [...newEvents, ...prev].slice(0, 500));
+            setBlocks(prev => {
+              const newBlock: BlockInfo = {
+                number: block.number,
+                hash: block.hash,
+                timestamp: Date.now(),
+                eventCount: newEvents.length,
+                events: newEvents,
+              };
+              const existingIdx = prev.findIndex(b => b.number === block.number);
+              if (existingIdx >= 0) {
+                const updated = [...prev];
+                updated[existingIdx] = newBlock;
+                return updated;
+              }
+              return [newBlock, ...prev].slice(0, 50);
+            });
           } catch (err) {
-            console.warn("[Explorer] Failed to fetch events for block", block.number, err);
+            // BlockNotPinnedError is expected for older blocks — silently skip
+            const msg = String(err);
+            if (!msg.includes("not pinned") && !msg.includes("already discarded")) {
+              console.warn("[Explorer] Failed to fetch events for block", block.number, err);
+            }
           }
         },
         error: (err) => {
