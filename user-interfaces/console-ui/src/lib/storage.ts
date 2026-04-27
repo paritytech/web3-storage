@@ -361,29 +361,24 @@ export class StorageClient {
     const cached = this.providerUrlCache.get(key);
     if (cached) return cached;
 
-    // Retry with backoff — provider auto-accepts agreements every ~6s
-    const delays = [0, 2000, 4000, 6000];
-    for (let i = 0; i < delays.length; i++) {
-      if (delays[i] > 0) {
-        const msg = `Waiting for provider to accept agreement...`;
-        console.log(`[StorageClient] ${msg} (attempt ${i + 1}/${delays.length}, bucket ${bucketId})`);
-        onProgress?.(msg, i + 1, delays.length);
-        await new Promise(r => setTimeout(r, delays[i]));
+    // Try to resolve from on-chain bucket data (works when provider has accepted agreement)
+    try {
+      const url = await this.resolveProviderEndpoint(bucketId);
+      this.providerUrlCache.set(key, url);
+      onProgress?.("Provider ready", 1, 1);
+      return url;
+    } catch {
+      // Fall back to default local provider for dev chains.
+      // The provider stores data regardless of on-chain agreements — agreements
+      // are only needed for checkpoints/accountability, not for HTTP uploads.
+      if (this.chainWs.includes("127.0.0.1") || this.chainWs.includes("localhost")) {
+        const fallback = "http://127.0.0.1:3333";
+        console.log(`[StorageClient] No on-chain provider for bucket ${bucketId}, using local fallback: ${fallback}`);
+        this.providerUrlCache.set(key, fallback);
+        return fallback;
       }
-      try {
-        const url = await this.resolveProviderEndpoint(bucketId);
-        this.providerUrlCache.set(key, url);
-        onProgress?.("Provider ready", delays.length, delays.length);
-        return url;
-      } catch (err) {
-        if (i === delays.length - 1) throw err;
-        // Retry on transient errors — bucket may not be visible yet or provider hasn't accepted
-        const msg = err instanceof Error ? err.message : "";
-        const retryable = msg.includes("no primary providers") || msg.includes("not found on chain");
-        if (!retryable) throw err;
-      }
+      throw new Error(`Bucket ${bucketId} has no primary providers and no fallback available`);
     }
-    throw new Error(`Bucket ${bucketId} has no primary providers after waiting`);
   }
 
   /**
@@ -460,25 +455,18 @@ export class StorageClient {
 
   // --- S3 Operations ---
 
-  async createBucket(name: string, _options: CreateBucketOptions): Promise<BucketInfo> {
+  async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
 
-    console.log("[StorageClient] createBucket:", name);
+    console.log("[StorageClient] createBucket:", name, options);
 
-    // Create an S3 bucket via the create_s3_bucket extrinsic
-    let tx;
-    try {
-      tx = this.api!.tx.S3Registry.create_s3_bucket({
-        name: Binary.fromText(name),
-        min_providers: 1,
-      });
-    } catch (err) {
-      console.error("[StorageClient] Failed to build S3Registry tx:", err);
-      console.error("[StorageClient] The runtime descriptor may be out of date.");
-      console.error("[StorageClient] Try: cd user-interfaces/console-ui && npx papi update");
-      throw err;
-    }
+    // Create the S3 bucket (this also creates the Layer 0 bucket).
+    // Provider agreement is requested separately after creation.
+    const tx = this.api!.tx.S3Registry.create_s3_bucket({
+      name: Binary.fromText(name),
+      min_providers: 1,
+    });
 
     const result = await this.submitAndWatchBestBlock(tx);
 
@@ -532,8 +520,12 @@ export class StorageClient {
     for (const bucketId of bucketIds) {
       const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
       if (bucket) {
-        // Handle name - Binary type in polkadot-api
-        const bucketName = bucket.name.asText();
+        // Handle name - may be Binary (.asText()), Uint8Array, or string depending on descriptor
+        const bucketName = typeof bucket.name === "string"
+          ? bucket.name
+          : typeof bucket.name?.asText === "function"
+            ? bucket.name.asText()
+            : new TextDecoder().decode(bucket.name as Uint8Array);
 
         buckets.push({
           s3BucketId: BigInt(bucketId),
