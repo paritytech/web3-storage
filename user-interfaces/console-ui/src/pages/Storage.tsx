@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { AlertCircle, Database, Users } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, Database } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
@@ -10,34 +10,8 @@ import CheckpointPanel from "@/components/CheckpointPanel";
 
 export default function Storage() {
   const { connected } = useChain();
-  const { signerAddress, balance, providerCapacity, listAccessibleBucketIds, fetchBucketMembers, buckets } = useStorage();
+  const { signerAddress, balance, providerCapacity } = useStorage();
   const [selectedLayer0BucketId, setSelectedLayer0BucketId] = useState<bigint | null>(null);
-  const [sharedBucketIds, setSharedBucketIds] = useState<bigint[]>([]);
-
-  // Fetch shared bucket IDs (buckets where user is a member but not owner).
-  // Validate each ID still exists on-chain to filter out stale references
-  // left behind after bucket deletion.
-  useEffect(() => {
-    if (!signerAddress) {
-      setSharedBucketIds([]);
-      return;
-    }
-    listAccessibleBucketIds().then(async (ids) => {
-      const ownedIds = new Set(buckets.map((b) => b.layer0BucketId));
-      const candidates = ids.filter((id) => !ownedIds.has(id));
-      // Validate buckets still exist by checking fetchBucketMembers doesn't throw
-      const valid: bigint[] = [];
-      for (const id of candidates) {
-        try {
-          await fetchBucketMembers(id);
-          valid.push(id);
-        } catch {
-          // Bucket no longer exists — skip
-        }
-      }
-      setSharedBucketIds(valid);
-    }).catch(() => setSharedBucketIds([]));
-  }, [signerAddress, buckets, listAccessibleBucketIds, fetchBucketMembers]);
 
   if (!connected) {
     return (
@@ -113,34 +87,6 @@ export default function Storage() {
 
       {/* S3 Storage */}
       <S3Tab onBucketSelect={setSelectedLayer0BucketId} />
-
-      {/* Shared with me */}
-      {sharedBucketIds.length > 0 && (
-        <Card>
-          <CardContent className="py-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <h3 className="font-semibold text-sm">Shared with me</h3>
-              <span className="text-xs text-muted-foreground">({sharedBucketIds.length})</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {sharedBucketIds.map((id) => (
-                <button
-                  key={id.toString()}
-                  className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                    selectedLayer0BucketId === id
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card hover:bg-accent border-border"
-                  }`}
-                  onClick={() => setSelectedLayer0BucketId(id)}
-                >
-                  Bucket #{id.toString()}
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {selectedLayer0BucketId && (
         <>
