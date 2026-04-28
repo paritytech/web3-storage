@@ -115,15 +115,21 @@ async function registerProvider(api, provider) {
 
 async function updateProviderSettings(api, provider) {
   console.log("  Updating provider settings (price_per_byte=1)...");
-  await api.tx.StorageProvider.update_provider_settings({
+  const settings = {
     min_duration: 10,
     max_duration: 100_000,
     price_per_byte: 1n,
     accepting_primary: true,
     replica_sync_price: undefined,
     accepting_extensions: true,
-    max_capacity: 0, // unlimited
-  }).signAndSubmit(provider.signer);
+    max_capacity: 0n,
+  };
+  // Try named param first (PAPI typed), fall back to positional
+  try {
+    await api.tx.StorageProvider.update_provider_settings({ settings }).signAndSubmit(provider.signer);
+  } catch {
+    await api.tx.StorageProvider.update_provider_settings(settings).signAndSubmit(provider.signer);
+  }
   console.log("  Settings updated");
 }
 
