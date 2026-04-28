@@ -368,7 +368,7 @@ async function signAndSubmitTx(
         resolved = true
         reject(new Error(`${description} timed out — transaction may still be pending.`))
       }
-    }, 120_000)
+    }, 60_000)
 
     startSubmission().finally(() => {
       // startSubmission itself may reject synchronously — clear timeout if so

@@ -845,6 +845,7 @@ function SettingsManager() {
               <Input
                 id="pricePerByte"
                 type="number"
+                className={settings.pricePerByte === 0n ? 'text-gray-500' : ''}
                 value={settings.pricePerByte.toString()}
                 onChange={(e) =>
                   setSettings({ ...settings, pricePerByte: BigInt(e.target.value || '0') })
@@ -856,12 +857,13 @@ function SettingsManager() {
               <Input
                 id="maxCapacity"
                 type="number"
+                className={settings.maxCapacity === 0n ? 'text-gray-500' : ''}
                 value={settings.maxCapacity.toString()}
                 onChange={(e) =>
                   setSettings({ ...settings, maxCapacity: BigInt(e.target.value || '0') })
                 }
               />
-              <p className="text-xs text-gray-500">{formatBytes(Number(settings.maxCapacity))}</p>
+              <p className="text-xs text-gray-500">{settings.maxCapacity === 0n ? '0 = unlimited' : formatBytes(Number(settings.maxCapacity))}</p>
             </div>
           </div>
 
@@ -871,9 +873,10 @@ function SettingsManager() {
               <Input
                 id="minDuration"
                 type="number"
+                className={settings.minDuration === 0 ? 'text-gray-500' : ''}
                 value={settings.minDuration}
                 onChange={(e) =>
-                  setSettings({ ...settings, minDuration: parseInt(e.target.value) || 1 })
+                  setSettings({ ...settings, minDuration: parseInt(e.target.value) || 0 })
                 }
               />
             </div>
@@ -882,6 +885,7 @@ function SettingsManager() {
               <Input
                 id="maxDuration"
                 type="number"
+                className={settings.maxDuration >= 4_000_000_000 ? 'text-gray-500' : ''}
                 value={settings.maxDuration}
                 onChange={(e) =>
                   setSettings({ ...settings, maxDuration: parseInt(e.target.value) || 1 })
