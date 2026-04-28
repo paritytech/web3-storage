@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { Database, ChevronDown, ChevronUp, Users, Lock, AlertTriangle, CheckCircle } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -101,9 +101,8 @@ function BucketsContent() {
                   const admin = bucket.members.find((m) => m.role === 'Admin')
 
                   return (
-                    <>
+                    <Fragment key={bucket.bucketId}>
                       <TableRow
-                        key={bucket.bucketId}
                         className="cursor-pointer hover:bg-gray-800/50"
                         onClick={() => setExpandedBucket(isExpanded ? null : bucket.bucketId)}
                       >
@@ -160,7 +159,7 @@ function BucketsContent() {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </TableBody>
