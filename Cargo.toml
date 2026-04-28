@@ -46,11 +46,11 @@ s3-primitives = { path = "storage-interfaces/s3/primitives", default-features = 
 # Substrate frame
 frame-benchmarking = { version = "46.0.0", default-features = false }
 frame-executive = { version = "46.0.0", default-features = false }
+frame-metadata-hash-extension = { version = "0.14.0", default-features = false }
 frame-support = { version = "46.0.0", default-features = false }
 frame-system = { version = "46.0.0", default-features = false }
 frame-system-rpc-runtime-api = { version = "41.0.0", default-features = false }
 frame-try-runtime = { version = "0.52.0", default-features = false }
-frame-metadata-hash-extension = { version = "0.14.0", default-features = false }
 polkadot-sdk-frame = { version = "0.15.0", default-features = false }
 
 # Substrate pallets
