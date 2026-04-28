@@ -12,7 +12,9 @@ import {
   connectToChain,
   disconnectFromChain,
   subscribeToBlocks,
+  getChainProperties,
 } from '@/lib/chain-client'
+import { configureFromChain } from '@/utils/format'
 import { loadSelectedNetwork } from '@web3-storage/network-config'
 
 // Types
@@ -73,7 +75,12 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   try {
     await connectToChain(ep)
 
-    // Get chain info (placeholder - would come from chain metadata)
+    // Fetch chain properties and configure formatting
+    const chainProps = await getChainProperties()
+    configureFromChain(chainProps)
+    // Store minProviderStake for Registration page
+    ;(globalThis as any).__minProviderStake = chainProps.minProviderStake
+
     chainInfo$.next({
       name: 'Storage Parachain',
       version: '0.1.0',

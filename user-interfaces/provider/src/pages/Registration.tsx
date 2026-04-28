@@ -51,8 +51,11 @@ import {
 } from '@/state/provider.state'
 import { formatTokens, parseTokens, formatBytes } from '@/utils/format'
 
-const UNIT = 1_000_000_000_000n
-const MIN_STAKE = 1000n * UNIT // 1000 tokens
+// Min stake is fetched from chain constants at connection time.
+// Falls back to 1000 tokens if not yet loaded.
+function getMinStake(): bigint {
+  return (globalThis as any).__minProviderStake ?? 1_000_000_000_000_000n
+}
 
 // Registration wizard steps
 type WizardStep = 'connect' | 'stake' | 'settings' | 'confirm' | 'complete'
@@ -182,7 +185,7 @@ export function Registration() {
 
   const stakeAmount = parseTokens(stake)
   const hasEnoughBalance = balance && balance.free >= stakeAmount
-  const meetsMinStake = stakeAmount >= MIN_STAKE
+  const meetsMinStake = stakeAmount >= getMinStake()
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -312,7 +315,7 @@ export function Registration() {
               />
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">
-                  Minimum: {formatTokens(MIN_STAKE)}
+                  Minimum: {formatTokens(getMinStake())}
                 </span>
                 {balance && (
                   <span className="text-gray-500">
@@ -326,7 +329,7 @@ export function Registration() {
               <div className="flex items-start gap-2 p-3 rounded-md bg-yellow-500/10 border border-yellow-500/30">
                 <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5" />
                 <p className="text-sm text-yellow-400">
-                  Stake must be at least {formatTokens(MIN_STAKE)}
+                  Stake must be at least {formatTokens(getMinStake())}
                 </p>
               </div>
             )}

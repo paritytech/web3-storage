@@ -119,6 +119,45 @@ export function getUnsafeApi(): any {
   return unsafeApi
 }
 
+/**
+ * Fetch chain properties (token decimals, symbol, block time, min provider stake).
+ * Returns runtime-derived values instead of hardcoded constants.
+ */
+export async function getChainProperties(): Promise<{
+  tokenDecimals: number
+  tokenSymbol: string
+  blockTimeMs: number
+  minProviderStake: bigint
+}> {
+  // Defaults matching the current runtime
+  let tokenDecimals = 12
+  let tokenSymbol = 'UNIT'
+  let blockTimeMs = 6000
+  let minProviderStake = 1_000_000_000_000_000n // 1000 tokens at 12 decimals
+
+  if (polkadotApi) {
+    try {
+      const props = await polkadotApi.rpc.system.properties()
+      const decimals = props.tokenDecimals.unwrapOr(undefined)
+      if (decimals && decimals.length > 0) tokenDecimals = decimals[0]!.toNumber()
+      const symbols = props.tokenSymbol.unwrapOr(undefined)
+      if (symbols && symbols.length > 0) tokenSymbol = symbols[0]!.toString()
+    } catch { /* use defaults */ }
+
+    try {
+      const minStake = (polkadotApi.consts.storageProvider as any).minProviderStake
+      if (minStake) minProviderStake = BigInt(minStake.toString())
+    } catch { /* use default */ }
+
+    try {
+      const expectedBlockTime = (polkadotApi.consts as any).timestamp?.minimumPeriod
+      if (expectedBlockTime) blockTimeMs = Number(expectedBlockTime.toString()) * 2
+    } catch { /* use default */ }
+  }
+
+  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Signer Helpers for @polkadot/api
 // ─────────────────────────────────────────────────────────────────────────────

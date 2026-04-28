@@ -1,12 +1,41 @@
-const UNIT = 1_000_000_000_000n // 12 decimals
+// Chain-derived configuration — initialized with defaults, updated from chain
+// metadata at connection time via configureFromChain().
+let tokenDecimals = 12
+let tokenSymbol = 'UNIT'
+let blockTimeMs = 6000
+let UNIT = 10n ** BigInt(tokenDecimals)
+
+/**
+ * Update formatting configuration from chain metadata.
+ * Called once after chain connection to replace hardcoded defaults.
+ */
+export function configureFromChain(props: {
+  tokenDecimals: number
+  tokenSymbol: string
+  blockTimeMs: number
+}) {
+  tokenDecimals = props.tokenDecimals
+  tokenSymbol = props.tokenSymbol
+  blockTimeMs = props.blockTimeMs
+  UNIT = 10n ** BigInt(tokenDecimals)
+}
+
+export function getTokenSymbol(): string {
+  return tokenSymbol
+}
+
+export function getTokenDecimals(): number {
+  return tokenDecimals
+}
 
 export function formatAddress(address: string, chars = 4): string {
   if (!address) return ''
   return `${address.slice(0, chars + 2)}...${address.slice(-chars)}`
 }
 
-export function formatBalance(balance: bigint, decimals = 12): string {
-  const divisor = 10n ** BigInt(decimals)
+export function formatBalance(balance: bigint, decimals?: number): string {
+  const dec = decimals ?? tokenDecimals
+  const divisor = 10n ** BigInt(dec)
   const whole = balance / divisor
   const fraction = balance % divisor
 
@@ -14,8 +43,8 @@ export function formatBalance(balance: bigint, decimals = 12): string {
     return whole.toLocaleString()
   }
 
-  const fullFraction = fraction.toString().padStart(decimals, '0')
-  const maxDecimals = whole > 0n ? 4 : decimals
+  const fullFraction = fraction.toString().padStart(dec, '0')
+  const maxDecimals = whole > 0n ? 4 : dec
   const display = fullFraction.slice(0, maxDecimals).replace(/0+$/, '')
 
   if (!display) {
@@ -25,43 +54,39 @@ export function formatBalance(balance: bigint, decimals = 12): string {
   return `${whole.toLocaleString()}.${display}`
 }
 
-// SI prefixes for sub-unit amounts (12-decimal token)
-const SI_PREFIXES: { threshold: bigint; divisor: bigint; label: string }[] = [
-  { threshold: 1_000_000_000n, divisor: 1_000_000_000n, label: 'milli' },  // 10^9
-  { threshold: 1_000_000n,     divisor: 1_000_000n,     label: 'micro' },  // 10^6
-  { threshold: 1_000n,         divisor: 1_000n,         label: 'nano' },   // 10^3
-  { threshold: 1n,             divisor: 1n,             label: 'pico' },   // 10^0
-]
-
 export function formatTokens(balance: bigint): string {
-  if (balance === 0n) return '0 UNIT'
+  if (balance === 0n) return `0 ${tokenSymbol}`
 
-  // >= 1 UNIT: use standard decimal format
   if (balance >= UNIT) {
-    return `${formatBalance(balance)} UNIT`
+    return `${formatBalance(balance)} ${tokenSymbol}`
   }
 
-  // < 1 UNIT: pick the best SI prefix
-  for (const { threshold, divisor, label } of SI_PREFIXES) {
+  // SI prefixes for sub-unit amounts (derived from token decimals)
+  const siPrefixes: { threshold: bigint; divisor: bigint; label: string }[] = []
+  if (tokenDecimals >= 9) siPrefixes.push({ threshold: 10n ** BigInt(tokenDecimals - 3), divisor: 10n ** BigInt(tokenDecimals - 3), label: 'milli' })
+  if (tokenDecimals >= 6) siPrefixes.push({ threshold: 10n ** BigInt(tokenDecimals - 6), divisor: 10n ** BigInt(tokenDecimals - 6), label: 'micro' })
+  if (tokenDecimals >= 3) siPrefixes.push({ threshold: 10n ** BigInt(tokenDecimals - 9), divisor: 10n ** BigInt(Math.max(0, tokenDecimals - 9)), label: 'nano' })
+  siPrefixes.push({ threshold: 1n, divisor: 1n, label: 'pico' })
+
+  for (const { threshold, divisor, label } of siPrefixes) {
     if (balance >= threshold) {
       const whole = balance / divisor
       const fraction = balance % divisor
       if (fraction === 0n) {
-        return `${whole.toLocaleString()} ${label} UNIT`
+        return `${whole.toLocaleString()} ${label} ${tokenSymbol}`
       }
-      // Show up to 4 significant fractional digits
       const fracDigits = Math.log10(Number(divisor)) || 1
       const fracStr = fraction.toString().padStart(fracDigits, '0').replace(/0+$/, '').slice(0, 4)
-      return `${whole.toLocaleString()}.${fracStr} ${label} UNIT`
+      return `${whole.toLocaleString()}.${fracStr} ${label} ${tokenSymbol}`
     }
   }
 
-  return `${formatBalance(balance)} UNIT`
+  return `${formatBalance(balance)} ${tokenSymbol}`
 }
 
 export function parseTokens(value: string): bigint {
   const [whole, fraction = ''] = value.split('.')
-  const paddedFraction = fraction.padEnd(12, '0').slice(0, 12)
+  const paddedFraction = fraction.padEnd(tokenDecimals, '0').slice(0, tokenDecimals)
   return BigInt(whole || '0') * UNIT + BigInt(paddedFraction)
 }
 
@@ -81,11 +106,9 @@ export function formatBytes(bytes: number | bigint): string {
 
 export function formatDuration(blocks: number): string {
   if (blocks === 0) return '0 blocks'
-  // u32::MAX or similarly huge values = "no limit"
   if (blocks >= 4_000_000_000) return 'no limit'
 
-  // Assuming 6 second blocks
-  const seconds = blocks * 6
+  const seconds = blocks * (blockTimeMs / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
@@ -102,7 +125,7 @@ export function formatDuration(blocks: number): string {
   if (minutes > 0) {
     return `${minutes}m`
   }
-  return `${seconds}s`
+  return `${Math.round(seconds)}s`
 }
 
 export function formatBlockNumber(block: number | bigint): string {
