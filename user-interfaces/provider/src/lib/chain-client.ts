@@ -361,7 +361,19 @@ async function signAndSubmitTx(
       }
     }
 
-    startSubmission()
+    // Timeout after 120s so the spinner doesn't hang forever
+    const txTimeout = setTimeout(() => {
+      cleanup()
+      if (!resolved) {
+        resolved = true
+        reject(new Error(`${description} timed out — transaction may still be pending.`))
+      }
+    }, 120_000)
+
+    startSubmission().finally(() => {
+      // startSubmission itself may reject synchronously — clear timeout if so
+      if (resolved) clearTimeout(txTimeout)
+    })
   })
 }
 
@@ -973,15 +985,14 @@ export async function submitUpdateSettings(
   const palletSettings = {
     min_duration: settings.minDuration,
     max_duration: settings.maxDuration,
-    price_per_byte: settings.pricePerByte.toString(),
+    price_per_byte: settings.pricePerByte,
     accepting_primary: settings.acceptingPrimary,
-    // replica_sync_price: Some(value) if accepting replicas, None otherwise
     replica_sync_price:
       settings.acceptingReplica && settings.replicaSyncPrice
-        ? settings.replicaSyncPrice.toString()
+        ? settings.replicaSyncPrice
         : null,
     accepting_extensions: settings.acceptingExtensions,
-    max_capacity: settings.maxCapacity.toString(),
+    max_capacity: Number(settings.maxCapacity),
   }
 
   console.log('Submitting update_provider_settings with @polkadot/api:', palletSettings)
