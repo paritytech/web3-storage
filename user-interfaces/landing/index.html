@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web3 Storage</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #e5e5e5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container { max-width: 800px; padding: 2rem; text-align: center; }
+    h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .subtitle { color: #888; font-size: 1.1rem; margin-bottom: 3rem; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 12px;
+      padding: 2rem 1.5rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .card:hover { border-color: #7c3aed; transform: translateY(-2px); }
+    .card h2 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    .card p { color: #888; font-size: 0.9rem; line-height: 1.5; }
+    .icon { font-size: 2rem; margin-bottom: 1rem; }
+    @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Web3 Storage</h1>
+    <p class="subtitle">Decentralized storage with game-theoretic guarantees</p>
+    <div class="cards">
+      <a href="./console/" class="card">
+        <div class="icon">&#x1F4E6;</div>
+        <h2>Storage Console</h2>
+        <p>Create S3 buckets, upload and download objects, manage permissions, and explore blockchain events.</p>
+      </a>
+      <a href="./provider/" class="card">
+        <div class="icon">&#x1F5A5;</div>
+        <h2>Provider Dashboard</h2>
+        <p>Register as a storage provider, manage agreements, respond to challenges, and track earnings.</p>
+      </a>
+      <a href="./drive/" class="card">
+        <div class="icon">&#x1F4C1;</div>
+        <h2>Drive</h2>
+        <p>File manager interface. Create drives, browse directories, upload and download files.</p>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
