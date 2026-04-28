@@ -1,44 +1,41 @@
 //! Tests for S3 Registry pallet.
 
-use crate::{mock::*, Error, Objects, S3Buckets};
-use frame_support::{assert_noop, assert_ok, BoundedVec};
-use s3_primitives::MaxObjectKeyLen;
-use sp_core::H256;
+use crate::{mock::*, Error, S3Buckets};
+use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
+use pallet_storage_provider::ProviderSettings;
 
-/// Helper to register a provider.
-fn register_provider(who: u64) {
-    let multiaddr: BoundedVec<u8, frame_support::traits::ConstU32<128>> =
+fn test_public_key() -> BoundedVec<u8, ConstU32<64>> {
+    vec![1u8; 32].try_into().unwrap()
+}
+
+/// Register provider (account 3) with accepting_primary = true, capacity 200.
+fn setup_provider() {
+    let multiaddr: BoundedVec<u8, ConstU32<128>> =
         b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap();
-    let public_key: BoundedVec<u8, frame_support::traits::ConstU32<64>> =
-        b"01234567890123456789012345678901"
-            .to_vec()
-            .try_into()
-            .unwrap();
     assert_ok!(StorageProvider::register_provider(
-        RuntimeOrigin::signed(who),
+        RuntimeOrigin::signed(3),
         multiaddr,
-        public_key,
-        1_000_000_000_000, // Stake
+        test_public_key(),
+        10_000_000_000_000 // Must exceed MinProviderStake (1_000_000_000_000)
     ));
+    let settings = ProviderSettings {
+        min_duration: 10u64,
+        max_duration: 10_000u64,
+        price_per_byte: 0u128,
+        accepting_primary: true,
+        replica_sync_price: None,
+        accepting_extensions: true,
+        max_capacity: 10_000_000_000, // stake / MinStakePerByte
+    };
     assert_ok!(StorageProvider::update_provider_settings(
-        RuntimeOrigin::signed(who),
-        pallet_storage_provider::ProviderSettings {
-            accepting_primary: true,
-            accepting_extensions: true,
-            min_duration: 10,
-            max_duration: 1000,
-            price_per_byte: 1,
-            replica_sync_price: None, // Not accepting replicas
-            max_capacity: 1_000_000_000,
-        }
+        RuntimeOrigin::signed(3),
+        settings
     ));
 }
 
 #[test]
 fn create_s3_bucket_works() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
-
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
@@ -49,23 +46,41 @@ fn create_s3_bucket_works() {
         assert_eq!(bucket.name.as_slice(), b"my-bucket");
         assert_eq!(bucket.owner, 1);
         assert_eq!(bucket.object_count, 0);
+        assert_eq!(bucket.total_size, 0);
         // Layer 0 bucket should have been created automatically
         assert!(pallet_storage_provider::Buckets::<Test>::get(bucket.layer0_bucket_id).is_some());
     });
 }
 
 #[test]
+fn create_s3_bucket_sets_min_providers() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"multi-provider-bucket".to_vec(),
+            2, // min_providers
+        ));
+
+        let bucket = S3Buckets::<Test>::get(0).unwrap();
+        // Layer 0 bucket should have min_providers set
+        let l0_bucket =
+            pallet_storage_provider::Buckets::<Test>::get(bucket.layer0_bucket_id).unwrap();
+        assert_eq!(l0_bucket.min_providers, 2);
+    });
+}
+
+#[test]
 fn create_s3_bucket_fails_invalid_name() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
-
+        // Too short
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"ab".to_vec(), 1),
+            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"ab".to_vec(), 1,),
             Error::<Test>::InvalidBucketName
         );
 
+        // Uppercase not allowed
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"MyBucket".to_vec(), 1),
+            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"MyBucket".to_vec(), 1,),
             Error::<Test>::InvalidBucketName
         );
     });
@@ -74,8 +89,6 @@ fn create_s3_bucket_fails_invalid_name() {
 #[test]
 fn create_s3_bucket_fails_duplicate_name() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
-
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
@@ -83,7 +96,7 @@ fn create_s3_bucket_fails_duplicate_name() {
         ));
 
         assert_noop!(
-            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"my-bucket".to_vec(), 1),
+            S3Registry::create_s3_bucket(RuntimeOrigin::signed(1), b"my-bucket".to_vec(), 1,),
             Error::<Test>::BucketNameExists
         );
     });
@@ -92,8 +105,6 @@ fn create_s3_bucket_fails_duplicate_name() {
 #[test]
 fn delete_s3_bucket_works() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
-
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
@@ -107,21 +118,113 @@ fn delete_s3_bucket_works() {
 }
 
 #[test]
-fn delete_s3_bucket_fails_not_empty() {
+fn delete_s3_bucket_fails_not_owner() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
-
         assert_ok!(S3Registry::create_s3_bucket(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
             1,
         ));
 
-        let cid = H256::repeat_byte(0x42);
+        assert_noop!(
+            S3Registry::delete_s3_bucket(RuntimeOrigin::signed(2), 0),
+            Error::<Test>::NotBucketOwner
+        );
+    });
+}
+
+#[test]
+fn delete_s3_bucket_fails_not_found() {
+    new_test_ext().execute_with(|| {
+        assert_noop!(
+            S3Registry::delete_s3_bucket(RuntimeOrigin::signed(1), 999),
+            Error::<Test>::BucketNotFound
+        );
+    });
+}
+
+#[test]
+fn put_and_get_object_metadata_works() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"my-bucket".to_vec(),
+            1,
+        ));
+
+        let cid = sp_core::H256::repeat_byte(0xAB);
         assert_ok!(S3Registry::put_object_metadata(
             RuntimeOrigin::signed(1),
             0,
-            b"test.txt".to_vec(),
+            b"photos/cat.jpg".to_vec(),
+            cid,
+            1024,
+            b"image/jpeg".to_vec(),
+            vec![],
+        ));
+
+        // Check bucket stats updated
+        let bucket = S3Buckets::<Test>::get(0).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, 1024);
+
+        // Check object exists
+        let obj = S3Registry::get_object(0, b"photos/cat.jpg").unwrap();
+        assert_eq!(obj.cid, cid);
+        assert_eq!(obj.size, 1024);
+    });
+}
+
+#[test]
+fn delete_object_metadata_works() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"my-bucket".to_vec(),
+            1,
+        ));
+
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            0,
+            b"photos/cat.jpg".to_vec(),
+            cid,
+            1024,
+            b"image/jpeg".to_vec(),
+            vec![],
+        ));
+
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            0,
+            b"photos/cat.jpg".to_vec(),
+        ));
+
+        // Check bucket stats updated
+        let bucket = S3Buckets::<Test>::get(0).unwrap();
+        assert_eq!(bucket.object_count, 0);
+        assert_eq!(bucket.total_size, 0);
+
+        // Check object removed
+        assert!(S3Registry::get_object(0, b"photos/cat.jpg").is_none());
+    });
+}
+
+#[test]
+fn delete_nonempty_bucket_fails() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(S3Registry::create_s3_bucket(
+            RuntimeOrigin::signed(1),
+            b"my-bucket".to_vec(),
+            1,
+        ));
+
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            0,
+            b"file.txt".to_vec(),
             cid,
             100,
             b"text/plain".to_vec(),
@@ -135,115 +238,94 @@ fn delete_s3_bucket_fails_not_empty() {
     });
 }
 
-#[test]
-fn put_object_metadata_works() {
-    new_test_ext().execute_with(|| {
-        register_provider(1);
-
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"my-bucket".to_vec(),
-            1,
-        ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"folder/test.txt".to_vec(),
-            cid,
-            1234,
-            b"text/plain".to_vec(),
-            vec![(b"x-custom".to_vec(), b"value".to_vec())],
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"folder/test.txt".to_vec().try_into().unwrap();
-        let metadata = Objects::<Test>::get(0, &key).unwrap();
-        assert_eq!(metadata.cid, cid);
-        assert_eq!(metadata.size, 1234);
-
-        let bucket = S3Buckets::<Test>::get(0).unwrap();
-        assert_eq!(bucket.object_count, 1);
-        assert_eq!(bucket.total_size, 1234);
-    });
-}
+// --- create_s3_bucket_with_storage tests ---
 
 #[test]
-fn delete_object_metadata_works() {
+fn create_s3_bucket_with_storage_works() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        setup_provider();
 
-        assert_ok!(S3Registry::create_s3_bucket(
+        assert_ok!(S3Registry::create_s3_bucket_with_storage(
             RuntimeOrigin::signed(1),
             b"my-bucket".to_vec(),
-            1,
+            100,  // max_capacity
+            500,  // duration
+            1000, // max_payment
         ));
-
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"test.txt".to_vec(),
-            cid,
-            100,
-            b"text/plain".to_vec(),
-            vec![],
-        ));
-
-        assert_ok!(S3Registry::delete_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"test.txt".to_vec(),
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"test.txt".to_vec().try_into().unwrap();
-        assert!(Objects::<Test>::get(0, &key).is_none());
 
         let bucket = S3Buckets::<Test>::get(0).unwrap();
+        assert_eq!(bucket.name.as_slice(), b"my-bucket");
+        assert_eq!(bucket.owner, 1);
         assert_eq!(bucket.object_count, 0);
         assert_eq!(bucket.total_size, 0);
+
+        // Layer 0 bucket should exist
+        assert!(pallet_storage_provider::Buckets::<Test>::get(bucket.layer0_bucket_id).is_some());
+
+        // Agreement should have been requested
+        let l0_bucket =
+            pallet_storage_provider::Buckets::<Test>::get(bucket.layer0_bucket_id).unwrap();
+        assert_eq!(l0_bucket.min_providers, 1);
     });
 }
 
 #[test]
-fn copy_object_metadata_works() {
+fn create_s3_bucket_with_storage_fails_no_providers() {
     new_test_ext().execute_with(|| {
-        register_provider(1);
+        // No providers registered
+        assert_noop!(
+            S3Registry::create_s3_bucket_with_storage(
+                RuntimeOrigin::signed(1),
+                b"my-bucket".to_vec(),
+                100,
+                500,
+                1000,
+            ),
+            Error::<Test>::NoProvidersAvailable
+        );
+    });
+}
 
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"bucket1".to_vec(),
-            1,
-        ));
+#[test]
+fn create_s3_bucket_with_storage_fails_invalid_name() {
+    new_test_ext().execute_with(|| {
+        setup_provider();
 
-        assert_ok!(S3Registry::create_s3_bucket(
-            RuntimeOrigin::signed(1),
-            b"bucket2".to_vec(),
-            1,
-        ));
+        assert_noop!(
+            S3Registry::create_s3_bucket_with_storage(
+                RuntimeOrigin::signed(1),
+                b"ab".to_vec(), // too short
+                100,
+                500,
+                1000,
+            ),
+            Error::<Test>::InvalidBucketName
+        );
+    });
+}
 
-        let cid = H256::repeat_byte(0x42);
-        assert_ok!(S3Registry::put_object_metadata(
+#[test]
+fn create_s3_bucket_with_storage_fails_duplicate_name() {
+    new_test_ext().execute_with(|| {
+        setup_provider();
+
+        assert_ok!(S3Registry::create_s3_bucket_with_storage(
             RuntimeOrigin::signed(1),
-            0,
-            b"source.txt".to_vec(),
-            cid,
+            b"my-bucket".to_vec(),
             100,
-            b"text/plain".to_vec(),
-            vec![],
+            500,
+            1000,
         ));
 
-        assert_ok!(S3Registry::copy_object_metadata(
-            RuntimeOrigin::signed(1),
-            0,
-            b"source.txt".to_vec(),
-            1,
-            b"copy.txt".to_vec(),
-        ));
-
-        let key: BoundedVec<u8, MaxObjectKeyLen> = b"copy.txt".to_vec().try_into().unwrap();
-        let metadata = Objects::<Test>::get(1, &key).unwrap();
-        assert_eq!(metadata.cid, cid);
-        assert_eq!(metadata.size, 100);
+        assert_noop!(
+            S3Registry::create_s3_bucket_with_storage(
+                RuntimeOrigin::signed(1),
+                b"my-bucket".to_vec(),
+                100,
+                500,
+                1000,
+            ),
+            Error::<Test>::BucketNameExists
+        );
     });
 }

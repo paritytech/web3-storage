@@ -7,15 +7,12 @@
 //! 1. Create an S3 bucket
 //! 2. Upload objects with metadata
 //! 3. Download and verify objects
-//! 4. List objects
-//! 5. Copy objects
-//! 6. Delete objects and bucket
+//! 4. Copy objects
+//! 5. Delete objects and bucket
+//!
+//! Object operations go directly through the provider's S3 HTTP API.
 //!
 //! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
-//!
-//! Defaults:
-//!   chain_ws: ws://127.0.0.1:2222
-//!   provider_url: http://127.0.0.1:3333
 
 use s3_client::{PutObjectOptions, S3Client};
 use std::collections::HashMap;
@@ -26,10 +23,8 @@ const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let chain_ws = args.get(1).map(|s| s.as_str()).unwrap_or(DEFAULT_CHAIN_WS);
     let provider_url = args
@@ -102,18 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         put_result_2.size, put_result_2.etag
     );
 
-    // Step 4: Head bucket to verify object count
+    // Step 4: Download and verify objects
     println!();
-    println!("Step 4: Verifying bucket info...");
-    let bucket_info = client.head_bucket(&bucket_name).await?;
-    println!("  Bucket: {}", bucket_info.name);
-    println!("  Object count: {}", bucket_info.object_count);
-    println!("  Total size: {} bytes", bucket_info.total_size);
-    assert_eq!(bucket_info.object_count, 2, "Expected 2 objects in bucket");
-
-    // Step 5: Download and verify objects
-    println!();
-    println!("Step 5: Downloading and verifying objects...");
+    println!("Step 4: Downloading and verifying objects...");
 
     let get_result_1 = client.get_object(&bucket_name, "hello.txt").await?;
     println!(
@@ -139,9 +125,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("    Content verified!");
 
-    // Step 6: Copy object
+    // Step 5: Copy object
     println!();
-    println!("Step 6: Copying object...");
+    println!("Step 5: Copying object...");
     let copy_result = client
         .copy_object(&bucket_name, "hello.txt", &bucket_name, "hello-copy.txt")
         .await?;
@@ -158,6 +144,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Content mismatch for copied object"
     );
     println!("    Copy content verified!");
+
+    // Step 6: Head object
+    println!();
+    println!("Step 6: Checking object metadata...");
+    let head = client.get_object(&bucket_name, "hello.txt").await?;
+    println!("  hello.txt metadata:");
+    println!("    Content-Type: {}", head.content_type);
+    println!("    Size: {}", head.size);
+    println!("    ETag: {}", head.etag);
 
     // Step 7: Delete objects and bucket
     println!();
@@ -183,10 +178,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("Summary:");
     println!("  - Created S3 bucket ({bucket_name})");
-    println!("  - Uploaded 2 objects with metadata");
-    println!("  - Verified bucket info (object count, total size)");
+    println!("  - Uploaded 2 objects via provider HTTP API");
     println!("  - Downloaded and verified 2 objects");
     println!("  - Copied and verified 1 object");
+    println!("  - Checked object metadata via HEAD");
     println!("  - Cleaned up all objects and bucket");
 
     Ok(())

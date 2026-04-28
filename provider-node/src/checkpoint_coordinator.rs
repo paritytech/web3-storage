@@ -6,11 +6,12 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::{Pair, H256};
+use sp_core::{crypto::Ss58Codec, Pair, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, CheckpointProposal};
+use subxt::dynamic::At;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
 use tokio::sync::mpsc;
@@ -26,6 +27,9 @@ pub struct CheckpointCoordinatorConfig {
     pub signature_timeout: Duration,
     /// Whether to automatically submit checkpoints when leader.
     pub auto_submit: bool,
+    /// Seed phrase or derivation path for signing (e.g., "//Alice").
+    /// Used to create the subxt signer directly (avoids key conversion issues).
+    pub seed: Option<String>,
 }
 
 impl Default for CheckpointCoordinatorConfig {
@@ -35,6 +39,7 @@ impl Default for CheckpointCoordinatorConfig {
             poll_interval: Duration::from_secs(6), // ~1 block
             signature_timeout: Duration::from_secs(30),
             auto_submit: true,
+            seed: None,
         }
     }
 }
@@ -147,6 +152,11 @@ impl CheckpointCoordinatorHandle {
             .await
             .map_err(|_| Error::Internal("Coordinator channel closed".to_string()))
     }
+
+    /// Get a clone of the command sender (for sharing with the HTTP API).
+    pub fn command_sender(&self) -> mpsc::Sender<CoordinatorCommand> {
+        self.command_tx.clone()
+    }
 }
 
 /// Checkpoint coordinator service.
@@ -181,14 +191,18 @@ impl CheckpointCoordinator {
 
         self.api = Some(api);
 
-        // Set up signer from provider state if available
-        if let Some(ref kp) = self.state.keypair {
-            let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
-            let signer = Keypair::from_secret_key(secret_bytes)
+        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
+        // This avoids key conversion issues between sp_core and subxt_signer.
+        if let Some(ref seed) = self.config.seed {
+            let uri: subxt_signer::SecretUri = seed
+                .parse()
+                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+            let signer = Keypair::from_uri(&uri)
                 .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+            tracing::info!(
+                "Checkpoint coordinator signer: {}",
+                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
+            );
             self.signer = Some(signer);
         }
 
@@ -214,10 +228,13 @@ impl CheckpointCoordinator {
 
         let coordinator = self;
 
+        let running_exit = running.clone();
         tokio::spawn(async move {
             coordinator
                 .run_loop(command_rx, running_clone, callback)
                 .await;
+            tracing::error!("Checkpoint coordinator run_loop exited unexpectedly!");
+            running_exit.store(false, Ordering::SeqCst);
         });
 
         Ok(CheckpointCoordinatorHandle {
@@ -256,10 +273,20 @@ impl CheckpointCoordinator {
                             paused = false;
                         }
                         Some(CoordinatorCommand::ForceCheckpoint(bucket_id)) => {
-                            if let Ok(Some(duty)) = self.get_checkpoint_duty(bucket_id).await {
-                                let result = self.coordinate_checkpoint(&duty).await;
-                                if let Some(ref cb) = callback {
-                                    cb(result);
+                            tracing::info!("Force checkpoint requested for bucket {}", bucket_id);
+                            match self.get_checkpoint_duty(bucket_id).await {
+                                Ok(Some(duty)) => {
+                                    let result = self.coordinate_checkpoint(&duty).await;
+                                    tracing::info!("Force checkpoint result: {:?}", result);
+                                    if let Some(ref cb) = callback {
+                                        cb(result);
+                                    }
+                                }
+                                Ok(None) => {
+                                    tracing::warn!("No checkpoint duty found for bucket {}", bucket_id);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to get checkpoint duty for bucket {}: {}", bucket_id, e);
                                 }
                             }
                         }
@@ -306,6 +333,9 @@ impl CheckpointCoordinator {
     }
 
     /// Get checkpoint duty for a specific bucket.
+    ///
+    /// Queries the chain for the current block and checkpoint config,
+    /// then builds a duty from local storage state.
     async fn get_checkpoint_duty(
         &self,
         bucket_id: BucketId,
@@ -313,21 +343,91 @@ impl CheckpointCoordinator {
         // Get bucket data from local storage
         let bucket = match self.state.storage.get_bucket(bucket_id) {
             Some(b) => b,
-            None => return Ok(None),
+            None => {
+                tracing::warn!("Bucket {} not found in local storage", bucket_id);
+                return Ok(None);
+            }
         };
 
-        // Build duty from local state
-        // Note: In production, this would also query chain for config
+        if bucket.leaf_count == 0 {
+            tracing::warn!("Bucket {} has no data (leaf_count=0)", bucket_id);
+            return Ok(None);
+        }
+
+        // Query chain for current block number and checkpoint config
+        let api = self
+            .api
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+
+        let current_block = {
+            let block = api
+                .blocks()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
+            block.number() as u64
+        };
+
+        // Query checkpoint config from chain storage
+        let config_query = subxt::dynamic::storage(
+            "StorageProvider",
+            "CheckpointConfigs",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
+        let storage = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let (interval, grace_period) = match storage
+            .fetch(&config_query)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
+        {
+            Some(val) => {
+                let decoded = val
+                    .to_value()
+                    .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
+                let interval = decoded
+                    .at("interval")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(100) as u32;
+                let grace_period = decoded
+                    .at("grace_period")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(20) as u32;
+                (interval, grace_period)
+            }
+            None => (100u32, 20u32), // defaults
+        };
+
+        let window = if interval > 0 {
+            current_block / interval as u64
+        } else {
+            0
+        };
+
+        tracing::info!(
+            "Checkpoint duty: bucket={} block={} interval={} window={} mmr_root=0x{} leaves={}",
+            bucket_id,
+            current_block,
+            interval,
+            window,
+            hex::encode(&bucket.mmr_root.as_bytes()[..4]),
+            bucket.leaf_count
+        );
+
         let duty = CheckpointDuty {
             bucket_id,
-            window: 0, // Would calculate from current block
+            window,
             mmr_root: bucket.mmr_root,
             start_seq: bucket.start_seq,
             leaf_count: bucket.leaf_count,
-            is_leader: true, // Would calculate based on window and provider index
-            peer_endpoints: vec![], // Would get from chain
-            interval: 100,
-            grace_period: 20,
+            is_leader: true, // Force checkpoint bypasses leader check
+            peer_endpoints: vec![],
+            interval,
+            grace_period,
         };
 
         Ok(Some(duty))
@@ -475,24 +575,29 @@ impl CheckpointCoordinator {
             .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
 
         // Build signature tuples for the extrinsic
-        let sig_values: Vec<_> = signatures
-            .iter()
-            .map(|(account, sig)| {
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    // Account ID
-                    subxt::dynamic::Value::from_bytes(
-                        hex::decode(account.trim_start_matches("0x")).unwrap_or_default(),
-                    ),
-                    // Signature (Sr25519)
-                    subxt::dynamic::Value::unnamed_variant(
-                        "Sr25519",
-                        vec![subxt::dynamic::Value::from_bytes(
-                            hex::decode(sig.trim_start_matches("0x")).unwrap_or_default(),
-                        )],
-                    ),
-                ])
-            })
-            .collect();
+        let mut sig_values = Vec::with_capacity(signatures.len());
+        for (account, sig) in &signatures {
+            // Account is SS58 — decode to raw 32-byte AccountId
+            let account_id: sp_core::crypto::AccountId32 =
+                sp_core::crypto::Ss58Codec::from_ss58check(account).map_err(|e| {
+                    Error::Internal(format!("Invalid SS58 account '{account}': {e:?}"))
+                })?;
+            let account_bytes: [u8; 32] = account_id.into();
+
+            // Signature is hex-encoded with 0x prefix
+            let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
+                .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
+
+            sig_values.push(subxt::dynamic::Value::unnamed_composite(vec![
+                // AccountId32
+                subxt::dynamic::Value::from_bytes(account_bytes),
+                // MultiSignature::Sr25519(signature)
+                subxt::dynamic::Value::unnamed_variant(
+                    "Sr25519",
+                    vec![subxt::dynamic::Value::from_bytes(sig_bytes)],
+                ),
+            ]));
+        }
 
         // Build the extrinsic
         let tx = subxt::dynamic::tx(

@@ -33,6 +33,12 @@ pub struct Cli {
 
     #[clap(flatten)]
     pub replica_sync: ReplicaSyncParams,
+
+    #[clap(flatten)]
+    pub agreement: AgreementParams,
+
+    #[clap(flatten)]
+    pub auth: AuthParams,
 }
 
 /// Parameters for the storage backend.
@@ -148,6 +154,51 @@ pub struct CheckpointParams {
     pub enable_checkpoint_coordinator: bool,
 }
 
+/// Parameters for the agreement coordinator.
+#[derive(Debug, clap::Args)]
+pub struct AgreementParams {
+    /// Enable the background agreement coordinator that auto-accepts
+    /// pending storage agreement requests.
+    #[arg(long, env = "ENABLE_AGREEMENT_COORDINATOR")]
+    pub enable_agreement_coordinator: bool,
+
+    /// Seconds between agreement poll checks.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 6,
+        env = "AGREEMENT_POLL_INTERVAL"
+    )]
+    pub agreement_poll_interval: u64,
+}
+
+/// Parameters for authentication and authorization.
+#[derive(Debug, clap::Args)]
+pub struct AuthParams {
+    /// Enable authentication and role-based access control.
+    /// When disabled (default), all requests are allowed without auth headers.
+    #[arg(long, env = "ENABLE_AUTH")]
+    pub enable_auth: bool,
+
+    /// Cache TTL in seconds for membership lookups from the chain.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 30,
+        env = "AUTH_CACHE_TTL"
+    )]
+    pub auth_cache_ttl: u64,
+
+    /// Maximum allowed clock skew in seconds for request timestamps.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 300,
+        env = "AUTH_MAX_SKEW"
+    )]
+    pub auth_max_skew: u64,
+}
+
 /// Parameters for replica synchronization.
 #[derive(Debug, clap::Args)]
 pub struct ReplicaSyncParams {
@@ -196,6 +247,8 @@ mod tests {
         assert!(cli.key.keyfile.is_none());
         assert!(cli.key.provider_id.is_none());
         assert!(!cli.checkpoint.enable_checkpoint_coordinator);
+        assert!(!cli.agreement.enable_agreement_coordinator);
+        assert_eq!(cli.agreement.agreement_poll_interval, 6);
         assert!(!cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 12);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
@@ -217,6 +270,9 @@ mod tests {
             "--keyfile",
             "/tmp/test-key",
             "--enable-checkpoint-coordinator",
+            "--enable-agreement-coordinator",
+            "--agreement-poll-interval",
+            "10",
             "--enable-replica-sync",
             "--replica-poll-interval",
             "30",
@@ -236,6 +292,8 @@ mod tests {
             "/tmp/test-key"
         );
         assert!(cli.checkpoint.enable_checkpoint_coordinator);
+        assert!(cli.agreement.enable_agreement_coordinator);
+        assert_eq!(cli.agreement.agreement_poll_interval, 10);
         assert!(cli.replica_sync.enable_replica_sync);
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);

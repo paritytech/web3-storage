@@ -18,7 +18,6 @@
 //! ```
 
 use file_system_client::FileSystemClient;
-use file_system_primitives::CommitStrategy;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,12 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let drive_id = fs_client
         .create_drive(
-            Some("My Documents"),                            // Drive name
-            10_000_000_000,                                  // 10 GB capacity
-            500,                                             // 500 blocks duration
-            1_000_000_000_000,                               // 1 token payment (12 decimals)
-            None,                                            // Auto-determine providers
-            Some(CommitStrategy::Batched { interval: 100 }), // Batch commits every 100 blocks
+            Some("My Documents"), // Drive name
+            10_000_000_000,       // 10 GB capacity
+            500,                  // 500 blocks duration
+            1_000_000_000_000,    // 1 token payment (12 decimals)
+            None,                 // Auto-determine providers
         )
         .await?;
 

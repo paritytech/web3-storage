@@ -15,7 +15,6 @@ import {
 import {
   useChallenges,
   usePendingChallenges,
-  respondToChallenge,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
@@ -35,13 +34,28 @@ function ChallengesContent() {
   const pendingChallenges = usePendingChallenges()
   const [respondingTo, setRespondingTo] = useState<number | null>(null)
 
-  const handleRespond = async (challengeId: number) => {
+  const handleRespond = async (challenge: typeof challenges[number]) => {
     if (!selectedAccount) return
 
-    setRespondingTo(challengeId)
+    setRespondingTo(challenge.id)
     try {
-      const mockProof = new Uint8Array(64)
-      await respondToChallenge(challengeId, mockProof, selectedAccount)
+      // The provider node should automatically respond to challenges.
+      // Manual response from the UI is not yet supported because it requires
+      // fetching MMR proofs and chunk proofs from the provider node, then
+      // assembling a proper ChallengeResponse extrinsic with the full
+      // { deadline, index } ChallengeId — not just the index.
+      //
+      // For now, show an informative message.
+      console.warn(
+        'Manual challenge response not yet implemented.',
+        'The provider node auto-responds to challenges.',
+        'Challenge:', challenge
+      )
+      alert(
+        `Manual challenge response is not yet supported.\n\n` +
+        `The provider node should automatically respond to challenges before the deadline (block #${challenge.deadline.toLocaleString()}).\n\n` +
+        `Check your provider node logs for auto-response activity.`
+      )
     } catch (error) {
       console.error('Failed to respond to challenge:', error)
     } finally {
@@ -171,6 +185,7 @@ function ChallengesContent() {
               <TableHeader>
                 <TableRow>
                   <TableHead>ID</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Bucket</TableHead>
                   <TableHead>Challenger</TableHead>
                   <TableHead>Leaf Index</TableHead>
@@ -195,6 +210,16 @@ function ChallengesContent() {
                       }
                     >
                       <TableCell className="font-mono">#{challenge.id}</TableCell>
+                      <TableCell>
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          challenge.challengeType === 'offchain' ? 'bg-blue-500/20 text-blue-400' :
+                          challenge.challengeType === 'checkpoint' ? 'bg-purple-500/20 text-purple-400' :
+                          'bg-gray-500/20 text-gray-400'
+                        }`}>
+                          {challenge.challengeType === 'offchain' ? 'Off-chain' :
+                           challenge.challengeType === 'checkpoint' ? 'Checkpoint' : '—'}
+                        </span>
+                      </TableCell>
                       <TableCell className="font-mono">#{challenge.bucketId}</TableCell>
                       <TableCell>
                         <span className="font-mono">{formatAddress(challenge.challenger)}</span>
@@ -220,10 +245,10 @@ function ChallengesContent() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {challenge.status === 'pending' && (
+                        {challenge.status === 'pending' ? (
                           <Button
                             size="sm"
-                            onClick={() => handleRespond(challenge.id)}
+                            onClick={() => handleRespond(challenge)}
                             disabled={respondingTo === challenge.id}
                           >
                             {respondingTo === challenge.id ? (
@@ -235,7 +260,13 @@ function ChallengesContent() {
                               'Respond'
                             )}
                           </Button>
-                        )}
+                        ) : challenge.status === 'responded' ? (
+                          <span className="text-green-400 text-sm">Defended</span>
+                        ) : challenge.status === 'slashed' ? (
+                          <span className="text-red-400 text-sm">Slashed</span>
+                        ) : challenge.status === 'expired' ? (
+                          <span className="text-gray-500 text-sm">Expired</span>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

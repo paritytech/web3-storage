@@ -17,7 +17,9 @@ pallet-s3-registry = { workspace = true }
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
 scale-info = { workspace = true, features = ["derive"] }
-serde = { optional = true, features = ["derive"], workspace = true, default-features = true }
+serde = { optional = true, features = [
+	"derive",
+], workspace = true, default-features = true }
 serde_json = { features = ["alloc"], workspace = true }
 
 # Substrate

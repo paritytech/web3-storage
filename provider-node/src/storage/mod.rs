@@ -121,6 +121,29 @@ pub trait StorageBackend: Send + Sync {
         data_roots: Vec<H256>,
     ) -> Result<(H256, u64, Vec<u64>), Error>;
 
+    /// Collect actual chunk data under a data root (DFS, leaf data in order).
+    fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {
+        let mut chunks = Vec::new();
+        let mut stack = vec![root];
+
+        while let Some(hash) = stack.pop() {
+            if hash == H256::zero() {
+                continue;
+            }
+            if let Some(node) = self.get_node(&hash) {
+                if let Some(ref children) = node.children {
+                    for child in children.iter().rev() {
+                        stack.push(*child);
+                    }
+                } else {
+                    chunks.push(node.data.clone());
+                }
+            }
+        }
+
+        chunks
+    }
+
     /// Collect leaf chunk hashes under a data root (DFS, in order).
     fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
         let mut hashes = Vec::new();
@@ -223,3 +246,38 @@ mod hex {
 }
 
 pub use hex::{decode as hex_decode, encode as hex_encode};
+
+/// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
+///
+/// Pads to the next power of 2 with `H256::zero()`. Returns the tree root hash.
+pub fn build_padded_merkle_tree(
+    storage: &dyn StorageBackend,
+    bucket_id: BucketId,
+    leaves: &[H256],
+) -> H256 {
+    if leaves.is_empty() {
+        return H256::zero();
+    }
+    if leaves.len() == 1 {
+        return leaves[0];
+    }
+
+    let padded_len = leaves.len().next_power_of_two();
+    let mut current_level = leaves.to_vec();
+    current_level.resize(padded_len, H256::zero());
+
+    while current_level.len() > 1 {
+        let mut next_level = Vec::new();
+        for pair in current_level.chunks(2) {
+            let parent = hash_children(pair[0], pair[1]);
+            let mut node_data = Vec::new();
+            node_data.extend_from_slice(pair[0].as_bytes());
+            node_data.extend_from_slice(pair[1].as_bytes());
+            let _ = storage.store_node(bucket_id, parent, node_data, Some(vec![pair[0], pair[1]]));
+            next_level.push(parent);
+        }
+        current_level = next_level;
+    }
+
+    current_level[0]
+}

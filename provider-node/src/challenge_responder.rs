@@ -5,7 +5,7 @@
 //! the required proof data.
 
 use crate::{Error, ProviderState};
-use sp_core::{Pair, H256};
+use sp_core::{crypto::Ss58Codec, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +25,9 @@ pub struct ChallengeResponderConfig {
     pub proof_timeout: Duration,
     /// Whether to automatically respond to challenges.
     pub auto_respond: bool,
+    /// Seed phrase or derivation path for signing (e.g., "//Alice").
+    /// Used to create the subxt signer directly (avoids key conversion issues).
+    pub seed: Option<String>,
 }
 
 impl Default for ChallengeResponderConfig {
@@ -34,6 +37,7 @@ impl Default for ChallengeResponderConfig {
             poll_interval: Duration::from_secs(6), // ~1 block
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
+            seed: None,
         }
     }
 }
@@ -164,16 +168,18 @@ impl ChallengeResponder {
 
         self.api = Some(api);
 
-        // Set up signer from provider state if available
-        if let Some(ref kp) = self.state.keypair {
-            // Convert sp_core keypair to subxt_signer keypair
-            // sr25519 to_raw_vec returns 64 bytes (seed + nonce), we need just the first 32
-            let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
-            let signer = Keypair::from_secret_key(secret_bytes)
+        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
+        // This avoids key conversion issues between sp_core and subxt_signer.
+        if let Some(ref seed) = self.config.seed {
+            let uri: subxt_signer::SecretUri = seed
+                .parse()
+                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+            let signer = Keypair::from_uri(&uri)
                 .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+            tracing::info!(
+                "Challenge responder signer: {}",
+                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
+            );
             self.signer = Some(signer);
         }
 

@@ -1,6 +1,7 @@
 [settings]
 timeout = 1000
 provider = "native"
+node_spawn_timeout = 240
 
 [relaychain]
 default_command = "{{PROJECT_ROOT}}/.bin/polkadot"

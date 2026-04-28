@@ -24,7 +24,7 @@ import {
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
 import { getPolkadotSigner } from 'polkadot-api/signer'
-import { getAccountBalance, isProviderRegistered, DEV_ACCOUNTS } from '@/lib/chain-client'
+import { getAccountBalance, isProviderRegistered, DEV_ACCOUNTS as DEV_ACCOUNT_ADDRESSES } from '@/lib/chain-client'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -49,7 +49,7 @@ export interface AccountBalance {
 }
 
 // Well-known development accounts (from Substrate)
-const DEV_ACCOUNTS = [
+const DEV_ACCOUNT_SEEDS = [
   { name: 'Alice', path: '//Alice' },
   { name: 'Bob', path: '//Bob' },
   { name: 'Charlie', path: '//Charlie' },
@@ -94,9 +94,7 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
     const miniSecret = entropyToMiniSecret(entropy)
     const derive = sr25519CreateDerive(miniSecret)
 
-    const knownAddresses = DEV_ACCOUNTS
-
-    return DEV_ACCOUNTS.map(({ name, path }) => {
+    return DEV_ACCOUNT_SEEDS.map(({ name, path }) => {
       const keypair = derive(path)
       const publicKey = keypair.publicKey
 
@@ -105,7 +103,7 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
       )
 
       return {
-        address: knownAddresses[name] || '',
+        address: DEV_ACCOUNT_ADDRESSES[name] || '',
         name: `${name} (Dev)`,
         polkadotSigner,
       }

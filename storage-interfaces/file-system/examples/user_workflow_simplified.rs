@@ -42,7 +42,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Storage period: 500 blocks");
     println!("  Payment: 1 token");
     println!("  Providers: Auto (defaults to 1 for short-term)");
-    println!("  Commit strategy: Auto (defaults to batched every 100 blocks)");
     println!();
 
     // User just specifies what they need - system handles everything else!
@@ -52,7 +51,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     500,                 // 500 blocks (short-term, so 1 provider by default)
     //     1_000_000_000_000,   // 1 token (12 decimals)
     //     None,                // Use default providers (auto-determined)
-    //     None,                // Use default commit strategy (batched)
     // ).await?;
 
     let drive_id: DriveId = 1; // Placeholder
@@ -63,7 +61,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    - Selected 1 provider (short-term storage)");
     println!("    - Requested storage agreement with provider");
     println!("    - Set up empty drive structure");
-    println!("    - Configured batched commits (every 100 blocks)");
     println!("  User never saw any of this complexity!");
     println!();
 
@@ -77,22 +74,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Storage period: 2000 blocks (long-term)");
     println!("  Payment: 2 tokens");
     println!("  Providers: 5 (1 primary + 4 replicas for high redundancy)");
-    println!("  Commit strategy: Immediate (real-time updates)");
     println!();
 
-    // For critical data, user can specify more providers and immediate commits
+    // For critical data, user can specify more providers
     // let drive_id = fs_client.create_drive(
     //     Some("Critical Data"),
     //     5_000_000_000,       // 5 GB
     //     2000,                // 2000 blocks (long-term)
     //     2_000_000_000_000,   // 2 tokens (more payment for more providers)
     //     Some(5),             // 5 providers for high redundancy
-    //     Some(CommitStrategy::Immediate), // Real-time commits
     // ).await?;
 
     println!("✓ Advanced drive created with custom configuration!");
     println!("  - 5 providers selected for maximum redundancy");
-    println!("  - Immediate commits for real-time updates");
     println!();
 
     // ============================================================
