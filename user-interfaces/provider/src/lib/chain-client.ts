@@ -388,6 +388,39 @@ export interface OnChainChallenge {
   deadline: number
 }
 
+export interface OnChainBucketMember {
+  account: string
+  role: 'Admin' | 'Writer' | 'Reader'
+}
+
+export interface OnChainBucketSnapshot {
+  mmrRoot: string
+  startSeq: number
+  leafCount: number
+  checkpointBlock: number
+}
+
+export interface OnChainCheckpointConfig {
+  interval: number
+  gracePeriod: number
+  enabled: boolean
+}
+
+export interface OnChainBucketDetails {
+  bucketId: number
+  members: OnChainBucketMember[]
+  frozenStartSeq: number | null
+  minProviders: number
+  primaryProviders: string[]
+  snapshot: OnChainBucketSnapshot | null
+  historicalRoots: Array<{ position: number; root: string }>
+  totalSnapshots: number
+  checkpointConfig: OnChainCheckpointConfig | null
+  lastCheckpointWindow: number | null
+  checkpointPoolBalance: bigint
+  checkpointReward: bigint
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider Pallet Queries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -653,6 +686,121 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     console.error('Error fetching checkpoints:', error)
     return []
   }
+}
+
+/**
+ * Get detailed bucket information for the given bucket IDs.
+ * Combines Bucket struct data with checkpoint config, pool, and rewards.
+ */
+export async function getBucketDetails(
+  bucketIds: number[],
+  providerAddress: string
+): Promise<OnChainBucketDetails[]> {
+  if (!polkadotApi || !unsafeApi) throw new Error('Not connected to chain')
+
+  const details: OnChainBucketDetails[] = []
+
+  for (const bucketId of bucketIds) {
+    try {
+      // Query Bucket struct via @polkadot/api (handles Option/BoundedVec correctly)
+      const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
+      if (bucketOpt.isNone) continue
+      const bucket = bucketOpt.unwrap()
+
+      // Parse members
+      const members: OnChainBucketMember[] = []
+      const rawMembers = (bucket as any).members || []
+      for (const m of rawMembers) {
+        const roleStr = m.role?.toString?.() || m.role?.type || 'Reader'
+        members.push({
+          account: m.account?.toString() || '',
+          role: roleStr as 'Admin' | 'Writer' | 'Reader',
+        })
+      }
+
+      // Parse snapshot
+      let snapshot: OnChainBucketSnapshot | null = null
+      const snap = (bucket as any).snapshot
+      if (snap && !snap.isNone) {
+        const s = snap.isNone === undefined ? snap : snap.unwrap()
+        snapshot = {
+          mmrRoot: s.mmrRoot?.toHex?.() || s.mmr_root?.toString?.() || '0x',
+          startSeq: Number(s.startSeq?.toNumber?.() ?? s.start_seq ?? 0),
+          leafCount: Number(s.leafCount?.toNumber?.() ?? s.leaf_count ?? 0),
+          checkpointBlock: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+        }
+      }
+
+      // Parse primary providers
+      const primaryProviders = ((bucket as any).primaryProviders || (bucket as any).primary_providers || [])
+        .map((p: any) => p.toString())
+
+      // Parse historical roots (skip zero entries)
+      const historicalRoots: Array<{ position: number; root: string }> = []
+      const rawRoots = (bucket as any).historicalRoots || (bucket as any).historical_roots || []
+      for (const entry of rawRoots) {
+        const pos = Number(entry[0]?.toNumber?.() ?? entry[0] ?? 0)
+        const root = entry[1]?.toHex?.() || entry[1]?.toString?.() || '0x'
+        if (pos > 0 || (root !== '0x' && !root.match(/^0x0+$/))) {
+          historicalRoots.push({ position: pos, root })
+        }
+      }
+
+      // Checkpoint sub-storage via PAPI unsafeApi
+      let checkpointConfig: OnChainCheckpointConfig | null = null
+      try {
+        const config = await unsafeApi.query.StorageProvider.CheckpointConfigs.getValue(bucketId)
+        if (config) {
+          checkpointConfig = {
+            interval: Number(config.interval ?? 0),
+            gracePeriod: Number(config.grace_period ?? config.gracePeriod ?? 0),
+            enabled: config.enabled ?? true,
+          }
+        }
+      } catch { /* not configured */ }
+
+      let lastCheckpointWindow: number | null = null
+      try {
+        const val = await unsafeApi.query.StorageProvider.LastCheckpointWindow.getValue(bucketId)
+        lastCheckpointWindow = val != null ? Number(val) : null
+      } catch { /* not set */ }
+
+      let checkpointPoolBalance = 0n
+      try {
+        const pool = await unsafeApi.query.StorageProvider.CheckpointPool.getValue(bucketId)
+        checkpointPoolBalance = pool != null ? BigInt(pool.toString()) : 0n
+      } catch { /* no pool */ }
+
+      let checkpointReward = 0n
+      try {
+        const reward = await unsafeApi.query.StorageProvider.CheckpointRewards.getValue(
+          bucketId,
+          providerAddress
+        )
+        checkpointReward = reward != null ? BigInt(reward.toString()) : 0n
+      } catch { /* no reward */ }
+
+      details.push({
+        bucketId,
+        members,
+        frozenStartSeq: (bucket as any).frozenStartSeq?.toNumber?.() ??
+          ((bucket as any).frozen_start_seq != null ? Number((bucket as any).frozen_start_seq) : null),
+        minProviders: Number((bucket as any).minProviders?.toNumber?.() ?? (bucket as any).min_providers ?? 0),
+        primaryProviders,
+        snapshot,
+        historicalRoots,
+        totalSnapshots: Number((bucket as any).totalSnapshots?.toNumber?.() ?? (bucket as any).total_snapshots ?? 0),
+        checkpointConfig,
+        lastCheckpointWindow,
+        checkpointPoolBalance,
+        checkpointReward,
+      })
+    } catch (e) {
+      console.warn(`Could not query bucket details for bucket ${bucketId}:`, e)
+    }
+  }
+
+  return details
 }
 
 /**
@@ -922,20 +1070,35 @@ export function subscribeToChallengeEvents(
         const rawEvents = await api.query.System.Events.getValue({ at: block.hash })
         const events = Array.isArray(rawEvents) ? rawEvents : (rawEvents as any)?.value ?? []
 
-        // Try to get block body for extrinsic type detection
-        let extrinsicTypes: Map<number, string> = new Map()
+        // Decode extrinsics to detect challenge type from call name.
+        // Try decoding call data from the end of each extrinsic (works for
+        // both signed and unsigned since call data is the tail).
+        const extrinsicTypes: Map<number, string> = new Map()
         try {
           const body = await client!.getBlockBody(block.hash)
           for (let i = 0; i < body.length; i++) {
             try {
-              const hex = body[i] instanceof Uint8Array
-                ? '0x' + Array.from(body[i] as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('')
-                : String(body[i])
-              // Look for known call prefixes in the hex
-              if (hex.includes('challenge_offchain') || hex.includes('6368616c6c656e67655f6f6666636861696e')) {
-                extrinsicTypes.set(i, 'offchain')
-              } else if (hex.includes('challenge_checkpoint') || hex.includes('6368616c6c656e67655f636865636b706f696e74')) {
-                extrinsicTypes.set(i, 'checkpoint')
+              const raw = body[i]
+              const bytes = raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw))
+              // Skip compact length prefix
+              const mode = bytes[0]! & 0x03
+              const lenSize = mode === 0 ? 1 : mode === 1 ? 2 : mode === 2 ? 4 : 1 + ((bytes[0]! >> 2) + 4)
+              // Try slices starting from the longest (right after signature) to
+              // shortest. Longest-first avoids false positives like System.remark
+              // which matches almost any short byte sequence.
+              const minOffset = lenSize + 1 + 1 + 32 + 1 + 64 // preamble+addrType+addr+sigType+sig
+              for (let off = minOffset; off < bytes.length - 2; off++) {
+                try {
+                  const tx = await api.txFromCallData(bytes.slice(off))
+                  const pallet = tx.decodedCall?.type || ''
+                  const callName = (tx.decodedCall?.value as any)?.type || ''
+                  if (pallet === 'StorageProvider') {
+                    console.log(`[challenges] Decoded ext #${i}: ${pallet}.${callName}`)
+                    if (callName === 'challenge_offchain') extrinsicTypes.set(i, 'offchain')
+                    else if (callName === 'challenge_checkpoint') extrinsicTypes.set(i, 'checkpoint')
+                  }
+                  break // first successful decode is the correct one
+                } catch { /* try next offset */ }
               }
             } catch { /* skip */ }
           }
