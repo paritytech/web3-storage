@@ -36,7 +36,7 @@ use frame_system::{
 };
 use pallet_xcm::{EnsureXcm, IsVoiceOfBody};
 use parachains_common::message_queue::{NarrowOriginToSibling, ParaIdToSibling};
-use polkadot_runtime_common::xcm_sender::NoPriceForMessageDelivery;
+use polkadot_runtime_common::xcm_sender::ExponentialPrice;
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata, H256};
@@ -207,8 +207,8 @@ parameter_types! {
         })
         .avg_block_initialization(AVERAGE_ON_INITIALIZE_RATIO)
         .build_or_panic();
-    // TODO(tungbui): Update SS58 prefix for Paseo Web3 Storage runtime.
-    pub const SS58Prefix: u16 = 42;
+    // The standard SS58 prefix for System Parachains on Polkadot
+    pub const SS58Prefix: u8 = 0;
 }
 
 #[derive_impl(frame_system::config_preludes::ParaChainDefaultConfig)]
@@ -346,15 +346,21 @@ impl cumulus_pallet_aura_ext::Config for Runtime {}
 impl cumulus_pallet_xcmp_queue::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type ChannelInfo = ParachainSystem;
-    type VersionWrapper = ();
-    type ControllerOrigin = EnsureRoot<AccountId>;
-    type ControllerOriginConverter = xcm_config::XcmOriginToTransactDispatchOrigin;
+    type VersionWrapper = PolkadotXcm;
+    type XcmpQueue = TransformOrigin<MessageQueue, AggregateMessageOrigin, ParaId, ParaIdToSibling>;
     type MaxInboundSuspended = ConstU32<1_000>;
     type MaxActiveOutboundChannels = ConstU32<128>;
-    type MaxPageSize = ConstU32<{ 1 << 16 }>;
-    type PriceForSiblingDelivery = NoPriceForMessageDelivery<ParaId>;
+    // Most on-chain HRMP channels are configured to use 102400 bytes of max message size, so we
+    // need to set the page size larger than that until we reduce the channel size on-chain.
+    type MaxPageSize = ConstU32<{ 103 * 1024 }>;
+    type ControllerOrigin = RootOrFellows;
+    type ControllerOriginConverter = xcm_config::XcmOriginToTransactDispatchOrigin;
+    type PriceForSiblingDelivery = PriceForSiblingParachainDelivery;
     type WeightInfo = ();
-    type XcmpQueue = TransformOrigin<MessageQueue, AggregateMessageOrigin, ParaId, ParaIdToSibling>;
+}
+
+impl cumulus_pallet_xcmp_queue::migration::v5::V5Config for Runtime {
+    type ChannelList = ParachainSystem;
 }
 
 parameter_types! {
@@ -388,13 +394,30 @@ impl pallet_aura::Config for Runtime {
 parameter_types! {
     pub const PotId: PalletId = PalletId(*b"PotStake");
     pub const SessionLength: BlockNumber = 6 * HOURS;
-    pub const UnitBody: xcm::v5::BodyId = xcm::v5::BodyId::Unit;
+    /// StakingAdmin pluralistic body.
+    pub const StakingAdminBodyId: xcm::v5::BodyId = xcm::v5::BodyId::Defense;
+    /// Fellows pluralistic body.
+    pub const FellowsBodyId: xcm::v5::BodyId = xcm::v5::BodyId::Technical;
 }
 
-/// We allow root and the Relay Chain council as combiner.
+/// Privileged origin that represents Root or Fellows pluralistic body.
+pub type RootOrFellows = EitherOfDiverse<
+    EnsureRoot<AccountId>,
+    EnsureXcm<IsVoiceOfBody<xcm_config::FellowshipLocation, FellowsBodyId>>,
+>;
+
+/// We allow Root and the StakingAdmin body on the governance chain to update collator selection.
 pub type CollatorSelectionUpdateOrigin = EitherOfDiverse<
     EnsureRoot<AccountId>,
-    EnsureXcm<IsVoiceOfBody<xcm_config::RelayLocation, UnitBody>>,
+    EnsureXcm<IsVoiceOfBody<xcm_config::GovernanceLocation, StakingAdminBodyId>>,
+>;
+
+/// Exponential price for delivering XCM messages to sibling parachains.
+pub type PriceForSiblingParachainDelivery = ExponentialPrice<
+    xcm_config::FeeAssetId,
+    xcm_config::BaseDeliveryFee,
+    TransactionByteFee,
+    XcmpQueue,
 >;
 
 impl pallet_collator_selection::Config for Runtime {

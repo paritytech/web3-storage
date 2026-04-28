@@ -7,8 +7,8 @@ use frame_support::build_struct_json_patch;
 use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
-// TODO(tungbui): Update Parachain id for Paseo Web3 Storage runtime
-pub const PARA_ID: ParaId = ParaId::new(4000);
+// Parachain ID for Paseo Web3 Storage runtime
+pub const WEB3_STORAGE_PARA_ID: ParaId = ParaId::new(1502);
 
 fn storage_parachain_genesis(
     invulnerables: Vec<(AccountId, sp_consensus_aura::sr25519::AuthorityId)>,
@@ -72,7 +72,7 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 .map(|k| k.to_account_id())
                 .collect(),
             UNIT * 10_000_000_000_000,
-            PARA_ID,
+            WEB3_STORAGE_PARA_ID,
             // Sudo
             Some(Sr25519Keyring::Alice.to_account_id()),
             // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
@@ -94,7 +94,7 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 Sr25519Keyring::BobStash.to_account_id(),
             ],
             UNIT * 10_000_000_000_000,
-            PARA_ID,
+            WEB3_STORAGE_PARA_ID,
             // Sudo
             Some(Sr25519Keyring::Alice.to_account_id()),
             // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)

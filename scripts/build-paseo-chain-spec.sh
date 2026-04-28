@@ -11,12 +11,11 @@ rm -f chain_spec.json
 cargo build --release -p storage-paseo-runtime >&2
 
 # Generate chain spec using chain-spec-builder with local_testnet preset
-# TODO(tungbui): Update Parachain id for Paseo Web3 Storage runtime
 .bin/chain-spec-builder create \
   -n "Paseo Web3 Storage Parachain" \
   -i "storage-paseo" \
   -t local \
-  -p 4000 \
+  -p 1502 \
   -c westend-local \
   -r target/release/wbuild/storage-paseo-runtime/storage_paseo_runtime.compact.compressed.wasm \
   named-preset local_testnet

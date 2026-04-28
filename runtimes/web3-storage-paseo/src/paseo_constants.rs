@@ -1,5 +1,17 @@
 //! Web3 Storage Paseo Parachain runtime constants used by this runtime.
 
+/// Inlined subset of the Paseo relay chain runtime constants crate.
+mod paseo_runtime_constants {
+    pub mod system_parachain {
+        pub const ASSET_HUB_ID: u32 = 1000;
+        pub const COLLECTIVES_ID: u32 = 1001;
+        pub const PEOPLE_ID: u32 = 1004;
+    }
+}
+
+/// System parachain ids on Paseo.
+pub use paseo_runtime_constants::system_parachain;
+
 /// Consensus-related.
 pub mod consensus {
     use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight};
@@ -71,4 +83,27 @@ pub mod fee {
 
     /// Weight fee multiplier: 1 unit of balance per unit of ref_time.
     pub const WEIGHT_FEE: Balance = 1;
+}
+
+/// Well-known XCM locations on Paseo.
+pub mod locations {
+    use frame_support::parameter_types;
+    use xcm::latest::prelude::{Junction::*, Location};
+
+    use super::paseo_runtime_constants;
+
+    parameter_types! {
+        pub AssetHubLocation: Location =
+            Location::new(1, Parachain(paseo_runtime_constants::system_parachain::ASSET_HUB_ID));
+        pub PeopleLocation: Location =
+            Location::new(1, Parachain(paseo_runtime_constants::system_parachain::PEOPLE_ID));
+        /// Governance is conducted on Asset Hub for Paseo.
+        pub GovernanceLocation: Location =
+            Location::new(1, Parachain(paseo_runtime_constants::system_parachain::ASSET_HUB_ID));
+    }
+}
+
+/// Default XCM version for genesis config.
+pub mod xcm_version {
+    pub const SAFE_XCM_VERSION: u32 = xcm::prelude::XCM_VERSION;
 }

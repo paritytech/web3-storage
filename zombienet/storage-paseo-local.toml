@@ -17,9 +17,8 @@ name = "bob"
 validator = true
 rpc_port = 9901
 
-# TODO(tungbui): Update Parachain id for Paseo Web3 Storage runtime
 [[parachains]]
-id = 4000
+id = 1502
 cumulus_based = true
 chain_spec_command = "{{PROJECT_ROOT}}/scripts/build-paseo-chain-spec.sh"
 
