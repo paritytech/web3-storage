@@ -517,20 +517,22 @@ export async function getProviderData(
       multiaddr,
     }
 
-    const settings: OnChainProviderSettings | null = provider.settings
+    const s = provider.settings
+    const settings: OnChainProviderSettings | null = s
       ? {
-          minDuration: provider.settings.min_duration || 0,
-          maxDuration: provider.settings.max_duration || 0,
-          pricePerByte: BigInt(provider.settings.price_per_byte?.toString() || '0'),
-          acceptingPrimary: provider.settings.accepting_primary ?? false,
-          acceptingReplica: provider.settings.accepting_replica ?? false,
-          replicaSyncPrice: provider.settings.replica_sync_price
-            ? BigInt(provider.settings.replica_sync_price.toString())
+          minDuration: Number(s.min_duration ?? s.minDuration ?? 0),
+          maxDuration: Number(s.max_duration ?? s.maxDuration ?? 0),
+          pricePerByte: BigInt((s.price_per_byte ?? s.pricePerByte ?? 0).toString()),
+          acceptingPrimary: s.accepting_primary ?? s.acceptingPrimary ?? false,
+          acceptingReplica: s.accepting_replica ?? s.acceptingReplica ?? false,
+          replicaSyncPrice: (s.replica_sync_price ?? s.replicaSyncPrice)
+            ? BigInt((s.replica_sync_price ?? s.replicaSyncPrice).toString())
             : null,
-          acceptingExtensions: provider.settings.accepting_extensions ?? false,
-          maxCapacity: BigInt(provider.settings.max_capacity?.toString() || '0'),
+          acceptingExtensions: s.accepting_extensions ?? s.acceptingExtensions ?? false,
+          maxCapacity: BigInt((s.max_capacity ?? s.maxCapacity ?? 0).toString()),
         }
       : null
+    console.log('[settings] Parsed settings:', JSON.stringify(settings, (_, v) => typeof v === 'bigint' ? v.toString() : v))
 
     if (!settings) return null
 
@@ -701,8 +703,8 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
       try {
         if (!polkadotApi) continue
         const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
-        if (bucketOpt.isNone) continue
-        const bucket = bucketOpt.unwrap()
+        if ((bucketOpt as any).isNone) continue
+        const bucket = (bucketOpt as any).unwrap()
         const snap = (bucket as any).snapshot
         if (snap && !snap.isNone) {
           const s = snap.isNone === undefined ? snap : snap.unwrap()
@@ -743,8 +745,8 @@ export async function getBucketDetails(
     try {
       // Query Bucket struct via @polkadot/api (handles Option/BoundedVec correctly)
       const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
-      if (bucketOpt.isNone) continue
-      const bucket = bucketOpt.unwrap()
+      if ((bucketOpt as any).isNone) continue
+      const bucket = (bucketOpt as any).unwrap()
 
       // Parse members
       const members: OnChainBucketMember[] = []

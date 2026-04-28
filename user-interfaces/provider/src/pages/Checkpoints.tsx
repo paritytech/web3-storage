@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/Table'
 import { useCheckpoints } from '@/state/provider.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatBlockNumber, formatRelativeTime, formatAddress } from '@/utils/format'
+import { formatBlockNumber, formatAddress } from '@/utils/format'
 
 export function Checkpoints() {
   return (

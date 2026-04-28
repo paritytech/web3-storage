@@ -73,8 +73,7 @@ import {
   getProviderAgreements,
   getAgreementRequests,
   getProviderChallenges,
-  getProviderInfo,
-  getProviderSettings,
+  getProviderData,
 } from './chain-client'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
@@ -430,50 +429,13 @@ describe('chain-client queries', () => {
     })
   })
 
-  // ── getProviderInfo ──────────────────────────────────────────────────
+  // ── getProviderData ─────────────────────────────────────────────────
 
-  describe('getProviderInfo', () => {
-    it('returns mapped provider info from getValue', async () => {
+  describe('getProviderData', () => {
+    it('returns mapped provider info and settings from getValue', async () => {
       mockGetValue.providers.mockResolvedValue({
         stake: 1_000_000_000_000n,
-        settings: { max_capacity: 10_737_418_240n },
-        committed_bytes: 5_000_000n,
-        stats: { agreements_total: 3, registered_at: 100 },
-      })
-
-      const result = await getProviderInfo(PROVIDER)
-
-      expect(result).toMatchObject({
-        stake: 1_000_000_000_000n,
-        capacity: 10_737_418_240n,
-        usedCapacity: 5_000_000n,
-        activeBuckets: 3,
-        registeredAt: 100,
-      })
-    })
-
-    it('returns null when getValue returns undefined', async () => {
-      mockGetValue.providers.mockResolvedValue(undefined)
-
-      const result = await getProviderInfo(PROVIDER)
-
-      expect(result).toBeNull()
-    })
-
-    it('returns null when getValue returns null', async () => {
-      mockGetValue.providers.mockResolvedValue(null)
-
-      const result = await getProviderInfo(PROVIDER)
-
-      expect(result).toBeNull()
-    })
-  })
-
-  // ── getProviderSettings ──────────────────────────────────────────────
-
-  describe('getProviderSettings', () => {
-    it('maps all settings fields from snake_case to camelCase', async () => {
-      mockGetValue.providers.mockResolvedValue({
+        multiaddr: new Uint8Array([47, 105, 112, 52]),
         settings: {
           min_duration: 100,
           max_duration: 5000,
@@ -484,34 +446,31 @@ describe('chain-client queries', () => {
           accepting_extensions: true,
           max_capacity: 1_073_741_824n,
         },
+        committed_bytes: 5_000_000n,
+        stats: { agreements_total: 3, registered_at: 100 },
       })
 
-      const result = await getProviderSettings(PROVIDER)
+      const result = await getProviderData(PROVIDER)
 
-      expect(result).toMatchObject({
+      expect(result).not.toBeNull()
+      expect(result!.info).toMatchObject({
+        stake: 1_000_000_000_000n,
+        usedCapacity: 5_000_000n,
+        activeBuckets: 3,
+        registeredAt: 100,
+      })
+      expect(result!.settings).toMatchObject({
         minDuration: 100,
         maxDuration: 5000,
         pricePerByte: 50n,
         acceptingPrimary: true,
-        acceptingReplica: false,
-        replicaSyncPrice: null,
-        acceptingExtensions: true,
-        maxCapacity: 1_073_741_824n,
       })
     })
 
-    it('returns null when no provider found', async () => {
+    it('returns null when getValue returns undefined', async () => {
       mockGetValue.providers.mockResolvedValue(undefined)
 
-      const result = await getProviderSettings(PROVIDER)
-
-      expect(result).toBeNull()
-    })
-
-    it('returns null when provider has no settings', async () => {
-      mockGetValue.providers.mockResolvedValue({ settings: null })
-
-      const result = await getProviderSettings(PROVIDER)
+      const result = await getProviderData(PROVIDER)
 
       expect(result).toBeNull()
     })
@@ -544,18 +503,10 @@ describe('chain-client queries', () => {
       expect(result).toEqual([])
     })
 
-    it('getProviderInfo returns null when getValue throws', async () => {
+    it('getProviderData returns null when getValue throws', async () => {
       mockGetValue.providers.mockRejectedValue(new Error('network error'))
 
-      const result = await getProviderInfo(PROVIDER)
-
-      expect(result).toBeNull()
-    })
-
-    it('getProviderSettings returns null when getValue throws', async () => {
-      mockGetValue.providers.mockRejectedValue(new Error('network error'))
-
-      const result = await getProviderSettings(PROVIDER)
+      const result = await getProviderData(PROVIDER)
 
       expect(result).toBeNull()
     })
@@ -580,12 +531,8 @@ describe('chain-client queries', () => {
       await expect(getProviderChallenges(PROVIDER)).rejects.toThrow('Not connected')
     })
 
-    it('getProviderInfo throws when not connected', async () => {
-      await expect(getProviderInfo(PROVIDER)).rejects.toThrow('Not connected')
-    })
-
-    it('getProviderSettings throws when not connected', async () => {
-      await expect(getProviderSettings(PROVIDER)).rejects.toThrow('Not connected')
+    it('getProviderData throws when not connected', async () => {
+      await expect(getProviderData(PROVIDER)).rejects.toThrow('Not connected')
     })
   })
 

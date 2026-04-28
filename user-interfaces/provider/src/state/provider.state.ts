@@ -272,8 +272,8 @@ export async function loadProviderData(address: string): Promise<void> {
       const statsRes = await fetch(`${providerHttp}/stats`)
       if (statsRes.ok) {
         const stats = await statsRes.json()
-        if (chainInfo) {
-          const info = convertProviderInfo(address, chainInfo)
+        if (providerData) {
+          const info = convertProviderInfo(address, providerData.info)
           info.usedCapacity = BigInt(stats.total_bytes || 0)
           providerInfo$.next(info)
         }
@@ -340,6 +340,8 @@ export async function updateSettings(
   signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
 ): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
+
   const current = providerSettings$.getValue()
   if (!current) throw new Error('No provider settings to update')
 
@@ -351,8 +353,13 @@ export async function updateSettings(
     const fullSettings = { ...current, ...settings }
     await submitUpdateSettings(fullSettings, signer, onProgress)
 
-    // Update local state optimistically
-    providerSettings$.next(fullSettings)
+    // Reload from chain to get confirmed state (not just optimistic)
+    const address = providerInfo$.getValue()?.account
+    if (address) {
+      await loadProviderData(address)
+    } else {
+      providerSettings$.next(fullSettings)
+    }
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Update failed')
     throw err
@@ -369,6 +376,7 @@ export async function updateMultiaddr(
   signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
   onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
 ): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
   isLoading$.next(true)
   error$.next(null)
 
@@ -376,11 +384,9 @@ export async function updateMultiaddr(
     const { submitUpdateMultiaddr } = await import('@/lib/chain-client')
     await submitUpdateMultiaddr(multiaddr, signer, onProgress)
 
-    // Update local state optimistically
-    const current = providerInfo$.getValue()
-    if (current) {
-      providerInfo$.next({ ...current, multiaddr })
-    }
+    // Reload from chain
+    const address = providerInfo$.getValue()?.account
+    if (address) await loadProviderData(address)
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Update multiaddr failed')
     throw err
@@ -396,6 +402,7 @@ export async function addStake(
   amount: bigint,
   signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
 ): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
   isLoading$.next(true)
   error$.next(null)
 
@@ -403,14 +410,9 @@ export async function addStake(
     const { submitAddStake } = await import('@/lib/chain-client')
     await submitAddStake(amount, signer)
 
-    // Update local state optimistically
-    const current = providerInfo$.getValue()
-    if (current) {
-      providerInfo$.next({
-        ...current,
-        stake: current.stake + amount,
-      })
-    }
+    // Reload from chain
+    const address = providerInfo$.getValue()?.account
+    if (address) await loadProviderData(address)
   } catch (err) {
     error$.next(err instanceof Error ? err.message : 'Add stake failed')
     throw err
