@@ -338,12 +338,18 @@ async function signAndSubmitTx(
 
     const startSubmission = async () => {
       try {
+        // Use accountNextIndex which accounts for pending txs in the pool,
+        // unlike nonce: -1 which only reads on-chain state and causes 1014
+        // "priority too low" when a previous tx is still in the pool.
+        const address = 'keypair' in signerInfo ? signerInfo.keypair.address : signerInfo.address
+        const nonce = await polkadotApi!.rpc.system.accountNextIndex(address)
+
         if ('keypair' in signerInfo) {
-          unsub = await tx.signAndSend(signerInfo.keypair, { nonce: -1 }, callback)
+          unsub = await tx.signAndSend(signerInfo.keypair, { nonce }, callback)
         } else {
           unsub = await tx.signAndSend(
             signerInfo.address,
-            { signer: signerInfo.signer, nonce: -1 },
+            { signer: signerInfo.signer, nonce },
             callback
           )
         }
