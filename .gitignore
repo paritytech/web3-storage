@@ -27,7 +27,10 @@ Thumbs.db
 # Node.js
 node_modules/
 package-lock.json
+pnpm-lock.yaml
 .papi/
+.vite/
+tsconfig.tsbuildinfo
 
 # Generated chain specs
 zombienet/storage-local-spec.json
@@ -35,8 +38,8 @@ zombienet/storage-local-spec.json
 # Build output
 **/dist/
 
-# Lockfiles (use npm's package-lock.json)
-user-interfaces/pnpm-lock.yaml
+# Lockfiles are per-project, not committed
+# (each UI project has its own package manager)
 
 # Binary/generated docs
 *.docx
