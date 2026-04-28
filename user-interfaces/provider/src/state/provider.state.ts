@@ -13,13 +13,16 @@ import {
   getAgreementRequests,
   getProviderCheckpoints,
   getProviderChallenges,
+  getBucketDetails,
   OnChainProviderInfo,
   OnChainProviderSettings,
   OnChainAgreement,
   OnChainAgreementRequest,
   OnChainCheckpoint,
   OnChainChallenge,
+  OnChainBucketDetails,
 } from '@/lib/chain-client'
+import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 
 // Types (matching chain types with some UI additions)
@@ -94,6 +97,35 @@ export interface EarningsSummary {
   activeAgreementValue: bigint
 }
 
+export interface BucketMember {
+  account: string
+  role: 'Admin' | 'Writer' | 'Reader'
+}
+
+export interface BucketDetail {
+  bucketId: number
+  members: BucketMember[]
+  frozenStartSeq: number | null
+  minProviders: number
+  primaryProviders: string[]
+  totalSnapshots: number
+  snapshot: { mmrRoot: string; startSeq: number; leafCount: number; checkpointBlock: number } | null
+  historicalRoots: Array<{ position: number; root: string }>
+  agreement: {
+    maxBytes: bigint
+    expiresAt: number
+    startedAt: number
+    isPrimary: boolean
+    paymentLocked: bigint
+    status: 'active' | 'expired' | 'terminated'
+  }
+  checkpointConfig: { interval: number; gracePeriod: number; enabled: boolean } | null
+  lastCheckpointWindow: number | null
+  checkpointPoolBalance: bigint
+  checkpointReward: bigint
+  isCheckpointOverdue: boolean
+}
+
 // Persist challenges to localStorage so they survive page reloads
 // (responded challenges are removed from chain storage and unpinned blocks
 // can't be queried, so this is the only way to keep history).
@@ -117,6 +149,7 @@ const agreementRequests$ = new BehaviorSubject<AgreementRequest[]>([])
 const agreements$ = new BehaviorSubject<Agreement[]>([])
 const checkpoints$ = new BehaviorSubject<Checkpoint[]>([])
 const challenges$ = new BehaviorSubject<Challenge[]>(loadPersistedChallenges())
+const bucketDetails$ = new BehaviorSubject<BucketDetail[]>([])
 const earnings$ = new BehaviorSubject<EarningsSummary | null>(null)
 const isLoading$ = new BehaviorSubject<boolean>(false)
 const error$ = new BehaviorSubject<string | null>(null)
@@ -151,6 +184,7 @@ export const [useActiveAgreements] = bind(activeAgreements$, [])
 export const [useCheckpoints] = bind(checkpoints$, [])
 export const [useChallenges] = bind(challenges$, [])
 export const [usePendingChallenges] = bind(pendingChallenges$, [])
+export const [useBucketDetails] = bind(bucketDetails$, [])
 export const [useEarnings] = bind(earnings$, null)
 export const [useIsRegistered] = bind(isRegistered$, false)
 export const [useCapacityUsage] = bind(capacityUsage$, 0)
@@ -201,6 +235,36 @@ export async function loadProviderData(address: string): Promise<void> {
     // Overlay with fresh data (updates status for ones still visible)
     for (const c of newChallenges) merged.set(`${c.deadline}-${c.id}`, c)
     challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
+
+    // Phase 2: Fetch bucket details (depends on agreement data for bucket IDs)
+    const bucketIds = [...new Set(
+      chainAgreements
+        .filter((a) => a.provider === address)
+        .map((a) => a.bucketId)
+    )]
+    if (bucketIds.length > 0) {
+      try {
+        const chainBucketDetails = await getBucketDetails(bucketIds, address)
+        const currentBlock = getCurrentBlock() || 0
+        const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
+        for (const a of chainAgreements) {
+          if (a.provider === address) agreementsByBucket.set(a.bucketId, a)
+        }
+        bucketDetails$.next(
+          chainBucketDetails.map((bd) => {
+            const agr = agreementsByBucket.get(bd.bucketId)
+            let isOverdue = false
+            if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && currentBlock > 0) {
+              const expectedWindow = Math.floor(currentBlock / bd.checkpointConfig.interval)
+              isOverdue = expectedWindow > bd.lastCheckpointWindow + 1
+            }
+            return convertBucketDetail(bd, agr || null, isOverdue)
+          }).sort((a, b) => a.bucketId - b.bucketId)
+        )
+      } catch (e) {
+        console.warn('Failed to load bucket details:', e)
+      }
+    }
 
     // Fetch real storage usage from provider node /stats endpoint
     try {
@@ -392,6 +456,7 @@ export function clearProviderState(): void {
   agreements$.next([])
   checkpoints$.next([])
   challenges$.next([])
+  bucketDetails$.next([])
   earnings$.next(null)
   error$.next(null)
 }
@@ -495,6 +560,38 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     challengeType: chain.challengeType,
     createdAt: chain.createdAt,
     deadline: chain.deadline,
+  }
+}
+
+function convertBucketDetail(
+  chain: OnChainBucketDetails,
+  agreement: { bucketId: number; maxBytes: bigint; endBlock: number; startBlock: number; isPrimary: boolean; paymentLocked: bigint; status: 'active' | 'expired' | 'terminated' } | null,
+  isCheckpointOverdue: boolean
+): BucketDetail {
+  return {
+    bucketId: chain.bucketId,
+    members: chain.members,
+    frozenStartSeq: chain.frozenStartSeq,
+    minProviders: chain.minProviders,
+    primaryProviders: chain.primaryProviders,
+    totalSnapshots: chain.totalSnapshots,
+    snapshot: chain.snapshot,
+    historicalRoots: chain.historicalRoots,
+    agreement: agreement ? {
+      maxBytes: agreement.maxBytes,
+      expiresAt: agreement.endBlock,
+      startedAt: agreement.startBlock,
+      isPrimary: agreement.isPrimary,
+      paymentLocked: agreement.paymentLocked,
+      status: agreement.status,
+    } : {
+      maxBytes: 0n, expiresAt: 0, startedAt: 0, isPrimary: false, paymentLocked: 0n, status: 'expired' as const,
+    },
+    checkpointConfig: chain.checkpointConfig,
+    lastCheckpointWindow: chain.lastCheckpointWindow,
+    checkpointPoolBalance: chain.checkpointPoolBalance,
+    checkpointReward: chain.checkpointReward,
+    isCheckpointOverdue,
   }
 }
 

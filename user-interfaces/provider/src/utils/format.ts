@@ -113,6 +113,11 @@ export function formatPercentage(value: number, decimals = 2): string {
   return `${(value * 100).toFixed(decimals)}%`
 }
 
+export function formatHash(hex: string, prefixChars = 6, suffixChars = 6): string {
+  if (!hex || hex.length <= prefixChars + suffixChars + 2) return hex
+  return `${hex.slice(0, prefixChars + 2)}...${hex.slice(-suffixChars)}`
+}
+
 export function formatDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString('en-US', {
     year: 'numeric',
