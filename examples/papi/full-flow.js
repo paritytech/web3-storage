@@ -96,6 +96,8 @@ async function registerProvider(api, provider) {
   const existing = await api.query.StorageProvider.Providers.getValue(provider.address);
   if (existing) {
     console.log("  Provider already registered");
+    // Ensure settings have nonzero price for payment testing
+    await updateProviderSettings(api, provider);
     return;
   }
   console.log("  Registering provider (%s)...", PROVIDER_SEED);
@@ -108,6 +110,21 @@ async function registerProvider(api, provider) {
     stake: 1_000_000_000_000_000n, // 1000 tokens
   }).signAndSubmit(provider.signer);
   console.log("  Provider registered");
+  await updateProviderSettings(api, provider);
+}
+
+async function updateProviderSettings(api, provider) {
+  console.log("  Updating provider settings (price_per_byte=1)...");
+  await api.tx.StorageProvider.update_provider_settings({
+    min_duration: 10,
+    max_duration: 100_000,
+    price_per_byte: 1n,
+    accepting_primary: true,
+    replica_sync_price: undefined,
+    accepting_extensions: true,
+    max_capacity: 0, // unlimited
+  }).signAndSubmit(provider.signer);
+  console.log("  Settings updated");
 }
 
 async function createBucket(api, client) {
@@ -135,13 +152,18 @@ async function createAgreement(api, provider, client, bucketId) {
     console.log("  Agreement already exists");
     return;
   }
-  console.log("  Requesting agreement (%s)...", CLIENT_SEED);
+  // Short duration (30 blocks ≈ 3 min) with nonzero payment for earnings testing.
+  // payment = price_per_byte(1) * max_bytes(1GB) * duration(30) = 30 * 1073741824 ≈ 32 billion planck
+  const agreementMaxBytes = 1073741824n; // 1 GB
+  const agreementDuration = 30;
+  const maxPayment = agreementMaxBytes * BigInt(agreementDuration) * 2n; // 2x buffer
+  console.log("  Requesting agreement (%s), duration=%d blocks, maxPayment=%s...", CLIENT_SEED, agreementDuration, maxPayment);
   await api.tx.StorageProvider.request_primary_agreement({
     bucket_id: bucketId,
     provider: provider.address,
-    max_bytes: 1073741824n, // 1 GB
-    duration: 100_000,
-    max_payment: 100_000_000_000n,
+    max_bytes: agreementMaxBytes,
+    duration: agreementDuration,
+    max_payment: maxPayment,
   }).signAndSubmit(client.signer);
   console.log("  Agreement requested");
 
@@ -370,7 +392,7 @@ async function main() {
     await respondToChallenge(api, provider, challengeId2, bucketId);
     console.log("  Challenge defended");
 
-    console.log("\n=== Verifying results ===");
+    console.log("\n=== Verifying challenge results ===");
     await new Promise((r) => setTimeout(r, 3000));
     console.log("ChallengeDefended events: %d (expected: 2)", defendedEvents.length);
     assert.strictEqual(
@@ -379,6 +401,52 @@ async function main() {
       `Expected 2 ChallengeDefended events, got ${defendedEvents.length}`
     );
     console.log("PASSED: Both challenges were defended!");
+
+    console.log("\n=== Step 8: Wait for agreement expiry & claim payment ===");
+    // Get agreement details to find expiry block
+    const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+      bucketId,
+      provider.address
+    );
+    const expiresAt = Number(agreement.expires_at);
+    console.log("  Agreement expires at block:", expiresAt);
+
+    // Get provider balance before payment
+    const balanceBefore = await api.query.System.Account.getValue(provider.address);
+    const freeBefore = balanceBefore.data.free;
+    console.log("  Provider balance before:", freeBefore.toString());
+
+    // Wait for expiry
+    console.log("  Waiting for agreement to expire...");
+    await new Promise((resolve) => {
+      const sub = papi.finalizedBlock$.subscribe((block) => {
+        if (block.number % 5 === 0) {
+          console.log("    Block %d / %d", block.number, expiresAt);
+        }
+        if (block.number > expiresAt) {
+          sub.unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    // Owner (Bob) ends agreement with Pay action
+    console.log("  Ending agreement with Pay action (%s)...", CLIENT_SEED);
+    await api.tx.StorageProvider.end_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+      action: Enum("Pay"),
+    }).signAndSubmit(client.signer);
+    console.log("  Agreement ended with payment");
+
+    // Check provider balance after payment
+    const balanceAfter = await api.query.System.Account.getValue(provider.address);
+    const freeAfter = balanceAfter.data.free;
+    const earned = freeAfter - freeBefore;
+    console.log("  Provider balance after:", freeAfter.toString());
+    console.log("  Earned from agreement:", earned.toString());
+    assert.ok(earned > 0n, `Expected provider to earn tokens, got ${earned}`);
+    console.log("PASSED: Provider received payment!");
   } catch (err) {
     console.error("\nERROR:", err.message || err);
     if (err.stack) console.error(err.stack);
