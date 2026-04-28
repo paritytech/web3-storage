@@ -32,6 +32,18 @@
     .card h2 { font-size: 1.25rem; margin-bottom: 0.5rem; }
     .card p { color: #888; font-size: 0.9rem; line-height: 1.5; }
     .icon { font-size: 2rem; margin-bottom: 1rem; }
+    .banner {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border: 1px solid #2a2a3e;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2.5rem;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: #aaa;
+    }
+    .banner a { color: #a78bfa; text-decoration: none; }
+    .banner a:hover { text-decoration: underline; }
     @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -39,6 +51,13 @@
   <div class="container">
     <h1>Web3 Storage</h1>
     <p class="subtitle">Decentralized storage with game-theoretic guarantees</p>
+    <div class="banner">
+      Successor to the <a href="https://paritytech.github.io/polkadot-bulletin-chain/">Polkadot Bulletin Chain</a> storage system.
+      Rather than heavy cryptographic proofs on every operation, Web3 Storage uses economic incentives:
+      providers lock stake proportional to their capacity and face slashing for data loss.
+      The chain acts as a credible threat for accountability, not the hot path &mdash;
+      normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
+    </div>
     <div class="cards">
       <a href="./console/" class="card">
         <div class="icon">&#x1F4E6;</div>
