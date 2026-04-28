@@ -155,7 +155,7 @@ async function createAgreement(api, provider, client, bucketId) {
   // Short duration (30 blocks ≈ 3 min) with nonzero payment for earnings testing.
   // payment = price_per_byte(1) * max_bytes(1GB) * duration(30) = 30 * 1073741824 ≈ 32 billion planck
   const agreementMaxBytes = 1073741824n; // 1 GB
-  const agreementDuration = 30;
+  const agreementDuration = 5;
   const maxPayment = agreementMaxBytes * BigInt(agreementDuration) * 2n; // 2x buffer
   console.log("  Requesting agreement (%s), duration=%d blocks, maxPayment=%s...", CLIENT_SEED, agreementDuration, maxPayment);
   await api.tx.StorageProvider.request_primary_agreement({
