@@ -126,10 +126,11 @@ export interface BucketDetail {
   isCheckpointOverdue: boolean
 }
 
-// Persist challenges to localStorage so they survive page reloads
-// (responded challenges are removed from chain storage and unpinned blocks
-// can't be queried, so this is the only way to keep history).
+// Persist challenges to localStorage so they survive page reloads.
+// Stores genesis hash alongside data to auto-clear on chain restart.
 const CHALLENGES_STORAGE_KEY = 'provider-challenges'
+const CHALLENGES_GENESIS_KEY = 'provider-challenges-genesis'
+
 function loadPersistedChallenges(): Challenge[] {
   try {
     const raw = localStorage.getItem(CHALLENGES_STORAGE_KEY)
@@ -140,6 +141,18 @@ function persistChallenges(challenges: Challenge[]) {
   try {
     localStorage.setItem(CHALLENGES_STORAGE_KEY, JSON.stringify(challenges))
   } catch { /* ignore */ }
+}
+/**
+ * Clear stale challenge cache if connected to a different chain (genesis hash changed).
+ * Called at data load time.
+ */
+function clearStaleCache(genesisHash: string) {
+  const stored = localStorage.getItem(CHALLENGES_GENESIS_KEY)
+  if (stored && stored !== genesisHash) {
+    localStorage.removeItem(CHALLENGES_STORAGE_KEY)
+    challenges$.next([])
+  }
+  localStorage.setItem(CHALLENGES_GENESIS_KEY, genesisHash)
 }
 
 // State subjects
@@ -203,6 +216,13 @@ export async function loadProviderData(address: string): Promise<void> {
   error$.next(null)
 
   try {
+    // Clear stale challenge cache if chain restarted (different genesis)
+    try {
+      const { getPolkadotApi } = await import('@/lib/chain-client')
+      const api = getPolkadotApi()
+      if (api) clearStaleCache(api.genesisHash.toHex())
+    } catch { /* ignore */ }
+
     // Query provider info and settings in a single RPC call
     const providerData = await getProviderData(address)
 
