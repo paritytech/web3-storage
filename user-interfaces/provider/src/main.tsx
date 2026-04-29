@@ -21,7 +21,7 @@ function AppWithInit() {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Subscribe fallback={<div className="min-h-screen bg-gray-950" />}>
-      <BrowserRouter>
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || '/'}>
         <AppWithInit />
       </BrowserRouter>
     </Subscribe>

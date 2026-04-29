@@ -1,0 +1,88 @@
+name: Deploy UIs to GitHub Pages
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "user-interfaces/**"
+      - ".github/workflows/deploy-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install shared dependencies
+        working-directory: user-interfaces
+        run: npm install
+
+      - name: Build Console UI
+        working-directory: user-interfaces/console-ui
+        env:
+          GITHUB_PAGES: "true"
+        run: |
+          npm install
+          npx papi generate || true
+          npm run build
+
+      - name: Build Provider Dashboard
+        working-directory: user-interfaces/provider
+        env:
+          GITHUB_PAGES: "true"
+        run: |
+          npm install
+          npm run build
+
+      - name: Build Drive UI
+        working-directory: user-interfaces/drive-ui
+        env:
+          GITHUB_PAGES: "true"
+        run: |
+          npm install
+          npm run build
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          # Landing page at root
+          cp user-interfaces/landing/index.html _site/
+          cp user-interfaces/landing/404.html _site/
+          # Each app in its subpath
+          cp -r user-interfaces/console-ui/dist _site/console
+          cp -r user-interfaces/provider/dist _site/provider
+          cp -r user-interfaces/drive-ui/dist _site/drive
+          # Per-app 404.html for SPA routing within each app
+          cp user-interfaces/console-ui/dist/index.html _site/console/404.html
+          cp user-interfaces/provider/dist/index.html _site/provider/404.html
+          cp user-interfaces/drive-ui/dist/index.html _site/drive/404.html
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
