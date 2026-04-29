@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Web3 Storage</title>
+  <script>
+    // SPA redirect for GitHub Pages.
+    // Detects which app the path belongs to and redirects to that app's index.html
+    // with the original path preserved as a query parameter for the client-side router.
+    var path = window.location.pathname;
+    var apps = ['/web3-storage/console/', '/web3-storage/provider/', '/web3-storage/drive/'];
+    var matched = apps.find(function(app) { return path.startsWith(app); });
+    if (matched) {
+      // Redirect to the app's index.html — the SPA router will handle the rest
+      var rest = path.slice(matched.length);
+      window.location.replace(matched + '?p=' + encodeURIComponent('/' + rest) + window.location.search.replace('?', '&') + window.location.hash);
+    } else {
+      window.location.replace('/web3-storage/');
+    }
+  </script>
+</head>
+<body></body>
+</html>
