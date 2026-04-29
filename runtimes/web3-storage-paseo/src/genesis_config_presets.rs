@@ -1,6 +1,7 @@
 //! Paseo Web3 Storage Parachain Runtime genesis config presets
 
 use crate::*;
+use crate::paseo_constants::currency::UNIT;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
 use frame_support::build_struct_json_patch;

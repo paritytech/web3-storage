@@ -10,8 +10,17 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+/// Provides the `WASM_BINARY` build with `fast-runtime` feature enabled.
+///
+/// This is for example useful for local test chains.
+#[cfg(feature = "std")]
+pub mod fast_runtime_binary {
+	include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
+}
+
 mod genesis_config_presets;
 pub mod paseo_constants;
+mod storage_provider;
 mod weights;
 pub mod xcm_config;
 
@@ -71,7 +80,7 @@ use paseo_constants::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
         MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
     },
-    currency::{EXISTENTIAL_DEPOSIT, MICROUNIT, UNIT},
+    currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     fee::WEIGHT_FEE,
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
     time::HOURS,
@@ -440,58 +449,12 @@ impl pallet_collator_selection::Config for Runtime {
     type WeightInfo = ();
 }
 
-// --------------------------------
-// Storage Provider Pallet Config
-// --------------------------------
-
-parameter_types! {
-    pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
-    pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
-    pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-    pub const RequestTimeout: BlockNumber = 6 * HOURS;
-    // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
-    pub const MinStakePerByte: Balance = 1_000;
-    pub const DefaultCheckpointInterval: BlockNumber = 100;
-    pub const DefaultCheckpointGrace: BlockNumber = 20;
-    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
-    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
-}
-
-// Treasury account for slashed funds
-pub struct TreasuryAccount;
-impl frame_support::traits::Get<AccountId> for TreasuryAccount {
-    fn get() -> AccountId {
-        // Use a well-known account derived from "modl" + pallet name
-        // In production, this would be a proper treasury pallet
-        sp_runtime::traits::AccountIdConversion::<AccountId>::into_account_truncating(
-            &frame_support::PalletId(*b"py/trsry"),
-        )
-    }
-}
-
 impl cumulus_pallet_weight_reclaim::Config for Runtime {
     type WeightInfo = ();
 }
 
-impl pallet_storage_provider::Config for Runtime {
-    type Currency = Balances;
-    type Treasury = TreasuryAccount;
-    type MinStakePerByte = MinStakePerByte;
-    type MaxMultiaddrLength = ConstU32<128>;
-    type MaxMembers = ConstU32<100>;
-    type MaxPrimaryProviders = ConstU32<5>;
-    type MinProviderStake = MinProviderStake;
-    type MaxChunkSize = ConstU32<262144>; // 256 KiB
-    type ChallengeTimeout = ChallengeTimeout;
-    type SettlementTimeout = SettlementTimeout;
-    type RequestTimeout = RequestTimeout;
-    type DefaultCheckpointInterval = DefaultCheckpointInterval;
-    type DefaultCheckpointGrace = DefaultCheckpointGrace;
-    type CheckpointReward = CheckpointReward;
-    type CheckpointMissPenalty = CheckpointMissPenalty;
-    type MaxBucketsPerMember = ConstU32<1000>;
-    type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
-}
+// `pallet_storage_provider::Config`, its parameter types, and `TreasuryAccount`
+// live in the `storage_provider` module.
 
 // --------------------------------
 // Drive Registry Pallet Config
