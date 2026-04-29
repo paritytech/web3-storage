@@ -331,14 +331,7 @@ export class StorageClient {
       if (!provider) continue;
 
       // multiaddr is a BoundedVec<u8> — decode to string
-      let multiaddrStr: string;
-      if (provider.multiaddr instanceof Uint8Array) {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      } else if (typeof provider.multiaddr.asBytes === "function") {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr.asBytes());
-      } else {
-        multiaddrStr = String(provider.multiaddr);
-      }
+      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
       console.log(`[StorageClient] Provider ${providerAccount} multiaddr raw:`, provider.multiaddr, `decoded: "${multiaddrStr}"`);
       const url = this.parseMultiaddrToHttp(multiaddrStr);
@@ -520,12 +513,7 @@ export class StorageClient {
     for (const bucketId of bucketIds) {
       const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
       if (bucket) {
-        // Handle name - may be Binary (.asText()), Uint8Array, or string depending on descriptor
-        const bucketName = typeof bucket.name === "string"
-          ? bucket.name
-          : typeof bucket.name?.asText === "function"
-            ? bucket.name.asText()
-            : new TextDecoder().decode(bucket.name as Uint8Array);
+        const bucketName = new TextDecoder().decode(bucket.name);
 
         buckets.push({
           s3BucketId: BigInt(bucketId),
@@ -551,8 +539,7 @@ export class StorageClient {
     const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
     if (!bucket) return null;
 
-    // Handle name - Binary type in polkadot-api
-    const bucketName = bucket.name.asText();
+    const bucketName = new TextDecoder().decode(bucket.name);
 
     return {
       s3BucketId: BigInt(bucketId),
@@ -745,10 +732,7 @@ export class StorageClient {
       const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
       if (bucket?.snapshot) {
         const s = bucket.snapshot;
-        const mmrBytes = s.mmr_root instanceof Uint8Array
-          ? s.mmr_root
-          : (s.mmr_root as any).asBytes?.() ?? new Uint8Array(32);
-        const mmrHex = "0x" + Array.from(mmrBytes as Uint8Array).map((b) => b.toString(16).padStart(2, "0")).join("");
+        const mmrHex = typeof s.mmr_root === "string" ? s.mmr_root : String(s.mmr_root);
         snapshot = {
           mmrRoot: mmrHex,
           startSeq: BigInt(s.start_seq),
@@ -978,14 +962,7 @@ export class StorageClient {
         continue;
       }
 
-      let multiaddrStr: string;
-      if (provider.multiaddr instanceof Uint8Array) {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      } else if (typeof provider.multiaddr.asBytes === "function") {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr.asBytes());
-      } else {
-        multiaddrStr = String(provider.multiaddr);
-      }
+      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
       const url = this.parseMultiaddrToHttp(multiaddrStr) ?? "unknown";
       let healthy = false;
@@ -1018,14 +995,7 @@ export class StorageClient {
       const settings = provider.settings;
 
       // Decode multiaddr
-      let multiaddrStr: string;
-      if (provider.multiaddr instanceof Uint8Array) {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      } else if (typeof provider.multiaddr.asBytes === "function") {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr.asBytes());
-      } else {
-        multiaddrStr = String(provider.multiaddr);
-      }
+      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
       const maxCapacity = BigInt(settings.max_capacity ?? 0);
       const committedBytes = BigInt(provider.committed_bytes ?? 0);

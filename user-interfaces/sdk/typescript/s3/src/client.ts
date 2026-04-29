@@ -119,7 +119,7 @@ export class S3Client {
     this.ensureConnected();
     this.validateBucketName(name);
 
-    const nameBytes = Binary.fromBytes(new TextEncoder().encode(name));
+    const nameBytes = Binary.fromText(name);
 
     // Try atomic extrinsic when storage options are provided
     if (options?.capacity && options?.duration && options?.maxPayment) {
@@ -176,7 +176,7 @@ export class S3Client {
 
     // Look up bucket ID by name
     const bucketId = await this.api!.query.S3Registry.BucketNameToId.getValue(
-      Binary.fromBytes(new TextEncoder().encode(name))
+      Binary.fromText(name)
     );
 
     if (bucketId === undefined) {
@@ -190,7 +190,7 @@ export class S3Client {
 
     return {
       s3BucketId: bucketId,
-      name: new TextDecoder().decode(bucket.name.asBytes()),
+      name: new TextDecoder().decode(bucket.name),
       layer0BucketId: bucket.layer0_bucket_id,
       owner: bucket.owner,
       createdAt: bucket.created_at,
@@ -215,7 +215,7 @@ export class S3Client {
       if (bucket) {
         buckets.push({
           s3BucketId: bucketId,
-          name: new TextDecoder().decode(bucket.name.asBytes()),
+          name: new TextDecoder().decode(bucket.name),
           layer0BucketId: bucket.layer0_bucket_id,
           owner: bucket.owner,
           createdAt: bucket.created_at,

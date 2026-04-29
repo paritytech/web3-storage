@@ -229,14 +229,7 @@ export class DriveClient {
       const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount);
       if (!provider) continue;
 
-      let multiaddrStr: string;
-      if (provider.multiaddr instanceof Uint8Array) {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      } else if (typeof provider.multiaddr.asBytes === "function") {
-        multiaddrStr = new TextDecoder().decode(provider.multiaddr.asBytes());
-      } else {
-        multiaddrStr = String(provider.multiaddr);
-      }
+      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
       const url = this.parseMultiaddrToHttp(multiaddrStr);
       if (url) return url;
@@ -337,6 +330,7 @@ export class DriveClient {
       storage_period: options.storagePeriod,
       payment: options.payment,
       min_providers: options.minProviders ?? undefined,
+      commit_strategy: Enum("Batched", { interval: 100 }),
     });
 
     const result = await this.submitAndWatchBestBlock(tx);
@@ -392,15 +386,7 @@ export class DriveClient {
         let driveName: string | null = null;
         if (drive.name) {
           try {
-            if (drive.name instanceof Uint8Array) {
-              driveName = new TextDecoder().decode(drive.name);
-            } else if (typeof drive.name.asText === "function") {
-              driveName = drive.name.asText();
-            } else if (typeof drive.name.asBytes === "function") {
-              driveName = new TextDecoder().decode(drive.name.asBytes());
-            } else {
-              driveName = String(drive.name);
-            }
+            driveName = new TextDecoder().decode(drive.name);
           } catch {
             driveName = null;
           }
@@ -568,16 +554,7 @@ export class DriveClient {
     const snapshot = bucket.snapshot;
     if (!snapshot) return null;
 
-    let mmrRoot: string;
-    const raw = snapshot.mmr_root;
-    if (raw instanceof Uint8Array) {
-      mmrRoot = "0x" + Array.from(raw).map((b) => b.toString(16).padStart(2, "0")).join("");
-    } else if (typeof raw?.asBytes === "function") {
-      const bytes = raw.asBytes();
-      mmrRoot = "0x" + Array.from(bytes).map((b: number) => b.toString(16).padStart(2, "0")).join("");
-    } else {
-      mmrRoot = String(raw);
-    }
+    const mmrRoot = typeof snapshot.mmr_root === "string" ? snapshot.mmr_root : String(snapshot.mmr_root);
 
     return {
       mmrRoot,
