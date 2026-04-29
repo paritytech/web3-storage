@@ -19,7 +19,7 @@ pub mod constants {
     mod test_weights {
         use frame_support::weights::constants;
 
-        /// Checks that the weight exists and is sane.
+        /// Checks that the weight exists and is same.
         #[test]
         fn sane() {
             let w = super::constants::BlockExecutionWeight::get();

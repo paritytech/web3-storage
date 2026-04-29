@@ -484,6 +484,7 @@ impl pallet_storage_provider::Config for Runtime {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type MaxBucketsPerMember = ConstU32<1000>;
     type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
