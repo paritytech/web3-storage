@@ -83,6 +83,7 @@ sp-version = { version = "44.0.0", default-features = false }
 
 # Polkadot
 pallet-xcm = { version = "26.0.0", default-features = false }
+parachains-runtimes-test-utils = { version = "29.0.0", default-features = true }
 polkadot-parachain-primitives = { version = "21.0.0", default-features = false }
 polkadot-primitives = { version = "23.0.0", default-features = false }
 polkadot-runtime-common = { version = "25.0.0", default-features = false }

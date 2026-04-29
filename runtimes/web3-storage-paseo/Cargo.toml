@@ -58,6 +58,7 @@ polkadot-runtime-common = { workspace = true }
 xcm = { workspace = true }
 xcm-builder = { workspace = true }
 xcm-executor = { workspace = true }
+xcm-runtime-apis = { workspace = true }
 
 # Cumulus
 cumulus-pallet-aura-ext = { workspace = true }
@@ -70,6 +71,11 @@ cumulus-primitives-core = { workspace = true }
 cumulus-primitives-utility = { workspace = true }
 parachains-common = { workspace = true }
 parachain-info = { workspace = true }
+
+[dev-dependencies]
+parachains-runtimes-test-utils = { workspace = true, default-features = true }
+sp-io = { workspace = true }
+log = { workspace = true }
 
 [build-dependencies]
 substrate-wasm-builder = { workspace = true, optional = true }
@@ -119,7 +125,9 @@ std = [
 	"polkadot-runtime-common/std",
 	"xcm-builder/std",
 	"xcm-executor/std",
+	"xcm-runtime-apis/std",
 	"xcm/std",
+
 	# Cumulus
 	"cumulus-pallet-aura-ext/std",
 	"cumulus-pallet-parachain-system/std",
@@ -132,6 +140,8 @@ std = [
 	"parachain-info/std",
 	"parachains-common/std",
 	# Build
+	"log/std",
+	"sp-io/std",
 	"substrate-wasm-builder",
 ]
 runtime-benchmarks = [
@@ -158,6 +168,7 @@ runtime-benchmarks = [
 	"sp-runtime/runtime-benchmarks",
 	"xcm-builder/runtime-benchmarks",
 	"xcm-executor/runtime-benchmarks",
+	"xcm-runtime-apis/runtime-benchmarks",
 	"xcm/runtime-benchmarks",
 ]
 try-runtime = [
