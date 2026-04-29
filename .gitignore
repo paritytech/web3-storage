@@ -29,6 +29,10 @@ node_modules/
 package-lock.json
 pnpm-lock.yaml
 .papi/
+# Exception: commit console-ui PAPI config + metadata for CI builds
+# (papi generate needs these to produce descriptors without a running chain)
+!user-interfaces/console-ui/.papi/
+user-interfaces/console-ui/.papi/descriptors/dist/
 .vite/
 tsconfig.tsbuildinfo
 
