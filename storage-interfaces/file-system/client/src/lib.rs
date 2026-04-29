@@ -40,7 +40,6 @@ mod substrate;
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
-use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -167,7 +166,6 @@ impl FileSystemClient {
     /// * `storage_period` - Storage duration in blocks (e.g., 500 blocks)
     /// * `payment` - Upfront payment tokens for storage agreements
     /// * `min_providers` - Optional minimum number of providers (default: 3 for long-term, 1 for short-term)
-    /// * `commit_strategy` - Optional strategy for committing changes (default: Batched every 100 blocks)
     ///
     /// # Returns
     ///
@@ -176,8 +174,6 @@ impl FileSystemClient {
     /// # Example
     ///
     /// ```ignore
-    /// use file_system_primitives::CommitStrategy;
-    ///
     /// // Create a 10 GB drive with defaults
     /// let drive_id = fs_client.create_drive(
     ///     Some("My Documents"),
@@ -185,17 +181,15 @@ impl FileSystemClient {
     ///     500,              // 500 blocks
     ///     1_000_000_000_000, // 1 token (12 decimals)
     ///     None,             // Use default providers (auto-determined)
-    ///     None,             // Use default commit strategy
     /// ).await?;
     ///
-    /// // Create a highly replicated drive with immediate commits
+    /// // Create a highly replicated drive
     /// let drive_id = fs_client.create_drive(
     ///     Some("Critical Data"),
     ///     5_000_000_000,
     ///     500,
     ///     2_000_000_000_000, // 2 tokens for more providers
     ///     Some(5),           // 1 primary + 4 replicas
-    ///     Some(CommitStrategy::Immediate),
     /// ).await?;
     /// ```
     pub async fn create_drive(
@@ -205,41 +199,17 @@ impl FileSystemClient {
         storage_period: u64,
         payment: u128,
         min_providers: Option<u8>,
-        commit_strategy: Option<file_system_primitives::CommitStrategy>,
     ) -> Result<DriveId> {
-        // Call on-chain extrinsic to create drive
-        // The system automatically:
-        // 1. Creates a bucket in Layer 0
-        // 2. Requests storage agreements with providers
-        // 3. Creates an empty root directory
-        // 4. Returns the drive_id
-        //
-        // NOTE: In a real implementation, this would use subxt or similar to call:
-        // drive_registry.create_drive(name, max_capacity, storage_period, payment, min_providers, commit_strategy)
-
-        // Use provided strategy or default
-        let strategy = commit_strategy.unwrap_or_default();
-
         let drive_id = self
-            .create_drive_on_chain(
-                name,
-                max_capacity,
-                storage_period,
-                payment,
-                min_providers,
-                strategy,
-            )
+            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers)
             .await?;
 
         // Get the bucket_id for this drive
         let bucket_id = self.query_drive_bucket_id(drive_id).await?;
 
-        // Create an empty root directory and upload it
+        // Create an empty root directory and upload it to the provider
         let root_dir = DirectoryNode::new_empty(drive_id);
         let root_dir_bytes = root_dir.to_scale_bytes();
-
-        // Upload the root directory to the provider
-        // The returned data_root is the hash of the data, which we use as the root CID
         let root_cid = self.upload_blob(bucket_id, &root_dir_bytes).await?;
 
         // Verify the CID matches what we would compute locally
@@ -248,10 +218,7 @@ impl FileSystemClient {
             log::warn!("CID mismatch: data_root={root_cid:?}, expected={expected_cid:?}");
         }
 
-        // Update the on-chain root CID
-        self.update_drive_root_cid(drive_id, root_cid).await?;
-
-        // Cache the root CID
+        // Cache the root CID (now managed off-chain only)
         log::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
         self.root_cache.insert(drive_id, root_cid);
 
@@ -401,20 +368,15 @@ impl FileSystemClient {
         Ok(())
     }
 
-    /// Get the root CID of a drive
+    /// Get the root CID of a drive (managed off-chain via provider)
     pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
-        // Check cache first
+        // Root CID is now managed off-chain only (cached in-memory)
         if let Some(cid) = self.root_cache.get(&drive_id) {
             log::debug!("get_root_cid: cache hit for drive {drive_id}, cid={cid:?}");
             return Ok(*cid);
         }
 
-        // Query on-chain
-        let cid = self.query_drive_root_cid(drive_id).await?;
-        log::debug!("get_root_cid: cache miss for drive {drive_id}, queried cid={cid:?}");
-        self.root_cache.insert(drive_id, cid);
-
-        Ok(cid)
+        Err(FsClientError::DriveNotFound(drive_id))
     }
 
     // ============ Checkpoint Methods ============
@@ -527,9 +489,9 @@ impl FileSystemClient {
 
     /// Enable automatic batched checkpoints for a drive.
     ///
-    /// This starts a background loop that periodically submits checkpoints
-    /// according to the drive's CommitStrategy. Changes are automatically tracked,
-    /// and checkpoints are submitted when the interval elapses.
+    /// This starts a background loop that periodically submits checkpoints.
+    /// Changes are automatically tracked, and checkpoints are submitted when
+    /// the interval elapses.
     ///
     /// # Arguments
     ///
@@ -740,10 +702,7 @@ impl FileSystemClient {
             .update_ancestors(drive_id, parent_path, new_parent_cid, bucket_id)
             .await?;
 
-        // Update on-chain root CID
-        self.update_drive_root_cid(drive_id, new_root_cid).await?;
-
-        // Update cache
+        // Update cache (root CID is now managed off-chain only)
         self.root_cache.insert(drive_id, new_root_cid);
 
         Ok(())
@@ -904,7 +863,6 @@ impl FileSystemClient {
         storage_period: u64,
         payment: u128,
         min_providers: Option<u8>,
-        commit_strategy: file_system_primitives::CommitStrategy,
     ) -> Result<DriveId> {
         use subxt::dynamic::At;
 
@@ -917,7 +875,6 @@ impl FileSystemClient {
             storage_period,
             payment,
             min_providers,
-            commit_strategy,
         );
 
         // Sign and submit
@@ -971,91 +928,6 @@ impl FileSystemClient {
         ))
     }
 
-    async fn update_drive_root_cid(&self, drive_id: DriveId, new_root_cid: Cid) -> Result<()> {
-        // Build the extrinsic
-        let call = substrate::extrinsics::update_root_cid(drive_id, new_root_cid);
-
-        // Sign and submit
-        let signer = self.substrate_client.signer()?;
-        let mut progress = self
-            .substrate_client
-            .api()
-            .tx()
-            .sign_and_submit_then_watch_default(&call, signer)
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?;
-
-        // Wait for finalization
-        while let Some(event) = progress.next().await {
-            let event =
-                event.map_err(|e| FsClientError::Blockchain(format!("Transaction error: {e}")))?;
-
-            if event.as_finalized().is_some() {
-                log::info!("Root CID updated for drive {drive_id}");
-                return Ok(());
-            }
-        }
-
-        Err(FsClientError::Blockchain(
-            "Transaction did not finalize".to_string(),
-        ))
-    }
-
-    async fn query_drive_root_cid(&self, drive_id: DriveId) -> Result<Cid> {
-        let storage_client = self
-            .substrate_client
-            .api()
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
-
-        // Build the storage key for Drives storage map
-        // Format: pallet_hash + storage_hash + key_hash(drive_id)
-        use sp_core::twox_128;
-
-        let pallet_hash = twox_128(b"DriveRegistry");
-        let storage_hash = twox_128(b"Drives");
-        let key = drive_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key);
-
-        let mut storage_key = Vec::new();
-        storage_key.extend_from_slice(&pallet_hash);
-        storage_key.extend_from_slice(&storage_hash);
-        storage_key.extend_from_slice(&key_hash);
-        storage_key.extend_from_slice(&key);
-
-        let bytes_opt = storage_client
-            .fetch_raw(storage_key)
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?;
-
-        if let Some(bytes) = bytes_opt {
-            // DriveInfo structure:
-            // - owner: AccountId32 (32 bytes)
-            // - bucket_id: u64 (8 bytes
-            // - root_cid: H256 (32 bytes)
-            // - ... more fields
-
-            // We need to skip SCALE encoding overhead and extract root_cid
-            // This is a simplified approach - in production use proper type decoding
-
-            if bytes.len() >= 32 + 8 + 32 {
-                // Skip owner (32 bytes) + bucket_id (8 bytes)
-                let root_cid_offset = 32 + 8;
-                let mut root_cid_bytes = [0u8; 32];
-                root_cid_bytes.copy_from_slice(&bytes[root_cid_offset..root_cid_offset + 32]);
-                return Ok(H256::from(root_cid_bytes));
-            }
-
-            return Err(FsClientError::Blockchain(
-                "Invalid drive info encoding".to_string(),
-            ));
-        }
-
-        Err(FsClientError::DriveNotFound(drive_id))
-    }
-
     /// Query bucket_id for a drive from on-chain storage
     async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
         let storage_client = self
@@ -1086,10 +958,10 @@ impl FileSystemClient {
             .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?;
 
         if let Some(bytes) = bytes_opt {
-            // DriveInfo structure:
+            // DriveInfo structure (simplified):
             // - owner: AccountId32 (32 bytes)
             // - bucket_id: u64 (8 bytes)
-            // - root_cid: H256 (32 bytes)
+            // - created_at: BlockNumber (4 bytes)
             // - ... more fields
 
             if bytes.len() >= 32 + 8 {

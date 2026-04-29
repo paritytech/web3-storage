@@ -6,7 +6,7 @@
 #   brew install just
 
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2512-2"
+polkadot_version := "polkadot-stable2603"
 # Zombienet version
 zombienet_version := "v0.4.11"
 
@@ -133,6 +133,8 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --storage-mode "{{MODE}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}" \
+        --enable-agreement-coordinator \
+        --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
 # Health check for provider node
@@ -321,6 +323,7 @@ fs-demo-ci:
     echo ""
     cargo run --release -p file-system-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
+
 # Build file system components only
 fs-build:
     #!/usr/bin/env bash
@@ -413,6 +416,7 @@ s3-demo-ci:
     echo "  Provider: {{ PROVIDER_URL }}"
     echo ""
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
 
 # Build S3 components only
 s3-build:

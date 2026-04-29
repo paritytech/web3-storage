@@ -488,6 +488,7 @@ impl pallet_storage_provider::Config for Runtime {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type MaxBucketsPerMember = ConstU32<1000>;
     type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
@@ -507,7 +508,7 @@ impl pallet_drive_registry::Config for Runtime {
 
 impl pallet_s3_registry::Config for Runtime {
     type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<100000>;
+    type MaxObjectsPerBucket = ConstU32<10000>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

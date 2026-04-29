@@ -11,7 +11,7 @@
  */
 
 import { createClient, PolkadotClient } from 'polkadot-api'
-import { getWsProvider } from 'polkadot-api/ws-provider/web'
+import { getWsProvider } from 'polkadot-api/ws'
 import { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { BehaviorSubject } from 'rxjs'
 import { ApiPromise, WsProvider } from '@polkadot/api'
@@ -117,6 +117,45 @@ export function getClient(): PolkadotClient | null {
  */
 export function getUnsafeApi(): any {
   return unsafeApi
+}
+
+/**
+ * Fetch chain properties (token decimals, symbol, block time, min provider stake).
+ * Returns runtime-derived values instead of hardcoded constants.
+ */
+export async function getChainProperties(): Promise<{
+  tokenDecimals: number
+  tokenSymbol: string
+  blockTimeMs: number
+  minProviderStake: bigint
+}> {
+  // Defaults matching the current runtime
+  let tokenDecimals = 12
+  let tokenSymbol = 'UNIT'
+  let blockTimeMs = 6000
+  let minProviderStake = 1_000_000_000_000_000n // 1000 tokens at 12 decimals
+
+  if (polkadotApi) {
+    try {
+      const props = await polkadotApi.rpc.system.properties()
+      const decimals = props.tokenDecimals.unwrapOr(undefined)
+      if (decimals && decimals.length > 0) tokenDecimals = decimals[0]!.toNumber()
+      const symbols = props.tokenSymbol.unwrapOr(undefined)
+      if (symbols && symbols.length > 0) tokenSymbol = symbols[0]!.toString()
+    } catch { /* use defaults */ }
+
+    try {
+      const minStake = (polkadotApi.consts.storageProvider as any).minProviderStake
+      if (minStake) minProviderStake = BigInt(minStake.toString())
+    } catch { /* use default */ }
+
+    try {
+      const expectedBlockTime = (polkadotApi.consts as any).timestamp?.minimumPeriod
+      if (expectedBlockTime) blockTimeMs = Number(expectedBlockTime.toString()) * 2
+    } catch { /* use default */ }
+  }
+
+  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,12 +338,17 @@ async function signAndSubmitTx(
 
     const startSubmission = async () => {
       try {
+        // Use on-chain nonce (nonce: -1) with a tip so the tx replaces any
+        // stuck tx at the same nonce. Without a tip, re-submitting the same
+        // nonce gets rejected as "priority too low" (error 1014).
+        const opts = { nonce: -1 as any, tip: 1 }
+
         if ('keypair' in signerInfo) {
-          unsub = await tx.signAndSend(signerInfo.keypair, { nonce: -1 }, callback)
+          unsub = await tx.signAndSend(signerInfo.keypair, opts, callback)
         } else {
           unsub = await tx.signAndSend(
             signerInfo.address,
-            { signer: signerInfo.signer, nonce: -1 },
+            { signer: signerInfo.signer, ...opts },
             callback
           )
         }
@@ -316,7 +360,19 @@ async function signAndSubmitTx(
       }
     }
 
-    startSubmission()
+    // Timeout after 120s so the spinner doesn't hang forever
+    const txTimeout = setTimeout(() => {
+      cleanup()
+      if (!resolved) {
+        resolved = true
+        reject(new Error(`${description} timed out — transaction may still be pending.`))
+      }
+    }, 60_000)
+
+    startSubmission().finally(() => {
+      // startSubmission itself may reject synchronously — clear timeout if so
+      if (resolved) clearTimeout(txTimeout)
+    })
   })
 }
 
@@ -330,6 +386,7 @@ export interface OnChainProviderInfo {
   usedCapacity?: bigint
   activeBuckets: number
   registeredAt: number
+  multiaddr?: string
 }
 
 export interface OnChainProviderSettings {
@@ -354,6 +411,16 @@ export interface OnChainAgreement {
   endBlock: number
   isPrimary: boolean
   status: 'active' | 'expired' | 'terminated'
+  paymentLocked: bigint
+}
+
+export interface OnChainAgreementRequest {
+  bucketId: number
+  requester: string
+  maxBytes: bigint
+  paymentLocked: bigint
+  duration: number
+  expiresAt: number
 }
 
 export interface OnChainCheckpoint {
@@ -372,8 +439,42 @@ export interface OnChainChallenge {
   provider: string
   leafIndex: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
+  challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   createdAt: number
   deadline: number
+}
+
+export interface OnChainBucketMember {
+  account: string
+  role: 'Admin' | 'Writer' | 'Reader'
+}
+
+export interface OnChainBucketSnapshot {
+  mmrRoot: string
+  startSeq: number
+  leafCount: number
+  checkpointBlock: number
+}
+
+export interface OnChainCheckpointConfig {
+  interval: number
+  gracePeriod: number
+  enabled: boolean
+}
+
+export interface OnChainBucketDetails {
+  bucketId: number
+  members: OnChainBucketMember[]
+  frozenStartSeq: number | null
+  minProviders: number
+  primaryProviders: string[]
+  snapshot: OnChainBucketSnapshot | null
+  historicalRoots: Array<{ position: number; root: string }>
+  totalSnapshots: number
+  checkpointConfig: OnChainCheckpointConfig | null
+  lastCheckpointWindow: number | null
+  checkpointPoolBalance: bigint
+  checkpointReward: bigint
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -411,28 +512,44 @@ export async function getProviderData(
 
     console.log('Provider data:', provider)
 
-    const info: OnChainProviderInfo = {
-      stake: BigInt(provider.stake?.toString() || '0'),
-      capacity: provider.capacity ? BigInt(provider.capacity.toString()) : undefined,
-      usedCapacity: provider.used_capacity ? BigInt(provider.used_capacity.toString()) : undefined,
-      activeBuckets: provider.active_buckets || 0,
-      registeredAt: provider.registered_at || 0,
+    // Decode multiaddr bytes to string
+    let multiaddr: string | undefined
+    if (provider.multiaddr) {
+      try {
+        const bytes = provider.multiaddr instanceof Uint8Array
+          ? provider.multiaddr
+          : new Uint8Array(provider.multiaddr)
+        multiaddr = new TextDecoder().decode(bytes)
+      } catch {
+        // Ignore decode errors
+      }
     }
 
-    const settings: OnChainProviderSettings | null = provider.settings
+    const info: OnChainProviderInfo = {
+      stake: BigInt(provider.stake?.toString() || '0'),
+      capacity: provider.settings?.max_capacity ? BigInt(provider.settings.max_capacity.toString()) : undefined,
+      usedCapacity: provider.committed_bytes ? BigInt(provider.committed_bytes.toString()) : undefined,
+      activeBuckets: provider.stats?.agreements_total || 0,
+      registeredAt: provider.stats?.registered_at || 0,
+      multiaddr,
+    }
+
+    const s = provider.settings
+    const settings: OnChainProviderSettings | null = s
       ? {
-          minDuration: provider.settings.min_duration || 0,
-          maxDuration: provider.settings.max_duration || 0,
-          pricePerByte: BigInt(provider.settings.price_per_byte?.toString() || '0'),
-          acceptingPrimary: provider.settings.accepting_primary ?? false,
-          acceptingReplica: provider.settings.accepting_replica ?? false,
-          replicaSyncPrice: provider.settings.replica_sync_price
-            ? BigInt(provider.settings.replica_sync_price.toString())
+          minDuration: Number(s.min_duration ?? s.minDuration ?? 0),
+          maxDuration: Number(s.max_duration ?? s.maxDuration ?? 0),
+          pricePerByte: BigInt((s.price_per_byte ?? s.pricePerByte ?? 0).toString()),
+          acceptingPrimary: s.accepting_primary ?? s.acceptingPrimary ?? false,
+          acceptingReplica: s.accepting_replica ?? s.acceptingReplica ?? false,
+          replicaSyncPrice: (s.replica_sync_price ?? s.replicaSyncPrice)
+            ? BigInt((s.replica_sync_price ?? s.replicaSyncPrice).toString())
             : null,
-          acceptingExtensions: provider.settings.accepting_extensions ?? false,
-          maxCapacity: BigInt(provider.settings.max_capacity?.toString() || '0'),
+          acceptingExtensions: s.accepting_extensions ?? s.acceptingExtensions ?? false,
+          maxCapacity: BigInt((s.max_capacity ?? s.maxCapacity ?? 0).toString()),
         }
       : null
+    console.log('[settings] Parsed settings:', JSON.stringify(settings, (_, v) => typeof v === 'bigint' ? v.toString() : v))
 
     if (!settings) return null
 
@@ -478,50 +595,109 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
   if (!client || !unsafeApi) throw new Error('Not connected to chain')
 
   try {
-    // Query agreements from storage
-    // The storage structure depends on the pallet design
     const agreements: OnChainAgreement[] = []
 
-    // Try to get agreements from Agreements storage map
     try {
-      const entries = await unsafeApi.query.StorageProvider.Agreements.getEntries()
+      // StorageAgreements is DoubleMap<BucketId, AccountId, StorageAgreement>
+      const entries = await unsafeApi.query.StorageProvider.StorageAgreements.getEntries()
       const currentBlock = blockNumber$.getValue() || 0
 
-      for (const [key, value] of entries) {
+      console.log('[agreements] Got', entries.length, 'StorageAgreements entries, filtering for', address)
+
+      for (const entry of entries) {
+        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
+        console.log('[agreements] Entry key:', JSON.stringify(key, (_, v) => typeof v === 'bigint' ? v.toString() : v), 'value:', JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v))
         if (!value) continue
 
-        // Check if this agreement involves our provider
-        const agreementProvider = value.provider?.toString()
-        if (agreementProvider !== address) continue
+        // key: [bucketId, provider]
+        const bucketId = Number(key[0]) || 0
+        const provider = key[1]?.toString() || ''
 
-        const endBlock = value.end_block || 0
+        // Filter by our provider
+        if (provider !== address) continue
+
+        const expiresAt = value.expires_at || 0
         let status: 'active' | 'expired' | 'terminated' = 'active'
-        if (value.terminated) {
+        if (value.extensions_blocked) {
           status = 'terminated'
-        } else if (currentBlock > endBlock) {
+        } else if (currentBlock > expiresAt && expiresAt > 0) {
           status = 'expired'
         }
 
+        // Determine if primary from role enum
+        const role = value.role
+        const isPrimary = role?.type === 'Primary' || role?.tag === 'Primary' ||
+          (typeof role === 'string' && role === 'Primary') ||
+          (!role?.type && !role?.tag) // default to primary if unknown
+
         agreements.push({
-          id: key[0] || 0,
-          bucketId: value.bucket_id || 0,
-          provider: agreementProvider,
-          user: value.user?.toString() || '',
+          id: bucketId,
+          bucketId,
+          provider,
+          user: value.owner?.toString() || '',
           maxBytes: BigInt(value.max_bytes?.toString() || '0'),
           pricePerByte: BigInt(value.price_per_byte?.toString() || '0'),
-          startBlock: value.start_block || 0,
-          endBlock,
-          isPrimary: value.is_primary ?? true,
+          paymentLocked: BigInt(value.payment_locked?.toString() || '0'),
+          startBlock: value.started_at || 0,
+          endBlock: expiresAt,
+          isPrimary,
           status,
         })
       }
     } catch (e) {
-      console.warn('Could not query agreements:', e)
+      console.warn('Could not query StorageAgreements:', e)
     }
 
     return agreements
   } catch (error) {
     console.error('Error fetching provider agreements:', error)
+    return []
+  }
+}
+
+/**
+ * Get pending agreement requests for a provider
+ */
+export async function getAgreementRequests(address: string): Promise<OnChainAgreementRequest[]> {
+  if (!client || !unsafeApi) throw new Error('Not connected to chain')
+
+  try {
+    const requests: OnChainAgreementRequest[] = []
+
+    try {
+      // AgreementRequests is a DoubleMap: provider -> bucket_id -> request
+      // Fetch all entries and filter by provider, same pattern as getProviderAgreements
+      const entries = await unsafeApi.query.StorageProvider.AgreementRequests.getEntries()
+
+      console.log('[agreementRequests] Got', entries.length, 'AgreementRequests entries, filtering for', address)
+
+      for (const entry of entries) {
+        const { keyArgs: key, value } = entry as { keyArgs: any[]; value: any }
+        console.log('[agreementRequests] Entry key:', JSON.stringify(key, (_, v) => typeof v === 'bigint' ? v.toString() : v), 'value:', JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v))
+        if (!value) continue
+
+        // key structure for full getEntries(): [provider, bucketId]
+        const provider = key[0]?.toString()
+        if (provider !== address) continue
+
+        const bucketId = Number(key[1]) || 0
+
+        requests.push({
+          bucketId,
+          requester: value.requester?.toString() || '',
+          maxBytes: BigInt(value.max_bytes?.toString() || '0'),
+          paymentLocked: BigInt(value.payment_locked?.toString() || '0'),
+          duration: value.duration || 0,
+          expiresAt: value.expires_at || 0,
+        })
+      }
+    } catch (e) {
+      console.warn('Could not query agreement requests:', e)
+    }
+
+    return requests
+  } catch (error) {
+    console.error('Error fetching agreement requests:', error)
     return []
   }
 }
@@ -539,18 +715,23 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     const agreements = await getProviderAgreements(address)
     const bucketIds = [...new Set(agreements.map((a) => a.bucketId))]
 
-    // Query checkpoints for each bucket
+    // Query checkpoints from bucket snapshot field (use @polkadot/api to avoid PAPI incompatibility)
     for (const bucketId of bucketIds) {
       try {
-        const snapshot = await unsafeApi.query.StorageProvider.BucketSnapshots.getValue(bucketId)
-        if (snapshot) {
+        if (!polkadotApi) continue
+        const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
+        if ((bucketOpt as any).isNone) continue
+        const bucket = (bucketOpt as any).unwrap()
+        const snap = (bucket as any).snapshot
+        if (snap && !snap.isNone) {
+          const s = snap.isNone === undefined ? snap : snap.unwrap()
           checkpoints.push({
             bucketId,
-            mmrRoot: snapshot.mmr_root?.toString() || '0x',
-            leafCount: snapshot.leaf_count || 0,
-            submittedAt: snapshot.submitted_at || 0,
-            blockNumber: snapshot.block_number || 0,
-            providers: snapshot.providers?.map((p: any) => p.toString()) || [],
+            mmrRoot: s.mmrRoot?.toHex?.() || s.mmr_root?.toString() || '0x',
+            leafCount: Number(s.leafCount?.toNumber?.() ?? s.leaf_count ?? 0),
+            submittedAt: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+            blockNumber: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+            providers: (bucket as any).primaryProviders?.map((p: any) => p.toString()) || [],
           })
         }
       } catch (e) {
@@ -566,54 +747,165 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
 }
 
 /**
+ * Get detailed bucket information for the given bucket IDs.
+ * Combines Bucket struct data with checkpoint config, pool, and rewards.
+ */
+export async function getBucketDetails(
+  bucketIds: number[],
+  providerAddress: string
+): Promise<OnChainBucketDetails[]> {
+  if (!polkadotApi || !unsafeApi) throw new Error('Not connected to chain')
+
+  const details: OnChainBucketDetails[] = []
+
+  for (const bucketId of bucketIds) {
+    try {
+      // Query Bucket struct via @polkadot/api (handles Option/BoundedVec correctly)
+      const bucketOpt = await polkadotApi.query.storageProvider.buckets(bucketId)
+      if ((bucketOpt as any).isNone) continue
+      const bucket = (bucketOpt as any).unwrap()
+
+      // Parse members
+      const members: OnChainBucketMember[] = []
+      const rawMembers = (bucket as any).members || []
+      for (const m of rawMembers) {
+        const roleStr = m.role?.toString?.() || m.role?.type || 'Reader'
+        members.push({
+          account: m.account?.toString() || '',
+          role: roleStr as 'Admin' | 'Writer' | 'Reader',
+        })
+      }
+
+      // Parse snapshot
+      let snapshot: OnChainBucketSnapshot | null = null
+      const snap = (bucket as any).snapshot
+      if (snap && !snap.isNone) {
+        const s = snap.isNone === undefined ? snap : snap.unwrap()
+        snapshot = {
+          mmrRoot: s.mmrRoot?.toHex?.() || s.mmr_root?.toString?.() || '0x',
+          startSeq: Number(s.startSeq?.toNumber?.() ?? s.start_seq ?? 0),
+          leafCount: Number(s.leafCount?.toNumber?.() ?? s.leaf_count ?? 0),
+          checkpointBlock: Number(s.checkpointBlock?.toNumber?.() ?? s.checkpoint_block ?? 0),
+        }
+      }
+
+      // Parse primary providers
+      const primaryProviders = ((bucket as any).primaryProviders || (bucket as any).primary_providers || [])
+        .map((p: any) => p.toString())
+
+      // Parse historical roots (skip zero entries)
+      const historicalRoots: Array<{ position: number; root: string }> = []
+      const rawRoots = (bucket as any).historicalRoots || (bucket as any).historical_roots || []
+      for (const entry of rawRoots) {
+        const pos = Number(entry[0]?.toNumber?.() ?? entry[0] ?? 0)
+        const root = entry[1]?.toHex?.() || entry[1]?.toString?.() || '0x'
+        if (pos > 0 || (root !== '0x' && !root.match(/^0x0+$/))) {
+          historicalRoots.push({ position: pos, root })
+        }
+      }
+
+      // Checkpoint sub-storage via PAPI unsafeApi
+      let checkpointConfig: OnChainCheckpointConfig | null = null
+      try {
+        const config = await unsafeApi.query.StorageProvider.CheckpointConfigs.getValue(bucketId)
+        if (config) {
+          checkpointConfig = {
+            interval: Number(config.interval ?? 0),
+            gracePeriod: Number(config.grace_period ?? config.gracePeriod ?? 0),
+            enabled: config.enabled ?? true,
+          }
+        }
+      } catch { /* not configured */ }
+
+      let lastCheckpointWindow: number | null = null
+      try {
+        const val = await unsafeApi.query.StorageProvider.LastCheckpointWindow.getValue(bucketId)
+        lastCheckpointWindow = val != null ? Number(val) : null
+      } catch { /* not set */ }
+
+      let checkpointPoolBalance = 0n
+      try {
+        const pool = await unsafeApi.query.StorageProvider.CheckpointPool.getValue(bucketId)
+        checkpointPoolBalance = pool != null ? BigInt(pool.toString()) : 0n
+      } catch { /* no pool */ }
+
+      let checkpointReward = 0n
+      try {
+        const reward = await unsafeApi.query.StorageProvider.CheckpointRewards.getValue(
+          bucketId,
+          providerAddress
+        )
+        checkpointReward = reward != null ? BigInt(reward.toString()) : 0n
+      } catch { /* no reward */ }
+
+      details.push({
+        bucketId,
+        members,
+        frozenStartSeq: (bucket as any).frozenStartSeq?.toNumber?.() ??
+          ((bucket as any).frozen_start_seq != null ? Number((bucket as any).frozen_start_seq) : null),
+        minProviders: Number((bucket as any).minProviders?.toNumber?.() ?? (bucket as any).min_providers ?? 0),
+        primaryProviders,
+        snapshot,
+        historicalRoots,
+        totalSnapshots: Number((bucket as any).totalSnapshots?.toNumber?.() ?? (bucket as any).total_snapshots ?? 0),
+        checkpointConfig,
+        lastCheckpointWindow,
+        checkpointPoolBalance,
+        checkpointReward,
+      })
+    } catch (e) {
+      console.warn(`Could not query bucket details for bucket ${bucketId}:`, e)
+    }
+  }
+
+  return details
+}
+
+/**
  * Get challenges for a provider
  */
 export async function getProviderChallenges(address: string): Promise<OnChainChallenge[]> {
   if (!client || !unsafeApi) throw new Error('Not connected to chain')
 
+  const challenges = new Map<string, OnChainChallenge>() // keyed by "deadline-index"
+  const currentBlock = blockNumber$.getValue() || 0
+
+  // Check storage for any still-pending challenges.
+  // Note: responded/slashed challenges are removed from storage — those are
+  // captured by the real-time subscribeToChallengeEvents() subscription instead.
   try {
-    const challenges: OnChainChallenge[] = []
-
-    try {
-      const entries = await unsafeApi.query.StorageProvider.Challenges.getEntries()
-      const currentBlock = blockNumber$.getValue() || 0
-
-      for (const [key, value] of entries) {
-        if (!value) continue
-
-        const challengeProvider = value.provider?.toString()
+    const entries = await unsafeApi.query.StorageProvider.Challenges.getEntries()
+    for (const entry of entries) {
+      const { keyArgs, value: challengeVec } = entry as { keyArgs: any[]; value: any }
+      if (!challengeVec) continue
+      const deadline = Number(keyArgs[0]) || 0
+      const items = Array.isArray(challengeVec) ? challengeVec : [challengeVec]
+      for (let idx = 0; idx < items.length; idx++) {
+        const ch = items[idx]
+        if (!ch) continue
+        const challengeProvider = ch.provider?.toString()
         if (challengeProvider !== address) continue
-
-        const deadline = value.deadline || 0
-        let status: 'pending' | 'responded' | 'slashed' | 'expired' = 'pending'
-        if (value.responded) {
-          status = 'responded'
-        } else if (value.slashed) {
-          status = 'slashed'
-        } else if (currentBlock > deadline) {
-          status = 'expired'
+        const key = `${deadline}-${idx}`
+        if (!challenges.has(key)) {
+          challenges.set(key, {
+            id: idx,
+            bucketId: Number(ch.bucket_id ?? 0),
+            challenger: ch.challenger?.toString() || '',
+            provider: challengeProvider,
+            leafIndex: Number(ch.leaf_index ?? 0),
+            status: currentBlock > deadline ? 'expired' : 'pending',
+            createdAt: 0,
+            deadline,
+          })
         }
-
-        challenges.push({
-          id: key[0] || 0,
-          bucketId: value.bucket_id || 0,
-          challenger: value.challenger?.toString() || '',
-          provider: challengeProvider,
-          leafIndex: value.leaf_index || 0,
-          status,
-          createdAt: value.created_at || 0,
-          deadline,
-        })
       }
-    } catch (e) {
-      console.warn('Could not query challenges:', e)
     }
-
-    return challenges
-  } catch (error) {
-    console.error('Error fetching challenges:', error)
-    return []
+  } catch (e) {
+    console.warn('Could not query challenge storage:', e)
   }
+
+  // Sort by deadline descending (most recent first)
+  return Array.from(challenges.values()).sort((a, b) => b.deadline - a.deadline)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -692,15 +984,14 @@ export async function submitUpdateSettings(
   const palletSettings = {
     min_duration: settings.minDuration,
     max_duration: settings.maxDuration,
-    price_per_byte: settings.pricePerByte.toString(),
+    price_per_byte: settings.pricePerByte,
     accepting_primary: settings.acceptingPrimary,
-    // replica_sync_price: Some(value) if accepting replicas, None otherwise
     replica_sync_price:
       settings.acceptingReplica && settings.replicaSyncPrice
-        ? settings.replicaSyncPrice.toString()
+        ? settings.replicaSyncPrice
         : null,
     accepting_extensions: settings.acceptingExtensions,
-    max_capacity: settings.maxCapacity.toString(),
+    max_capacity: Number(settings.maxCapacity),
   }
 
   console.log('Submitting update_provider_settings with @polkadot/api:', palletSettings)
@@ -710,6 +1001,29 @@ export async function submitUpdateSettings(
   await signAndSubmitTx(tx, signer, 'Update settings', onProgress)
 
   console.log('Settings updated successfully')
+}
+
+/**
+ * Submit update_provider_multiaddr extrinsic using @polkadot/api
+ */
+export async function submitUpdateMultiaddr(
+  multiaddr: string,
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback
+): Promise<void> {
+  if (!polkadotApi) throw new Error('Not connected to chain')
+
+  const multiaddrBytes = new TextEncoder().encode(multiaddr)
+
+  console.log('Submitting update_provider_multiaddr with @polkadot/api:', multiaddr)
+
+  const tx = polkadotApi.tx.storageProvider.updateProviderMultiaddr(
+    Array.from(multiaddrBytes)
+  )
+
+  await signAndSubmitTx(tx, signer, 'Update multiaddr', onProgress)
+
+  console.log('Multiaddr updated successfully')
 }
 
 /**
@@ -793,33 +1107,138 @@ export type ProviderEvent =
   | { type: 'ProviderSlashed'; provider: string; amount: bigint }
 
 /**
- * Subscribe to provider-related events
- *
- * Note: Full event parsing requires runtime metadata.
- * This is a placeholder that logs finalized blocks.
+ * Subscribe to challenge events in real-time via finalizedBlock$.
+ * Processes each finalized block's events while the block is still pinned.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToChallengeEvents(
+  address: string,
+  onChallenge: (challenge: OnChainChallenge) => void
+): () => void {
+  if (!client || !unsafeApi) {
+    console.warn('Cannot subscribe to challenge events: not connected')
+    return () => {}
+  }
+
+  const api = unsafeApi
+  const subscription = client.finalizedBlock$.subscribe({
+    next: async (block) => {
+      try {
+        const rawEvents = await api.query.System.Events.getValue({ at: block.hash })
+        const events = Array.isArray(rawEvents) ? rawEvents : (rawEvents as any)?.value ?? []
+
+        // Decode extrinsics to detect challenge type from call name.
+        // Try decoding call data from the end of each extrinsic (works for
+        // both signed and unsigned since call data is the tail).
+        const extrinsicTypes: Map<number, string> = new Map()
+        try {
+          const body = await client!.getBlockBody(block.hash)
+          for (let i = 0; i < body.length; i++) {
+            try {
+              const raw = body[i]
+              const bytes = raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw))
+              // Skip compact length prefix
+              const mode = bytes[0]! & 0x03
+              const lenSize = mode === 0 ? 1 : mode === 1 ? 2 : mode === 2 ? 4 : 1 + ((bytes[0]! >> 2) + 4)
+              // Try slices starting from the longest (right after signature) to
+              // shortest. Longest-first avoids false positives like System.remark
+              // which matches almost any short byte sequence.
+              const minOffset = lenSize + 1 + 1 + 32 + 1 + 64 // preamble+addrType+addr+sigType+sig
+              for (let off = minOffset; off < bytes.length - 2; off++) {
+                try {
+                  const tx = await api.txFromCallData(bytes.slice(off))
+                  const pallet = tx.decodedCall?.type || ''
+                  const callName = (tx.decodedCall?.value as any)?.type || ''
+                  if (pallet === 'StorageProvider') {
+                    console.log(`[challenges] Decoded ext #${i}: ${pallet}.${callName}`)
+                    if (callName === 'challenge_offchain') extrinsicTypes.set(i, 'offchain')
+                    else if (callName === 'challenge_checkpoint') extrinsicTypes.set(i, 'checkpoint')
+                  }
+                  break // first successful decode is the correct one
+                } catch { /* try next offset */ }
+              }
+            } catch { /* skip */ }
+          }
+        } catch { /* body not available */ }
+
+        for (const record of events) {
+          const event = (record as any).event
+          if (!event || event.type !== 'StorageProvider') continue
+          const ev = event.value
+          if (!ev) continue
+
+          // Get extrinsic index from event phase for type detection
+          const phase = (record as any).phase
+          const extIdx = phase?.type === 'ApplyExtrinsic' ? Number(phase.value) : -1
+
+          if (ev.type === 'ChallengeCreated') {
+            const d = ev.value
+            const provider = d.provider?.toString()
+            if (provider !== address) continue
+            const cid = d.challenge_id
+            // Determine challenge type from the extrinsic that created it
+            const challengeType = extrinsicTypes.get(extIdx) as 'offchain' | 'checkpoint' | undefined
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: Number(d.bucket_id ?? 0),
+              challenger: d.challenger?.toString() || '',
+              provider,
+              leafIndex: Number(d.leaf_index ?? 0),
+              status: 'pending',
+              challengeType: challengeType || 'unknown',
+              createdAt: block.number,
+              deadline: Number(cid.deadline ?? d.respond_by ?? 0),
+            })
+          } else if (ev.type === 'ChallengeDefended') {
+            const d = ev.value
+            if (d.provider?.toString() !== address) continue
+            const cid = d.challenge_id
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: 0,
+              challenger: '',
+              provider: address,
+              leafIndex: 0,
+              status: 'responded',
+              createdAt: 0,
+              deadline: Number(cid.deadline ?? 0),
+            })
+          } else if (ev.type === 'ChallengeSlashed') {
+            const d = ev.value
+            if (d.provider?.toString() !== address) continue
+            const cid = d.challenge_id
+            onChallenge({
+              id: Number(cid.index ?? 0),
+              bucketId: 0,
+              challenger: '',
+              provider: address,
+              leafIndex: 0,
+              status: 'slashed',
+              createdAt: 0,
+              deadline: Number(cid.deadline ?? 0),
+            })
+          }
+        }
+      } catch {
+        // Block unpinned or events unavailable — skip
+      }
+    },
+    error: (err) => {
+      console.error('Challenge event subscription error:', err)
+    },
+  })
+
+  return () => subscription.unsubscribe()
+}
+
+/**
+ * Subscribe to provider-related events (stub for general events)
  */
 export function subscribeToProviderEvents(
   _address: string,
   _callback: (event: ProviderEvent) => void
 ): () => void {
-  if (!client) {
-    console.warn('Cannot subscribe to events: not connected')
-    return () => {}
-  }
-
-  // Subscribe to finalized blocks
-  // Note: Event parsing requires knowing the runtime metadata structure
-  // For now, we log the block and would need to query events separately
-  const subscription = client.finalizedBlock$.subscribe({
-    next: (block) => {
-      console.log('New finalized block:', block.number)
-      // In a full implementation, we would query events from the block
-      // and parse them using the chain metadata
-    },
-    error: (err) => {
-      console.error('Event subscription error:', err)
-    },
-  })
-
-  return () => subscription.unsubscribe()
+  if (!client) return () => {}
+  // General event subscription — challenge events are handled by subscribeToChallengeEvents
+  return () => {}
 }

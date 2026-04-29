@@ -33,6 +33,12 @@ pub mod pallet {
     pub type S3BucketInfoOf<T> =
         S3BucketInfo<<T as frame_system::Config>::AccountId, BlockNumberFor<T>>;
 
+    /// Balance type (inherited from the storage provider pallet's Currency).
+    pub type BalanceOf<T> =
+        <<T as pallet_storage_provider::Config>::Currency as frame_support::traits::Currency<
+            <T as frame_system::Config>::AccountId,
+        >>::Balance;
+
     #[pallet::pallet]
     pub struct Pallet<T>(_);
 
@@ -149,6 +155,10 @@ pub mod pallet {
         ContentTypeTooLong,
         /// Layer 0 bucket creation failed.
         Layer0BucketCreationFailed,
+        /// No storage providers available for the requested capacity.
+        NoProvidersAvailable,
+        /// Failed to request storage agreement with provider.
+        AgreementRequestFailed,
     }
 
     #[pallet::call]
@@ -458,6 +468,105 @@ pub mod pallet {
                 src_key,
                 dst_bucket_id,
                 dst_key,
+            });
+
+            Ok(())
+        }
+
+        /// Create an S3 bucket with automatic provider discovery and agreement request.
+        ///
+        /// This atomically creates a Layer 0 bucket, finds an available provider,
+        /// and requests a primary storage agreement — all in a single transaction.
+        ///
+        /// Parameters:
+        /// - `name`: S3 bucket name (3-63 chars, lowercase alphanumeric + hyphens)
+        /// - `max_capacity`: Maximum storage capacity in bytes
+        /// - `duration`: Storage duration in blocks
+        /// - `max_payment`: Maximum payment for the storage agreement
+        #[pallet::call_index(5)]
+        #[pallet::weight(Weight::from_parts(150_000_000, 0))]
+        pub fn create_s3_bucket_with_storage(
+            origin: OriginFor<T>,
+            name: Vec<u8>,
+            max_capacity: u64,
+            duration: BlockNumberFor<T>,
+            max_payment: BalanceOf<T>,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Validate bucket name
+            ensure!(validate_bucket_name(&name), Error::<T>::InvalidBucketName);
+
+            let bounded_name: BucketName = name
+                .clone()
+                .try_into()
+                .map_err(|_| Error::<T>::InvalidBucketName)?;
+
+            // Check name uniqueness
+            ensure!(
+                !BucketNameToId::<T>::contains_key(&bounded_name),
+                Error::<T>::BucketNameExists
+            );
+
+            // Check user bucket limit
+            let mut user_buckets = UserBuckets::<T>::get(&who);
+            ensure!(
+                user_buckets.len() < T::MaxBucketsPerUser::get() as usize,
+                Error::<T>::TooManyBuckets
+            );
+
+            // Step 1: Create Layer 0 bucket
+            let layer0_bucket_id =
+                pallet_storage_provider::Pallet::<T>::create_bucket_internal(&who, 1)
+                    .map_err(|_| Error::<T>::Layer0BucketCreationFailed)?;
+
+            // Step 2: Find an available provider
+            let available_providers =
+                pallet_storage_provider::Pallet::<T>::query_available_providers(max_capacity, true);
+            ensure!(
+                !available_providers.is_empty(),
+                Error::<T>::NoProvidersAvailable
+            );
+            let provider = &available_providers[0];
+
+            // Step 3: Request primary agreement
+            pallet_storage_provider::Pallet::<T>::request_primary_agreement_internal(
+                &who,
+                layer0_bucket_id,
+                provider,
+                max_capacity,
+                duration,
+                max_payment,
+            )
+            .map_err(|_| Error::<T>::AgreementRequestFailed)?;
+
+            // Step 4: Create S3 metadata
+            let s3_bucket_id = NextS3BucketId::<T>::get();
+            NextS3BucketId::<T>::put(s3_bucket_id.saturating_add(1));
+
+            let bucket_info = S3BucketInfo {
+                s3_bucket_id,
+                name: bounded_name.clone(),
+                layer0_bucket_id,
+                owner: who.clone(),
+                created_at: frame_system::Pallet::<T>::block_number(),
+                object_count: 0,
+                total_size: 0,
+            };
+
+            S3Buckets::<T>::insert(s3_bucket_id, bucket_info);
+            BucketNameToId::<T>::insert(&bounded_name, s3_bucket_id);
+
+            user_buckets
+                .try_push(s3_bucket_id)
+                .map_err(|_| Error::<T>::TooManyBuckets)?;
+            UserBuckets::<T>::insert(&who, user_buckets);
+
+            Self::deposit_event(Event::S3BucketCreated {
+                s3_bucket_id,
+                name,
+                layer0_bucket_id,
+                owner: who,
             });
 
             Ok(())

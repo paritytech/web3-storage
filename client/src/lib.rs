@@ -99,6 +99,7 @@ pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
 pub mod discovery;
+pub mod encryption;
 pub mod event_subscription;
 pub mod provider;
 pub mod storage_user;
@@ -132,6 +133,9 @@ pub use provider::ProviderClient;
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
 
+// Encryption re-exports
+pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -145,6 +149,7 @@ type Error = ClientError;
 pub struct StorageClient {
     http: Client,
     base_url: String,
+    cipher: Option<Box<dyn Cipher>>,
 }
 
 impl StorageClient {
@@ -153,7 +158,19 @@ impl StorageClient {
         Self {
             http: Client::new(),
             base_url: base_url.into(),
+            cipher: None,
         }
+    }
+
+    /// Enable client-side encryption with a custom cipher (builder pattern).
+    pub fn with_encryption(mut self, cipher: Box<dyn Cipher>) -> Self {
+        self.cipher = Some(cipher);
+        self
+    }
+
+    /// Enable client-side encryption with an XChaCha20-Poly1305 key (builder pattern).
+    pub fn with_encryption_key(self, key: &EncryptionKey) -> Self {
+        self.with_encryption(Box::new(XChaCha20Poly1305Cipher::new(key)))
     }
 
     /// Upload data to the provider and return the data root.
@@ -163,8 +180,17 @@ impl StorageClient {
         data: &[u8],
         strategy: ChunkingStrategy,
     ) -> Result<H256, Error> {
+        // Encrypt data before chunking if encryption is enabled
+        let maybe_encrypted;
+        let upload_data = if let Some(cipher) = &self.cipher {
+            maybe_encrypted = cipher.encrypt(data)?;
+            &maybe_encrypted
+        } else {
+            data
+        };
+
         // Chunk the data
-        let chunks = Self::chunk_data(data, strategy);
+        let chunks = Self::chunk_data(upload_data, strategy);
 
         // Upload chunks (leaves)
         let chunk_hashes: Vec<H256> = chunks.iter().map(|chunk| blake2_256(chunk)).collect();
@@ -255,10 +281,17 @@ impl StorageClient {
         // Trim to requested range
         let start = (offset % (256 * 1024)) as usize;
         let end = start + length as usize;
-        if end <= data.len() {
-            Ok(data[start..end].to_vec())
+        let trimmed = if end <= data.len() {
+            data[start..end].to_vec()
         } else {
-            Ok(data[start..].to_vec())
+            data[start..].to_vec()
+        };
+
+        // Decrypt after reassembly if encryption is enabled
+        if let Some(cipher) = &self.cipher {
+            cipher.decrypt(&trimmed)
+        } else {
+            Ok(trimmed)
         }
     }
 
@@ -490,7 +523,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err("invalid hex length");
     }
 

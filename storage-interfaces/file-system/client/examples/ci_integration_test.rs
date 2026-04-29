@@ -13,7 +13,7 @@
 //! Run via justfile (recommended): just fs-demo-ci
 
 use file_system_client::FileSystemClient;
-use file_system_primitives::{CommitStrategy, DirectoryEntry};
+use file_system_primitives::DirectoryEntry;
 use std::env;
 
 async fn list_and_verify(
@@ -75,7 +75,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             500,                   // 500 blocks duration
             1_000_000_000_000_000, // 1000 tokens payment (12 decimals)
             Some(1),               // 1 provider minimum
-            Some(CommitStrategy::Immediate),
         )
         .await?;
     println!("  Drive created: ID = {drive_id}");

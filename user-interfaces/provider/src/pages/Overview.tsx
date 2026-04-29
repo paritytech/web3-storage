@@ -158,7 +158,9 @@ function OverviewContent() {
               <CardTitle>Storage Capacity</CardTitle>
               <CardDescription>
                 {providerInfo
-                  ? `${formatBytes(providerInfo.usedCapacity)} used of ${formatBytes(providerInfo.capacity)}`
+                  ? providerInfo.capacity > 0
+                    ? `${formatBytes(providerInfo.usedCapacity)} used of ${formatBytes(providerInfo.capacity)}`
+                    : `${formatBytes(providerInfo.usedCapacity)} committed (no capacity limit set)`
                   : 'No capacity data'}
               </CardDescription>
             </div>

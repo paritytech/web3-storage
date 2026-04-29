@@ -95,6 +95,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxMultiaddrLength = ConstU32<128>;
     type MaxMembers = ConstU32<100>;
     type MaxPrimaryProviders = ConstU32<5>;
+    type MaxBucketsPerMember = ConstU32<100>;
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>;
     type ChallengeTimeout = ChallengeTimeout;
@@ -109,7 +110,7 @@ impl pallet_storage_provider::Config for Test {
 
 impl pallet_s3_registry::Config for Test {
     type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<10000>;
+    type MaxObjectsPerBucket = ConstU32<1000>;
 }
 
 /// Build test externalities.

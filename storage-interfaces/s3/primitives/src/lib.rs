@@ -6,7 +6,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::H256;
@@ -14,9 +13,6 @@ use sp_runtime::{traits::Get, BoundedVec};
 
 /// Maximum length for bucket names (S3 spec: 3-63 characters).
 pub const MAX_BUCKET_NAME_LENGTH: u32 = 63;
-
-/// Maximum length for object keys (S3 spec: up to 1024 bytes).
-pub const MAX_OBJECT_KEY_LENGTH: u32 = 1024;
 
 /// S3 bucket identifier.
 pub type S3BucketId = u64;
@@ -34,7 +30,7 @@ impl Get<u32> for MaxBucketNameLen {
     }
 }
 
-/// Maximum object key length (1024 bytes).
+/// Maximum object key length (1024 bytes, S3 spec).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
 pub struct MaxObjectKeyLen;
 impl Get<u32> for MaxObjectKeyLen {
@@ -43,25 +39,25 @@ impl Get<u32> for MaxObjectKeyLen {
     }
 }
 
-/// Maximum content type length (128 bytes).
+/// Maximum content type length (256 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
 pub struct MaxContentTypeLen;
 impl Get<u32> for MaxContentTypeLen {
+    fn get() -> u32 {
+        256
+    }
+}
+
+/// Maximum ETag length (128 bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
+pub struct MaxEtagLen;
+impl Get<u32> for MaxEtagLen {
     fn get() -> u32 {
         128
     }
 }
 
-/// Maximum ETag length (64 bytes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
-pub struct MaxEtagLen;
-impl Get<u32> for MaxEtagLen {
-    fn get() -> u32 {
-        64
-    }
-}
-
-/// Maximum number of metadata entries per object (16).
+/// Maximum number of user metadata entries per object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
 pub struct MaxMetadataEntries;
 impl Get<u32> for MaxMetadataEntries {
@@ -70,12 +66,12 @@ impl Get<u32> for MaxMetadataEntries {
     }
 }
 
-/// Maximum metadata key length (64 bytes).
+/// Maximum metadata key length (128 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen)]
 pub struct MaxMetadataKeyLen;
 impl Get<u32> for MaxMetadataKeyLen {
     fn get() -> u32 {
-        64
+        128
     }
 }
 
@@ -121,8 +117,8 @@ pub struct S3BucketInfo<AccountId, BlockNumber> {
     pub total_size: u64,
 }
 
-/// Metadata entry (key-value pair).
-#[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Debug, PartialEq, Eq, Default)]
+/// A single user metadata key-value pair stored on-chain.
+#[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Debug, PartialEq, Eq)]
 pub struct MetadataEntry {
     /// Metadata key.
     pub key: BoundedVec<u8, MaxMetadataKeyLen>,
@@ -133,69 +129,70 @@ pub struct MetadataEntry {
 /// Object metadata stored on-chain.
 #[derive(Clone, Encode, Decode, TypeInfo, MaxEncodedLen, Debug, PartialEq, Eq)]
 pub struct ObjectMetadata {
-    /// Content hash (data root from Layer 0).
+    /// Content identifier (blake2-256 hash of data).
     pub cid: H256,
-    /// Object size in bytes.
+    /// Size of the object in bytes.
     pub size: u64,
-    /// Last modified timestamp (Unix epoch seconds).
+    /// Last modified timestamp (block number as u64).
     pub last_modified: u64,
-    /// Content type (MIME type).
+    /// MIME content type.
     pub content_type: BoundedVec<u8, MaxContentTypeLen>,
-    /// ETag for S3 compatibility (CID hex string).
+    /// ETag (hex-encoded CID).
     pub etag: BoundedVec<u8, MaxEtagLen>,
-    /// User-defined metadata.
+    /// User-defined metadata entries.
     pub user_metadata: BoundedVec<MetadataEntry, MaxMetadataEntries>,
 }
 
-/// List objects parameters.
-#[derive(Clone, Encode, Decode, TypeInfo, Debug, PartialEq, Eq, Default)]
+/// Parameters for listing objects (S3 ListObjectsV2 style).
+#[cfg(feature = "std")]
+#[derive(Clone, Debug, Default)]
 pub struct ListObjectsParams {
-    /// Filter by prefix.
-    pub prefix: Option<Vec<u8>>,
-    /// Delimiter for grouping.
-    pub delimiter: Option<u8>,
-    /// Continuation token for pagination.
-    pub continuation_token: Option<Vec<u8>>,
-    /// Maximum keys to return.
+    /// Filter objects by key prefix.
+    pub prefix: Option<alloc::string::String>,
+    /// Delimiter for grouping keys into common prefixes.
+    pub delimiter: Option<alloc::string::String>,
+    /// Maximum number of keys to return.
     pub max_keys: Option<u32>,
-    /// Start after this key.
-    pub start_after: Option<Vec<u8>>,
+    /// Continuation token for pagination.
+    pub continuation_token: Option<alloc::string::String>,
 }
 
-/// Object info in list response.
-#[derive(Clone, Encode, Decode, TypeInfo, Debug, PartialEq, Eq)]
-pub struct ObjectInfo {
+/// Response from listing objects.
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct ListObjectsResponse {
+    /// Bucket name.
+    pub name: alloc::vec::Vec<u8>,
+    /// Prefix filter used.
+    pub prefix: Option<alloc::string::String>,
+    /// Delimiter used.
+    pub delimiter: Option<alloc::string::String>,
+    /// Maximum number of keys requested.
+    pub max_keys: u32,
+    /// Whether the result is truncated.
+    pub is_truncated: bool,
+    /// Token for fetching next page.
+    pub next_continuation_token: Option<alloc::string::String>,
+    /// Matching object entries.
+    pub contents: alloc::vec::Vec<ListObjectEntry>,
+    /// Common prefixes (when delimiter is used).
+    pub common_prefixes: alloc::vec::Vec<alloc::string::String>,
+    /// Number of keys returned.
+    pub key_count: u32,
+}
+
+/// A single object entry in a list response.
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct ListObjectEntry {
     /// Object key.
-    pub key: Vec<u8>,
-    /// Object size.
-    pub size: u64,
+    pub key: alloc::string::String,
     /// Last modified timestamp.
     pub last_modified: u64,
     /// ETag.
-    pub etag: Vec<u8>,
-}
-
-/// List objects response.
-#[derive(Clone, Encode, Decode, TypeInfo, Debug, PartialEq, Eq)]
-pub struct ListObjectsResponse {
-    /// Bucket name.
-    pub name: Vec<u8>,
-    /// Prefix used for filtering.
-    pub prefix: Option<Vec<u8>>,
-    /// Delimiter used.
-    pub delimiter: Option<u8>,
-    /// Maximum keys requested.
-    pub max_keys: u32,
-    /// Whether more results are available.
-    pub is_truncated: bool,
-    /// Token for next page.
-    pub next_continuation_token: Option<Vec<u8>>,
-    /// Objects matching the criteria.
-    pub contents: Vec<ObjectInfo>,
-    /// Common prefixes (for delimiter grouping).
-    pub common_prefixes: Vec<Vec<u8>>,
-    /// Number of keys returned.
-    pub key_count: u32,
+    pub etag: alloc::string::String,
+    /// Size in bytes.
+    pub size: u64,
 }
 
 /// S3 error types.
@@ -207,12 +204,8 @@ pub enum S3Error {
     NoSuchKey,
     /// Bucket already exists.
     BucketAlreadyExists,
-    /// Bucket not empty.
-    BucketNotEmpty,
     /// Invalid bucket name.
     InvalidBucketName,
-    /// Invalid object key.
-    InvalidObjectKey,
     /// Access denied.
     AccessDenied,
     /// Internal error.
@@ -230,8 +223,22 @@ pub fn compute_cid(data: &[u8]) -> H256 {
 
 /// Compute ETag from CID (hex string without 0x prefix).
 #[cfg(feature = "std")]
-pub fn compute_etag(cid: &H256) -> Vec<u8> {
+pub fn compute_etag(cid: &H256) -> alloc::vec::Vec<u8> {
     hex::encode(cid.as_bytes()).into_bytes()
+}
+
+/// Validate object key according to S3 naming rules.
+///
+/// Keys must be 1-1024 bytes, UTF-8, and not start with '/'.
+pub fn validate_object_key(key: &[u8]) -> bool {
+    if key.is_empty() || key.len() > 1024 {
+        return false;
+    }
+    // Must be valid UTF-8
+    if core::str::from_utf8(key).is_err() {
+        return false;
+    }
+    true
 }
 
 /// Validate bucket name according to S3 naming rules.
@@ -259,14 +266,6 @@ pub fn validate_bucket_name(name: &[u8]) -> bool {
     true
 }
 
-/// Validate object key.
-pub fn validate_object_key(key: &[u8]) -> bool {
-    if key.is_empty() || key.len() > 1024 {
-        return false;
-    }
-    !key.contains(&0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,13 +277,6 @@ mod tests {
         assert!(!validate_bucket_name(b"ab"));
         assert!(!validate_bucket_name(b"My-Bucket"));
         assert!(!validate_bucket_name(b"-bucket"));
-    }
-
-    #[test]
-    fn test_validate_object_key() {
-        assert!(validate_object_key(b"file.txt"));
-        assert!(validate_object_key(b"folder/file.txt"));
-        assert!(!validate_object_key(b""));
     }
 
     #[test]
