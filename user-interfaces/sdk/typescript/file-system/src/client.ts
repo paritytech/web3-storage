@@ -108,7 +108,7 @@ export class FileSystemClient {
 
     const result = await this.api!.tx.DriveRegistry.create_drive({
       name: options.name
-        ? Binary.fromBytes(new TextEncoder().encode(options.name))
+        ? Binary.fromText(options.name)
         : undefined,
       max_bytes: options.capacity,
       duration: options.duration,
@@ -136,9 +136,9 @@ export class FileSystemClient {
     return {
       driveId,
       owner: drive.owner,
-      name: drive.name ? new TextDecoder().decode(drive.name.asBytes()) : null,
+      name: drive.name ? new TextDecoder().decode(drive.name) : null,
       bucketId: drive.bucket_id,
-      rootCid: drive.root_cid ? this.toHex(drive.root_cid.asBytes()) : null,
+      rootCid: drive.root_cid ? this.toHex(drive.root_cid) : null,
       createdAt: drive.created_at,
       updatedAt: drive.updated_at,
     };

@@ -27,20 +27,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install shared dependencies
-        working-directory: user-interfaces
+      - name: Install Console UI dependencies
+        working-directory: user-interfaces/console-ui
         run: npm install
+
+      - name: Generate PAPI descriptors
+        working-directory: user-interfaces/console-ui
+        run: npx papi generate
 
       - name: Build Console UI
         working-directory: user-interfaces/console-ui
         env:
           GITHUB_PAGES: "true"
-        run: |
-          npm install
-          npx papi generate || true
-          npm run build
+        run: npm run build
 
-      - name: Build Provider Dashboard
+      - name: Install and build Provider Dashboard
         working-directory: user-interfaces/provider
         env:
           GITHUB_PAGES: "true"
@@ -48,7 +49,7 @@ jobs:
           npm install
           npm run build
 
-      - name: Build Drive UI
+      - name: Install and build Drive UI
         working-directory: user-interfaces/drive-ui
         env:
           GITHUB_PAGES: "true"
