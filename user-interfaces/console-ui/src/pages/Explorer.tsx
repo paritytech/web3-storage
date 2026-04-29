@@ -37,15 +37,12 @@ function serializeArgs(obj: unknown): Record<string, unknown> {
 
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (value && typeof value === "object" && "asHex" in value && typeof (value as any).asHex === "function") {
-      result[key] = (value as any).asHex();
-    } else if (typeof value === "bigint") {
+    if (typeof value === "bigint") {
       result[key] = value.toString();
     } else if (value instanceof Uint8Array) {
       result[key] = "0x" + Array.from(value).map((b) => b.toString(16).padStart(2, "0")).join("");
     } else if (Array.isArray(value)) {
       result[key] = value.map((v) =>
-        v && typeof v === "object" && "asHex" in v ? (v as any).asHex() :
         typeof v === "bigint" ? v.toString() :
         v instanceof Uint8Array ? "0x" + Array.from(v).map((b) => b.toString(16).padStart(2, "0")).join("") :
         typeof v === "object" && v !== null ? serializeArgs(v) : v
@@ -207,9 +204,7 @@ export default function Explorer() {
         try {
           const blockHash = await api.query.System.BlockHash.getValue(blockNumber);
           if (blockHash) {
-            const hex = typeof blockHash === "string" ? blockHash
-              : typeof (blockHash as any).asHex === "function" ? (blockHash as any).asHex()
-              : "";
+            const hex = String(blockHash);
             if (hex && !hex.match(/^0x0+$/)) hashHex = hex;
           }
         } catch { /* block not in storage */ }
