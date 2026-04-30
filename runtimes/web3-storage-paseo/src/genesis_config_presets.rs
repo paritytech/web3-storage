@@ -9,7 +9,7 @@ use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
 // Parachain ID for Paseo Web3 Storage runtime
-pub const WEB3_STORAGE_PARA_ID: ParaId = ParaId::new(1502);
+pub const WEB3_STORAGE_PARA_ID: ParaId = ParaId::new(1600);
 
 fn storage_parachain_genesis(
     invulnerables: Vec<(AccountId, sp_consensus_aura::sr25519::AuthorityId)>,
