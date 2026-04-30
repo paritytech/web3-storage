@@ -57,7 +57,7 @@ impl<T: frame_system::Config> pallet_transaction_payment::WeightInfo for WeightI
 		//  Measured:  `101`
 		//  Estimated: `3593`
 		// Minimum execution time: 27_000_000 picoseconds.
-		Weight::from_parts(30_000_000, 0)
+		Weight::from_parts(29_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 3593))
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))

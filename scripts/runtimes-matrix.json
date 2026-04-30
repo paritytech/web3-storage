@@ -4,7 +4,7 @@
     "package": "storage-paseo-runtime",
     "path": "runtimes/web3-storage-paseo",
     "uris": [
-      "wss://to.do"
+      "TODO: update Paseo WSS"
     ],
     "integration_tests": true,
     "try_runtime": {

@@ -55,7 +55,7 @@ impl<T: frame_system::Config> cumulus_pallet_weight_reclaim::WeightInfo for Weig
 		//  Measured:  `0`
 		//  Estimated: `0`
 		// Minimum execution time: 3_000_000 picoseconds.
-		Weight::from_parts(5_000_000, 0)
+		Weight::from_parts(4_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 0))
 	}
 }

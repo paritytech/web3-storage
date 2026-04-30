@@ -81,10 +81,32 @@ fn setup_primary_agreement<T: Config>(
     let _ = Pallet::<T>::accept_agreement(RawOrigin::Signed(provider.clone()).into(), bucket_id);
 }
 
+/// Register an sr25519 keypair for a provider and return the public key.
+///
+/// Overwrites the provider's stored public_key so `verify_signature` uses the
+/// sr25519 key instead of the zeroed placeholder set by `create_provider`.
+fn register_sr25519_key<T: Config>(
+    provider: &T::AccountId,
+    key_type: sp_core::crypto::KeyTypeId,
+    index: u32,
+) -> sp_core::sr25519::Public {
+    let seed = alloc::format!("//BenchProvider{index}");
+    let public_key = sp_io::crypto::sr25519_generate(key_type, Some(seed.into_bytes()));
+    Providers::<T>::mutate(provider, |maybe_p| {
+        if let Some(p) = maybe_p {
+            p.public_key = public_key.0.to_vec().try_into().unwrap();
+        }
+    });
+    public_key
+}
+
 #[benchmarks]
 mod benchmarks {
     use super::*;
     use frame_system::pallet_prelude::BlockNumberFor;
+
+    // Key type used for sr25519 key generation in benchmarks
+    const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"bnch");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider Management
@@ -149,6 +171,7 @@ mod benchmarks {
         add_stake(RawOrigin::Signed(provider), amount);
     }
 
+    /// Worst case: provider has an existing agreement (storage read + write path).
     #[benchmark]
     fn block_extensions() {
         let admin = funded_account::<T>("admin", 0);
@@ -158,6 +181,18 @@ mod benchmarks {
 
         #[extrinsic_call]
         set_extensions_blocked(RawOrigin::Signed(provider), bucket_id, true);
+    }
+
+    /// Worst case: provider has a max-length multiaddr stored (max write size).
+    #[benchmark]
+    fn update_provider_multiaddr() {
+        let provider = create_provider::<T>(0);
+        let max_len = T::MaxMultiaddrLength::get() as usize;
+        let multiaddr: BoundedVec<u8, T::MaxMultiaddrLength> =
+            alloc::vec![b'x'; max_len].try_into().unwrap();
+
+        #[extrinsic_call]
+        update_provider_multiaddr(RawOrigin::Signed(provider), multiaddr);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -482,18 +517,40 @@ mod benchmarks {
     // Checkpoints
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// Worst case: MaxPrimaryProviders all sign — every signature is verified.
     #[benchmark]
     fn checkpoint() {
         let admin = funded_account::<T>("admin", 0);
-        let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
-        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
-
+        let n = T::MaxPrimaryProviders::get();
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
+
+        // Create n providers, each with an sr25519 keypair, and set up primary agreements.
+        let mut provider_keys: alloc::vec::Vec<(T::AccountId, sp_core::sr25519::Public)> =
+            alloc::vec::Vec::new();
+        for i in 0..n {
+            let provider = create_provider::<T>(i);
+            let key = register_sr25519_key::<T>(&provider, KEY_TYPE, i);
+            setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+            provider_keys.push((provider, key));
+        }
+
+        // Require all n providers to sign (worst case — maximum signature verifications).
+        let _ =
+            Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
+
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let encoded_payload = codec::Encode::encode(&payload);
+
+        let mut signatures: BoundedVec<
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        for (provider, key) in provider_keys {
+            let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &key, &encoded_payload)
+                .expect("signing should work");
+            let _ = signatures.try_push((provider, sp_runtime::MultiSignature::Sr25519(sig)));
+        }
 
         #[extrinsic_call]
         checkpoint(
@@ -506,34 +563,53 @@ mod benchmarks {
         );
     }
 
+    /// Worst case: MaxPrimaryProviders new signatures are each verified and bits set.
     #[benchmark]
     fn extend_checkpoint() {
         let admin = funded_account::<T>("admin", 0);
-        let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
-        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
-
-        // Create initial checkpoint
+        let n = T::MaxPrimaryProviders::get();
         let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
+
+        // Create n providers with sr25519 keys and primary agreements.
+        let mut provider_keys: alloc::vec::Vec<(T::AccountId, sp_core::sr25519::Public)> =
+            alloc::vec::Vec::new();
+        for i in 0..n {
+            let provider = create_provider::<T>(i);
+            let key = register_sr25519_key::<T>(&provider, KEY_TYPE, i);
+            setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+            provider_keys.push((provider, key));
+        }
+
+        // Submit initial checkpoint with 0 signatures (min_providers=0).
+        // The snapshot bitfield has all bits unset, so every extend_checkpoint
+        // signature triggers a real verification + bit-set operation.
+        let empty_sigs: BoundedVec<
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
-
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
             mmr_root,
             0,
             10,
-            signatures,
+            empty_sigs,
         );
 
-        // Add more signatures
-        let additional_signatures: BoundedVec<
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let encoded_payload = codec::Encode::encode(&payload);
+
+        let mut additional_signatures: BoundedVec<
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        for (provider, key) in provider_keys {
+            let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &key, &encoded_payload)
+                .expect("signing should work");
+            let _ = additional_signatures
+                .try_push((provider, sp_runtime::MultiSignature::Sr25519(sig)));
+        }
 
         #[extrinsic_call]
         extend_checkpoint(RawOrigin::Signed(admin), bucket_id, additional_signatures);
@@ -553,14 +629,29 @@ mod benchmarks {
     // Provider-Initiated Checkpoints
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// Worst case: `s` = MaxPrimaryProviders, all signatures verified.
+    /// After grace period any provider may submit, so provider[0] is the caller.
     #[benchmark]
     fn provider_checkpoint(s: Linear<1, 5>) {
         let admin = funded_account::<T>("admin", 0);
-        let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
-        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Fund checkpoint pool
+        let window = 1u64;
+        let interval = T::DefaultCheckpointInterval::get();
+        let grace_period = T::DefaultCheckpointGrace::get();
+        let mmr_root = H256::repeat_byte(0xCD);
+
+        // Create s providers with sr25519 keys and primary agreements.
+        let mut provider_keys: alloc::vec::Vec<(T::AccountId, sp_core::sr25519::Public)> =
+            alloc::vec::Vec::new();
+        for i in 0..s {
+            let provider = create_provider::<T>(i);
+            let key = register_sr25519_key::<T>(&provider, KEY_TYPE, i);
+            setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+            provider_keys.push((provider, key));
+        }
+
+        // Fund checkpoint pool so the reward payout path is exercised.
         let pool_amount = BalanceOf::<T>::max_value() / 100u32.into();
         let _ = Pallet::<T>::fund_checkpoint_pool(
             RawOrigin::Signed(admin).into(),
@@ -569,27 +660,34 @@ mod benchmarks {
         );
 
         // Advance past the grace period of window 1 so any primary provider can submit.
-        // Target: window_start(window) + grace_period + 1 = interval * window + grace_period + 1
-        let window = 1u64;
-        let interval = T::DefaultCheckpointInterval::get();
-        let grace_period = T::DefaultCheckpointGrace::get();
         let window_start = interval.saturating_mul(window.saturated_into());
         let target_block: BlockNumberFor<T> = window_start
             .saturating_add(grace_period)
             .saturating_add(1u32.into());
         System::<T>::set_block_number(target_block);
 
-        let mmr_root = H256::repeat_byte(0xCD);
+        // Sign the CheckpointProposal with all s providers.
+        let proposal =
+            storage_primitives::CheckpointProposal::new(bucket_id, mmr_root, 0, 10, window);
+        let encoded_proposal = codec::Encode::encode(&proposal);
 
-        // Create bounded signatures vec
-        let signatures: BoundedVec<
+        let mut signatures: BoundedVec<
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        for (provider, key) in provider_keys.iter() {
+            let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, key, &encoded_proposal)
+                .expect("signing should work");
+            let _ =
+                signatures.try_push((provider.clone(), sp_runtime::MultiSignature::Sr25519(sig)));
+        }
+
+        // After grace period any provider can submit; use provider[0].
+        let submitter = provider_keys[0].0.clone();
 
         #[extrinsic_call]
         provider_checkpoint(
-            RawOrigin::Signed(provider),
+            RawOrigin::Signed(submitter),
             bucket_id,
             mmr_root,
             0,
@@ -793,6 +891,8 @@ mod benchmarks {
         challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
     }
 
+    /// Worst case: `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
+    /// This is more expensive than `Superseded` which only does a sequence number comparison.
     #[benchmark]
     fn respond_to_challenge() {
         let admin = funded_account::<T>("admin", 0);
@@ -800,28 +900,50 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Create checkpoint so bucket has a snapshot (needed for Superseded response)
-        let mmr_root = H256::repeat_byte(0xAB);
-        let signatures: BoundedVec<
-            (T::AccountId, sp_runtime::MultiSignature),
-            T::MaxPrimaryProviders,
-        > = BoundedVec::new();
-        let _ = Pallet::<T>::checkpoint(
-            RawOrigin::Signed(admin.clone()).into(),
-            bucket_id,
-            mmr_root,
-            0,
-            10,
-            signatures,
-        );
+        // Construct a single-chunk / single-leaf MMR so all proof verifications pass.
+        //
+        // Chunk tree (1 chunk):  data_root = blake2_256(chunk_data)
+        //   chunk_proof = empty (leaf IS the root, no siblings)
+        //
+        // MMR (1 leaf):  mmr_root = blake2_256(encode(mmr_leaf))
+        //   leaf_proof = empty (leaf IS the single peak, no siblings)
+        //   peaks = [mmr_root]
+        let chunk_size = T::MaxChunkSize::get() as usize;
+        let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
+        let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
+            BoundedVec::try_from(chunk_bytes.clone()).unwrap();
 
-        // Create challenge directly in storage
+        let chunk_hash = storage_primitives::blake2_256(&chunk_bytes);
+        let data_root = chunk_hash; // single-element Merkle tree
+
+        let mmr_leaf = storage_primitives::MmrLeaf {
+            data_root,
+            data_size: chunk_size as u64,
+            total_size: chunk_size as u64,
+        };
+        let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&mmr_leaf));
+        let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
+
+        let mmr_proof = storage_primitives::MmrProof {
+            peaks: alloc::vec![leaf_hash],
+            leaf: mmr_leaf,
+            leaf_proof: storage_primitives::MerkleProof {
+                siblings: alloc::vec![],
+                path: alloc::vec![],
+            },
+        };
+        let chunk_proof = storage_primitives::MerkleProof {
+            siblings: alloc::vec![],
+            path: alloc::vec![],
+        };
+
+        // Store the challenge directly so mmr_root matches the constructed proof.
         let deadline: BlockNumberFor<T> = 200u32.into();
         let challenge = pallet::Challenge::<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: admin.clone(),
-            mmr_root,
+            mmr_root, // must match proof's root
             start_seq: 0,
             leaf_index: 0,
             chunk_index: 0,
@@ -831,8 +953,11 @@ mod benchmarks {
 
         let challenge_id = storage_primitives::ChallengeId { deadline, index: 0 };
 
-        // Superseded: challenged_seq (0+0=0) < canonical_end (0+10=10) ✓
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
+            chunk_data,
+            mmr_proof,
+            chunk_proof,
+        };
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
