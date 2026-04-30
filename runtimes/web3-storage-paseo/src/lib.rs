@@ -463,10 +463,6 @@ impl cumulus_pallet_weight_reclaim::Config for Runtime {
     type WeightInfo = weights::cumulus_pallet_weight_reclaim::WeightInfo<Runtime>;
 }
 
-// `pallet_storage_provider::Config`, `pallet_drive_registry::Config`,
-// `pallet_s3_registry::Config`, their parameter types, and `TreasuryAccount`
-// live in the `storage` module.
-
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
 mod runtime {
