@@ -50,6 +50,7 @@ frame-executive = { version = "46.0.0", default-features = false }
 frame-metadata-hash-extension = { version = "0.14.0", default-features = false }
 frame-support = { version = "46.0.0", default-features = false }
 frame-system = { version = "46.0.0", default-features = false }
+frame-system-benchmarking = { version = "46.0.0", default-features = false }
 frame-system-rpc-runtime-api = { version = "41.0.0", default-features = false }
 frame-try-runtime = { version = "0.52.0", default-features = false }
 polkadot-sdk-frame = { version = "0.15.0", default-features = false }
@@ -83,6 +84,7 @@ sp-version = { version = "44.0.0", default-features = false }
 
 # Polkadot
 pallet-xcm = { version = "26.0.0", default-features = false }
+pallet-xcm-benchmarks = { version = "26.0.0", default-features = false }
 parachains-runtimes-test-utils = { version = "29.0.0", default-features = true }
 polkadot-parachain-primitives = { version = "21.0.0", default-features = false }
 polkadot-primitives = { version = "23.0.0", default-features = false }
@@ -95,6 +97,7 @@ xcm-runtime-apis = { version = "0.13.0", default-features = false }
 # Cumulus
 cumulus-pallet-aura-ext = { version = "0.26.0", default-features = false }
 cumulus-pallet-parachain-system = { version = "0.26.0", default-features = false }
+cumulus-pallet-session-benchmarking = { version = "27.0.0", default-features = false }
 cumulus-pallet-weight-reclaim = { version = "0.8.0", default-features = false }
 cumulus-pallet-xcm = { version = "0.25.0", default-features = false }
 cumulus-pallet-xcmp-queue = { version = "0.26.0", default-features = false }

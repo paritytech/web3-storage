@@ -1,23 +1,13 @@
 //! Benchmarking setup for pallet-storage-provider.
 //!
-//! Run benchmarks with:
-//! ```bash
-//! cargo build --release --features runtime-benchmarks
-//! ./target/release/parachain-node benchmark pallet \
-//!     --chain dev \
-//!     --pallet pallet_storage_provider \
-//!     --extrinsic "*" \
-//!     --steps 50 \
-//!     --repeat 20 \
-//!     --output pallet/src/weights.rs
-//! ```
 
-use super::*;
+use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
 use frame_support::{pallet_prelude::*, traits::Currency};
-use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
+use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
+use sp_runtime::Saturating;
 use storage_primitives::{BucketId, ReplicaRequestParams};
 
 const SEED: u32 = 0;
@@ -475,10 +465,14 @@ mod benchmarks {
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
         // Advance block past agreement expiry + settlement timeout
-        // Agreement duration=100, starts at block 1, so expires_at=101
-        // settlement_timeout=50, so need block > 151
-        let target_block: BlockNumberFor<T> = 200u32.into();
-        frame_system::Pallet::<T>::set_block_number(target_block);
+        let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
+        let current_block = System::<T>::block_number();
+        let target_block: BlockNumberFor<T> = agreement
+            .expires_at
+            .saturating_add(T::SettlementTimeout::get())
+            .saturating_add(current_block)
+            .saturating_add(1u32.into());
+        System::<T>::set_block_number(target_block);
 
         #[extrinsic_call]
         claim_expired_agreement(RawOrigin::Signed(provider), bucket_id);
@@ -574,14 +568,18 @@ mod benchmarks {
             pool_amount,
         );
 
-        // Default checkpoint config: interval=10, grace_period=5
-        // Window 1 = blocks [10, 20), grace period = blocks [10, 15]
-        // Advance past grace period so any primary provider can submit
-        let target_block: BlockNumberFor<T> = 16u32.into();
-        frame_system::Pallet::<T>::set_block_number(target_block);
+        // Advance past the grace period of window 1 so any primary provider can submit.
+        // Target: window_start(window) + grace_period + 1 = interval * window + grace_period + 1
+        let window = 1u64;
+        let interval = T::DefaultCheckpointInterval::get();
+        let grace_period = T::DefaultCheckpointGrace::get();
+        let window_start = interval.saturating_mul(window.saturated_into());
+        let target_block: BlockNumberFor<T> = window_start
+            .saturating_add(grace_period)
+            .saturating_add(1u32.into());
+        System::<T>::set_block_number(target_block);
 
         let mmr_root = H256::repeat_byte(0xCD);
-        let window = 1u64;
 
         // Create bounded signatures vec
         let signatures: BoundedVec<
@@ -626,13 +624,13 @@ mod benchmarks {
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        // Default config: interval=10, grace_period=5
-        // Report window 1 (blocks 10-19)
-        // Check: current_block > window_start_block(window+1, interval) = (1+1)*10 = 20
-        // So need block > 20
-        let target_block: BlockNumberFor<T> = 21u32.into();
-        frame_system::Pallet::<T>::set_block_number(target_block);
+        // Report window 1 — must satisfy current_block > window_start_block(window+1, interval).
+        // Target: interval * (window + 1) + 1
         let window = 1u64;
+        let interval = T::DefaultCheckpointInterval::get();
+        let next_window_start = interval.saturating_mul((window + 1).saturated_into());
+        let target_block: BlockNumberFor<T> = next_window_start.saturating_add(1u32.into());
+        System::<T>::set_block_number(target_block);
 
         #[extrinsic_call]
         report_missed_checkpoint(RawOrigin::Signed(admin), bucket_id, window);
