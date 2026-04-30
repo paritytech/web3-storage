@@ -1,5 +1,5 @@
 //! Storage configuration
-//! 
+//!
 
 use frame_support::{
     parameter_types,
