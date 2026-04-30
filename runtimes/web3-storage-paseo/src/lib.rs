@@ -20,7 +20,7 @@ pub mod fast_runtime_binary {
 
 mod genesis_config_presets;
 pub mod paseo_constants;
-mod storage_provider;
+mod storage;
 mod weights;
 pub mod xcm_config;
 
@@ -463,27 +463,9 @@ impl cumulus_pallet_weight_reclaim::Config for Runtime {
     type WeightInfo = weights::cumulus_pallet_weight_reclaim::WeightInfo<Runtime>;
 }
 
-// `pallet_storage_provider::Config`, its parameter types, and `TreasuryAccount`
-// live in the `storage_provider` module.
-
-// --------------------------------
-// Drive Registry Pallet Config
-// --------------------------------
-
-impl pallet_drive_registry::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type MaxDriveNameLength = ConstU32<128>;
-    type MaxDrivesPerUser = ConstU32<100>;
-}
-
-// --------------------------------
-// S3 Registry Pallet Config
-// --------------------------------
-
-impl pallet_s3_registry::Config for Runtime {
-    type MaxBucketsPerUser = ConstU32<100>;
-    type MaxObjectsPerBucket = ConstU32<100000>;
-}
+// `pallet_storage_provider::Config`, `pallet_drive_registry::Config`,
+// `pallet_s3_registry::Config`, their parameter types, and `TreasuryAccount`
+// live in the `storage` module.
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]

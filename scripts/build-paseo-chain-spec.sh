@@ -15,7 +15,7 @@ cargo build --release -p storage-paseo-runtime >&2
   -n "Paseo Web3 Storage Parachain" \
   -i "storage-paseo" \
   -t local \
-  -p 1502 \
+  -p 1600 \
   -c westend-local \
   -r target/release/wbuild/storage-paseo-runtime/storage_paseo_runtime.compact.compressed.wasm \
   named-preset local_testnet

@@ -18,7 +18,7 @@ validator = true
 rpc_port = 9901
 
 [[parachains]]
-id = 1502
+id = 1600
 cumulus_based = true
 chain_spec_command = "{{PROJECT_ROOT}}/scripts/build-paseo-chain-spec.sh"
 

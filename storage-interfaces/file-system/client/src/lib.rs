@@ -215,11 +215,11 @@ impl FileSystemClient {
         // Verify the CID matches what we would compute locally
         let expected_cid = compute_cid(&root_dir_bytes);
         if root_cid != expected_cid {
-            log::warn!("CID mismatch: data_root={root_cid:?}, expected={expected_cid:?}");
+            tracing::warn!("CID mismatch: data_root={root_cid:?}, expected={expected_cid:?}");
         }
 
         // Cache the root CID (now managed off-chain only)
-        log::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
+        tracing::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
         self.root_cache.insert(drive_id, root_cid);
 
         Ok(drive_id)
@@ -372,7 +372,7 @@ impl FileSystemClient {
     pub async fn get_root_cid(&mut self, drive_id: DriveId) -> Result<Cid> {
         // Root CID is now managed off-chain only (cached in-memory)
         if let Some(cid) = self.root_cache.get(&drive_id) {
-            log::debug!("get_root_cid: cache hit for drive {drive_id}, cid={cid:?}");
+            tracing::debug!("get_root_cid: cache hit for drive {drive_id}, cid={cid:?}");
             return Ok(*cid);
         }
 
@@ -769,7 +769,7 @@ impl FileSystemClient {
 
         // The data_root returned by the storage client is the hash of the data
         // which should match our CID for single-chunk uploads
-        log::debug!("Uploaded blob, data_root: {data_root:?}");
+        tracing::debug!("Uploaded blob, data_root: {data_root:?}");
 
         Ok(data_root)
     }
@@ -791,7 +791,7 @@ impl FileSystemClient {
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 
-        log::debug!(
+        tracing::debug!(
             "fetch_blob: cid={:?}, data_len={}, data_hex={}",
             cid,
             data.len(),
@@ -911,7 +911,7 @@ impl FileSystemClient {
                             // Extract drive_id from first field (all drive events have drive_id as first field)
                             if let Some(drive_id_value) = value.at(0) {
                                 if let Some(drive_id) = drive_id_value.as_u128() {
-                                    log::info!("Drive created with ID: {drive_id}");
+                                    tracing::info!("Drive created with ID: {drive_id}");
                                     return Ok(drive_id as DriveId);
                                 }
                             }

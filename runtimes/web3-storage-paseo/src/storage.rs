@@ -1,8 +1,5 @@
-//! Runtime configuration for `pallet_storage_provider`.
-//!
-//! Holds the runtime-level constants used by the storage provider pallet,
-//! the `TreasuryAccount` that receives slashed funds, and the
-//! `pallet_storage_provider::Config` impl for [`Runtime`].
+//! Storage configuration
+//! 
 
 use frame_support::{
     parameter_types,
@@ -13,7 +10,7 @@ use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
     paseo_constants::{currency::UNIT, time::HOURS},
-    AccountId, Balance, Balances, BlockNumber, Runtime,
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
 parameter_types! {
@@ -39,6 +36,29 @@ impl Get<AccountId> for TreasuryAccount {
         AccountIdConversion::<AccountId>::into_account_truncating(&PalletId(*b"py/trsry"))
     }
 }
+
+// --------------------------------
+// Drive Registry Pallet Config
+// --------------------------------
+
+impl pallet_drive_registry::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type MaxDriveNameLength = ConstU32<128>;
+    type MaxDrivesPerUser = ConstU32<100>;
+}
+
+// --------------------------------
+// S3 Registry Pallet Config
+// --------------------------------
+
+impl pallet_s3_registry::Config for Runtime {
+    type MaxBucketsPerUser = ConstU32<100>;
+    type MaxObjectsPerBucket = ConstU32<100000>;
+}
+
+// --------------------------------
+// Storage Provider Pallet Config
+// --------------------------------
 
 impl pallet_storage_provider::Config for Runtime {
     type Currency = Balances;

@@ -80,7 +80,7 @@ parachain-info = { workspace = true }
 [dev-dependencies]
 parachains-runtimes-test-utils = { workspace = true, default-features = true }
 sp-io = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 
 [build-dependencies]
 substrate-wasm-builder = { workspace = true, optional = true }
@@ -149,10 +149,10 @@ std = [
 	"parachain-info/std",
 	"parachains-common/std",
 	# Build
-	"log/std",
 	"sp-io/std",
 	"sp-storage/std",
 	"substrate-wasm-builder",
+	"tracing/std",
 ]
 runtime-benchmarks = [
 	"cumulus-pallet-parachain-system/runtime-benchmarks",

@@ -64,7 +64,7 @@ fn construct_and_apply_extrinsic(
     let dispatch_info = call.get_dispatch_info();
     let xt = construct_extrinsic(account, call)?;
     let xt_len = xt.encode().len();
-    log::info!(
+    tracing::info!(
         "Applying extrinsic: class={:?} pays_fee={:?} weight={:?} encoded_len={} bytes",
         dispatch_info.class,
         dispatch_info.pays_fee,
