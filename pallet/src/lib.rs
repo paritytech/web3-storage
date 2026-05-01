@@ -21,6 +21,7 @@ pub use pallet::*;
 
 pub mod runtime_api;
 pub mod weights;
+pub use weights::WeightInfo;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
@@ -139,7 +140,7 @@ pub mod pallet {
         type MaxBucketsPerMember: Get<u32>;
 
         /// Weight information for extrinsics in this pallet.
-        type WeightInfo: crate::weights::WeightInfo;
+        type WeightInfo: WeightInfo;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

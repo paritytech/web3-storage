@@ -9,14 +9,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
+use core::fmt::Debug;
 use scale_info::TypeInfo;
 use sp_core::H256;
-
-// Debug is available in no_std, core Debug in std
-#[cfg(feature = "std")]
-use core::fmt::Debug;
-#[cfg(not(feature = "std"))]
-use core::fmt::Debug;
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.

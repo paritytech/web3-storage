@@ -468,7 +468,7 @@ impl FileSystemClient {
                     self.update_root_cid(drive_id, new_root_cid).await?;
                 }
                 CheckpointResult::InsufficientConsensus { .. } => {
-                    log::warn!("Checkpoint delayed: insufficient consensus");
+                    tracing::warn!("Checkpoint delayed: insufficient consensus");
                     // Queue for retry
                 }
                 _ => { /* Handle other cases */ }
@@ -500,7 +500,7 @@ impl CheckpointManager {
                     if blocks_since_last >= interval as u64 {
                         // Check if there are pending changes
                         if self.has_pending_changes(drive_id) {
-                            log::info!("Submitting batched checkpoint for drive {}", drive_id);
+                            tracing::info!("Submitting batched checkpoint for drive {}", drive_id);
                             let _ = self.submit_checkpoint(drive_info.bucket_id).await;
                         }
                     }
@@ -599,7 +599,7 @@ impl CheckpointManager {
             if let Ok(commitment) = their_commitment {
                 if commitment.leaf_count < majority_leaf_count {
                     // They're behind - likely sync delay
-                    log::info!(
+                    tracing::info!(
                         "Provider {} is {} leaves behind, likely sync delay",
                         provider_id,
                         majority_leaf_count - commitment.leaf_count
@@ -610,7 +610,7 @@ impl CheckpointManager {
                     };
                 } else if commitment.leaf_count == majority_leaf_count {
                     // Same leaf count but different root - data divergence!
-                    log::warn!(
+                    tracing::warn!(
                         "Provider {} has different data at same leaf count! Potential corruption.",
                         provider_id
                     );
