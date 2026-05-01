@@ -330,8 +330,8 @@ pub async fn new(
 ```
 
 **Parameters:**
-- `chain_endpoint`: Parachain WebSocket endpoint (e.g., `"ws://127.0.0.1:9944"`)
-- `provider_endpoint`: Storage provider HTTP endpoint (e.g., `"http://localhost:3000"`)
+- `chain_endpoint`: Parachain WebSocket endpoint (e.g., `"ws://127.0.0.1:2222"`)
+- `provider_endpoint`: Storage provider HTTP endpoint (e.g., `"http://127.0.0.1:3333"`)
 
 **Returns:**
 - `Ok(FileSystemClient)`: Client connected to blockchain and provider
@@ -342,8 +342,8 @@ pub async fn new(
 use file_system_client::FileSystemClient;
 
 let mut fs_client = FileSystemClient::new(
-    "ws://127.0.0.1:9944",
-    "http://localhost:3000",
+    "ws://127.0.0.1:2222",
+    "http://127.0.0.1:3333",
 ).await?;
 ```
 
@@ -683,7 +683,7 @@ pub async fn submit_checkpoint(
 ```rust
 let result = fs_client.submit_checkpoint(
     drive_id,
-    vec!["http://localhost:3000".to_string()],
+    vec!["http://127.0.0.1:3333".to_string()],
 ).await?;
 
 match result {
@@ -737,7 +737,7 @@ use std::sync::Arc;
 
 fs_client.enable_auto_checkpoints(
     drive_id,
-    vec!["http://localhost:3000".to_string()],
+    vec!["http://127.0.0.1:3333".to_string()],
     Some(100),  // Every 100 blocks (~10 minutes)
     Some(Arc::new(|bucket_id, result| {
         println!("Checkpoint for bucket {}: {:?}", bucket_id, result);
@@ -1339,8 +1339,8 @@ use file_system_primitives::CommitStrategy;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Initialize client
     let mut fs_client = FileSystemClient::new(
-        "ws://localhost:9944",
-        "http://localhost:3000",
+        "ws://127.0.0.1:2222",
+        "http://127.0.0.1:3333",
         keypair,
     ).await?;
 
@@ -1382,5 +1382,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - **[User Guide](./USER_GUIDE.md)** - User-friendly documentation
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
-- **[Architecture](./FILE_SYSTEM_INTERFACE.md)** - Design overview
+- **[Architecture](./ARCHITECTURE.md)** - Encoding, security, chain integration
 - **[Examples](../../storage-interfaces/file-system/examples/)** - Code samples

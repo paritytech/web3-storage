@@ -64,8 +64,8 @@ use file_system_client::FileSystemClient;
 
 // Initialize client with blockchain connection
 let mut fs_client = FileSystemClient::new(
-    "ws://localhost:9944",           // Parachain WebSocket endpoint
-    "http://localhost:3000",         // Storage provider HTTP endpoint
+    "ws://127.0.0.1:2222",           // Parachain WebSocket endpoint
+    "http://127.0.0.1:3333",         // Storage provider HTTP endpoint
 ).await?;
 
 // Set up signing (for testing with dev accounts)
@@ -812,7 +812,7 @@ fn list_all_files(fs_client: &FileSystemClient, drive_id: DriveId, path: &str) {
 ### Getting Help
 
 1. **Check Logs**: Enable debug logging to see detailed operations
-2. **Verify Setup**: Run `scripts/verify-setup.sh` to check system state
+2. **Check Chain**: Run `scripts/check-chain.sh` to confirm relay + parachain reachable
 3. **Contact Support**: Include drive_id, error message, and transaction hash
 4. **Community**: Ask in Discord/Forum with reproducible example
 
@@ -888,7 +888,7 @@ See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for deta
 
 ## Additional Resources
 
-- **[Architecture Overview](./FILE_SYSTEM_INTERFACE.md)** - System design
+- **[Architecture](./ARCHITECTURE.md)** - System design
 - **[Architecture Deep Dive](./ARCHITECTURE.md)** - Encoding, security, blockchain details
 - **[Layer 0 Documentation](../design/scalable-web3-storage.md)** - Underlying storage
-- **[Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)** - Testing procedures
+- **[Layer 1 Quick Start](../getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup + SDK examples

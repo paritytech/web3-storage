@@ -525,7 +525,7 @@ grep "DriveCreated" /var/log/parachain.log
 polkadot-backup export-state --output chain-state.json
 
 # 2. Backup drive registry specifically
-polkadot-js-api --ws ws://localhost:9944 \
+polkadot-js-api --ws ws://127.0.0.1:2222 \
   query.driveRegistry.drives.entries | jq > drives-backup.json
 
 # 3. Recovery
@@ -832,10 +832,10 @@ When troubleshooting provider issues, note these API behaviors:
 **Read Endpoint**: Avoid `u64::MAX` as length parameter:
 ```bash
 # BAD: Causes chunk calculation overflow, returns empty
-curl "localhost:3000/read?data_root=0x...&offset=0&length=18446744073709551615"
+curl "127.0.0.1:3333/read?data_root=0x...&offset=0&length=18446744073709551615"
 
 # GOOD: Use reasonable max (1 TiB)
-curl "localhost:3000/read?data_root=0x...&offset=0&length=1099511627776"
+curl "127.0.0.1:3333/read?data_root=0x...&offset=0&length=1099511627776"
 ```
 
 **Upload Verification**: Verify uploaded data by checking CID:
@@ -850,11 +850,11 @@ curl "localhost:3000/read?data_root=0x...&offset=0&length=1099511627776"
 
 - **[User Guide](./USER_GUIDE.md)** - Help users get started
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
-- **[Architecture Overview](./FILE_SYSTEM_INTERFACE.md)** - System design
+- **[Architecture](./ARCHITECTURE.md)** - System design
 - **[Architecture Deep Dive](./ARCHITECTURE.md)** - Encoding, security, blockchain details
 
 ## Additional Resources
 
 - **[Layer 0 Admin Guide](../reference/EXTRINSICS_REFERENCE.md)** - Layer 0 operations
-- **[Testing Guide](../testing/MANUAL_TESTING_GUIDE.md)** - Testing procedures
+- **[Layer 1 Quick Start](../getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup + SDK examples
 - **[Design Documents](../design/)** - Architecture specifications

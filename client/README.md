@@ -413,7 +413,7 @@ use storage_client::{
 
 // Create checkpoint manager
 let manager = CheckpointManager::new(
-    "ws://localhost:9944",
+    "ws://127.0.0.1:2222",
     CheckpointConfig::default()
 ).await?;
 
@@ -500,7 +500,7 @@ use storage_client::{
 };
 
 // Create subscriber
-let subscriber = EventSubscriber::new("ws://localhost:9944").await?;
+let subscriber = EventSubscriber::new("ws://127.0.0.1:2222").await?;
 
 // Subscribe to bucket events
 let filter = EventFilter::bucket(bucket_id);
@@ -522,11 +522,11 @@ while let Some(event) = stream.next().await {
 }
 
 // Or use convenience functions
-let mut checkpoint_stream = subscribe_checkpoints("ws://localhost:9944", bucket_id).await?;
-let mut challenge_stream = subscribe_challenges("ws://localhost:9944", bucket_id).await?;
+let mut checkpoint_stream = subscribe_checkpoints("ws://127.0.0.1:2222", bucket_id).await?;
+let mut challenge_stream = subscribe_challenges("ws://127.0.0.1:2222", bucket_id).await?;
 
 // Subscribe with callback
-subscribe_with_callback("ws://localhost:9944", filter, |event| {
+subscribe_with_callback("ws://127.0.0.1:2222", filter, |event| {
     println!("Event: {:?}", event);
 }).await?;
 ```

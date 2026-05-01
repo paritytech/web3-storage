@@ -150,7 +150,7 @@ use drive_registry_client::DriveRegistryClient;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let admin_client = StorageProviderClient::new("ws://localhost:9944")
+    let admin_client = StorageProviderClient::new("ws://127.0.0.1:2222")
         .with_signer(admin_keypair);
 
     // 1. Create bucket
@@ -213,7 +213,7 @@ use file_system_client::FileSystemClient;
 #[tokio::main]
 async fn main() -> Result<()> {
     let fs_client = FileSystemClient::new(
-        "ws://localhost:9944",
+        "ws://127.0.0.1:2222",
         "http://provider.example.com",
     ).with_signer(alice_keypair).await?;
 

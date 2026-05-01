@@ -664,7 +664,6 @@ let data = storage_client.read(&cid, 0, MAX_READ_LENGTH).await?;
 | Document | Description |
 |----------|-------------|
 | [User Guide](./USER_GUIDE.md) | Complete guide for end users |
-| [Example Walkthrough](./EXAMPLE_WALKTHROUGH.md) | Step-by-step basic_usage.rs walkthrough |
 
 ### Administrator Documentation
 
@@ -677,7 +676,6 @@ let data = storage_client.read(&cid, 0, MAX_READ_LENGTH).await?;
 | Document | Description |
 |----------|-------------|
 | [API Reference](./API_REFERENCE.md) | Complete API documentation |
-| [File System Interface](./FILE_SYSTEM_INTERFACE.md) | Architecture overview |
 
 ### Layer 0 Documentation
 
@@ -685,7 +683,7 @@ let data = storage_client.read(&cid, 0, MAX_READ_LENGTH).await?;
 |----------|-------------|
 | [Extrinsics Reference](../reference/EXTRINSICS_REFERENCE.md) | Layer 0 blockchain API |
 | [Payment Calculator](../reference/PAYMENT_CALCULATOR.md) | Calculate storage costs |
-| [Quick Start](../getting-started/QUICKSTART.md) | Get running in 5 minutes |
+| [Layer 1 Quick Start](../getting-started/LAYER1_QUICKSTART.md) | Three-terminal setup + SDK examples |
 
 ### Design Documents
 

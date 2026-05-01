@@ -30,8 +30,8 @@ async fn demo_api_usage() -> Result<(), FsClientError> {
     println!("Step 1: Initialize the client");
     println!("-------------------------------");
     println!("let mut fs_client = FileSystemClient::new(");
-    println!("    \"ws://localhost:9944\",  // Parachain RPC");
-    println!("    \"http://localhost:3000\" // Storage provider HTTP");
+    println!("    \"ws://127.0.0.1:2222\",  // Parachain RPC");
+    println!("    \"http://127.0.0.1:3333\" // Storage provider HTTP");
     println!();
    ").await?;\n");
 
@@ -93,8 +93,8 @@ fn show_complete_example() {
     println!("async fn main() -> Result<(), FsClientError> {{");
     println!("    // Initialize client");
     println!("    let mut client = FileSystemClient::new(");
-    println!("        \"ws://localhost:9944\",");
-    println!("        \"http://localhost:3000\",");
+    println!("        \"ws://127.0.0.1:2222\",");
+    println!("        \"http://127.0.0.1:3333\",");
     println!("    ).await?;");
     println!();
     println!("    // Create drive");

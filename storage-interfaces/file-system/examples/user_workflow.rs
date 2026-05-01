@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // NOTE: In production, this would be initialized with actual endpoints
     // let fs_client = FileSystemClient::new(
-    //     "ws://localhost:9944",      // Parachain RPC
+    //     "ws://127.0.0.1:2222",      // Parachain RPC
     //     "http://provider.example.com", // Storage provider HTTP
     // ).await?;
 
