@@ -42,6 +42,10 @@ zombienet/storage-local-spec.json
 # Build output
 **/dist/
 
+# Playwright artefacts
+user-interfaces/*/playwright-report/
+user-interfaces/*/test-results/
+
 # Lockfiles are per-project, not committed
 # (each UI project has its own package manager)
 
