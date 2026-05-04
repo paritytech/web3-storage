@@ -1,6 +1,10 @@
 #![cfg(test)]
 
-use frame_support::{assert_ok, dispatch::GetDispatchInfo, traits::Currency};
+use frame_support::{
+    assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,
+};
+use pallet_drive_registry::Call as DriveRegistryCall;
+use pallet_s3_registry::Call as S3RegistryCall;
 use pallet_storage_provider::Call as StorageProviderCall;
 use parachains_common::{AccountId, AuraId, Hash as PcHash, Signature as PcSignature};
 use parachains_runtimes_test_utils::{ExtBuilder, RuntimeHelper};
@@ -10,11 +14,33 @@ use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
     Balance, Balances, Block, Runtime, RuntimeCall, RuntimeEvent, RuntimeGenesisConfig,
-    RuntimeOrigin, SessionKeys, StorageProvider, System, TxExtension, UncheckedExtrinsic,
-    WeightToFee,
+    RuntimeOrigin, S3Registry, SessionKeys, StorageProvider, System, TxExtension,
+    UncheckedExtrinsic, WeightToFee,
 };
 use xcm::latest::prelude::*;
 use xcm_runtime_apis::conversions::LocationToAccountHelper;
+
+//
+// Utility functions & constants
+//
+
+const ALICE: [u8; 32] = [1u8; 32];
+
+/// Advance to the next block for testing transaction storage.
+fn advance_block() {
+    let current = frame_system::Pallet::<Runtime>::block_number();
+
+    <StorageProvider as Hooks<_>>::on_finalize(current);
+    <System as Hooks<_>>::on_finalize(current);
+
+    let next = current + 1;
+    System::set_block_number(next);
+
+    frame_system::BlockWeight::<Runtime>::kill();
+    frame_system::BlockSize::<Runtime>::kill();
+
+    <System as Hooks<_>>::on_initialize(next);
+}
 
 fn construct_extrinsic(
     sender: Option<sp_core::sr25519::Pair>,
@@ -111,6 +137,207 @@ fn register_provider_for(account: Sr25519Keyring, stake: Balance) {
 fn new_test_ext() -> sp_io::TestExternalities {
     sp_io::TestExternalities::new(RuntimeGenesisConfig::default().build_storage().unwrap())
 }
+
+/// Alice's account on a sibling parachain (`(1, [Parachain(para_id), AccountId32 { Alice }])`).
+///
+/// `LocationToAccountId` converts this through `HashedDescription` to a derived sovereign
+/// `AccountId` — that derived account becomes the `Signed` origin of the dispatched call.
+fn alice_on_sibling_parachain(para_id: u32) -> Location {
+    Location::new(
+        1,
+        [
+            Parachain(para_id),
+            Junction::AccountId32 {
+                network: None,
+                id: Sr25519Keyring::Alice.to_raw_public(),
+            },
+        ],
+    )
+}
+
+fn xcm_test_ext() -> sp_io::TestExternalities {
+    ExtBuilder::<Runtime>::default()
+        .with_collators(vec![AccountId::from(ALICE)])
+        .with_session_keys(vec![(
+            AccountId::from(ALICE),
+            AccountId::from(ALICE),
+            SessionKeys {
+                aura: AuraId::from(sp_core::sr25519::Public::from_raw(ALICE)),
+            },
+        )])
+        .with_tracing()
+        .build()
+}
+
+// ===============================
+// Tests for the XCM functionality.
+// ===============================
+
+#[test]
+fn location_conversion_works() {
+    // the purpose of hardcoded values is to catch an unintended location conversion logic change.
+    struct TestCase {
+        description: &'static str,
+        location: Location,
+        expected_account_id_str: &'static str,
+    }
+
+    let test_cases = vec![
+        // DescribeTerminus
+        TestCase {
+            description: "DescribeTerminus Parent",
+            location: Location::new(1, Here),
+            expected_account_id_str: "5Dt6dpkWPwLaH4BBCKJwjiWrFVAGyYk3tLUabvyn4v7KtESG",
+        },
+        TestCase {
+            description: "DescribeTerminus Sibling",
+            location: Location::new(1, [Parachain(1111)]),
+            expected_account_id_str: "5Eg2fnssmmJnF3z1iZ1NouAuzciDaaDQH7qURAy3w15jULDk",
+        },
+        // DescribePalletTerminal
+        TestCase {
+            description: "DescribePalletTerminal Parent",
+            location: Location::new(1, [PalletInstance(50)]),
+            expected_account_id_str: "5CnwemvaAXkWFVwibiCvf2EjqwiqBi29S5cLLydZLEaEw6jZ",
+        },
+        TestCase {
+            description: "DescribePalletTerminal Sibling",
+            location: Location::new(1, [Parachain(1111), PalletInstance(50)]),
+            expected_account_id_str: "5GFBgPjpEQPdaxEnFirUoa51u5erVx84twYxJVuBRAT2UP2g",
+        },
+        // DescribeAccountId32Terminal
+        TestCase {
+            description: "DescribeAccountId32Terminal Parent",
+            location: Location::new(
+                1,
+                [Junction::AccountId32 {
+                    network: None,
+                    id: AccountId::from(ALICE).into(),
+                }],
+            ),
+            expected_account_id_str: "5DN5SGsuUG7PAqFL47J9meViwdnk9AdeSWKFkcHC45hEzVz4",
+        },
+        TestCase {
+            description: "DescribeAccountId32Terminal Sibling",
+            location: Location::new(
+                1,
+                [
+                    Parachain(1111),
+                    Junction::AccountId32 {
+                        network: None,
+                        id: AccountId::from(ALICE).into(),
+                    },
+                ],
+            ),
+            expected_account_id_str: "5DGRXLYwWGce7wvm14vX1Ms4Vf118FSWQbJkyQigY2pfm6bg",
+        },
+        // DescribeAccountKey20Terminal
+        TestCase {
+            description: "DescribeAccountKey20Terminal Parent",
+            location: Location::new(
+                1,
+                [AccountKey20 {
+                    network: None,
+                    key: [0u8; 20],
+                }],
+            ),
+            expected_account_id_str: "5F5Ec11567pa919wJkX6VHtv2ZXS5W698YCW35EdEbrg14cg",
+        },
+        TestCase {
+            description: "DescribeAccountKey20Terminal Sibling",
+            location: Location::new(
+                1,
+                [
+                    Parachain(1111),
+                    AccountKey20 {
+                        network: None,
+                        key: [0u8; 20],
+                    },
+                ],
+            ),
+            expected_account_id_str: "5CB2FbUds2qvcJNhDiTbRZwiS3trAy6ydFGMSVutmYijpPAg",
+        },
+        // DescribeTreasuryVoiceTerminal
+        TestCase {
+            description: "DescribeTreasuryVoiceTerminal Parent",
+            location: Location::new(
+                1,
+                [Plurality {
+                    id: BodyId::Treasury,
+                    part: BodyPart::Voice,
+                }],
+            ),
+            expected_account_id_str: "5CUjnE2vgcUCuhxPwFoQ5r7p1DkhujgvMNDHaF2bLqRp4D5F",
+        },
+        TestCase {
+            description: "DescribeTreasuryVoiceTerminal Sibling",
+            location: Location::new(
+                1,
+                [
+                    Parachain(1111),
+                    Plurality {
+                        id: BodyId::Treasury,
+                        part: BodyPart::Voice,
+                    },
+                ],
+            ),
+            expected_account_id_str: "5G6TDwaVgbWmhqRUKjBhRRnH4ry9L9cjRymUEmiRsLbSE4gB",
+        },
+        // DescribeBodyTerminal
+        TestCase {
+            description: "DescribeBodyTerminal Parent",
+            location: Location::new(
+                1,
+                [Plurality {
+                    id: BodyId::Unit,
+                    part: BodyPart::Voice,
+                }],
+            ),
+            expected_account_id_str: "5EBRMTBkDisEXsaN283SRbzx9Xf2PXwUxxFCJohSGo4jYe6B",
+        },
+        TestCase {
+            description: "DescribeBodyTerminal Sibling",
+            location: Location::new(
+                1,
+                [
+                    Parachain(1111),
+                    Plurality {
+                        id: BodyId::Unit,
+                        part: BodyPart::Voice,
+                    },
+                ],
+            ),
+            expected_account_id_str: "5DBoExvojy8tYnHgLL97phNH975CyT45PWTZEeGoBZfAyRMH",
+        },
+    ];
+
+    for tc in test_cases {
+        let expected =
+            AccountId::from_string(tc.expected_account_id_str).expect("Invalid AccountId string");
+
+        let got = LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
+            tc.location.into(),
+        )
+        .unwrap();
+
+        assert_eq!(got, expected, "{}", tc.description);
+    }
+}
+
+#[test]
+fn xcm_payment_api_works() {
+    parachains_runtimes_test_utils::test_cases::xcm_payment_api_with_native_token_works::<
+        Runtime,
+        RuntimeCall,
+        RuntimeOrigin,
+        Block,
+        WeightToFee,
+    >();
+}
+
+// ===============================
+// Tests for the storage provider pallet.
+// ===============================
 
 #[test]
 fn should_register_provider() {
@@ -275,169 +502,9 @@ fn should_create_bucket() {
     });
 }
 
-const ALICE: [u8; 32] = [1u8; 32];
-
-#[test]
-fn location_conversion_works() {
-    // the purpose of hardcoded values is to catch an unintended location conversion logic change.
-    struct TestCase {
-        description: &'static str,
-        location: Location,
-        expected_account_id_str: &'static str,
-    }
-
-    let test_cases = vec![
-        // DescribeTerminus
-        TestCase {
-            description: "DescribeTerminus Parent",
-            location: Location::new(1, Here),
-            expected_account_id_str: "5Dt6dpkWPwLaH4BBCKJwjiWrFVAGyYk3tLUabvyn4v7KtESG",
-        },
-        TestCase {
-            description: "DescribeTerminus Sibling",
-            location: Location::new(1, [Parachain(1111)]),
-            expected_account_id_str: "5Eg2fnssmmJnF3z1iZ1NouAuzciDaaDQH7qURAy3w15jULDk",
-        },
-        // DescribePalletTerminal
-        TestCase {
-            description: "DescribePalletTerminal Parent",
-            location: Location::new(1, [PalletInstance(50)]),
-            expected_account_id_str: "5CnwemvaAXkWFVwibiCvf2EjqwiqBi29S5cLLydZLEaEw6jZ",
-        },
-        TestCase {
-            description: "DescribePalletTerminal Sibling",
-            location: Location::new(1, [Parachain(1111), PalletInstance(50)]),
-            expected_account_id_str: "5GFBgPjpEQPdaxEnFirUoa51u5erVx84twYxJVuBRAT2UP2g",
-        },
-        // DescribeAccountId32Terminal
-        TestCase {
-            description: "DescribeAccountId32Terminal Parent",
-            location: Location::new(
-                1,
-                [Junction::AccountId32 {
-                    network: None,
-                    id: AccountId::from(ALICE).into(),
-                }],
-            ),
-            expected_account_id_str: "5DN5SGsuUG7PAqFL47J9meViwdnk9AdeSWKFkcHC45hEzVz4",
-        },
-        TestCase {
-            description: "DescribeAccountId32Terminal Sibling",
-            location: Location::new(
-                1,
-                [
-                    Parachain(1111),
-                    Junction::AccountId32 {
-                        network: None,
-                        id: AccountId::from(ALICE).into(),
-                    },
-                ],
-            ),
-            expected_account_id_str: "5DGRXLYwWGce7wvm14vX1Ms4Vf118FSWQbJkyQigY2pfm6bg",
-        },
-        // DescribeAccountKey20Terminal
-        TestCase {
-            description: "DescribeAccountKey20Terminal Parent",
-            location: Location::new(
-                1,
-                [AccountKey20 {
-                    network: None,
-                    key: [0u8; 20],
-                }],
-            ),
-            expected_account_id_str: "5F5Ec11567pa919wJkX6VHtv2ZXS5W698YCW35EdEbrg14cg",
-        },
-        TestCase {
-            description: "DescribeAccountKey20Terminal Sibling",
-            location: Location::new(
-                1,
-                [
-                    Parachain(1111),
-                    AccountKey20 {
-                        network: None,
-                        key: [0u8; 20],
-                    },
-                ],
-            ),
-            expected_account_id_str: "5CB2FbUds2qvcJNhDiTbRZwiS3trAy6ydFGMSVutmYijpPAg",
-        },
-        // DescribeTreasuryVoiceTerminal
-        TestCase {
-            description: "DescribeTreasuryVoiceTerminal Parent",
-            location: Location::new(
-                1,
-                [Plurality {
-                    id: BodyId::Treasury,
-                    part: BodyPart::Voice,
-                }],
-            ),
-            expected_account_id_str: "5CUjnE2vgcUCuhxPwFoQ5r7p1DkhujgvMNDHaF2bLqRp4D5F",
-        },
-        TestCase {
-            description: "DescribeTreasuryVoiceTerminal Sibling",
-            location: Location::new(
-                1,
-                [
-                    Parachain(1111),
-                    Plurality {
-                        id: BodyId::Treasury,
-                        part: BodyPart::Voice,
-                    },
-                ],
-            ),
-            expected_account_id_str: "5G6TDwaVgbWmhqRUKjBhRRnH4ry9L9cjRymUEmiRsLbSE4gB",
-        },
-        // DescribeBodyTerminal
-        TestCase {
-            description: "DescribeBodyTerminal Parent",
-            location: Location::new(
-                1,
-                [Plurality {
-                    id: BodyId::Unit,
-                    part: BodyPart::Voice,
-                }],
-            ),
-            expected_account_id_str: "5EBRMTBkDisEXsaN283SRbzx9Xf2PXwUxxFCJohSGo4jYe6B",
-        },
-        TestCase {
-            description: "DescribeBodyTerminal Sibling",
-            location: Location::new(
-                1,
-                [
-                    Parachain(1111),
-                    Plurality {
-                        id: BodyId::Unit,
-                        part: BodyPart::Voice,
-                    },
-                ],
-            ),
-            expected_account_id_str: "5DBoExvojy8tYnHgLL97phNH975CyT45PWTZEeGoBZfAyRMH",
-        },
-    ];
-
-    for tc in test_cases {
-        let expected =
-            AccountId::from_string(tc.expected_account_id_str).expect("Invalid AccountId string");
-
-        let got = LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
-            tc.location.into(),
-        )
-        .unwrap();
-
-        assert_eq!(got, expected, "{}", tc.description);
-    }
-}
-
-#[test]
-fn xcm_payment_api_works() {
-    parachains_runtimes_test_utils::test_cases::xcm_payment_api_with_native_token_works::<
-        Runtime,
-        RuntimeCall,
-        RuntimeOrigin,
-        Block,
-        WeightToFee,
-    >();
-}
+// ===============================
+// Tests for the storage provider pallet via XCM.
+// ===============================
 
 #[test]
 fn should_register_provider_via_xcm() {
@@ -506,37 +573,6 @@ fn should_register_provider_via_xcm() {
             assert_eq!(provider.multiaddr.to_vec(), multiaddr);
             assert_eq!(provider.public_key, public_key);
         });
-}
-
-/// Alice's account on a sibling parachain (`(1, [Parachain(para_id), AccountId32 { Alice }])`).
-///
-/// `LocationToAccountId` converts this through `HashedDescription` to a derived sovereign
-/// `AccountId` — that derived account becomes the `Signed` origin of the dispatched call.
-fn alice_on_sibling_parachain(para_id: u32) -> Location {
-    Location::new(
-        1,
-        [
-            Parachain(para_id),
-            Junction::AccountId32 {
-                network: None,
-                id: Sr25519Keyring::Alice.to_raw_public(),
-            },
-        ],
-    )
-}
-
-fn xcm_test_ext() -> sp_io::TestExternalities {
-    ExtBuilder::<Runtime>::default()
-        .with_collators(vec![AccountId::from(ALICE)])
-        .with_session_keys(vec![(
-            AccountId::from(ALICE),
-            AccountId::from(ALICE),
-            SessionKeys {
-                aura: AuraId::from(sp_core::sr25519::Public::from_raw(ALICE)),
-            },
-        )])
-        .with_tracing()
-        .build()
 }
 
 #[test]
@@ -664,5 +700,542 @@ fn should_fail_xcm_unpaid_execution_from_unauthorized_origin() {
             outcome.clone().ensure_complete().is_err(),
             "barrier must reject unauthorized unpaid execution, got: {outcome:?}",
         );
+    });
+}
+
+// ===============================
+// Tests for the Drive registry pallet.
+// ===============================
+
+/// Register `account` as a provider and configure it to accept primary agreements with
+/// unlimited capacity (`max_capacity = 0`), so `create_drive` can find it.
+fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
+    register_provider_for(account, stake);
+    assert_ok_ok(construct_and_apply_extrinsic(
+        Some(account.pair()),
+        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::update_provider_settings {
+            settings: pallet_storage_provider::ProviderSettings {
+                accepting_primary: true,
+                max_capacity: 0,
+                ..Default::default()
+            },
+        }),
+    ));
+}
+
+#[test]
+fn should_create_drive() {
+    new_test_ext().execute_with(|| {
+        let provider = Sr25519Keyring::Bob;
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+        let stake = default_stake();
+
+        register_accepting_provider_for(provider, stake);
+
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let drive_id_before = pallet_drive_registry::NextDriveId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
+                name: Some(b"My Drive".to_vec()),
+                max_capacity: 1_000_000,
+                storage_period: 500,
+                payment: UNIT,
+                min_providers: Some(1),
+            }),
+        ));
+
+        let drive = pallet_drive_registry::Drives::<Runtime>::get(drive_id_before)
+            .expect("drive must be stored");
+        assert_eq!(drive.owner, user_id);
+        assert_eq!(drive.max_capacity, 1_000_000);
+
+        let user_drives = pallet_drive_registry::UserDrives::<Runtime>::get(&user_id);
+        assert!(user_drives.contains(&drive_id_before));
+
+        assert_eq!(
+            pallet_drive_registry::NextDriveId::<Runtime>::get(),
+            drive_id_before + 1
+        );
+    });
+}
+
+#[test]
+fn should_delete_drive() {
+    new_test_ext().execute_with(|| {
+        let provider = Sr25519Keyring::Bob;
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+        let stake = default_stake();
+
+        register_accepting_provider_for(provider, stake);
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
+                name: None,
+                max_capacity: 1_000_000,
+                storage_period: 500,
+                payment: UNIT,
+                min_providers: Some(1),
+            }),
+        ));
+
+        assert!(pallet_drive_registry::Drives::<Runtime>::get(drive_id).is_some());
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::delete_drive { drive_id }),
+        ));
+
+        assert!(pallet_drive_registry::Drives::<Runtime>::get(drive_id).is_none());
+        let user_drives = pallet_drive_registry::UserDrives::<Runtime>::get(&user_id);
+        assert!(!user_drives.contains(&drive_id));
+    });
+}
+
+#[test]
+fn should_share_and_unshare_drive() {
+    new_test_ext().execute_with(|| {
+        advance_block();
+
+        let provider = Sr25519Keyring::Charlie;
+        let owner = Sr25519Keyring::Alice;
+        let owner_id: AccountId = owner.to_account_id();
+        let member_id: AccountId = Sr25519Keyring::Bob.to_account_id();
+        let stake = default_stake();
+
+        register_accepting_provider_for(provider, stake);
+        let _ = Balances::deposit_creating(&owner_id, 10 * UNIT);
+
+        let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
+                name: None,
+                max_capacity: 1_000_000,
+                storage_period: 500,
+                payment: UNIT,
+                min_providers: Some(1),
+            }),
+        ));
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::share_drive {
+                drive_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            }),
+        ));
+
+        System::assert_has_event(RuntimeEvent::DriveRegistry(
+            pallet_drive_registry::Event::DriveShared {
+                drive_id,
+                member: member_id.clone(),
+                role: storage_primitives::Role::Reader,
+            },
+        ));
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::unshare_drive {
+                drive_id,
+                member: member_id.clone(),
+            }),
+        ));
+
+        System::assert_has_event(RuntimeEvent::DriveRegistry(
+            pallet_drive_registry::Event::DriveUnshared {
+                drive_id,
+                member: member_id,
+            },
+        ));
+    });
+}
+
+// ===============================
+// Tests for the Drive registry pallet via XCM.
+// ===============================
+
+#[test]
+fn should_create_drive_via_xcm() {
+    let user = Sr25519Keyring::Alice;
+    let user_id: AccountId = user.to_account_id();
+
+    let create_drive_call =
+        RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
+            name: Some(b"My XCM Drive".to_vec()),
+            max_capacity: 1_000_000,
+            storage_period: 500,
+            payment: UNIT,
+            min_providers: Some(1),
+        });
+
+    xcm_test_ext().execute_with(|| {
+        // Bob is the storage provider; Alice is the drive owner submitting via XCM.
+        register_accepting_provider_for(Sr25519Keyring::Bob, default_stake());
+
+        // Alice needs balance for both the payment token and XCM execution fees.
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let drive_id_before = pallet_drive_registry::NextDriveId::<Runtime>::get();
+
+        // Alice's local account location. With `OriginKind::SovereignAccount`,
+        // `AccountId32Aliases` maps this directly to Alice's `AccountId` —
+        // so the drive is owned by Alice herself.
+        let alice_location = Location::new(
+            0,
+            [Junction::AccountId32 {
+                network: None,
+                id: user.to_raw_public(),
+            }],
+        );
+
+        // Pay XCM execution fees from Alice's balance.
+        let fee: Asset = (Location::parent(), UNIT).into();
+
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_location, OriginKind::SovereignAccount),
+                create_drive_call,
+                Some(fee),
+            )
+            .ensure_complete()
+        );
+
+        System::assert_has_event(RuntimeEvent::DriveRegistry(
+            pallet_drive_registry::Event::DriveCreated {
+                drive_id: drive_id_before,
+                owner: user_id.clone(),
+                bucket_id: pallet_drive_registry::Drives::<Runtime>::get(drive_id_before)
+                    .expect("drive must be stored")
+                    .bucket_id,
+            },
+        ));
+
+        let drive = pallet_drive_registry::Drives::<Runtime>::get(drive_id_before)
+            .expect("drive must be stored");
+        assert_eq!(drive.owner, user_id);
+        assert_eq!(drive.max_capacity, 1_000_000);
+    });
+}
+
+#[test]
+fn should_create_drive_via_xcm_from_sibling_parachain() {
+    // Use a distinct para id so the derived sovereign is different from other tests.
+    let alice_on_para = alice_on_sibling_parachain(4_000);
+
+    let create_drive_call =
+        RuntimeCall::DriveRegistry(DriveRegistryCall::<Runtime>::create_drive {
+            name: Some(b"Sibling Drive".to_vec()),
+            max_capacity: 1_000_000,
+            storage_period: 500,
+            payment: UNIT,
+            min_providers: Some(1),
+        });
+
+    xcm_test_ext().execute_with(|| {
+        // The dispatch origin is the sovereign `AccountId` derived from Alice-on-para.
+        let derived: AccountId =
+            LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
+                alice_on_para.clone().into(),
+            )
+            .expect("Alice-on-para must convert to an account");
+
+        // Bob is the storage provider; the derived sovereign account owns the drive.
+        register_accepting_provider_for(Sr25519Keyring::Bob, default_stake());
+
+        // Fund the derived account for the drive payment and XCM execution fees.
+        let _ = Balances::deposit_creating(&derived, 10 * UNIT);
+
+        let drive_id_before = pallet_drive_registry::NextDriveId::<Runtime>::get();
+        let fee: Asset = (Location::parent(), UNIT).into();
+
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_on_para, OriginKind::SovereignAccount),
+                create_drive_call,
+                Some(fee),
+            )
+            .ensure_complete()
+        );
+
+        let drive = pallet_drive_registry::Drives::<Runtime>::get(drive_id_before)
+            .expect("drive must be stored");
+        assert_eq!(drive.owner, derived);
+        assert_eq!(drive.max_capacity, 1_000_000);
+
+        let user_drives = pallet_drive_registry::UserDrives::<Runtime>::get(&derived);
+        assert!(user_drives.contains(&drive_id_before));
+    });
+}
+
+// ===============================
+// Tests for the S3 registry pallet.
+// ===============================
+
+#[test]
+fn should_create_s3_bucket() {
+    new_test_ext().execute_with(|| {
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let s3_bucket_id_before = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
+                name: b"my-test-bucket".to_vec(),
+                min_providers: 1,
+            }),
+        ));
+
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id_before)
+            .expect("bucket must be stored");
+        assert_eq!(bucket.owner, user_id);
+        assert_eq!(bucket.name.as_slice(), b"my-test-bucket");
+        assert_eq!(bucket.object_count, 0);
+
+        let user_buckets = pallet_s3_registry::UserBuckets::<Runtime>::get(&user_id);
+        assert!(user_buckets.contains(&s3_bucket_id_before));
+
+        assert_eq!(
+            pallet_s3_registry::NextS3BucketId::<Runtime>::get(),
+            s3_bucket_id_before + 1
+        );
+    });
+}
+
+#[test]
+fn should_delete_s3_bucket() {
+    new_test_ext().execute_with(|| {
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
+                name: b"delete-me".to_vec(),
+                min_providers: 1,
+            }),
+        ));
+
+        assert!(pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).is_some());
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_s3_bucket { s3_bucket_id }),
+        ));
+
+        assert!(pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).is_none());
+        let user_buckets = pallet_s3_registry::UserBuckets::<Runtime>::get(&user_id);
+        assert!(!user_buckets.contains(&s3_bucket_id));
+    });
+}
+
+#[test]
+fn should_put_and_delete_object_metadata() {
+    new_test_ext().execute_with(|| {
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket {
+                name: b"object-bucket".to_vec(),
+                min_providers: 1,
+            }),
+        ));
+
+        let cid = sp_core::H256::repeat_byte(0xAB);
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::put_object_metadata {
+                s3_bucket_id,
+                key: b"photos/cat.jpg".to_vec(),
+                cid,
+                size: 1024,
+                content_type: b"image/jpeg".to_vec(),
+                user_metadata: vec![],
+            }),
+        ));
+
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, 1024);
+
+        let obj =
+            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").expect("object must be stored");
+        assert_eq!(obj.cid, cid);
+        assert_eq!(obj.size, 1024);
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::delete_object_metadata {
+                s3_bucket_id,
+                key: b"photos/cat.jpg".to_vec(),
+            }),
+        ));
+
+        assert!(S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").is_none());
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 0);
+        assert_eq!(bucket.total_size, 0);
+    });
+}
+
+#[test]
+fn should_create_s3_bucket_with_storage() {
+    new_test_ext().execute_with(|| {
+        advance_block();
+
+        let provider = Sr25519Keyring::Bob;
+        let user = Sr25519Keyring::Alice;
+        let user_id: AccountId = user.to_account_id();
+
+        register_accepting_provider_for(provider, default_stake());
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let s3_bucket_id_before = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(user.pair()),
+            RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket_with_storage {
+                name: b"storage-bucket".to_vec(),
+                max_capacity: 1_000_000,
+                duration: 500,
+                max_payment: UNIT,
+            }),
+        ));
+
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id_before)
+            .expect("bucket must be stored");
+        assert_eq!(bucket.owner, user_id);
+        assert_eq!(bucket.name.as_slice(), b"storage-bucket");
+
+        System::assert_has_event(RuntimeEvent::S3Registry(
+            pallet_s3_registry::Event::S3BucketCreated {
+                s3_bucket_id: s3_bucket_id_before,
+                name: b"storage-bucket".to_vec(),
+                layer0_bucket_id: bucket.layer0_bucket_id,
+                owner: user_id,
+            },
+        ));
+    });
+}
+
+// ===============================
+// Tests for the S3 registry pallet via XCM.
+// ===============================
+
+#[test]
+fn should_create_s3_bucket_with_storage_via_xcm() {
+    let user = Sr25519Keyring::Alice;
+    let user_id: AccountId = user.to_account_id();
+
+    let create_call =
+        RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket_with_storage {
+            name: b"xcm-bucket".to_vec(),
+            max_capacity: 1_000_000,
+            duration: 500,
+            max_payment: UNIT,
+        });
+
+    xcm_test_ext().execute_with(|| {
+        // Bob is the storage provider; Alice creates the S3 bucket via XCM.
+        register_accepting_provider_for(Sr25519Keyring::Bob, default_stake());
+
+        let _ = Balances::deposit_creating(&user_id, 10 * UNIT);
+
+        let s3_bucket_id_before = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+
+        // Alice's local account location maps directly to her AccountId.
+        let alice_location = Location::new(
+            0,
+            [Junction::AccountId32 {
+                network: None,
+                id: user.to_raw_public(),
+            }],
+        );
+
+        let fee: Asset = (Location::parent(), UNIT).into();
+
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_location, OriginKind::SovereignAccount),
+                create_call,
+                Some(fee),
+            )
+            .ensure_complete()
+        );
+
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id_before)
+            .expect("bucket must be stored");
+        assert_eq!(bucket.owner, user_id);
+        assert_eq!(bucket.name.as_slice(), b"xcm-bucket");
+    });
+}
+
+#[test]
+fn should_create_s3_bucket_with_storage_via_xcm_from_sibling_parachain() {
+    // Use a distinct para id from all other sibling-parachain tests.
+    let alice_on_para = alice_on_sibling_parachain(5_000);
+
+    let create_call =
+        RuntimeCall::S3Registry(S3RegistryCall::<Runtime>::create_s3_bucket_with_storage {
+            name: b"sibling-bucket".to_vec(),
+            max_capacity: 1_000_000,
+            duration: 500,
+            max_payment: UNIT,
+        });
+
+    xcm_test_ext().execute_with(|| {
+        let derived: AccountId =
+            LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
+                alice_on_para.clone().into(),
+            )
+            .expect("Alice-on-para must convert to an account");
+
+        register_accepting_provider_for(Sr25519Keyring::Bob, default_stake());
+        let _ = Balances::deposit_creating(&derived, 10 * UNIT);
+
+        let s3_bucket_id_before = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
+        let fee: Asset = (Location::parent(), UNIT).into();
+
+        assert_ok!(
+            RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
+                (alice_on_para, OriginKind::SovereignAccount),
+                create_call,
+                Some(fee),
+            )
+            .ensure_complete()
+        );
+
+        let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id_before)
+            .expect("bucket must be stored");
+        assert_eq!(bucket.owner, derived);
+        assert_eq!(bucket.name.as_slice(), b"sibling-bucket");
+
+        let user_buckets = pallet_s3_registry::UserBuckets::<Runtime>::get(&derived);
+        assert!(user_buckets.contains(&s3_bucket_id_before));
     });
 }
