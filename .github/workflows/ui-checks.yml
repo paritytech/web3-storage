@@ -1,0 +1,72 @@
+name: UI Checks
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "user-interfaces/**"
+      - ".github/workflows/ui-checks.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "user-interfaces/**"
+      - ".github/workflows/ui-checks.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: npm install
+
+      - name: Generate console-ui PAPI descriptors
+        working-directory: user-interfaces/console-ui
+        run: npx papi generate
+
+      - name: Generate drive-ui PAPI descriptors
+        working-directory: user-interfaces/drive-ui
+        run: npx papi generate
+
+      - name: Run unit tests
+        working-directory: user-interfaces
+        run: npm run test:unit
+
+  build:
+    name: Typecheck + build (${{ matrix.ui }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ui: [drive-ui, console-ui, provider]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: npm install
+
+      - name: Generate PAPI descriptors
+        if: matrix.ui != 'provider'
+        working-directory: user-interfaces/${{ matrix.ui }}
+        run: npx papi generate
+
+      - name: Build
+        working-directory: user-interfaces/${{ matrix.ui }}
+        run: npm run build
