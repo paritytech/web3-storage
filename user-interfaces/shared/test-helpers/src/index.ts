@@ -24,7 +24,10 @@ export async function waitForConnection(page: Page, timeout = 30_000) {
 export async function waitForMinBlock(page: Page, minBlock = 3, timeout = 30_000) {
   await expect(async () => {
     const text = await page.getByTestId("block-number").textContent();
-    const num = parseInt(text?.replace(/[#,]/g, "") ?? "0", 10);
+    // The block-number element may contain a label like "Block #1,234" or
+    // bare "#1,234"; extract digits only.
+    const digits = (text ?? "").replace(/\D/g, "");
+    const num = digits ? parseInt(digits, 10) : NaN;
     expect(num).toBeGreaterThanOrEqual(minBlock);
   }).toPass({ timeout });
 }
