@@ -576,9 +576,44 @@ for event in events.iter() {
 3. **Partial Sync**: Download only needed branches
 4. **Proof of Inclusion**: Merkle proofs for any entry
 
+### Commit Strategies: Cost vs. Latency
+
+The on-chain root CID is updated according to the drive's `CommitStrategy`. Each change to the directory tree produces a new candidate root CID off-chain; the strategy decides when to actually write it on-chain.
+
+| Strategy | Behavior | Tx cost | Latency | Use case |
+|----------|----------|---------|---------|----------|
+| `Immediate` | Every file/dir change → on-chain tx | High (1 tx per op) | None | Audit trails, regulatory data |
+| `Batched { interval: N blocks }` | Coalesce changes; flush every N blocks | Medium (~1 tx per ~10 min @ N=100) | Up to N blocks | Default; collaborative documents |
+| `Manual` | Stay off-chain until caller invokes `commit_changes` | Low (1 tx per N writes) | Caller-controlled | Bulk uploads, git-style workflows |
+
+Batching trades freshness for cost. With `Batched { interval: 100 }`, a 100-file upload becomes one on-chain tx instead of 100; recovery still works because the off-chain pending state is reconstructable from the directory chunks the provider already holds.
+
+### Why 1 Bucket = 1 Drive
+
+Layer 1 deliberately does *not* invent its own access-control or pool primitive. Each drive maps to exactly one Layer-0 bucket (`pallet-drive-registry::BucketToDrive: u64 → DriveId`).
+
+This means:
+
+- **Permissions reuse Layer-0 bucket membership.** Layer 0 buckets already have `Admin` / `Reader` / `Writer` roles. Adding `Reader + Writer` to a bucket is what grants a user the ability to use a drive built on it. No separate "drive ACL" exists.
+- **Admin / user separation comes for free.** The bucket admin manages infrastructure (creates the bucket, requests provider agreements, replaces failed providers, monitors challenges). The bucket member uses it as a drive (uploads, downloads, directory ops). The split is the bucket-membership split.
+- **No new on-chain concepts.** An earlier design proposed a `StoragePool` abstraction with its own capacity, pricing, and access list; it was rejected because the bucket already carries all of that. The current registry stores `DriveInfo` and `BucketToDrive` and nothing else.
+
 ---
 
 ## Performance Considerations
+
+### On-Chain Storage Footprint
+
+Per drive, the registry stores a `DriveInfo` plus a 1:1 `BucketToDrive` mapping:
+
+| Item | Size |
+|------|-----:|
+| `DriveInfo` (owner + bucket_id + root_cid + name + timestamps) | ~200 bytes |
+| `BucketToDrive` map entry | 16 bytes |
+| `UserDrives` index entry | 8 bytes |
+| **Total per drive** | **~225 bytes** |
+
+Cost scales linearly with drive count, not with file count or capacity. Files and directories live entirely off-chain in the provider's content-addressed storage; only the root CID moves on-chain on commit.
 
 ### Read Path Optimization
 

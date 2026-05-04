@@ -1,104 +1,36 @@
 # File System Interface (Layer 1)
 
-This directory contains the Layer 1 file system implementation built on top of Layer 0 (Scalable Web3 Storage).
+Layer 1 file system built on top of Layer 0 (`pallet-storage-provider`). Users
+work with drives, directories, and files; the layer hides buckets, storage
+agreements, providers, and challenges.
 
-Located in: `storage-interfaces/file-system/`
+For the architecture deep-dive (encoding, content addressing, security,
+commit-strategy tradeoffs, on-chain footprint, "1 bucket = 1 drive" rationale),
+see [`docs/filesystems/ARCHITECTURE.md`](../../docs/filesystems/ARCHITECTURE.md).
+For the user-facing SDK guide, see
+[`docs/filesystems/USER_GUIDE.md`](../../docs/filesystems/USER_GUIDE.md).
 
-## User Experience: Truly Simplified Storage
-
-Layer 1 File System provides a **true abstraction** over Layer 0. Users only need to understand **drives and files** - all infrastructure details are completely hidden!
-
-### User Flow (Simple!)
+## Quick example
 
 ```rust
-// 1. Create a drive (specify storage needs)
 let drive_id = fs_client.create_drive(
     Some("My Documents"),
-    10_000_000_000,     // 10 GB storage
-    500,                 // 500 blocks duration
-    1_000_000_000_000,   // 1 token payment (12 decimals)
-    None,                // Use default providers (auto-determined)
-    None,                // Use default commit strategy (batched every 100 blocks)
+    10_000_000_000,    // 10 GB
+    500,               // 500 blocks
+    1_000_000_000_000, // 1 token (12 decimals)
+    None,              // auto-pick providers
+    None,              // default commit strategy (Batched, every 100 blocks)
 ).await?;
 
-// 2. Use it like normal file storage!
 fs_client.upload_file(drive_id, "/report.pdf", data).await?;
 let entries = fs_client.list_directory(drive_id, "/").await?;
 let data = fs_client.download_file(drive_id, "/report.pdf").await?;
-
-// Advanced: Create drive with custom configuration
-let drive_id = fs_client.create_drive(
-    Some("Critical Data"),
-    5_000_000_000,       // 5 GB
-    2000,                // Long-term storage
-    2_000_000_000_000,   // 2 tokens
-    Some(5),             // 5 providers (1 primary + 4 replicas)
-    Some(CommitStrategy::Immediate), // Real-time commits
-).await?;
 ```
 
-**What happens automatically (hidden from user):**
-- ✅ System creates bucket in Layer 0
-- ✅ System requests storage agreements with providers
-- ✅ System sets up replication and redundancy
-- ✅ System handles provider failures transparently
-
-### Admin Flow (Monitoring & Policies)
-
-Admins focus on system health rather than manual setup:
-
-1. **Ensure Providers Available** - Monitor provider capacity and health
-2. **Set System Policies** - Configure defaults (providers per drive, pricing, duration)
-3. **Monitor System** - Track drives, storage usage, challenges
-4. **Handle Failures** - Replace failed providers when needed
-
-**See Examples:**
-- `examples/user_workflow_simplified.rs` - User creating drives and managing files
-- `examples/admin_workflow_simplified.rs` - Admin monitoring and management
-
-**Key Benefits:**
-- ✅ Users have ZERO knowledge of buckets, agreements, or providers
-- ✅ Single API call to create a drive (vs 5-10 manual steps in Layer 0)
-- ✅ System automates all infrastructure creation
-- ✅ Admin burden reduced by 250× (monitoring vs manual setup)
-
-## Architecture Overview
-
-Following the three-layered architecture:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: User Interfaces                                   │
-│  (FUSE drivers, Web UI, CLI tools)                         │
-│  [Future Work]                                              │
-└─────────────────────────────────────────────────────────────┘
-                           ▲
-                           │
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: File System Interface (THIS LAYER)                │
-│                                                              │
-│  ┌────────────────┐    ┌──────────────────────────────┐    │
-│  │   Primitives   │    │   Pallet Registry            │    │
-│  │                │    │                              │    │
-│  │  - DirectoryNode   │  - create_drive()            │    │
-│  │  - FileManifest    │  - update_root_cid()         │    │
-│  │  - DriveInfo       │  - delete_drive()            │    │
-│  │  - CID helpers     │  - Multi-drive per account   │    │
-│  └────────────────┘    └──────────────────────────────┘    │
-│                                                              │
-│  Responsibilities:                                           │
-│  - Metadata management (directories, files)                 │
-│  - DAG navigation (Merkle-DAG traversal)                   │
-│  - Drive registry (on-chain root CID tracking)             │
-│  - Namespace & hierarchical structure                       │
-└─────────────────────────────────────────────────────────────┘
-                           ▲
-                           │
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 0: Scalable Web3 Storage                            │
-│  (Raw blob storage, buckets, agreements, challenges)       │
-└─────────────────────────────────────────────────────────────┘
-```
+`create_drive` allocates the underlying Layer-0 bucket, requests storage
+agreements with providers, and stamps the drive's initial empty root CID
+on-chain. `min_providers` defaults to 3 for periods >1000 blocks and 1
+otherwise. Examples in `examples/`.
 
 ## Components
 
@@ -177,136 +109,35 @@ The `create_drive` extrinsic automatically:
 - Transparent bucket management
 - Event emission for all operations
 
-## Data Flow
+## Design notes specific to this pallet
 
-### Writing a File
+**Names in parent.** Entry names are stored in the parent `DirectoryNode`, not
+in the child. Renaming touches only the parent blob; the child's CID stays
+stable, keeping caches valid and limiting the rewrite cascade to the path from
+the changed directory up to the root.
 
-```
-1. Client splits file into chunks
-   └─> Upload chunks to Layer 0 bucket
+**Multi-drive per account.** `UserDrives: AccountId → Vec<DriveId>` lets one
+account own many drives — useful for splitting personal/work data, public/
+private content, or different replication policies, without per-drive ACL
+machinery.
 
-2. Client creates FileManifest
-   └─> Serialize with protobuf
-   └─> Upload to Layer 0 bucket (get file_cid)
+**Immutable versioning.** Each on-chain root CID is a complete snapshot, so any
+historical state is reachable as long as the underlying chunks persist in the
+provider's bucket. Roll-back is just a `update_root_cid` to an older value.
 
-3. Client updates parent DirectoryNode
-   └─> Add DirectoryEntry { name: "file.txt", cid: file_cid, ... }
-   └─> Serialize and upload (get new_parent_cid)
-
-4. Client recursively updates parents up to root
-   └─> Generate new root_cid
-
-5. Client calls update_root_cid(drive_id, new_root_cid)
-   └─> On-chain update (creates new snapshot)
-```
-
-### Reading a File
-
-```
-1. Query on-chain: get_drive_root_cid(drive_id)
-   └─> Returns root_cid
-
-2. Fetch from Layer 0: GET /node?hash=root_cid
-   └─> Deserialize DirectoryNode (root /)
-
-3. Traverse path: /documents/report.pdf
-   └─> Find "documents" → get documents_cid
-   └─> Fetch documents_cid → DirectoryNode
-   └─> Find "report.pdf" → get report_cid
-
-4. Fetch FileManifest: GET /node?hash=report_cid
-   └─> Get list of chunk CIDs
-
-5. Fetch and reconstruct file from chunks
-```
-
-## Design Decisions
-
-### Why Names in Parent?
-Storing entry names in the parent DirectoryNode (not in the child) optimizes renames:
-- Renaming only changes parent blob
-- Child CID stays stable (good for caching)
-- Minimal cascade (only path from changed dir → root)
-
-### Why Multi-Drive Per Account?
-Flexibility for different use cases:
-- Personal vs Work drives
-- Public vs Private drives
-- Different storage providers per drive
-- Easier access control management
-
-### Why Immutable Versioning?
-Each root CID represents a complete snapshot:
-- "Time machine" capability (access any historical state)
-- Audit trail of all changes
-- Easy rollback to previous versions
-- Compatible with IPFS/IPLD patterns
-
-## Usage Example
-
-```rust
-use file_system_primitives::{DirectoryNode, FileManifest, compute_cid};
-use pallet_drive_registry::Pallet as DriveRegistry;
-
-// Create empty drive
-let root = DirectoryNode::new_empty("drive_1");
-let root_cid = root.compute_cid()?;
-let root_bytes = root.to_bytes()?;
-
-// Upload root to Layer 0
-provider_client.upload(bucket_id, &root_bytes).await?;
-
-// Register drive on-chain
-DriveRegistry::create_drive(
-    origin,
-    bucket_id,
-    root_cid,
-    Some(b"My Drive".to_vec())
-)?;
-```
+For the rest of the architecture (encoding, content addressing, security,
+commit-strategy tradeoffs, on-chain footprint, "1 bucket = 1 drive"), see
+[`docs/filesystems/ARCHITECTURE.md`](../../docs/filesystems/ARCHITECTURE.md).
 
 ## Testing
 
 ```bash
-# Test primitives
-cargo test -p file-system-primitives
-
-# Test pallet
-cargo test -p pallet-drive-registry
-
-# Run all Layer 1 tests
-cargo test -p file-system-primitives -p pallet-drive-registry
+just fs-test-all   # primitives + pallet-registry + client (unit tests)
 ```
-
-## Future Work
-
-### Planned Features (File System Interface)
-- [ ] Client SDK for high-level file operations
-- [ ] DAG builder and traversal utilities
-- [ ] Path resolution helpers
-- [ ] Batch operations (multiple file changes → single root update)
-- [ ] Indexer service (off-chain metadata indexing)
-- [ ] Search API (full-text search on file names/metadata)
-
-### Layer 2 Integration (Future)
-- [ ] FUSE driver for local mounting
-- [ ] Web dashboard (Google Drive-like UI)
-- [ ] CLI tools (ls, cp, mv, rm)
-- [ ] WebDAV server
-- [ ] Access control (W3ACL/UCAN integration)
 
 ## References
 
-- [Layer 1 Design Doc](../../docs/design/layer-1-file-system.md) _(to be created)_
-- [Three-Layered Architecture](../../docs/design/scalable-web3-storage.md)
+- [Layer 1 Architecture](../../docs/filesystems/ARCHITECTURE.md)
+- [Layer 0 Design](../../docs/design/scalable-web3-storage.md)
 - [Layer 0 Implementation](../../docs/design/scalable-web3-storage-implementation.md)
-- [Protobuf Schemas](./primitives/proto/filesystem.proto)
-
-## Contributing
-
-When adding new features to the File System Interface:
-1. Keep Layer 0 dependencies minimal (only use primitives)
-2. Follow the DAG/content-addressed pattern
-3. Add comprehensive tests
-4. Update this README with new components
-5. Document in architecture docs
+- [Protobuf schemas](./primitives/proto/filesystem.proto)
