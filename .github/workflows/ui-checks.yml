@@ -24,25 +24,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
 
       - name: Install workspace deps
         working-directory: user-interfaces
-        run: npm install
+        run: pnpm install --frozen-lockfile=false
 
       - name: Generate console-ui PAPI descriptors
-        working-directory: user-interfaces/console-ui
-        run: npx papi generate
+        working-directory: user-interfaces
+        run: pnpm --filter @web3-storage/console-ui exec papi generate
 
       - name: Generate drive-ui PAPI descriptors
-        working-directory: user-interfaces/drive-ui
-        run: npx papi generate
+        working-directory: user-interfaces
+        run: pnpm --filter @web3-storage/drive-ui exec papi generate
 
       - name: Run unit tests
         working-directory: user-interfaces
-        run: npm run test:unit
+        run: pnpm run test:unit
 
   build:
     name: Typecheck + build (${{ matrix.ui }})
@@ -50,23 +56,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ui: [drive-ui, console-ui, provider]
+        include:
+          - ui: drive-ui
+            filter: "@web3-storage/drive-ui"
+            papi: true
+          - ui: console-ui
+            filter: "@web3-storage/console-ui"
+            papi: true
+          - ui: provider
+            filter: provider-dashboard
+            papi: false
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
 
       - name: Install workspace deps
         working-directory: user-interfaces
-        run: npm install
+        run: pnpm install --frozen-lockfile=false
 
       - name: Generate PAPI descriptors
-        if: matrix.ui != 'provider'
-        working-directory: user-interfaces/${{ matrix.ui }}
-        run: npx papi generate
+        if: matrix.papi
+        working-directory: user-interfaces
+        run: pnpm --filter ${{ matrix.filter }} exec papi generate
 
       - name: Build
-        working-directory: user-interfaces/${{ matrix.ui }}
-        run: npm run build
+        working-directory: user-interfaces
+        run: pnpm --filter ${{ matrix.filter }} run build

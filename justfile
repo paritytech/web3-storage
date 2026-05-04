@@ -210,19 +210,19 @@ s3-demo-ci:
 
 # Run all UI unit tests (Vitest)
 test-ui-unit:
-    cd user-interfaces && npm run test:unit
+    cd user-interfaces && pnpm run test:unit
 
 # Run drive-ui Playwright e2e (requires chain + provider running)
 test-ui-drive:
-    cd user-interfaces && npm run test:e2e:drive-ui
+    cd user-interfaces && pnpm run test:e2e:drive-ui
 
 # Run console-ui Playwright e2e (requires chain running)
 test-ui-console:
-    cd user-interfaces && npm run test:e2e:console-ui
+    cd user-interfaces && pnpm run test:e2e:console-ui
 
 # Run provider Playwright e2e (requires chain running)
 test-ui-provider:
-    cd user-interfaces && npm run test:e2e:provider
+    cd user-interfaces && pnpm run test:e2e:provider
 
 # Run ALL UI tests: unit + e2e for every UI. Assumes chain + provider already
 # started (via `just start-chain` and `just start-provider` in separate

@@ -20,10 +20,12 @@ just start-chain         # zombienet relay + parachain (ports 9900, 2222)
 just start-provider      # provider HTTP node (port 3333)
 
 # Then any of:
-cd user-interfaces/drive-ui && npm run dev      # http://localhost:5174
-cd user-interfaces/console-ui && npm run dev    # http://localhost:5173
-cd user-interfaces/provider && npm run dev      # http://localhost:5175
+cd user-interfaces/drive-ui && pnpm dev      # http://localhost:5174
+cd user-interfaces/console-ui && pnpm dev    # http://localhost:5173
+cd user-interfaces/provider && pnpm dev      # http://localhost:5175
 ```
+
+The `user-interfaces/` workspace uses **pnpm** (`pnpm-workspace.yaml`); inter-workspace deps use the `workspace:*` protocol. Stick with pnpm — switching to npm breaks workspace resolution.
 
 ## Tests
 
@@ -75,5 +77,5 @@ Examples already in use:
 
 ## Workspace gotchas
 
-- Each UI has its own `.papi/descriptors/` (a `file:` dependency). `npm install` at the root only hoists *one* of them to `node_modules/@polkadot-api/descriptors`. Vite resolves correctly via an explicit `@polkadot-api/descriptors` alias in each `vite.config.ts` (and `vitest.config.ts` for unit tests).
+- Each UI has its own `.papi/descriptors/` (a `file:` dependency). `pnpm install` at the workspace root resolves them correctly because the per-UI `vite.config.ts` (and `vitest.config.ts` for unit tests) include an explicit `@polkadot-api/descriptors` alias. Inter-workspace deps (`@web3-storage/network-config`, `@web3-storage/test-helpers`) use `workspace:*` and only resolve under pnpm.
 - `provider/` historically defaulted to port `5173`, which collides with `console-ui/`. Provider now uses `5175`. Adjust your bookmarks if you had it open.
