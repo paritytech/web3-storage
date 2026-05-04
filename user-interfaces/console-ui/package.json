@@ -7,7 +7,10 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi"
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
+    "papi:check": "papi generate && git diff --exit-code .papi",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
@@ -48,6 +51,8 @@
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.30.1",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "@playwright/test": "^1.59.1",
+    "@web3-storage/test-helpers": "*"
   }
 }
