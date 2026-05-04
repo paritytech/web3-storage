@@ -1,6 +1,21 @@
 #!/bin/bash
-# Quick test script for basic functionality
-# This assumes blockchain and provider nodes are already running
+#
+# Curl-based smoke test for the Layer-0 provider HTTP API.
+#
+# Checks: chain reachable, provider reachable, block production, upload, list,
+# download+verify, and MMR root retrieval — all against bucket 0.
+#
+# Prerequisites (all must be running before this script):
+#   - `just start-chain` (parachain on ws://127.0.0.1:2222)
+#   - `just start-provider` (provider on http://127.0.0.1:3333)
+#   - Bucket 0 exists with an active agreement to the Alice provider.
+#     Bootstrap once via Polkadot.js UI (registerProvider → createBucket →
+#     requestPrimaryAgreement → acceptAgreement) or by running `just demo`,
+#     which performs the same setup against an already-running chain + provider.
+#
+# `just demo` (PAPI-based, JS) is the canonical end-to-end check. This script
+# exists for shell-only debugging of the raw provider HTTP endpoints
+# (POST /upload, GET /bucket/{id}/...).
 
 set -e
 
@@ -76,7 +91,7 @@ else
     echo "Response: $UPLOAD_RESPONSE"
     echo ""
     echo "Note: This might fail if bucket 0 doesn't exist or has no agreement."
-    echo "Follow docs/testing/MANUAL_TESTING_GUIDE.md steps 7-8 to create bucket and agreement first."
+    echo "Run \`just demo\` once to bootstrap bucket and agreement (against an already-running chain + provider)."
     exit 1
 fi
 
@@ -134,4 +149,4 @@ echo "Next steps:"
 echo "1. Create more buckets and agreements via Polkadot.js UI"
 echo "2. Test with multiple providers"
 echo "3. Test challenge and slashing mechanism"
-echo "4. See docs/testing/MANUAL_TESTING_GUIDE.md for complete testing workflow"
+echo "4. Run \`just demo\` for the canonical end-to-end PAPI flow"

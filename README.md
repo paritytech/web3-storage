@@ -42,55 +42,46 @@ just demo
 
 ### Next Steps
 
-1. **Configure on-chain** - Register provider, create bucket, setup agreement
-   - See: [Quick Start Guide](./docs/getting-started/QUICKSTART.md)
+1. **`just demo`** drives the full Layer-0 happy path against an already-running
+   chain + provider: registers a provider, creates a bucket, opens an agreement,
+   uploads data, fires two challenges, and asserts the provider defends both.
+   This is also what CI runs. It does **not** start the chain or provider for
+   you — keep `just start-chain` and `just start-provider` running in two other
+   terminals first.
 
-2. **Run tests** - Verify everything works
-   ```bash
-   bash scripts/verify-setup.sh  # Check on-chain setup
-   bash scripts/quick-test.sh    # Run automated tests
-   ```
+2. **Inspect chain health**: `bash scripts/check-chain.sh` (relay + parachain
+   status), `just health` (provider node health), `just stats` (provider stats).
 
-3. **Try the demo** - Quick end-to-end test (after on-chain setup)
-   ```bash
-   just demo-setup   # Register provider, create bucket, establish agreement
-   just demo-upload  # Upload test data with timestamp
-   ```
-
-4. **Upload data** - Use the client SDK or HTTP API
-   - See: [Client Documentation](./client/README.md)
+3. **Build something on top**: see [Client Documentation](./client/README.md)
+   for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./FILE_SYSTEM_QUICKSTART.md)
+   for the Layer-1 file-system interface.
 
 ## File System Interface (Layer 1)
 
-For most users, we recommend using the **Layer 1 File System Interface** instead of Layer 0 directly. It provides a familiar file system abstraction (drives, folders, files) over Layer 0's raw blob storage.
+The Layer 1 File System Interface provides a familiar file/folder abstraction
+over Layer 0's raw blob storage.
 
 ### Quick Start with File System
 
 ```bash
-# Full integration test (starts everything + runs example)
-just fs-integration-test
+# In separate terminals:
+just start-chain            # Terminal 1: relay + parachain
+just start-provider         # Terminal 2: provider node
 
-# Or manually:
-just start-services          # Terminal 1: Start infrastructure
-just fs-demo                 # Terminal 2: Run file system demo
+# Then run the file-system integration example:
+just fs-demo-ci             # Terminal 3
 ```
 
 **What you get:**
 - ✅ Familiar file/folder interface
 - ✅ Automatic provider selection
 - ✅ Built-in blockchain integration
-- ✅ No infrastructure management needed
 
 ### File System Commands
 
 ```bash
-just fs-integration-test     # Full test: start everything + run example
-just fs-demo                 # Quick demo (requires running infrastructure)
-just fs-example              # Run basic_usage.rs example
-just fs-test                 # Run unit tests
-just fs-test-all             # Test all file system components
-just fs-build                # Build file system components
-just fs-docs                 # Show documentation links
+just fs-test-all            # Run all unit tests across primitives, pallet, client
+just fs-demo-ci             # Integration example against a running chain + provider
 ```
 
 **Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
@@ -114,19 +105,24 @@ just fs-docs                 # Show documentation links
 ```bash
 # General
 just --list                  # Show all available commands
-just check                   # Verify prerequisites
 just build                   # Build the project
+just setup                   # One-time: download binaries + build everything
 
 # Infrastructure
-just start-chain             # Start blockchain only
-just start-chain             # Start blockchain
+just start-chain             # Start relay + parachain
 just start-provider          # Start provider node
 just health                  # Check provider health
+just stats                   # Provider storage stats
 
-# File System (Layer 1)
-just fs-integration-test     # Full file system test
-just fs-demo                 # Quick file system demo
-just fs-test-all             # Test all file system components
+# End-to-end demos (require chain + provider running)
+just demo                    # Layer-0 PAPI demo: setup, upload, 2 challenges
+just fs-demo-ci              # Layer-1 file-system integration example
+just s3-demo-ci              # Layer-1 S3-compatible integration example
+
+# Tests
+cargo test --workspace       # All unit + integration tests
+just fs-test-all             # File-system layer only
+just s3-test-all             # S3 layer only
 ```
 
 ## Documentation
@@ -137,13 +133,12 @@ just fs-test-all             # Test all file system components
 
 | Document | Description |
 |----------|-------------|
-| **[File System Quick Start](./FILE_SYSTEM_QUICKSTART.md)** | **Get started with Layer 1 (Recommended)** |
+| **[Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md)** | **Three-terminal setup + SDK examples (recommended)** |
+| [File System Quick Start](./FILE_SYSTEM_QUICKSTART.md) | File-system-only quickstart |
 | [File System Docs](./docs/filesystems/README.md) | Complete Layer 1 documentation |
-| [Quick Start Guide](./docs/getting-started/QUICKSTART.md) | Layer 0 setup (5 min) |
-| [Manual Testing Guide](./docs/testing/MANUAL_TESTING_GUIDE.md) | Complete testing workflow |
 | [Extrinsics Reference](./docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
-| [Architecture Design](./docs/design/scalable-web3-storage.md) | System design & rationale |
+| [Architecture Design](./docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](./docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 
 ## Architecture
@@ -296,10 +291,7 @@ See [Client README](./client/README.md) for complete examples.
 
 ## Deployment
 
-See [Manual Testing Guide](./docs/testing/MANUAL_TESTING_GUIDE.md) for:
-- Local development setup
-- Rococo testnet deployment
-- Production deployment checklist
+For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet.toml` for current local network shape.
 
 ## Contributing
 

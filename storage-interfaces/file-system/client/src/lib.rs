@@ -18,7 +18,7 @@
 //!
 //! // Create client
 //! let fs_client = FileSystemClient::new(
-//!     "http://localhost:9944",
+//!     "ws://127.0.0.1:2222",
 //!     "http://provider.example.com",
 //! ).await?;
 //!
@@ -122,7 +122,7 @@ impl FileSystemClient {
     ///
     /// # Arguments
     ///
-    /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://localhost:9944")
+    /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://127.0.0.1:2222")
     /// * `provider_endpoint` - Storage provider HTTP endpoint
     pub async fn new(chain_endpoint: &str, provider_endpoint: &str) -> Result<Self> {
         let storage_client = StorageClient::new(provider_endpoint);
@@ -404,7 +404,7 @@ impl FileSystemClient {
     /// // Single provider setup (development/testing)
     /// let result = fs_client.submit_checkpoint(
     ///     drive_id,
-    ///     vec!["http://localhost:3000".to_string()],
+    ///     vec!["http://127.0.0.1:3333".to_string()],
     /// ).await;
     ///
     /// match result {
@@ -506,7 +506,7 @@ impl FileSystemClient {
     /// // Enable automatic checkpoints every 100 blocks
     /// fs_client.enable_auto_checkpoints(
     ///     drive_id,
-    ///     vec!["http://localhost:3000".to_string()],
+    ///     vec!["http://127.0.0.1:3333".to_string()],
     ///     Some(100),
     ///     Some(Arc::new(|bucket_id, result| {
     ///         match result {
