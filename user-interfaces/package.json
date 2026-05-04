@@ -1,11 +1,10 @@
 {
   "name": "web3-storage-ui",
   "private": true,
-  "workspaces": ["shared/*", "provider", "console-ui", "drive-ui"],
   "scripts": {
-    "test:unit": "npm run test:unit --workspace=@web3-storage/drive-ui --workspace=provider-dashboard --if-present",
-    "test:e2e:drive-ui": "npm run test --workspace=@web3-storage/drive-ui",
-    "test:e2e:console-ui": "npm run test --workspace=@web3-storage/console-ui",
-    "test:e2e:provider": "npm run test:e2e --workspace=provider-dashboard"
+    "test:unit": "pnpm --filter @web3-storage/drive-ui --filter provider-dashboard --if-present run test:unit",
+    "test:e2e:drive-ui": "pnpm --filter @web3-storage/drive-ui run test",
+    "test:e2e:console-ui": "pnpm --filter @web3-storage/console-ui run test",
+    "test:e2e:provider": "pnpm --filter provider-dashboard run test:e2e"
   }
 }

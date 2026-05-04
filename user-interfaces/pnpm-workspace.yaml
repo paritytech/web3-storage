@@ -1,0 +1,5 @@
+packages:
+  - "shared/*"
+  - "provider"
+  - "console-ui"
+  - "drive-ui"

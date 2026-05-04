@@ -6,5 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.59.0"
   }
 }
