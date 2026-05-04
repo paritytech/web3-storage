@@ -187,5 +187,5 @@ fn test_provider_registered_event() {
 ## Links
 
 - [Pallet Source](/pallet/src/lib.rs)
-- [Testing Guide](docs/testing/MANUAL_TESTING_GUIDE.md)
+- For end-to-end exercise: `just demo` (Layer-0 PAPI), `just fs-demo-ci`, `just s3-demo-ci`
 - [Runtime](/runtime/src/lib.rs)

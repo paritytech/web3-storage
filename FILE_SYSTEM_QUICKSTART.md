@@ -4,311 +4,95 @@ Quick commands to test and run the Layer 1 File System Interface.
 
 ## Prerequisites
 
-Install `just`:
 ```bash
-cargo install just
-# or on macOS:
-brew install just
+cargo install just            # or: brew install just
+just setup                    # one-time: download binaries + build everything
 ```
 
-## Quick Commands
+## Run It
 
-### 🚀 Full Integration Test (Recommended for First Run)
-
-Starts everything and runs the example:
-```bash
-just fs-integration-test
-```
-
-This will:
-1. ✅ Start relay chain + parachain
-2. ✅ Start provider node
-3. ✅ Verify on-chain setup
-4. ✅ Run file system example
-
-**Expected output:** Complete file system workflow demonstration with drive creation, file uploads, downloads, and verification.
-
-### 📋 Quick Demo (Infrastructure Already Running)
-
-If you already have the infrastructure running:
-```bash
-# Terminal 1 - Start infrastructure
-just start-services
-
-# Terminal 2 - Run demo
-just fs-demo
-```
-
-### 🧪 Testing
+The file-system layer talks to a running parachain + provider node, so you need
+three terminals. None of the test recipes start the chain or provider for you.
 
 ```bash
-# Test file system client only
-just fs-test
-
-# Test with verbose logging
-just fs-test-verbose
-
-# Test all file system components (primitives + pallet + client)
-just fs-test-all
-```
-
-### 🔧 Building
-
-```bash
-# Build file system components only
-just fs-build
-
-# Build entire project
-just build
-```
-
-### 📚 Documentation
-
-```bash
-# Show documentation links
-just fs-docs
-```
-
-## Manual Workflow
-
-If you prefer to run each step manually:
-
-### Step 1: Setup (One-time)
-
-```bash
-just setup
-```
-
-This downloads binaries and builds the project.
-
-### Step 2: Start Infrastructure
-
-**Terminal 1 - Blockchain:**
-```bash
+# Terminal 1 — relay chain + parachain (parachain WS on ws://127.0.0.1:2222)
 just start-chain
 
-# Wait for:
-# ✓ Relay chain: ws://127.0.0.1:9900
-# ✓ Parachain: ws://127.0.0.1:9944
+# Terminal 2 — provider node (HTTP on http://127.0.0.1:3333, signing as //Alice)
+just start-provider
+
+# Terminal 3 — file-system integration example (chain + provider must be up)
+just fs-demo-ci
 ```
 
-**Terminal 2 - Provider:**
-```bash
-export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
-cargo run --release -p storage-provider-node
+`fs-demo-ci` runs `storage-interfaces/file-system/client/examples/ci_integration_test.rs`
+against the running infrastructure: it creates a drive via the `DriveRegistry`
+pallet, exercises directory and file operations through the provider's
+`/fs/{bucket}/...` HTTP endpoints, and asserts the round-trip. It assumes the
+chain and provider are already up.
 
-# Wait for:
-# ✓ Storage provider listening on http://0.0.0.0:3000
-```
+This is the same flow exercised by CI in `.github/workflows/integration-tests.yml`,
+which spins up zombienet + providers before invoking the recipe.
 
-### Step 3: Verify Setup
-
-**Terminal 3:**
-```bash
-# Verify blockchain
-bash scripts/check-chain.sh
-
-# Verify provider
-curl http://localhost:3000/health
-
-# Verify on-chain setup
-bash scripts/verify-setup.sh
-```
-
-### Step 4: Run Example
+## Tests
 
 ```bash
-just fs-example
+just fs-test-all              # primitives + drive registry pallet + client (unit tests)
+cargo test --workspace        # everything
 ```
 
-## Example Output
+## Health Checks
 
+```bash
+bash scripts/check-chain.sh   # relay (9900) + parachain (2222) + current block
+just health                   # provider node /health
+just stats                    # provider storage stats
 ```
-🚀 File System Client - Basic Usage Example
 
-============================================================
+## Network endpoints (defaults)
 
-📡 Step 1: Connecting to blockchain and provider...
-✅ Connected successfully!
+| Service              | Endpoint                                                  |
+|----------------------|-----------------------------------------------------------|
+| Relay chain RPC      | `ws://127.0.0.1:9900`                                     |
+| Parachain RPC        | `ws://127.0.0.1:2222`                                     |
+| Provider HTTP        | `http://127.0.0.1:3333`                                   |
+| Polkadot.js (relay)  | `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900`   |
+| Polkadot.js (chain)  | `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:2222`   |
 
-📁 Step 2: Creating a new drive...
-✅ Drive created with ID: 0
-   Name: My Documents
-   Capacity: 10 GB
-   Duration: 500 blocks
-
-📂 Step 3: Creating directory structure...
-   Creating /documents...
-   ✅ Created /documents
-   Creating /documents/work...
-   ✅ Created /documents/work
-   Creating /photos...
-   ✅ Created /photos
-
-📝 Step 4: Uploading files...
-   Uploading /README.md (92 bytes)...
-   ✅ Uploaded /README.md
-   Uploading /documents/work/report.txt (75 bytes)...
-   ✅ Uploaded /documents/work/report.txt
-   Uploading /documents/notes.txt (93 bytes)...
-   ✅ Uploaded /documents/notes.txt
-
-📋 Step 5: Listing directory contents...
-
-   Contents of /:
-   📁 documents (0 bytes)
-   📁 photos (0 bytes)
-   📄 README.md (92 bytes)
-
-   Contents of /documents:
-   📁 work (0 bytes)
-   📄 notes.txt (93 bytes)
-
-   Contents of /documents/work:
-   📄 report.txt (75 bytes)
-
-⬇️  Step 6: Downloading and verifying files...
-
-   Downloading /README.md...
-   ✅ Downloaded 92 bytes
-   ✅ Content verified!
-   Content preview: # My Documents
-
-Welcome to my decentralized fil
-
-   Downloading /documents/work/report.txt...
-   ✅ Downloaded 75 bytes
-   ✅ Content verified!
-   Content:
-   Q4 2024 Report
-
-   Revenue: $1M
-   Growth: 50%
-
-============================================================
-
-🎉 Example completed successfully!
-
-📊 Summary:
-   ✅ Created drive: 0
-   ✅ Created 3 directories
-   ✅ Uploaded 3 files
-   ✅ Listed directory contents
-   ✅ Downloaded and verified files
-
-💡 Next steps:
-   - Try clearing the drive: clear_drive()
-   - Try deleting the drive: delete_drive()
-   - Explore more file operations
-   - Check the on-chain state via polkadot.js
-```
+Override via the `RELAY_PORT`, `CHAIN_PORT`, `PROVIDER_PORT` justfile variables
+if you need different ports.
 
 ## Troubleshooting
 
-### "Connection failed" Error
-
-**Problem:** Cannot connect to blockchain
+### Cannot connect
 
 ```bash
-# Check blockchain status
-bash scripts/check-chain.sh
-
-# Restart blockchain
-just start-chain
+bash scripts/check-chain.sh   # parachain producing blocks?
+just health                   # provider responding?
 ```
 
-### "Provider unavailable" Error
-
-**Problem:** Cannot reach provider
+### Ports already in use
 
 ```bash
-# Check provider status
-curl http://localhost:3000/health
-
-# Restart provider (in separate terminal)
-export PROVIDER_ID=5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-export CHAIN_RPC=ws://127.0.0.1:9944
-cargo run --release -p storage-provider-node
+lsof -ti:2222 | xargs kill    # parachain
+lsof -ti:9900 | xargs kill    # relay chain
+lsof -ti:3333 | xargs kill    # provider
 ```
 
-### Ports Already in Use
+### Clean start
 
 ```bash
-# Find and kill processes
-lsof -ti:9944 | xargs kill  # Parachain
-lsof -ti:9900 | xargs kill  # Relay chain
-lsof -ti:3000 | xargs kill  # Provider
-```
-
-### Clean Start
-
-```bash
-# Kill all processes
 pkill -f polkadot
 pkill -f storage-provider-node
 pkill -f zombienet
-
-# Rebuild
 just build
-
-# Start fresh
-just fs-integration-test
+# then re-run the three terminals above
 ```
 
-## Available Just Commands
+## Further reading
 
-### File System Commands
-
-| Command | Description |
-|---------|-------------|
-| `just fs-integration-test` | Full integration test (starts everything) |
-| `just fs-demo` | Quick demo (requires running infrastructure) |
-| `just fs-example` | Run basic_usage.rs example |
-| `just fs-test` | Run unit tests |
-| `just fs-test-verbose` | Run tests with logging |
-| `just fs-test-all` | Test all file system components |
-| `just fs-build` | Build file system components |
-| `just fs-clean` | Clean build artifacts |
-| `just fs-docs` | Show documentation links |
-
-### Infrastructure Commands
-
-| Command | Description |
-|---------|-------------|
-| `just setup` | One-time setup (download binaries + build) |
-| `just start-chain` | Start blockchain only |
-| `just start-services` | Start blockchain + provider |
-| `just health` | Check provider health |
-| `just build` | Build entire project |
-
-## Web UIs
-
-Once infrastructure is running, access these UIs:
-
-- **Relay Chain**: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9900
-- **Parachain**: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
-- **Provider Health**: http://127.0.0.1:3000/health
-
-## Next Steps
-
-1. **Read the walkthrough**: `docs/filesystems/EXAMPLE_WALKTHROUGH.md`
-2. **Explore the API**: `docs/filesystems/API_REFERENCE.md`
-3. **Build your app**: Use the example as a template
-4. **Modify the example**: Try different drive parameters, files, and operations
-
-## Documentation
-
-- **[User Guide](docs/filesystems/USER_GUIDE.md)** - Complete user workflows
-- **[Example Walkthrough](docs/filesystems/EXAMPLE_WALKTHROUGH.md)** - Step-by-step guide
-- **[API Reference](docs/filesystems/API_REFERENCE.md)** - Complete API docs
-- **[Client README](storage-interfaces/file-system/client/README.md)** - SDK documentation
-- **[File System Overview](docs/filesystems/FILE_SYSTEM_INTERFACE.md)** - Architecture and design
-
-## Support
-
-For issues:
-1. Check logs: `RUST_LOG=debug just fs-example`
-2. Verify setup: `bash scripts/verify-setup.sh`
-3. Review troubleshooting section above
-4. Check main documentation: `docs/README.md`
+- [User Guide](docs/filesystems/USER_GUIDE.md) — complete user workflows
+- [Architecture](docs/filesystems/ARCHITECTURE.md) — encoding, security, chain integration
+- [API Reference](docs/filesystems/API_REFERENCE.md) — complete API docs
+- [Client README](storage-interfaces/file-system/client/README.md) — SDK docs
+- [Architecture](docs/filesystems/ARCHITECTURE.md) — encoding, security, chain integration

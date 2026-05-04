@@ -327,9 +327,11 @@ cargo test -p pallet-s3-registry
 cargo test -p s3-client
 
 # Run integration example (requires running infrastructure)
-just start-chain     # Terminal 1
-just start-provider  # Terminal 2
-just s3-example      # Terminal 3
+just start-chain                                  # Terminal 1
+just start-provider                               # Terminal 2
+cargo run -p s3-client --example basic_usage      # Terminal 3
+# Or the CI version:
+just s3-demo-ci                                   # Terminal 3
 ```
 
 ## Future Enhancements

@@ -34,19 +34,19 @@ Before using the client, you need:
 1. **Running blockchain node**:
    ```bash
    just start-chain
-   # Parachain WebSocket: ws://127.0.0.1:9944
+   # Parachain WebSocket: ws://127.0.0.1:2222
    ```
 
 2. **Running provider node**:
    ```bash
-   cargo run --release -p storage-provider-node
-   # Provider HTTP: http://localhost:3000
+   just start-provider
+   # Provider HTTP: http://127.0.0.1:3333
    ```
 
-3. **On-chain setup** (provider registration, etc.):
-   ```bash
-   bash scripts/verify-setup.sh
-   ```
+3. **On-chain setup** (provider registration, agreement). With the chain and
+   provider already running, `just demo` performs registerProvider →
+   createBucket → requestPrimaryAgreement → acceptAgreement and an upload.
+   It does not start the chain or provider for you.
 
 ### Basic Usage
 
@@ -58,8 +58,8 @@ use file_system_primitives::CommitStrategy;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Connect to blockchain and provider
     let mut fs_client = FileSystemClient::new(
-        "ws://127.0.0.1:9944",      // Parachain endpoint
-        "http://localhost:3000"      // Provider endpoint
+        "ws://127.0.0.1:2222",      // Parachain endpoint
+        "http://127.0.0.1:3333"      // Provider endpoint
     )
     .await?
     .with_dev_signer("alice")       // Use Alice's key for testing
@@ -122,8 +122,8 @@ The client uses `subxt` for blockchain interaction:
 ```rust
 // Connect to parachain
 let fs_client = FileSystemClient::new(
-    "ws://127.0.0.1:9944",      // Your parachain WebSocket
-    "http://localhost:3000"      // Your provider HTTP endpoint
+    "ws://127.0.0.1:2222",      // Your parachain WebSocket
+    "http://127.0.0.1:3333"      // Your provider HTTP endpoint
 )
 .await?;
 ```
@@ -255,11 +255,11 @@ Demonstrates the complete file system workflow:
 ```bash
 # Prerequisites
 just start-chain                              # Terminal 1
-cargo run --release -p storage-provider-node  # Terminal 2
-bash scripts/verify-setup.sh                  # Verify setup
+just start-provider                           # Terminal 2
+bash scripts/check-chain.sh                   # Confirm chain is producing blocks
 
 # Run example
-cargo run --example basic_usage
+cargo run -p file-system-client --example basic_usage
 ```
 
 The example shows:
@@ -393,7 +393,7 @@ For more details, see:
 - **[User Guide](../../../docs/filesystems/USER_GUIDE.md)** - Complete user workflows
 - **[Admin Guide](../../../docs/filesystems/ADMIN_GUIDE.md)** - System administration
 - **[API Reference](../../../docs/filesystems/API_REFERENCE.md)** - Complete API docs
-- **[File System Interface](../../../docs/filesystems/FILE_SYSTEM_INTERFACE.md)** - Architecture and design
+- **[Architecture](../../../docs/filesystems/ARCHITECTURE.md)** - Encoding, security, chain integration
 
 ## License
 

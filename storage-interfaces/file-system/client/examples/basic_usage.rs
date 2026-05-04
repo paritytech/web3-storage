@@ -9,8 +9,9 @@
 //!
 //! Prerequisites:
 //! 1. Start the blockchain: `just start-chain`
-//! 2. Start a provider node: `cargo run --release -p storage-provider-node`
-//! 3. Register the provider and setup agreements (see scripts/quick-test.sh)
+//! 2. Start a provider node: `just start-provider`
+//! 3. With both running, run `just demo` once to register the provider and
+//!    open an agreement (or do the equivalent steps manually in Polkadot.js).
 //!
 //! Run this example:
 //! ```bash
@@ -31,8 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
     let mut fs_client = FileSystemClient::new(
-        "ws://127.0.0.1:9944",   // Parachain WebSocket endpoint
-        "http://localhost:3000", // Provider HTTP endpoint
+        "ws://127.0.0.1:2222",   // Parachain WebSocket endpoint
+        "http://127.0.0.1:3333", // Provider HTTP endpoint
     )
     .await?
     .with_dev_signer("alice") // Use Alice for testing

@@ -749,6 +749,101 @@ Admins can instruct providers to temporarily refuse serving non-members, then ch
 
 ---
 
+## Addressing Common Concerns
+
+### Challenge Economics: Coordinated Griefing
+
+**Concern**: Coordinated users could grief providers with challenges, paying only 90% of costs.
+
+**Response**:
+
+Multiple protections:
+
+1. **Challenge cancellation**: Challenger can cancel anytime before response, getting full deposit back minus tx fee. If provider serves data off-chain after challenge initiated, challenger cancels and pays only tx fee.
+
+2. **Provider pays even when honest**: This is intentional. Incentive is to serve directly and avoid challenges entirely, not to optimize challenge response.
+
+3. **Economic rationality**: Coordinated griefing requires funding many challenges. At 90% cost, attacking a provider with 100 challenges costs attackers 9000 DOT to cost provider 1000 DOT. Cheaper to just not use that provider.
+
+4. **Reputation damage**: Provider with many challenges (even successful responses) signals problems. Clients migrate to better providers.
+
+### Collusion: Providers Sharing Storage
+
+**Concern**: Providers could collude to reduce physical redundancy (all proxy from a single source).
+
+**Response**:
+
+Multiple detection mechanisms:
+
+1. **Latency measurements**: A provider fetching from another location shows network latency. Physics doesn't lie — cross-region adds 60-80ms minimum. Clients measure per-provider latency over time and shift to consistently fast providers.
+
+2. **Stake requirements**: Each colluding provider still needs full stake at risk. Savings from sharing storage (~$20/month) vs risk (thousands in stake) makes collusion irrational.
+
+3. **Isolation mode** (future, see above): Admin temporarily blocks other providers, then challenges. If a provider was fetching from others, they can't respond.
+
+4. **Natural selection**: Poor performance → clients don't renew agreements → provider loses revenue.
+
+The design doesn't prevent collusion cryptographically. It makes collusion detectable and economically irrational.
+
+### Passive Data: Files Never Read
+
+**Concern**: Files never read receive no verification despite payment.
+
+**Response**:
+
+This is a design decision, not an oversight. The alternative is continuous proofs regardless of whether anyone cares — that's Filecoin's approach, and it doesn't scale.
+
+For passive data that matters:
+
+1. **Automated spot-checking**: Client software samples random chunks in the background. The user doesn't need to read files for verification to happen.
+
+2. **Stake deterrent**: 3 random checks per week gives 98% detection over 3 months. Provider risks entire stake for minimal savings.
+
+3. **Third-party verification**: Anyone caring about data can verify. Doesn't require being the owner.
+
+4. **Optional periodic proofs** (future): For fire-and-forget archival requiring stronger guarantees, optional PDP-style proofs can be added as a premium feature. Layered on later without changing the core protocol.
+
+The design optimizes for the common case: data someone actively cares about. For edge cases, mechanisms exist.
+
+### Burn Option: Blackmail Channel
+
+**Concern**: The burn option creates a blackmail channel ("refund me or I burn").
+
+**Response**:
+
+**Anti-blackmail mechanism**: Burning costs the client extra. When burning, client loses the locked payment AND pays an additional premium (e.g., 10%) from their own account. If they have insufficient funds, the burn fails.
+
+Properties:
+
+- Spite burns cost the blackmailer, not just the provider.
+- "Refund me or I burn" now costs the blackmailer extra each time.
+- A burn signals the client was so dissatisfied they paid extra to punish.
+- Makes burns rare but meaningful.
+
+Default behavior matters: most clients will pay (the default action). Burning requires an active decision and extra cost. This filters for legitimate dissatisfaction.
+
+### Chain Bottleneck: Dispute Saturation
+
+**Concern**: If disputes exceed chain capacity, the system breaks like Filecoin.
+
+**Response**:
+
+Fundamentally different scaling dynamics:
+
+- **Filecoin**: chain load = f(storage committed). More storage = more proofs, regardless of actor behavior.
+- **This design**: chain load = f(disputes). Disputes scale with misbehavior, not storage volume.
+
+Why disputes → 0 in normal operation:
+
+1. **Economic deterrent**: Provider risks entire stake for minimal savings. Rational actors don't cheat.
+2. **Challenge cost sharing**: Being challenged costs the provider money even when responding correctly. They serve directly to avoid challenges.
+3. **Reputation damage**: Challenges signal problems. Providers optimize to avoid them.
+4. **Natural selection**: Bad providers lose clients and leave the market.
+
+If disputes actually saturate the chain, something is fundamentally broken (massive irrational behavior or stake levels too low). Fix: governance increases stake requirements. Chain capacity is a ceiling for misbehavior, not active load.
+
+---
+
 ## Summary
 
 We've designed a storage system for the common case: data that someone cares about.
