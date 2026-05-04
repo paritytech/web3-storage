@@ -64,13 +64,12 @@ cargo test -p file-system-client
 # Or test all file system components at once
 just fs-test-all
 
-# Run integration tests (requires running services)
+# Run integration tests (require chain + provider already running)
 just start-chain     # Terminal 1
 just start-provider  # Terminal 2
-just demo  # Terminal 3
-
-# File system integration test (starts everything)
-just fs-integration-test
+just demo            # Terminal 3 — Layer-0 PAPI flow
+just fs-demo-ci      # Terminal 3 — Layer-1 file-system flow
+just s3-demo-ci      # Terminal 3 — Layer-1 S3 flow
 
 # Clippy linting
 cargo clippy --all-targets --all-features --workspace -- -D warnings
@@ -104,10 +103,10 @@ just start-provider
 # Check provider health
 just health
 
-# Verify on-chain setup
-bash scripts/verify-setup.sh
+# Check chain health (relay + parachain + current block)
+bash scripts/check-chain.sh
 
-# Run automated tests
+# Run end-to-end PAPI demo (setup, upload, 2 challenges)
 just demo
 ```
 
@@ -116,33 +115,14 @@ just demo
 The File System Interface provides a high-level abstraction over Layer 0's raw blob storage.
 
 ```bash
-# Full integration test (recommended for first run)
-# Starts infrastructure + runs file system example
-just fs-integration-test
+# Test all file system components (primitives + pallet + client)
+just fs-test-all
 
-# Quick demo (assumes infrastructure is running)
-just fs-demo
+# Run integration example against a running chain + provider node
+just fs-demo-ci
 
-# Run file system example
-just fs-example
-
-# Build file system components
-just fs-build
-
-# Test file system components
-just fs-test              # Client only
-just fs-test-verbose      # With logging
-just fs-test-all          # All components (primitives + pallet + client)
-
-# Clean file system artifacts
-just fs-clean
-
-# Show file system documentation links
-just fs-docs
-
-# Manual example run
-cd storage-interfaces/file-system/client
-cargo run --example basic_usage
+# Manually run the basic_usage example
+cargo run -p file-system-client --example basic_usage
 ```
 
 **Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
@@ -188,9 +168,9 @@ web3-storage/
 │           │   └── basic_usage.rs # Complete workflow example
 │           └── README.md      # File system client docs
 ├── scripts/                    # Helper scripts
-│   ├── quick-test.sh         # Automated basic tests
-│   ├── verify-setup.sh       # On-chain setup verification
-│   └── check-chain.sh        # Blockchain health check
+│   ├── build-chain-spec.sh   # Build runtime + emit chain spec (used by `just generate-chain-spec`)
+│   ├── check-chain.sh        # Relay + parachain health probe
+│   └── quick-test.sh         # Curl-based smoke test of provider HTTP API
 ├── chain-specs/                # Chain specification files
 ├── docs/                       # Documentation
 │   ├── README.md             # Documentation index
@@ -200,9 +180,9 @@ web3-storage/
 │   ├── design/               # Architecture docs
 │   └── filesystems/          # Layer 1 File System docs
 │       ├── README.md         # File system overview
+│       ├── ARCHITECTURE.md   # Encoding, security, chain integration
 │       ├── USER_GUIDE.md     # User guide
 │       ├── API_REFERENCE.md  # API documentation
-│       ├── EXAMPLE_WALKTHROUGH.md # Step-by-step example
 │       └── ADMIN_GUIDE.md    # Admin guide
 ├── FILE_SYSTEM_QUICKSTART.md  # Quick start for file system
 └── justfile                    # Development commands
@@ -265,7 +245,7 @@ web3-storage/
 ### Quick Start
 1. **Setup**: `just setup` (one-time, downloads binaries and builds)
 2. **Start**: `just start-chain` then `just start-provider` (in separate terminals)
-3. **Configure**: Follow [Quick Start Guide](docs/getting-started/QUICKSTART.md) for on-chain setup
+3. **Configure**: with chain + provider running, `just demo` registers the provider, opens an agreement, and exercises challenges end-to-end (it does not start the chain or provider for you)
 4. **Test**: `just demo`
 
 ### Development Cycle
@@ -329,11 +309,19 @@ pub const UNIT: Balance = 1_000_000_000_000; // 12 decimals
 // Minimum provider stake: 1000 tokens
 pub const MinProviderStake: Balance = 1_000 * UNIT;
 
-// Challenge period: 100 blocks
-pub const ChallengePeriod: BlockNumber = 100;
+// 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
+pub const MinStakePerByte: Balance = 1_000;
 
-// Checkpoint threshold: 51% of providers must sign
-pub const CheckpointThreshold: Permill = Permill::from_percent(51);
+// Challenge response deadline (provider must respond within this many blocks)
+pub const ChallengeTimeout: BlockNumber = 48 * HOURS;
+pub const SettlementTimeout: BlockNumber = 24 * HOURS;
+pub const RequestTimeout: BlockNumber = 6 * HOURS;
+
+// Provider-initiated checkpoint config
+pub const DefaultCheckpointInterval: BlockNumber = 100;
+pub const DefaultCheckpointGrace: BlockNumber = 20;
+pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
+pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
 
 ### Provider Settings (configured per provider)
@@ -490,7 +478,7 @@ Subscribe to real-time blockchain events:
 ```rust
 use storage_client::{EventSubscriber, EventFilter, StorageEvent};
 
-let subscriber = EventSubscriber::new(chain_endpoint).await?;
+let subscriber = EventSubscriber::connect(chain_endpoint).await?;
 
 // Subscribe to specific events
 let filter = EventFilter::bucket(bucket_id);
@@ -561,12 +549,10 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 | Document | Description |
 |----------|-------------|
-| [Quick Start Guide](docs/getting-started/QUICKSTART.md) | Get running in 5 minutes |
-| [Manual Testing Guide](docs/testing/MANUAL_TESTING_GUIDE.md) | Complete testing workflow |
+| [Layer 1 Quick Start](docs/getting-started/LAYER1_QUICKSTART.md) | Three-terminal setup + SDK examples |
 | [Extrinsics Reference](docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
-| [Benchmarking Guide](docs/reference/BENCHMARKING.md) | Generate weights for extrinsics |
-| [Architecture Design](docs/design/scalable-web3-storage.md) | System design & rationale |
+| [Architecture Design](docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
 | [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
 | [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
@@ -586,7 +572,8 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 ### Upload Fails
 - Complete on-chain setup first: register provider, create bucket, establish agreement
-- Run `bash scripts/verify-setup.sh` to check prerequisites
+- With chain + provider already running, `just demo` performs that setup
+- For chain health, run `bash scripts/check-chain.sh` (relay + parachain probe)
 
 ### Provider Not Accepting Agreements
 - Call `updateProviderSettings` after registration

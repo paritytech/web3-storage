@@ -105,8 +105,8 @@ The File System interface provides familiar file/folder semantics:
 ### Quick Demo
 
 ```bash
-# Run the file system example
-just fs-example
+# Run the file system example (chain + provider must already be running)
+cargo run -p file-system-client --example basic_usage
 ```
 
 ### Rust SDK Usage
@@ -166,9 +166,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Command | Description |
 |---------|-------------|
-| `just fs-example` | Run basic usage example |
+| `cargo run -p file-system-client --example basic_usage` | Run basic usage example |
 | `just fs-test-all` | Run all file system tests |
-| `just fs-build` | Build file system components |
+| `just fs-demo-ci` | Integration example used by CI (requires chain + provider) |
 
 ### File System API Summary
 
@@ -188,8 +188,8 @@ The S3 interface provides Amazon S3-compatible semantics:
 ### Quick Demo
 
 ```bash
-# Run the S3 example
-just s3-example
+# Run the S3 example (chain + provider must already be running)
+cargo run -p s3-client --example basic_usage
 ```
 
 ### Rust SDK Usage
@@ -241,9 +241,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Command | Description |
 |---------|-------------|
-| `just s3-example` | Run basic usage example |
+| `cargo run -p s3-client --example basic_usage` | Run basic usage example |
 | `just s3-test-all` | Run all S3 tests |
-| `just s3-build` | Build S3 components |
+| `just s3-demo-ci` | Integration example used by CI (requires chain + provider) |
 
 ### S3 API Summary
 
@@ -367,8 +367,8 @@ just build
 
 ```bash
 # Run with debug logging
-RUST_LOG=debug just fs-example
-RUST_LOG=debug just s3-example
+RUST_LOG=debug cargo run -p file-system-client --example basic_usage
+RUST_LOG=debug cargo run -p s3-client --example basic_usage
 ```
 
 ## Web UIs
@@ -385,7 +385,7 @@ Once infrastructure is running:
 ### File System
 - [User Guide](../filesystems/USER_GUIDE.md)
 - [API Reference](../filesystems/API_REFERENCE.md)
-- [Example Walkthrough](../filesystems/EXAMPLE_WALKTHROUGH.md)
+- [Architecture](../filesystems/ARCHITECTURE.md)
 
 ### S3 Interface
 - [S3 README](../../storage-interfaces/s3/README.md)
@@ -405,14 +405,17 @@ just start-chain      # Terminal 1
 just start-provider   # Terminal 2
 
 # File System
-just fs-example       # Run example
+cargo run -p file-system-client --example basic_usage
 just fs-test-all      # Run tests
+just fs-demo-ci       # CI integration test
 
 # S3
-just s3-example       # Run example
+cargo run -p s3-client --example basic_usage
 just s3-test-all      # Run tests
+just s3-demo-ci       # CI integration test
 
 # Utilities
 just health           # Check provider
+just stats            # Provider stats
 just build            # Build everything
 ```

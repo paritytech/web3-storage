@@ -633,7 +633,7 @@ export function Registration() {
             <div className="flex gap-3 justify-center">
               <Button variant="outline" asChild>
                 <a
-                  href="https://github.com/user/web3-storage/blob/main/docs/getting-started/QUICKSTART.md"
+                  href="https://github.com/user/web3-storage/blob/main/docs/getting-started/LAYER1_QUICKSTART.md"
                   target="_blank"
                   rel="noopener noreferrer"
                 >

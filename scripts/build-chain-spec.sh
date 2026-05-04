@@ -1,5 +1,12 @@
 #!/bin/bash
-# Build runtime and generate chain spec for zombienet
+#
+# Build runtime and emit a parachain chain spec to stdout.
+#
+# Used by `just generate-chain-spec`, which redirects the output to chain-spec.json.
+# Standalone usage: ./scripts/build-chain-spec.sh > chain-spec.json
+#
+# Requires: chain-spec-builder downloaded to .bin/ (see `just download-binaries`).
+# Para ID: 4000. Preset: local_testnet. Relay: westend-local.
 set -e
 
 cd "$(dirname "$0")/.."

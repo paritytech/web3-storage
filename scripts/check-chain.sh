@@ -1,5 +1,12 @@
 #!/bin/bash
-# Check if blockchain is ready
+#
+# Quick health probe for a locally-running zombienet network.
+#
+# Hits system_health on the relay chain (port 9900) and parachain (port 2222),
+# then prints the parachain's current block number.
+#
+# Use this when `just start-chain` is running to confirm both nodes are alive
+# and the parachain is producing blocks. For provider node health, use `just health`.
 
 echo "Checking blockchain status..."
 echo ""
