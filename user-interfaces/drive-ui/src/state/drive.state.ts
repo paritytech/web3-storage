@@ -419,10 +419,18 @@ function subscribeToDriveEvents(): void {
   const api = getApi();
   if (!api) return;
 
+  // polkadot-api's typed event watcher delivers the decoded payload at the top
+  // of the emitted object (no `value` wrapper) — but the precise shape can
+  // vary between runtime versions, so accept whatever comes and pluck fields
+  // defensively.
+  type EventObserver = {
+    next: (ev: unknown) => void;
+    error?: (err: unknown) => void;
+  };
   type EventWatcher = {
     watch: () => {
       subscribe: (
-        handler: (ev: { value: { drive_id?: bigint; owner?: string } }) => void,
+        handler: ((ev: unknown) => void) | EventObserver,
       ) => RegistryEventSubscription;
     };
   };
@@ -446,27 +454,47 @@ function subscribeToDriveEvents(): void {
     const watcher = events[name];
     if (!watcher) continue;
     try {
-      const sub = watcher.watch().subscribe((ev) => {
-        const ownAddr = getSignerAddress();
-        const driveId = ev.value.drive_id;
-        const eventOwner = ev.value.owner;
+      const sub = watcher.watch().subscribe({
+        next: (ev: unknown) => {
+          if (!ev || typeof ev !== "object") return;
+          // Tolerate either { value: { drive_id, owner } } or { drive_id, owner }.
+          const payload = ((ev as { value?: unknown }).value ?? ev) as {
+            drive_id?: bigint | number;
+            owner?: string;
+          };
+          if (!payload || typeof payload !== "object") return;
 
-        // Only react to events involving the current signer or already-tracked
-        // drives. Owner is not present on every event variant; if absent, fall
-        // back to "we track this drive_id".
-        const isOwn = ownAddr && eventOwner === ownAddr;
-        const isTracked =
-          driveId !== undefined &&
-          drives$.getValue().some((d) => d.driveId === driveId);
+          const ownAddr = getSignerAddress();
+          const driveIdRaw = payload.drive_id;
+          const driveId =
+            typeof driveIdRaw === "bigint"
+              ? driveIdRaw
+              : typeof driveIdRaw === "number"
+                ? BigInt(driveIdRaw)
+                : undefined;
+          const eventOwner = payload.owner;
 
-        if (isOwn || isTracked) {
-          eventTick$.next(eventTick$.getValue() + 1);
-          // Debounce-ish: schedule a refresh on next microtask so we coalesce
-          // bursts of events.
-          queueMicrotask(() => {
-            refreshDrives().catch(() => { /* swallow; loading$ surfaces error */ });
-          });
-        }
+          // Only react to events involving the current signer or already-tracked
+          // drives. Owner is not present on every event variant; if absent, fall
+          // back to "we track this drive_id".
+          const isOwn = ownAddr && eventOwner === ownAddr;
+          const isTracked =
+            driveId !== undefined &&
+            drives$.getValue().some((d) => d.driveId === driveId);
+
+          if (isOwn || isTracked) {
+            eventTick$.next(eventTick$.getValue() + 1);
+            // Debounce-ish: schedule a refresh on next microtask so we coalesce
+            // bursts of events.
+            queueMicrotask(() => {
+              refreshDrives().catch(() => { /* swallow; loading$ surfaces error */ });
+            });
+          }
+        },
+        // Some events listed in the descriptor may not exist on the running
+        // runtime ("Runtime entry Event(DriveRegistry.X) not found"). Swallow
+        // — that event variant just isn't deliverable here.
+        error: () => { /* swallow */ },
       });
       subscriptions.push(sub);
     } catch {

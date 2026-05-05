@@ -6,7 +6,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi"
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
+    "papi:check": "papi generate && git diff --exit-code .papi",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
@@ -22,7 +27,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-rxjs/core": "^0.10.8",
     "@react-rxjs/utils": "^0.9.7",
-    "@web3-storage/network-config": "*",
+    "@web3-storage/network-config": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.9.0",
@@ -34,6 +39,7 @@
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@polkadot-api/cli": "^0.20.4",
     "@tailwindcss/vite": "^4.2.4",
     "@types/react": "^19.2.14",
@@ -41,6 +47,8 @@
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5",
+    "@web3-storage/test-helpers": "workspace:*"
   }
 }
