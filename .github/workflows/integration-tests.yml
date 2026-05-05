@@ -32,13 +32,13 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@v6
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@v2
         with:
           shared-key: "integration-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
@@ -47,7 +47,7 @@ jobs:
         run: cargo install just --locked || true
 
       - name: Cache Polkadot SDK binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: sdk-cache
         with:
           path: |
@@ -63,7 +63,7 @@ jobs:
         run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
       - name: Cache zombienet
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: zombienet-cache
         with:
           path: .bin/zombienet
@@ -80,7 +80,7 @@ jobs:
           .bin/polkadot-omni-node --version
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -188,7 +188,7 @@ jobs:
 
       - name: Upload logs (on failure)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-test-logs
           path: |
