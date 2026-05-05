@@ -101,6 +101,13 @@ export function ChainProvider({ children }: { children: ReactNode }) {
     };
   }, [client]);
 
+  // Auto-connect to the persisted network on first mount so reload behaves
+  // like drive-ui + provider (where connection state is implicit).
+  useEffect(() => {
+    connect(initialEndpoint).catch(() => { /* surfaced via `error` */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <ChainContext.Provider
       value={{

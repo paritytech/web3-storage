@@ -203,3 +203,59 @@ s3-test-all:
 # S3 integration test (used by CI; assumes chain + provider already running)
 s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+# ─── UI Tests ─────────────────────────────────────────────────────────────────
+#
+# Unit tests + Playwright e2e for drive-ui, console-ui, and provider.
+# Requires a running local chain + provider node.
+
+# Run all UI unit tests (Vitest)
+test-ui-unit:
+    cd user-interfaces && pnpm run test:unit
+
+# Run drive-ui Playwright e2e (requires chain + provider running)
+test-ui-drive:
+    cd user-interfaces && pnpm run test:e2e:drive-ui
+
+# Run console-ui Playwright e2e (requires chain running)
+test-ui-console:
+    cd user-interfaces && pnpm run test:e2e:console-ui
+
+# Run provider Playwright e2e (requires chain running)
+test-ui-provider:
+    cd user-interfaces && pnpm run test:e2e:provider
+
+# Run ALL UI tests: unit + e2e for every UI. Assumes chain + provider already
+# started (via `just start-chain` and `just start-provider` in separate
+# terminals). The recipe waits for chain block #3 and provider /health before
+# kicking off Playwright, then runs them serially per-UI.
+test-ui:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "=== Probing local chain at {{CHAIN_WS}} ==="
+    until curl -sf -X POST -H "Content-Type: application/json" \
+        --data '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' \
+        http://127.0.0.1:{{CHAIN_PORT}} >/dev/null 2>&1; do
+        echo "  waiting for chain..."
+        sleep 2
+    done
+
+    echo "=== Probing provider /health at {{PROVIDER_URL}} ==="
+    until curl -sf {{PROVIDER_URL}}/health >/dev/null 2>&1; do
+        echo "  waiting for provider..."
+        sleep 2
+    done
+
+    echo "=== Running unit tests ==="
+    just test-ui-unit
+
+    echo "=== drive-ui e2e ==="
+    just test-ui-drive
+
+    echo "=== console-ui e2e ==="
+    just test-ui-console
+
+    echo "=== provider e2e ==="
+    just test-ui-provider
+
+    echo "✅ All UI tests passed"

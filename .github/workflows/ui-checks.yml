@@ -1,0 +1,93 @@
+name: UI Checks
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "user-interfaces/**"
+      - ".github/workflows/ui-checks.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "user-interfaces/**"
+      - ".github/workflows/ui-checks.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
+
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate console-ui PAPI descriptors
+        working-directory: user-interfaces
+        run: pnpm --filter @web3-storage/console-ui exec papi generate
+
+      - name: Generate drive-ui PAPI descriptors
+        working-directory: user-interfaces
+        run: pnpm --filter @web3-storage/drive-ui exec papi generate
+
+      - name: Run unit tests
+        working-directory: user-interfaces
+        run: pnpm run test:unit
+
+  build:
+    name: Typecheck + build (${{ matrix.ui }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ui: drive-ui
+            filter: "@web3-storage/drive-ui"
+            papi: true
+          - ui: console-ui
+            filter: "@web3-storage/console-ui"
+            papi: true
+          - ui: provider
+            filter: provider-dashboard
+            papi: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
+
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate PAPI descriptors
+        if: matrix.papi
+        working-directory: user-interfaces
+        run: pnpm --filter ${{ matrix.filter }} exec papi generate
+
+      - name: Build
+        working-directory: user-interfaces
+        run: pnpm --filter ${{ matrix.filter }} run build
