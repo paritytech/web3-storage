@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let mut provider_client = ProviderClient::new(config, ss58_address.clone())?;
+    let mut provider_client = ProviderClient::new(config, ss58_address)?;
     provider_client.connect().await?;
     provider_client.set_signer(keypair.clone())?;
 
