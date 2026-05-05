@@ -1,13 +1,14 @@
 import { useRef, useState, useCallback, type ReactNode } from "react";
-import { Upload, Loader2 } from "lucide-react";
-import { useDrive } from "@/hooks/useDrive";
+import { Upload, Loader2, X } from "lucide-react";
+import { useUploading, useSelectedDrive, uploadFiles, abortUpload } from "@/state";
 
 interface UploadZoneProps {
   children: ReactNode;
 }
 
 export default function UploadZone({ children }: UploadZoneProps) {
-  const { uploadFiles, uploading, selectedDrive } = useDrive();
+  const uploading = useUploading();
+  const selectedDrive = useSelectedDrive();
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -46,22 +47,21 @@ export default function UploadZone({ children }: UploadZoneProps) {
 
       const files = Array.from(e.dataTransfer.files);
       if (files.length > 0) {
-        await uploadFiles(files);
+        await uploadFiles(files).catch(() => { /* error surfaced via state */ });
       }
     },
-    [selectedDrive, uploadFiles]
+    [selectedDrive],
   );
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
       if (files.length > 0) {
-        await uploadFiles(files);
+        await uploadFiles(files).catch(() => { /* swallow */ });
       }
-      // Reset input so same file can be selected again
       e.target.value = "";
     },
-    [uploadFiles]
+    [],
   );
 
   return (
@@ -74,7 +74,6 @@ export default function UploadZone({ children }: UploadZoneProps) {
     >
       {children}
 
-      {/* Hidden file input */}
       <input
         ref={fileInputRef}
         type="file"
@@ -83,7 +82,6 @@ export default function UploadZone({ children }: UploadZoneProps) {
         onChange={handleFileSelect}
       />
 
-      {/* Drag overlay */}
       {dragOver && selectedDrive && (
         <div className="absolute inset-0 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-primary/5 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2 text-primary">
@@ -98,16 +96,17 @@ export default function UploadZone({ children }: UploadZoneProps) {
           </div>
         </div>
       )}
+
+      {uploading && !dragOver && (
+        <button
+          data-testid="upload-cancel"
+          onClick={abortUpload}
+          className="absolute bottom-4 right-4 z-50 flex items-center gap-2 rounded-full bg-background border px-3 py-1.5 text-xs font-medium shadow-md hover:bg-accent"
+        >
+          <X className="h-3 w-3" />
+          Cancel upload
+        </button>
+      )}
     </div>
   );
-}
-
-export function useFileUploadTrigger() {
-  const ref = useRef<HTMLInputElement>(null);
-
-  const trigger = useCallback(() => {
-    ref.current?.click();
-  }, []);
-
-  return { ref, trigger };
 }

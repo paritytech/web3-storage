@@ -9,6 +9,9 @@ import {
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { BehaviorSubject } from "rxjs";
+import { loadSelectedNetwork } from "@web3-storage/network-config";
+
+const initialEndpoint = loadSelectedNetwork().config.parachainWs;
 
 interface ChainState {
   client: PolkadotClient | null;
@@ -26,7 +29,7 @@ const defaultState: ChainState = {
   connected: false,
   connecting: false,
   error: null,
-  chainEndpoint: "ws://127.0.0.1:2222",
+  chainEndpoint: initialEndpoint,
   blockNumber: 0,
   connect: async () => {},
   disconnect: () => {},
@@ -41,7 +44,7 @@ export function ChainProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chainEndpoint, setChainEndpoint] = useState("ws://127.0.0.1:2222");
+  const [chainEndpoint, setChainEndpoint] = useState(initialEndpoint);
   const [blockNumber, setBlockNumber] = useState(0);
 
   const connect = useCallback(

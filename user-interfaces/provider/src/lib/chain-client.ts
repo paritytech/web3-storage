@@ -1096,16 +1096,6 @@ export function subscribeToBlocks(callback: (blockNumber: number) => void): () =
 // Event Subscription
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ProviderEvent =
-  | { type: 'ProviderRegistered'; provider: string; stake: bigint }
-  | { type: 'ProviderSettingsUpdated'; provider: string }
-  | { type: 'StakeAdded'; provider: string; amount: bigint }
-  | { type: 'AgreementCreated'; bucketId: number; provider: string }
-  | { type: 'BucketCheckpointed'; bucketId: number; mmrRoot: string }
-  | { type: 'ChallengeCreated'; challengeId: number; provider: string }
-  | { type: 'ChallengeResponded'; challengeId: number }
-  | { type: 'ProviderSlashed'; provider: string; amount: bigint }
-
 /**
  * Subscribe to challenge events in real-time via finalizedBlock$.
  * Processes each finalized block's events while the block is still pinned.
@@ -1231,14 +1221,3 @@ export function subscribeToChallengeEvents(
   return () => subscription.unsubscribe()
 }
 
-/**
- * Subscribe to provider-related events (stub for general events)
- */
-export function subscribeToProviderEvents(
-  _address: string,
-  _callback: (event: ProviderEvent) => void
-): () => void {
-  if (!client) return () => {}
-  // General event subscription — challenge events are handled by subscribeToChallengeEvents
-  return () => {}
-}

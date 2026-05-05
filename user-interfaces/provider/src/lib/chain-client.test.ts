@@ -40,25 +40,28 @@ vi.mock('polkadot-api', () => ({
   createClient: () => mockClient,
 }))
 
-vi.mock('polkadot-api/ws-provider/web', () => ({
+vi.mock('polkadot-api/ws', () => ({
   getWsProvider: () => ({}),
 }))
 
 vi.mock('polkadot-api/pjs-signer', () => ({}))
 
-vi.mock('@polkadot/api', () => ({
-  ApiPromise: {
-    create: () =>
-      Promise.resolve({
-        disconnect: vi.fn(),
-        registry: { findMetaError: vi.fn() },
-        tx: {},
-      }),
-  },
-  WsProvider: vi.fn().mockImplementation(() => ({
-    disconnect: vi.fn(),
-  })),
-}))
+vi.mock('@polkadot/api', () => {
+  class WsProvider {
+    disconnect = vi.fn()
+  }
+  return {
+    ApiPromise: {
+      create: () =>
+        Promise.resolve({
+          disconnect: vi.fn(),
+          registry: { findMetaError: vi.fn() },
+          tx: {},
+        }),
+    },
+    WsProvider,
+  }
+})
 
 vi.mock('@polkadot/keyring', () => ({
   Keyring: vi.fn(),
@@ -123,24 +126,29 @@ function requestEntry(
   }
 }
 
-/** Build a Challenges entry */
+/**
+ * Build a Challenges storage entry as returned by `getEntries()`.
+ *
+ * Runtime storage shape: `StorageMap<BlockNumber, Vec<Challenge>>` keyed by
+ * deadline block number. `responded` / `slashed` are NOT on the on-chain
+ * Challenge struct — those statuses come from event subscription, not from
+ * `getProviderChallenges()`.
+ */
 function challengeEntry(
-  challengeId: number,
-  overrides: Record<string, unknown> = {},
+  deadline: number,
+  challengeOverrides: Record<string, unknown> = {},
 ) {
   return {
-    keyArgs: [challengeId],
-    value: {
-      bucket_id: 1,
-      challenger: USER,
-      provider: PROVIDER,
-      leaf_index: 42,
-      responded: false,
-      slashed: false,
-      created_at: 300,
-      deadline: 600,
-      ...overrides,
-    },
+    keyArgs: [deadline],
+    value: [
+      {
+        bucket_id: 1,
+        challenger: USER,
+        provider: PROVIDER,
+        leaf_index: 42,
+        ...challengeOverrides,
+      },
+    ],
   }
 }
 
@@ -360,64 +368,51 @@ describe('chain-client queries', () => {
   // ── getProviderChallenges ────────────────────────────────────────────
 
   describe('getProviderChallenges', () => {
-    it('parses { keyArgs, value } entries correctly', async () => {
-      mockGetEntries.challenges.mockResolvedValue([challengeEntry(10)])
+    it('parses { keyArgs, value } Vec entries with deadline as the key', async () => {
+      mockGetEntries.challenges.mockResolvedValue([challengeEntry(600)])
 
       const result = await getProviderChallenges(PROVIDER)
 
       expect(result).toHaveLength(1)
       expect(result[0]).toMatchObject({
-        id: 10,
+        id: 0, // index in the Vec under this deadline
         bucketId: 1,
         challenger: USER,
         provider: PROVIDER,
         leafIndex: 42,
         status: 'pending',
-        createdAt: 300,
         deadline: 600,
       })
-    })
-
-    it('marks status as "responded" when responded=true', async () => {
-      mockGetEntries.challenges.mockResolvedValue([
-        challengeEntry(1, { responded: true }),
-      ])
-
-      const result = await getProviderChallenges(PROVIDER)
-
-      expect(result[0]!.status).toBe('responded')
-    })
-
-    it('marks status as "slashed" when slashed=true', async () => {
-      mockGetEntries.challenges.mockResolvedValue([
-        challengeEntry(1, { slashed: true }),
-      ])
-
-      const result = await getProviderChallenges(PROVIDER)
-
-      expect(result[0]!.status).toBe('slashed')
     })
 
     it('marks status as "expired" when current block > deadline', async () => {
       blockNumber$.next(700) // past deadline=600
 
-      mockGetEntries.challenges.mockResolvedValue([challengeEntry(1)])
+      mockGetEntries.challenges.mockResolvedValue([challengeEntry(600)])
 
       const result = await getProviderChallenges(PROVIDER)
 
       expect(result[0]!.status).toBe('expired')
     })
 
-    it('filters by provider in value.provider', async () => {
+    it('filters out Vec items whose provider does not match the address', async () => {
+      // One deadline with two challenges; only one is for PROVIDER.
       mockGetEntries.challenges.mockResolvedValue([
-        challengeEntry(1, { provider: PROVIDER }),
-        challengeEntry(2, { provider: OTHER_PROVIDER }),
+        {
+          keyArgs: [600],
+          value: [
+            { bucket_id: 1, challenger: USER, provider: OTHER_PROVIDER, leaf_index: 1 },
+            { bucket_id: 2, challenger: USER, provider: PROVIDER, leaf_index: 2 },
+          ],
+        },
       ])
 
       const result = await getProviderChallenges(PROVIDER)
 
       expect(result).toHaveLength(1)
+      // id === idx in the Vec; the matching challenge is at index 1.
       expect(result[0]!.id).toBe(1)
+      expect(result[0]!.bucketId).toBe(2)
     })
 
     it('returns [] for empty entries', async () => {

@@ -9,38 +9,39 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useDrive } from "@/hooks/useDrive";
+import { setSigner, selectDevAccount, useIsSettingSigner, DEV_ACCOUNTS } from "@/state";
 
 interface AccountDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-const DEV_ACCOUNTS = [
-  { name: "Alice", seed: "//Alice", color: "bg-indigo-100 text-indigo-700 border-indigo-200" },
-  { name: "Bob", seed: "//Bob", color: "bg-emerald-100 text-emerald-700 border-emerald-200" },
-  { name: "Charlie", seed: "//Charlie", color: "bg-amber-100 text-amber-700 border-amber-200" },
-  { name: "Dave", seed: "//Dave", color: "bg-rose-100 text-rose-700 border-rose-200" },
-];
-
 export default function AccountDialog({ open, onOpenChange }: AccountDialogProps) {
-  const { setSigner } = useDrive();
-  const [loading, setLoading] = useState(false);
+  const loading = useIsSettingSigner();
   const [customSeed, setCustomSeed] = useState("");
 
-  const handleSelect = async (seed: string, name?: string) => {
-    setLoading(true);
+  const handleSelectDev = async (name: string) => {
     try {
-      await setSigner(seed, name);
+      await selectDevAccount(name);
       onOpenChange(false);
-    } finally {
-      setLoading(false);
+    } catch {
+      /* swallow; loading$ resets in finally */
+    }
+  };
+
+  const handleCustom = async () => {
+    if (!customSeed) return;
+    try {
+      await setSigner(customSeed);
+      onOpenChange(false);
+    } catch {
+      /* swallow */
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" data-testid="account-dialog">
         <DialogHeader>
           <DialogTitle>Select Account</DialogTitle>
           <DialogDescription>
@@ -52,7 +53,8 @@ export default function AccountDialog({ open, onOpenChange }: AccountDialogProps
             {DEV_ACCOUNTS.map((account) => (
               <button
                 key={account.name}
-                onClick={() => handleSelect(account.seed, account.name)}
+                data-testid={`account-dialog-${account.name.toLowerCase()}`}
+                onClick={() => handleSelectDev(account.name)}
                 disabled={loading}
                 className={`flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-accent ${account.color}`}
               >
@@ -77,13 +79,15 @@ export default function AccountDialog({ open, onOpenChange }: AccountDialogProps
 
           <div className="flex gap-2">
             <Input
+              data-testid="account-custom-seed"
               value={customSeed}
               onChange={(e) => setCustomSeed(e.target.value)}
               placeholder="//CustomAccount or mnemonic"
               className="flex-1"
             />
             <Button
-              onClick={() => handleSelect(customSeed)}
+              data-testid="account-custom-submit"
+              onClick={handleCustom}
               disabled={loading || !customSeed}
               size="sm"
             >
