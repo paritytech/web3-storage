@@ -2,6 +2,7 @@
   "name": "web3-storage-ui",
   "private": true,
   "scripts": {
+    "papi:generate": "pnpm --recursive --if-present run papi:generate",
     "test:unit": "pnpm --filter @web3-storage/drive-ui --filter provider-dashboard --if-present run test:unit",
     "test:e2e:drive-ui": "pnpm --filter @web3-storage/drive-ui run test",
     "test:e2e:console-ui": "pnpm --filter @web3-storage/console-ui run test",
