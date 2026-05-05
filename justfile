@@ -28,6 +28,7 @@ PROVIDER_PORT := "3333"
 RELAY_WS := "ws://127.0.0.1:" + RELAY_PORT
 CHAIN_WS := "ws://127.0.0.1:" + CHAIN_PORT
 PROVIDER_URL := "http://127.0.0.1:" + PROVIDER_PORT
+PROVIDER_MULTI_ADDR := "/ip4/127.0.0.1/tcp/" + PROVIDER_PORT
 
 # Default recipe
 default:
@@ -116,6 +117,7 @@ start-paseo-chain: check build-paseo-runtime
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
 start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
+    set -euo pipefail
     echo ""
     echo "=== Starting Storage Provider Node ({{MODE}}) ==="
     echo ""
@@ -133,6 +135,10 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         KEY_ARGS="--keyfile $ALICE_KEY"
         trap "rm -f $ALICE_KEY" EXIT
     fi
+
+    just register-provider "{{KEYFILE}}"
+    echo ""
+
     ./target/release/storage-provider-node \
         $KEY_ARGS \
         --storage-mode "{{MODE}}" \
@@ -141,6 +147,17 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --enable-agreement-coordinator \
         --enable-checkpoint-coordinator \
         $EXTRA_ARGS
+
+# Register provider on-chain (idempotent). Requires a running chain.
+# Usually called automatically by start-provider.
+register-provider KEYFILE="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ARGS=("{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_MULTI_ADDR }}")
+    if [ -n "{{KEYFILE}}" ]; then
+        ARGS+=("{{KEYFILE}}")
+    fi
+    cargo run -p storage-client --example register_provider -- "${ARGS[@]}"
 
 # Health check for provider node
 health:

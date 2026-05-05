@@ -23,7 +23,7 @@ use file_system_client::FileSystemClient;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     println!("🚀 File System Client - Basic Usage Example\n");
     println!("{}", "=".repeat(60));

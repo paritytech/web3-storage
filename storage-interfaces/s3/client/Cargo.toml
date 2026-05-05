@@ -27,12 +27,11 @@ bip39 = "2.0"
 # Utilities
 hex = "0.4"
 thiserror = "2.0"
-tracing = "0.1"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "macros"] }
-tracing-subscriber = "0.3"
-env_logger = "0.11"
 
 [[example]]
 name = "basic_usage"

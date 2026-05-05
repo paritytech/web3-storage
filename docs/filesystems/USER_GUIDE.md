@@ -791,7 +791,7 @@ ensure!(file_size <= available, "Not enough capacity");
 ```rust
 // Enable verbose logging
 env::set_var("RUST_LOG", "file_system_client=debug");
-env_logger::init();
+tracing_subscriber::fmt::init();
 
 // Check drive state
 let drive_info = get_drive_info(drive_id).await?;

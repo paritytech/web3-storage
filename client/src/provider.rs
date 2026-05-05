@@ -43,6 +43,12 @@ impl ProviderClient {
         self.base.set_dev_signer(name)
     }
 
+    /// Set a custom keypair signer loaded from a keyfile or seed.
+    /// Must be called after connect().
+    pub fn set_signer(&mut self, signer: subxt_signer::sr25519::Keypair) -> ClientResult<()> {
+        self.base.set_signer(signer)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Provider Registration & Settings
     // ═════════════════════════════════════════════════════════════════════════
@@ -110,8 +116,36 @@ impl ProviderClient {
     ///
     /// Change pricing, availability, or other settings.
     pub async fn update_settings(&self, settings: ProviderSettings) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!("Would update settings: {:?}", settings);
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        tracing::info!(
+            "Updating settings for provider {}: price_per_byte={}",
+            self.provider_account,
+            settings.price_per_byte
+        );
+
+        let tx = extrinsics::update_provider_settings(
+            settings.min_duration,
+            settings.max_duration,
+            settings.price_per_byte,
+            settings.accepting_primary,
+            settings.replica_sync_price,
+            settings.accepting_extensions,
+            settings.max_capacity,
+        );
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Provider settings updated");
         Ok(())
     }
 
@@ -307,6 +341,8 @@ pub struct ProviderSettings {
     pub accepting_primary: bool,
     pub replica_sync_price: Option<u128>,
     pub accepting_extensions: bool,
+    /// Maximum storage capacity in bytes. 0 = unlimited.
+    pub max_capacity: u64,
 }
 
 #[derive(Debug, Clone)]

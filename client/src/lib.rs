@@ -129,7 +129,7 @@ pub use event_subscription::{
     subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
     EventCallback, EventFilter, EventStream, EventSubscriber, StorageEvent, SubscriptionHandle,
 };
-pub use provider::ProviderClient;
+pub use provider::{ProviderClient, ProviderSettings};
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
 
