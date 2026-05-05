@@ -31,8 +31,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
+
+      # The repo gitignores pnpm-lock.yaml, so setup-node's `cache: pnpm`
+      # can't compute a cache key. Cache the pnpm store directly, keyed on
+      # the hashes of every workspace package.json instead.
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('user-interfaces/**/package.json', 'user-interfaces/pnpm-workspace.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
 
       - name: Install workspace deps
         working-directory: user-interfaces
@@ -76,8 +89,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
+
+      # The repo gitignores pnpm-lock.yaml, so setup-node's `cache: pnpm`
+      # can't compute a cache key. Cache the pnpm store directly, keyed on
+      # the hashes of every workspace package.json instead.
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('user-interfaces/**/package.json', 'user-interfaces/pnpm-workspace.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
 
       - name: Install workspace deps
         working-directory: user-interfaces
