@@ -23,39 +23,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
 
-      - name: Install Console UI dependencies
-        working-directory: user-interfaces/console-ui
-        run: npm install
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: pnpm install --frozen-lockfile
 
       - name: Generate PAPI descriptors
-        working-directory: user-interfaces/console-ui
-        run: npx papi generate
+        working-directory: user-interfaces
+        run: |
+          pnpm --filter @web3-storage/console-ui exec papi generate
+          pnpm --filter @web3-storage/drive-ui exec papi generate
 
-      - name: Build Console UI
-        working-directory: user-interfaces/console-ui
-        env:
-          GITHUB_PAGES: "true"
-        run: npm run build
-
-      - name: Install and build Provider Dashboard
-        working-directory: user-interfaces/provider
+      - name: Build all UIs
+        working-directory: user-interfaces
         env:
           GITHUB_PAGES: "true"
         run: |
-          npm install
-          npm run build
-
-      - name: Install and build Drive UI
-        working-directory: user-interfaces/drive-ui
-        env:
-          GITHUB_PAGES: "true"
-        run: |
-          npm install
-          npm run build
+          pnpm --filter @web3-storage/console-ui run build
+          pnpm --filter provider-dashboard run build
+          pnpm --filter @web3-storage/drive-ui run build
 
       - name: Assemble site
         run: |
