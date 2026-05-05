@@ -169,7 +169,7 @@ export function Header() {
                 }`}
               />
               {connectionStatus === 'connected' && blockNumber > 0 && (
-                <Badge variant="secondary">#{blockNumber.toLocaleString()}</Badge>
+                <Badge variant="secondary" data-testid="block-number">#{blockNumber.toLocaleString()}</Badge>
               )}
             </div>
 

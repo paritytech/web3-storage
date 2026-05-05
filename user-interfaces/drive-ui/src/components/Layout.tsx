@@ -1,24 +1,30 @@
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { HardDrive, Plug, PlugZap, User, Wallet } from "lucide-react";
-import { useChain } from "@/hooks/useChain";
-import { useDrive } from "@/hooks/useDrive";
+import {
+  useIsConnected,
+  useBlockNumber,
+  useSignerAddress,
+  useSignerName,
+  useBalance,
+} from "@/state";
 import { formatTokens, truncateHash } from "@/lib/utils";
 import DriveList from "./DriveList";
 import ConnectDialog from "./ConnectDialog";
 import AccountDialog from "./AccountDialog";
 
 export default function Layout() {
-  const { connected, blockNumber } = useChain();
-  const { signerAddress, signerName, balance } = useDrive();
+  const connected = useIsConnected();
+  const blockNumber = useBlockNumber();
+  const signerAddress = useSignerAddress();
+  const signerName = useSignerName();
+  const balance = useBalance();
   const [showConnect, setShowConnect] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
 
   return (
     <div className="flex h-screen">
-      {/* Sidebar */}
       <aside className="w-64 flex-shrink-0 border-r bg-card flex flex-col">
-        {/* Logo */}
         <div className="flex items-center gap-2.5 px-4 py-4 border-b">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <HardDrive className="h-4 w-4" />
@@ -29,7 +35,6 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Drive list (only when signed in) */}
         <div className="flex-1 overflow-y-auto px-3 py-3">
           {connected && signerAddress ? (
             <DriveList />
@@ -45,17 +50,16 @@ export default function Layout() {
           )}
         </div>
 
-        {/* Bottom section: connection + account */}
         <div className="border-t px-3 py-3 space-y-2">
-          {/* Connection status */}
           <button
+            data-testid="connect-button"
             onClick={() => setShowConnect(true)}
             className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs hover:bg-accent transition-colors"
           >
             {connected ? (
               <>
                 <PlugZap className="h-3.5 w-3.5 text-emerald-500" />
-                <span className="text-muted-foreground">
+                <span data-testid="block-number" className="text-muted-foreground">
                   Block #{blockNumber.toLocaleString()}
                 </span>
               </>
@@ -67,9 +71,9 @@ export default function Layout() {
             )}
           </button>
 
-          {/* Account */}
           {connected && (
             <button
+              data-testid="account-button"
               onClick={() => setShowAccount(true)}
               className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs hover:bg-accent transition-colors"
             >
@@ -79,11 +83,11 @@ export default function Layout() {
                     {signerName ? signerName[0] : <User className="h-3 w-3" />}
                   </div>
                   <div className="flex flex-col items-start min-w-0">
-                    <span className="font-medium truncate">
+                    <span data-testid="signer-address" className="font-medium truncate">
                       {signerName || truncateHash(signerAddress)}
                     </span>
                     {balance && (
-                      <span className="flex items-center gap-1 text-muted-foreground">
+                      <span data-testid="balance-display" className="flex items-center gap-1 text-muted-foreground">
                         <Wallet className="h-3 w-3" />
                         {formatTokens(balance.free)} tokens
                       </span>
@@ -101,7 +105,6 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-6">
           <Outlet />

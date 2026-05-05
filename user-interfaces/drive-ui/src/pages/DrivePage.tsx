@@ -1,8 +1,15 @@
 import { useState } from "react";
 import { HardDrive, Plug, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useChain } from "@/hooks/useChain";
-import { useDrive } from "@/hooks/useDrive";
+import {
+  useIsConnected,
+  useSignerAddress,
+  useDrives,
+  useSelectedDrive,
+  useCreations,
+  dismissCreation,
+  type CreationStatus,
+} from "@/state";
 import FileBrowser from "@/components/FileBrowser";
 import EmptyState from "@/components/EmptyState";
 import NewDriveDialog from "@/components/NewDriveDialog";
@@ -10,13 +17,15 @@ import ConnectDialog from "@/components/ConnectDialog";
 import AccountDialog from "@/components/AccountDialog";
 
 export default function DrivePage() {
-  const { connected } = useChain();
-  const { signerAddress, drives, selectedDrive, creations, dismissCreation } = useDrive();
+  const connected = useIsConnected();
+  const signerAddress = useSignerAddress();
+  const drives = useDrives();
+  const selectedDrive = useSelectedDrive();
+  const creations = useCreations();
   const [showConnect, setShowConnect] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [showNewDrive, setShowNewDrive] = useState(false);
 
-  // State 1: Not connected
   if (!connected) {
     return (
       <>
@@ -25,7 +34,7 @@ export default function DrivePage() {
           title="Connect to Chain"
           description="Connect to your parachain node to start using Web3 Drive."
           action={
-            <Button onClick={() => setShowConnect(true)}>
+            <Button data-testid="connect-empty" onClick={() => setShowConnect(true)}>
               <Plug className="mr-2 h-4 w-4" />
               Connect
             </Button>
@@ -36,7 +45,6 @@ export default function DrivePage() {
     );
   }
 
-  // State 2: No signer
   if (!signerAddress) {
     return (
       <>
@@ -45,7 +53,7 @@ export default function DrivePage() {
           title="Select an Account"
           description="Choose a development account to access your drives."
           action={
-            <Button onClick={() => setShowAccount(true)}>
+            <Button data-testid="select-account-empty" onClick={() => setShowAccount(true)}>
               <User className="mr-2 h-4 w-4" />
               Select Account
             </Button>
@@ -56,7 +64,6 @@ export default function DrivePage() {
     );
   }
 
-  // State 3: No drives
   if (drives.length === 0 && !selectedDrive) {
     return (
       <>
@@ -65,14 +72,13 @@ export default function DrivePage() {
           title="No Drives Yet"
           description="Create your first decentralized drive to start storing files."
           action={
-            <Button onClick={() => setShowNewDrive(true)}>
+            <Button data-testid="create-first-drive" onClick={() => setShowNewDrive(true)}>
               <HardDrive className="mr-2 h-4 w-4" />
               Create Your First Drive
             </Button>
           }
         />
 
-        {/* Show creation status cards inline */}
         {creations.length > 0 && (
           <div className="max-w-md mx-auto mt-6 space-y-2">
             {creations.map((item) => (
@@ -86,7 +92,6 @@ export default function DrivePage() {
     );
   }
 
-  // State 4: No drive selected (drives exist)
   if (!selectedDrive) {
     return (
       <EmptyState
@@ -97,16 +102,14 @@ export default function DrivePage() {
     );
   }
 
-  // State 5: Drive selected — show file browser
   return <FileBrowser />;
 }
 
-// Inline creation card for the empty state
 function CreationCard({
   item,
   onDismiss,
 }: {
-  item: { id: string; name: string; stage: string; error?: string };
+  item: CreationStatus;
   onDismiss: (id: string) => void;
 }) {
   const isDismissible = item.stage === "ready" || item.stage === "failed";

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type ReactNode } from "react";
+import { useRef, useState, useCallback, type ReactNode } from "react";
 import {
   Upload,
   FolderPlus,
@@ -35,14 +35,30 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { useDrive } from "@/hooks/useDrive";
+import {
+  useSelectedDrive,
+  useCurrentPath,
+  useEntries,
+  useDriveLoading,
+  useUploading,
+  useViewMode,
+  setViewMode,
+  navigateTo,
+  refreshDirectory,
+  uploadFiles,
+  downloadFile,
+  deleteEntry,
+  createFolder,
+} from "@/state";
 import { formatBytes, formatTimestamp } from "@/lib/utils";
+import { toast } from "@/components/ui/toaster";
 import type { FsEntry } from "@/lib/drive-client";
 import UploadZone from "./UploadZone";
 import NewFolderDialog from "./NewFolderDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./EmptyState";
 import CheckpointPanel from "./CheckpointPanel";
+import PendingChangesBanner from "./PendingChangesBanner";
 
 function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -79,21 +95,12 @@ function getFileIconColor(name: string) {
 }
 
 export default function FileBrowser() {
-  const {
-    selectedDrive,
-    currentPath,
-    entries,
-    loading,
-    uploading,
-    viewMode,
-    setViewMode,
-    navigateTo,
-    refreshDirectory,
-    uploadFiles,
-    downloadFile,
-    deleteEntry,
-    createFolder,
-  } = useDrive();
+  const selectedDrive = useSelectedDrive();
+  const currentPath = useCurrentPath();
+  const entries = useEntries();
+  const loading = useDriveLoading();
+  const uploading = useUploading();
+  const viewMode = useViewMode();
 
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [entryToDelete, setEntryToDelete] = useState<FsEntry | null>(null);
@@ -104,16 +111,82 @@ export default function FileBrowser() {
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || []);
       if (files.length > 0) {
-        await uploadFiles(files);
+        try {
+          await uploadFiles(files);
+          toast({
+            title: "Upload complete",
+            description: `${files.length} file${files.length > 1 ? "s" : ""} uploaded`,
+          });
+        } catch (err) {
+          if ((err as Error).name !== "AbortError") {
+            toast({
+              title: "Upload failed",
+              description: err instanceof Error ? err.message : "Error",
+              variant: "destructive",
+            });
+          }
+        }
       }
       e.target.value = "";
     },
-    [uploadFiles]
+    [],
   );
+
+  const handleDownload = useCallback(
+    async (entry: FsEntry) => {
+      try {
+        const blob = await downloadFile(entry);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = entry.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast({ title: "Downloaded", description: entry.name });
+      } catch (err) {
+        toast({
+          title: "Download failed",
+          description: err instanceof Error ? err.message : "Error",
+          variant: "destructive",
+        });
+      }
+    },
+    [],
+  );
+
+  const handleDelete = useCallback(
+    async (entry: FsEntry) => {
+      try {
+        await deleteEntry(entry);
+        toast({ title: "Deleted", description: entry.name });
+      } catch (err) {
+        toast({
+          title: "Delete failed",
+          description: err instanceof Error ? err.message : "Error",
+          variant: "destructive",
+        });
+      }
+    },
+    [],
+  );
+
+  const handleCreateFolder = useCallback(async (name: string) => {
+    try {
+      await createFolder(name);
+      toast({ title: "Folder created", description: name });
+    } catch (err) {
+      toast({
+        title: "Create folder failed",
+        description: err instanceof Error ? err.message : "Error",
+        variant: "destructive",
+      });
+    }
+  }, []);
 
   if (!selectedDrive) return null;
 
-  // Breadcrumbs
   const breadcrumbs = () => {
     const driveName = selectedDrive.name || `Drive ${selectedDrive.driveId}`;
     const segments = [{ name: driveName, path: "/" }];
@@ -128,24 +201,22 @@ export default function FileBrowser() {
     return segments;
   };
 
-  // Separate directories and files, directories first
   const directories = entries.filter((e) => e.entryType === "directory");
   const files = entries.filter((e) => e.entryType === "file");
   const sortedEntries = [...directories, ...files];
 
   return (
     <UploadZone>
-      <div className="flex flex-col h-full">
-        {/* Toolbar */}
+      <div className="flex flex-col h-full" data-testid="file-browser">
         <div className="flex items-center justify-between gap-2 pb-4 border-b">
-          {/* Breadcrumbs */}
-          <nav className="flex items-center gap-1 text-sm min-w-0">
+          <nav data-testid="breadcrumbs" className="flex items-center gap-1 text-sm min-w-0">
             {breadcrumbs().map((seg, i, arr) => (
               <span key={seg.path} className="flex items-center gap-1">
                 {i > 0 && (
                   <ChevronRight className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                 )}
                 <button
+                  data-testid={`breadcrumb-${i}`}
                   className={`hover:underline truncate max-w-[150px] ${
                     i === arr.length - 1
                       ? "font-medium text-foreground"
@@ -159,9 +230,9 @@ export default function FileBrowser() {
             ))}
           </nav>
 
-          {/* Actions */}
           <div className="flex items-center gap-1.5">
             <Button
+              data-testid="upload-button"
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
@@ -182,6 +253,7 @@ export default function FileBrowser() {
               onChange={handleFileSelect}
             />
             <Button
+              data-testid="new-folder-button"
               variant="outline"
               size="sm"
               onClick={() => setShowNewFolder(true)}
@@ -191,17 +263,17 @@ export default function FileBrowser() {
             </Button>
             <div className="w-px h-6 bg-border mx-1" />
             <Button
+              data-testid="checkpoint-toggle"
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               onClick={() => setShowCheckpoint(!showCheckpoint)}
               title="Checkpoint"
             >
-              <Shield
-                className={`h-4 w-4 ${showCheckpoint ? "text-primary" : ""}`}
-              />
+              <Shield className={`h-4 w-4 ${showCheckpoint ? "text-primary" : ""}`} />
             </Button>
             <Button
+              data-testid="view-mode-toggle"
               variant="ghost"
               size="icon"
               className="h-8 w-8"
@@ -214,27 +286,26 @@ export default function FileBrowser() {
               )}
             </Button>
             <Button
+              data-testid="refresh-button"
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               onClick={() => refreshDirectory()}
               disabled={loading}
             >
-              <RefreshCw
-                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-              />
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
           </div>
         </div>
 
-        {/* Checkpoint Panel */}
+        <PendingChangesBanner />
+
         {showCheckpoint && (
           <div className="pt-4">
             <CheckpointPanel />
           </div>
         )}
 
-        {/* Content */}
         <div className="flex-1 pt-4">
           {loading && sortedEntries.length === 0 ? (
             <div className="flex items-center justify-center py-16">
@@ -270,14 +341,14 @@ export default function FileBrowser() {
             <ListView
               entries={sortedEntries}
               onNavigate={navigateTo}
-              onDownload={downloadFile}
+              onDownload={handleDownload}
               onDelete={setEntryToDelete}
             />
           ) : (
             <GridView
               entries={sortedEntries}
               onNavigate={navigateTo}
-              onDownload={downloadFile}
+              onDownload={handleDownload}
               onDelete={setEntryToDelete}
             />
           )}
@@ -287,7 +358,7 @@ export default function FileBrowser() {
       <NewFolderDialog
         open={showNewFolder}
         onOpenChange={setShowNewFolder}
-        onConfirm={createFolder}
+        onConfirm={handleCreateFolder}
       />
 
       <ConfirmDialog
@@ -300,16 +371,12 @@ export default function FileBrowser() {
             : "This file will be removed from the directory listing."
         }
         onConfirm={() => {
-          if (entryToDelete) deleteEntry(entryToDelete);
+          if (entryToDelete) handleDelete(entryToDelete);
         }}
       />
     </UploadZone>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// List View
-// ─────────────────────────────────────────────────────────────────────────────
 
 function ListView({
   entries,
@@ -324,7 +391,7 @@ function ListView({
 }) {
   return (
     <div className="rounded-lg border">
-      <table className="w-full">
+      <table className="w-full" data-testid="entries-table">
         <thead>
           <tr className="border-b bg-muted/50">
             <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -356,6 +423,7 @@ function ListView({
                 onDelete={onDelete}
               >
                 <tr
+                  data-testid={`entry-row-${entry.entryType}-${entry.name}`}
                   className="border-b last:border-b-0 hover:bg-muted/30 transition-colors"
                 >
                   <td className="px-4 py-2.5">
@@ -381,11 +449,7 @@ function ListView({
                     {entry.mtime > 0 ? formatTimestamp(entry.mtime) : "--"}
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <EntryActions
-                      entry={entry}
-                      onDownload={onDownload}
-                      onDelete={onDelete}
-                    />
+                    <EntryActions entry={entry} onDownload={onDownload} onDelete={onDelete} />
                   </td>
                 </tr>
               </EntryContextMenu>
@@ -396,10 +460,6 @@ function ListView({
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Grid View
-// ─────────────────────────────────────────────────────────────────────────────
 
 function GridView({
   entries,
@@ -413,7 +473,7 @@ function GridView({
   onDelete: (entry: FsEntry) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3" data-testid="entries-grid">
       {entries.map((entry) => {
         const isDir = entry.entryType === "directory";
         const Icon = isDir ? Folder : getFileIcon(entry.name);
@@ -428,6 +488,7 @@ function GridView({
             onDelete={onDelete}
           >
             <div
+              data-testid={`entry-card-${entry.entryType}-${entry.name}`}
               className="group relative flex flex-col items-center gap-2 rounded-lg border p-4 hover:bg-muted/50 transition-colors cursor-pointer"
               onClick={() => {
                 if (isDir) onNavigate(entry.path);
@@ -442,13 +503,8 @@ function GridView({
                   </p>
                 )}
               </div>
-              {/* Action button on hover */}
               <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <EntryActions
-                  entry={entry}
-                  onDownload={onDownload}
-                  onDelete={onDelete}
-                />
+                <EntryActions entry={entry} onDownload={onDownload} onDelete={onDelete} />
               </div>
             </div>
           </EntryContextMenu>
@@ -457,10 +513,6 @@ function GridView({
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry Actions dropdown
-// ─────────────────────────────────────────────────────────────────────────────
 
 function EntryActions({
   entry,
@@ -477,6 +529,7 @@ function EntryActions({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
+          data-testid={`entry-actions-${entry.name}`}
           variant="ghost"
           size="icon"
           className="h-7 w-7"
@@ -512,10 +565,6 @@ function EntryActions({
     </DropdownMenu>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Right-click context menu wrapper
-// ─────────────────────────────────────────────────────────────────────────────
 
 function EntryContextMenu({
   entry,

@@ -91,7 +91,7 @@ export default function Layout() {
                 {connecting
                   ? "Connecting..."
                   : connected
-                    ? `Block #${blockNumber}`
+                    ? <span data-testid="block-number">{`Block #${blockNumber}`}</span>
                     : "Disconnected"}
               </span>
             </div>

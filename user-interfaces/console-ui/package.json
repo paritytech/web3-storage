@@ -31,7 +31,8 @@
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.2",
     "rxjs": "^7.8.2",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "@web3-storage/network-config": "*"
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
