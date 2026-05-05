@@ -27,7 +27,6 @@ Thumbs.db
 # Node.js
 node_modules/
 package-lock.json
-pnpm-lock.yaml
 .papi/
 # Exception: commit per-UI PAPI config + metadata for CI builds
 # (papi generate needs these to produce descriptors without a running chain)
