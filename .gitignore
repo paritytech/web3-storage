@@ -35,7 +35,7 @@ user-interfaces/console-ui/.papi/descriptors/dist/
 !user-interfaces/drive-ui/.papi/
 user-interfaces/drive-ui/.papi/descriptors/dist/
 .vite/
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Generated chain specs
 zombienet/storage-local-spec.json
