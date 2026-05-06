@@ -307,6 +307,7 @@ export function Registration() {
               <Label htmlFor="stake">Stake Amount (tokens)</Label>
               <Input
                 id="stake"
+                data-testid="registration-stake-input"
                 type="number"
                 min="1000"
                 value={stake}
@@ -362,6 +363,7 @@ export function Registration() {
                 Back
               </Button>
               <Button
+                data-testid="registration-stake-continue"
                 className="flex-1"
                 onClick={() => setStep('settings')}
                 disabled={!meetsMinStake || !hasEnoughBalance}
@@ -387,6 +389,7 @@ export function Registration() {
               <Label htmlFor="multiaddr">Provider Node Address (multiaddr)</Label>
               <Input
                 id="multiaddr"
+                data-testid="registration-multiaddr-input"
                 type="text"
                 value={multiaddr}
                 onChange={(e) => setMultiaddr(e.target.value)}
@@ -403,6 +406,7 @@ export function Registration() {
                 <Label htmlFor="pricePerByte">Price per Byte (per block)</Label>
                 <Input
                   id="pricePerByte"
+                  data-testid="registration-priceperbyte-input"
                   type="number"
                   value={settings.pricePerByte.toString()}
                   onChange={(e) =>
@@ -414,6 +418,7 @@ export function Registration() {
                 <Label htmlFor="maxCapacity">Max Capacity (bytes)</Label>
                 <Input
                   id="maxCapacity"
+                  data-testid="registration-maxcapacity-input"
                   type="number"
                   value={settings.maxCapacity.toString()}
                   onChange={(e) =>
@@ -432,6 +437,7 @@ export function Registration() {
                 <Label htmlFor="minDuration">Min Duration (blocks)</Label>
                 <Input
                   id="minDuration"
+                  data-testid="registration-minduration-input"
                   type="number"
                   min="1"
                   value={settings.minDuration}
@@ -444,6 +450,7 @@ export function Registration() {
                 <Label htmlFor="maxDuration">Max Duration (blocks)</Label>
                 <Input
                   id="maxDuration"
+                  data-testid="registration-maxduration-input"
                   type="number"
                   min="1"
                   value={settings.maxDuration}
@@ -499,7 +506,7 @@ export function Registration() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>
-              <Button className="flex-1" onClick={() => setStep('confirm')}>
+              <Button data-testid="registration-settings-continue" className="flex-1" onClick={() => setStep('confirm')}>
                 Review & Confirm
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
@@ -568,6 +575,7 @@ export function Registration() {
                 Back
               </Button>
               <Button
+                data-testid="registration-submit"
                 className="flex-1"
                 onClick={handleRegister}
                 disabled={isSubmitting}
@@ -591,7 +599,7 @@ export function Registration() {
 
       {/* Step: Complete */}
       {step === 'complete' && (
-        <Card className="border-green-500/30">
+        <Card data-testid="registration-complete" className="border-green-500/30">
           <CardContent className="py-12 text-center space-y-6">
             <div className="flex justify-center">
               <div className="h-16 w-16 rounded-full bg-green-500/20 flex items-center justify-center">
@@ -807,6 +815,7 @@ function SettingsManager() {
             <div className="flex gap-3">
               <Input
                 id="multiaddr"
+                data-testid="settings-multiaddr-input"
                 type="text"
                 value={multiaddrValue}
                 onChange={(e) => setMultiaddrValue(e.target.value)}
@@ -814,6 +823,7 @@ function SettingsManager() {
                 className="flex-1"
               />
               <Button
+                data-testid="settings-multiaddr-update"
                 onClick={handleUpdateMultiaddr}
                 disabled={isMultiaddrSubmitting || !multiaddrValue || multiaddrValue === providerInfo?.multiaddr}
               >
@@ -844,6 +854,7 @@ function SettingsManager() {
               <Label htmlFor="pricePerByte">Price per Byte (per block)</Label>
               <Input
                 id="pricePerByte"
+                data-testid="settings-priceperbyte-input"
                 type="number"
                 className={settings.pricePerByte === 0n ? 'text-gray-500' : ''}
                 value={settings.pricePerByte.toString()}
@@ -856,6 +867,7 @@ function SettingsManager() {
               <Label htmlFor="maxCapacity">Max Capacity</Label>
               <Input
                 id="maxCapacity"
+                data-testid="settings-maxcapacity-input"
                 type="number"
                 className={settings.maxCapacity === 0n ? 'text-gray-500' : ''}
                 value={settings.maxCapacity.toString()}
@@ -941,6 +953,7 @@ function SettingsManager() {
       </Card>
 
       <Button
+        data-testid="settings-update"
         className="w-full"
         size="lg"
         onClick={handleUpdate}
