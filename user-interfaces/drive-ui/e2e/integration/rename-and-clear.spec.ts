@@ -54,10 +54,12 @@ test("rename → DriveNameUpdated event reflects without manual refresh", async 
   await localPage.getByTestId("rename-input").fill(newName);
   await localPage.getByTestId("rename-submit").click();
 
-  // The DriveNameUpdated subscription should refresh the sidebar.
+  // The DriveNameUpdated subscription should refresh the sidebar. The
+  // event-driven refresh kicks in once the rename tx is finalized; on a
+  // fresh chain that round-trip can take ~30-60s.
   await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toContainText(
     newName,
-    { timeout: 30_000 },
+    { timeout: 90_000 },
   );
 
   const onchain = await getApi().query.DriveRegistry.Drives.getValue(drive.driveId);

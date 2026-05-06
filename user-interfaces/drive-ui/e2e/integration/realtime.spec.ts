@@ -59,11 +59,11 @@ test("DriveCreated cross-tab", async ({ localPage, browser }) => {
 
     // Tab A also reflects (sanity).
     await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
-      timeout: 60_000,
+      timeout: 90_000,
     });
     // Tab B reflects without reload.
     await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
-      timeout: 60_000,
+      timeout: 90_000,
     });
   } finally {
     await ctx.close();
@@ -81,16 +81,16 @@ test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
       minProviders: 1,
     });
     await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
-      timeout: 60_000,
+      timeout: 90_000,
     });
 
     await deleteDriveViaApi(Alice, drive.driveId);
 
     await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
-      timeout: 60_000,
+      timeout: 90_000,
     });
     await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
-      timeout: 60_000,
+      timeout: 90_000,
     });
   } finally {
     await ctx.close();

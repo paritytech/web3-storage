@@ -114,19 +114,43 @@ export async function createDriveViaApi(
     signer.signer,
   );
 
+  let handle: DriveHandle | null = null;
   const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
   if (created.length > 0) {
     const { drive_id, bucket_id } = created[0].payload;
-    return { driveId: drive_id, bucketId: bucket_id, name: opts.name };
+    handle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
+  } else {
+    const createdWithStorage = api.event.DriveRegistry.DriveCreatedWithStorage.filter(
+      result.events as never,
+    );
+    if (createdWithStorage.length > 0) {
+      const { drive_id, bucket_id } = createdWithStorage[0].payload;
+      handle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
+    }
   }
-  const createdWithStorage = api.event.DriveRegistry.DriveCreatedWithStorage.filter(
-    result.events as never,
-  );
-  if (createdWithStorage.length > 0) {
-    const { drive_id, bucket_id } = createdWithStorage[0].payload;
-    return { driveId: drive_id, bucketId: bucket_id, name: opts.name };
+  if (!handle) throw new Error("DriveCreated event not found");
+
+  // create_drive auto-emits a request_agreement targeting the matched
+  // provider. Until that agreement transitions Pending→Active, uploads to
+  // the bucket fail because the provider has no committed multiaddr yet.
+  // The provider node's agreement-coordinator auto-accepts asynchronously
+  // (~6-12s), but tests racing the upload right after createDriveViaApi
+  // hit the gap. Force-accept here from the same signer (in test setups,
+  // Alice is both drive owner and the running provider node, so she can
+  // sign accept_agreement on her own bucket). Best-effort — if the
+  // coordinator already accepted, the runtime returns NoPendingAgreement
+  // which we ignore.
+  try {
+    await submitExtrinsic(
+      api.tx.StorageProvider.accept_agreement({ bucket_id: handle.bucketId }),
+      signer.signer,
+    );
+  } catch {
+    // already accepted by the provider's coordinator, or signer isn't the
+    // provider — leave it to the chain.
   }
-  throw new Error("DriveCreated event not found");
+
+  return handle;
 }
 
 export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Promise<void> {

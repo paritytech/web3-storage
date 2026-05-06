@@ -40,21 +40,20 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
  * success (NewDriveDialog calls `onOpenChange(false)` after `createDrive`
  * resolves), so we poll the chain for a new drive in Alice's UserDrives
  * rather than chasing the transient `creation-card-*` testids inside the
- * dialog.
+ * dialog. Returns `length`, not the latest id directly: a fresh chain's
+ * first drive has id 0n which is falsy in JS — we must check length.
  */
 async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
-  let latest: bigint | null = null;
   await expect.poll(
     async () => {
       const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-      if (!ids || ids.length === 0) return null;
-      latest = BigInt(ids[ids.length - 1]);
-      return latest;
+      return ids?.length ?? 0;
     },
     { timeout: 120_000, intervals: [1000, 2000, 3000] },
-  ).toBeTruthy();
-  return latest!;
+  ).toBeGreaterThan(0);
+  const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
+  return BigInt(ids![ids!.length - 1]);
 }
 
 test("Immediate strategy round-trips to chain", async ({ localPage }) => {
