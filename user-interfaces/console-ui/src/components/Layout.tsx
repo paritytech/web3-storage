@@ -41,6 +41,7 @@ export default function Layout() {
               key={item.name}
               to={item.href}
               end={item.href === "/"}
+              data-testid={`nav-${item.name.toLowerCase()}`}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -64,14 +65,14 @@ export default function Layout() {
                 {(signerName || signerAddress)[0].toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{signerName || "Account"}</p>
-                <p className="text-xs text-muted-foreground font-mono truncate">
+                <p data-testid="signer-name" className="text-sm font-medium truncate">{signerName || "Account"}</p>
+                <p data-testid="signer-address" className="text-xs text-muted-foreground font-mono truncate">
                   {truncateHash(signerAddress, 6, 4)}
                 </p>
               </div>
             </div>
             {balance && (
-              <p className="mt-1 text-xs text-muted-foreground pl-10">
+              <p data-testid="balance-display" className="mt-1 text-xs text-muted-foreground pl-10">
                 {formatTokens(balance.free)} tokens
               </p>
             )}
@@ -96,7 +97,7 @@ export default function Layout() {
               </span>
             </div>
             {connected ? (
-              <Button variant="ghost" size="sm" onClick={disconnect} title="Disconnect">
+              <Button data-testid="layout-disconnect" variant="ghost" size="sm" onClick={disconnect} title="Disconnect">
                 <LogOut className="h-4 w-4" />
               </Button>
             ) : (

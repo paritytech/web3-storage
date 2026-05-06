@@ -18,13 +18,13 @@ export default function ConnectDialog() {
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>
-        <Button size="sm" variant="outline">
+        <Button data-testid="connect-button" size="sm" variant="outline">
           <Plug className="h-4 w-4" />
         </Button>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-[50%] top-[50%] max-h-[85vh] w-[90vw] max-w-[450px] translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-card p-6 shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
+        <Dialog.Content data-testid="connect-dialog" className="fixed left-[50%] top-[50%] max-h-[85vh] w-[90vw] max-w-[450px] translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-card p-6 shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
           <Dialog.Title className="text-lg font-semibold">
             Connect to Network
           </Dialog.Title>
@@ -37,6 +37,7 @@ export default function ConnectDialog() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Chain WebSocket</label>
               <Input
+                data-testid="connect-ws-input"
                 value={chainWs}
                 onChange={(e) => setChainWs(e.target.value)}
                 placeholder="ws://127.0.0.1:2222"
@@ -49,9 +50,9 @@ export default function ConnectDialog() {
 
             <div className="flex justify-end gap-3">
               <Dialog.Close asChild>
-                <Button variant="outline">Cancel</Button>
+                <Button data-testid="connect-cancel" variant="outline">Cancel</Button>
               </Dialog.Close>
-              <Button onClick={handleConnect} disabled={connecting}>
+              <Button data-testid="connect-submit" onClick={handleConnect} disabled={connecting}>
                 {connecting ? "Connecting..." : "Connect"}
               </Button>
             </div>

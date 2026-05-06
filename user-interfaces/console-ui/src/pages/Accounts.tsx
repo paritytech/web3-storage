@@ -240,7 +240,7 @@ export default function Accounts() {
       )}
 
       {/* Add Custom Account */}
-      <Card>
+      <Card data-testid="accounts-custom-form">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" />
@@ -255,6 +255,7 @@ export default function Accounts() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Name</label>
               <Input
+                data-testid="accounts-custom-name-input"
                 placeholder="My Account"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
@@ -263,6 +264,7 @@ export default function Accounts() {
             <div className="space-y-2">
               <label className="text-sm font-medium">Seed / Derivation Path</label>
               <Input
+                data-testid="accounts-custom-seed-input"
                 placeholder="//MyAccount or seed phrase"
                 value={customSeed}
                 onChange={(e) => setCustomSeed(e.target.value)}
@@ -270,7 +272,7 @@ export default function Accounts() {
               />
             </div>
           </div>
-          <Button onClick={handleAddCustomAccount}>
+          <Button data-testid="accounts-custom-submit" onClick={handleAddCustomAccount}>
             <Key className="mr-2 h-4 w-4" />
             Add Account
           </Button>
@@ -289,10 +291,11 @@ export default function Accounts() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
+          <div data-testid="accounts-list" className="space-y-3">
             {accounts.map((account) => (
               <div
                 key={account.address}
+                data-testid={`accounts-list-row-${account.name}`}
                 className={`flex items-center justify-between rounded-lg border p-4 ${
                   account.isActive ? "border-primary bg-primary/5" : ""
                 }`}
@@ -311,7 +314,7 @@ export default function Accounts() {
                     <div className="flex items-center gap-2">
                       <p className="font-medium">{account.name}</p>
                       {account.isActive && (
-                        <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
+                        <span data-testid={`accounts-active-badge-${account.name}`} className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
                           Active
                         </span>
                       )}
@@ -330,6 +333,7 @@ export default function Accounts() {
                 <div className="flex items-center gap-2">
                   {!account.isActive && connected && (
                     <Button
+                      data-testid={`accounts-set-active-${account.name}`}
                       variant="outline"
                       size="sm"
                       onClick={() => handleSetActive(account)}
@@ -344,6 +348,7 @@ export default function Accounts() {
                     </Button>
                   )}
                   <Button
+                    data-testid={`accounts-copy-${account.name}`}
                     variant="ghost"
                     size="icon"
                     onClick={() =>
@@ -354,6 +359,7 @@ export default function Accounts() {
                   </Button>
                   {!DEV_ACCOUNTS.some((d) => d.address === account.address) && (
                     <Button
+                      data-testid={`accounts-delete-${account.name}`}
                       variant="ghost"
                       size="icon"
                       onClick={() => handleDeleteAccount(account.address)}

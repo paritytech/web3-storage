@@ -122,8 +122,9 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
   };
 
   return (
-    <Card>
+    <Card data-testid="bucket-info-panel">
       <button
+        data-testid="bucket-info-toggle"
         className="w-full flex items-center gap-2 p-4 text-left"
         onClick={() => setExpanded(!expanded)}
       >
@@ -197,7 +198,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
             {members.length === 0 ? (
               <p className="text-xs text-muted-foreground">No members found</p>
             ) : (
-              <table className="w-full text-xs">
+              <table data-testid="bucket-members-table" className="w-full text-xs">
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-1 font-medium">Account</th>
@@ -207,7 +208,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                 </thead>
                 <tbody>
                   {members.map((m) => (
-                    <tr key={m.account} className="border-b last:border-0">
+                    <tr key={m.account} data-testid={`bucket-member-row-${m.account}`} className="border-b last:border-0">
                       <td className="py-1.5 font-mono text-muted-foreground">
                         {truncateHash(m.account)}
                       </td>
@@ -216,6 +217,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                         <td className="py-1.5 text-right">
                           {m.account !== signerAddress && (
                             <Button
+                              data-testid={`bucket-member-remove-${m.account}`}
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 text-muted-foreground hover:text-destructive"
@@ -236,12 +238,14 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
             {isAdmin && (
               <div className="flex items-center gap-2 mt-2">
                 <Input
+                  data-testid="bucket-add-member-address"
                   placeholder="Account address"
                   value={newMemberAccount}
                   onChange={(e) => setNewMemberAccount(e.target.value)}
                   className="flex-1 text-xs h-8"
                 />
                 <select
+                  data-testid="bucket-add-member-role"
                   className="rounded-md border border-input bg-background px-2 py-1 text-xs h-8"
                   value={newMemberRole}
                   onChange={(e) => setNewMemberRole(e.target.value as 'Admin' | 'Writer' | 'Reader')}
@@ -251,6 +255,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                   <option value="Reader">Reader</option>
                 </select>
                 <Button
+                  data-testid="bucket-add-member-submit"
                   size="sm"
                   className="h-8 text-xs"
                   onClick={handleAddMember}
