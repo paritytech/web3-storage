@@ -14,6 +14,8 @@ import {
   registerProviderViaApi,
   submitExtrinsic,
   getApi,
+  waitForConnection,
+  waitForMinBlock,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -36,8 +38,11 @@ async function openTabB(browser: import("@playwright/test").Browser) {
     localStorage.setItem("drive-ui-account-name", "Alice");
   });
   const tabB = await ctx.newPage();
-  await tabB.goto("/");
-  await expect(tabB.getByTestId("block-number")).toBeVisible({ timeout: 60_000 });
+  await tabB.goto("http://localhost:5174/");
+  // Tab B has its own chain WS — wait until it's actually subscribed and has
+  // observed a finalized block before asserting cross-tab event propagation.
+  await waitForConnection(tabB, 60_000);
+  await waitForMinBlock(tabB, 3, 60_000);
   return { tabB, ctx };
 }
 

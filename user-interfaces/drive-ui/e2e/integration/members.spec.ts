@@ -46,9 +46,12 @@ test("SS58 validation rejects garbage input", async ({ localPage }) => {
   await localPage.reload();
 
   await openAccessDialog(localPage, drive.driveId);
+  // ManageAccessDialog updates `validationError` synchronously on input change
+  // and disables the submit button — there's nothing to click here, just
+  // assert the inline error appears.
   await localPage.getByTestId("add-member-address").fill("not-an-address");
-  await localPage.getByTestId("add-member-submit").click();
   await expect(localPage.getByTestId("add-member-error")).toContainText(/ss58|invalid/i);
+  await expect(localPage.getByTestId("add-member-submit")).toBeDisabled();
 });
 
 test("duplicate-member check rejects already-member address", async ({ localPage }) => {
@@ -64,8 +67,8 @@ test("duplicate-member check rejects already-member address", async ({ localPage
   await openAccessDialog(localPage, drive.driveId);
   // Alice is the owner and an implicit Admin member.
   await localPage.getByTestId("add-member-address").fill(Alice.address);
-  await localPage.getByTestId("add-member-submit").click();
   await expect(localPage.getByTestId("add-member-error")).toContainText(/already.*member/i);
+  await expect(localPage.getByTestId("add-member-submit")).toBeDisabled();
 });
 
 test("add Reader → list refreshes without manual click", async ({ localPage }) => {

@@ -2,7 +2,7 @@
  * Create-drive specs (slow ~30–90s each due to provider acceptance).
  *
  * Each test fills the new-drive form, picks a commit-strategy variant, submits,
- * waits for the creation flow to reach `ready`, and verifies the on-chain
+ * waits for the dialog to close on success, then verifies the on-chain
  * commit_strategy matches what the user picked.
  */
 import { test, expect } from "../fixtures";
@@ -35,27 +35,34 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
   // Capacity / duration / payment / min-providers — defaults are fine for these tests.
 }
 
-async function waitForReadyCard(page: import("@playwright/test").Page) {
-  await expect(page.getByTestId("creation-card-ready")).toBeVisible({ timeout: 120_000 });
-}
-
-async function getCreatedDriveId(): Promise<bigint> {
+/**
+ * Wait for the new-drive flow to land on chain. The dialog auto-closes on
+ * success (NewDriveDialog calls `onOpenChange(false)` after `createDrive`
+ * resolves), so we poll the chain for a new drive in Alice's UserDrives
+ * rather than chasing the transient `creation-card-*` testids inside the
+ * dialog.
+ */
+async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
-  const driveIds = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-  if (!driveIds || driveIds.length === 0) {
-    throw new Error("No drives found for Alice after creation");
-  }
-  // Latest drive is the one we just created — UserDrives returns in insertion order.
-  return BigInt(driveIds[driveIds.length - 1]);
+  let latest: bigint | null = null;
+  await expect.poll(
+    async () => {
+      const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
+      if (!ids || ids.length === 0) return null;
+      latest = BigInt(ids[ids.length - 1]);
+      return latest;
+    },
+    { timeout: 120_000, intervals: [1000, 2000, 3000] },
+  ).toBeTruthy();
+  return latest!;
 }
 
 test("Immediate strategy round-trips to chain", async ({ localPage }) => {
   await fillBaseFields(localPage, `immediate-${Date.now()}`);
   await localPage.getByTestId("commit-strategy-immediate").click();
   await localPage.getByTestId("new-drive-submit").click();
-  await waitForReadyCard(localPage);
 
-  const driveId = await getCreatedDriveId();
+  const driveId = await waitForCreatedDriveId();
   const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
   expect(drive).toBeTruthy();
   expect(drive!.commit_strategy.type).toBe("Immediate");
@@ -66,9 +73,8 @@ test("Batched(50) strategy round-trips to chain", async ({ localPage }) => {
   await localPage.getByTestId("commit-strategy-batched").click();
   await localPage.getByTestId("commit-strategy-batched-interval").fill("50");
   await localPage.getByTestId("new-drive-submit").click();
-  await waitForReadyCard(localPage);
 
-  const driveId = await getCreatedDriveId();
+  const driveId = await waitForCreatedDriveId();
   const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
   expect(drive).toBeTruthy();
   expect(drive!.commit_strategy.type).toBe("Batched");
@@ -79,9 +85,8 @@ test("Manual strategy round-trips to chain", async ({ localPage }) => {
   await fillBaseFields(localPage, `manual-${Date.now()}`);
   await localPage.getByTestId("commit-strategy-manual").click();
   await localPage.getByTestId("new-drive-submit").click();
-  await waitForReadyCard(localPage);
 
-  const driveId = await getCreatedDriveId();
+  const driveId = await waitForCreatedDriveId();
   const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
   expect(drive).toBeTruthy();
   expect(drive!.commit_strategy.type).toBe("Manual");

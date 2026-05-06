@@ -29,9 +29,9 @@ test.afterEach(async () => {
 });
 
 async function uploadOneFile(page: import("@playwright/test").Page, content: string) {
-  // The UploadZone exposes the native <input type="file">; Playwright drives it via setInputFiles.
-  const fileInput = page.locator('input[type="file"]').first();
-  await fileInput.setInputFiles({
+  // UploadZone's hidden <input type="file" data-testid="upload-input"> always
+  // mounts inside the FileBrowser; setInputFiles dispatches onChange directly.
+  await page.getByTestId("upload-input").setInputFiles({
     name: "hello.txt",
     mimeType: "text/plain",
     buffer: Buffer.from(content, "utf-8"),

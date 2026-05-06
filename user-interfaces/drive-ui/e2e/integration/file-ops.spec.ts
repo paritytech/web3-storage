@@ -43,8 +43,7 @@ async function selectFreshDrive(page: import("@playwright/test").Page) {
 test("multi-file upload appears in entries table", async ({ localPage }) => {
   await selectFreshDrive(localPage);
 
-  const fileInput = localPage.locator('input[type="file"]').first();
-  await fileInput.setInputFiles([
+  await localPage.getByTestId("upload-input").setInputFiles([
     { name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("alpha") },
     { name: "b.txt", mimeType: "text/plain", buffer: Buffer.from("bravo") },
     { name: "c.txt", mimeType: "text/plain", buffer: Buffer.from("charlie") },
@@ -60,8 +59,7 @@ test("multi-file upload appears in entries table", async ({ localPage }) => {
 test("download round-trips bytes", async ({ localPage }) => {
   await selectFreshDrive(localPage);
   const content = `download-${Date.now()}`;
-  const fileInput = localPage.locator('input[type="file"]').first();
-  await fileInput.setInputFiles({
+  await localPage.getByTestId("upload-input").setInputFiles({
     name: "round-trip.txt",
     mimeType: "text/plain",
     buffer: Buffer.from(content),
@@ -81,8 +79,7 @@ test("download round-trips bytes", async ({ localPage }) => {
 
 test("delete file removes the row", async ({ localPage }) => {
   await selectFreshDrive(localPage);
-  const fileInput = localPage.locator('input[type="file"]').first();
-  await fileInput.setInputFiles({
+  await localPage.getByTestId("upload-input").setInputFiles({
     name: "delete-me.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("bye"),
@@ -114,8 +111,7 @@ test("abort upload mid-flight (no error toast)", async ({ localPage }) => {
     await route.continue();
   });
 
-  const fileInput = localPage.locator('input[type="file"]').first();
-  await fileInput.setInputFiles({
+  await localPage.getByTestId("upload-input").setInputFiles({
     name: "abort.bin",
     mimeType: "application/octet-stream",
     buffer: Buffer.alloc(1024, 0xab),
