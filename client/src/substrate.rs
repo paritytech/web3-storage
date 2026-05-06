@@ -338,6 +338,59 @@ pub mod extrinsics {
         )
     }
 
+    /// Create an add_stake extrinsic payload.
+    pub fn add_stake(amount: u128) -> impl Payload {
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "add_stake",
+            vec![subxt::dynamic::Value::u128(amount)],
+        )
+    }
+
+    /// Create a deregister_provider extrinsic payload.
+    pub fn deregister_provider() -> impl Payload {
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "deregister_provider",
+            Vec::<subxt::dynamic::Value>::new(),
+        )
+    }
+
+    /// Create a confirm_replica_sync extrinsic payload.
+    pub fn confirm_replica_sync(
+        bucket_id: u64,
+        roots: [Option<H256>; 7],
+        signature: Vec<u8>,
+    ) -> impl Payload {
+        let roots_value = subxt::dynamic::Value::unnamed_composite(
+            roots
+                .iter()
+                .map(|r| match r {
+                    Some(h) => subxt::dynamic::Value::unnamed_variant(
+                        "Some",
+                        vec![subxt::dynamic::Value::from_bytes(h.as_bytes())],
+                    ),
+                    None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let sig_value = subxt::dynamic::Value::unnamed_variant(
+            "Sr25519",
+            vec![subxt::dynamic::Value::from_bytes(&signature)],
+        );
+
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "confirm_replica_sync",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                roots_value,
+                sig_value,
+            ],
+        )
+    }
+
     /// Create a respond_to_challenge extrinsic payload with a Proof response.
     ///
     /// Builds the `ChallengeResponse::Proof` variant with proper nested types
@@ -514,6 +567,54 @@ pub mod storage {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
             ],
         )
+    }
+
+    /// Query all pending agreement requests for a provider (prefix iteration over DoubleMap).
+    ///
+    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(provider)=16][provider=32]
+    /// → per entry appends [blake2_128(bucket_id)=16][bucket_id=8]; bucket_id at offset 96.
+    pub fn agreement_requests_for_provider(
+        provider: &AccountId32,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage(
+            "StorageProvider",
+            "AgreementRequests",
+            vec![subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8])],
+        )
+    }
+
+    /// Iterate all storage agreements (bucket_id × provider DoubleMap).
+    ///
+    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]
+    ///             [blake2_128(provider)=16][provider=32]; bucket_id at [48..56], provider at [72..104].
+    pub fn all_storage_agreements() -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage("StorageProvider", "StorageAgreements", vec![])
+    }
+
+    /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
+    ///
+    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4];
+    /// deadline block at [48..52].
+    pub fn all_challenges() -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage("StorageProvider", "Challenges", vec![])
     }
 
     /// Query challenges at a deadline block.
