@@ -12,6 +12,7 @@
 //!   multiaddr     - Provider multiaddr            (default: /ip4/127.0.0.1/tcp/3333)
 //!   keyfile       - Path to file containing seed  (default: dev seed //Alice)
 
+use sp_core::crypto::Ss58Codec;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient, ProviderSettings};
 use subxt_signer::{sr25519::Keypair, SecretUri};
@@ -48,7 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Derive SS58 address from the keypair for display and ProviderClient identity.
     let public_key_bytes = keypair.public_key().0;
     let account = sp_runtime::AccountId32::from(public_key_bytes);
-    use sp_core::crypto::Ss58Codec;
     let ss58_address = account.to_ss58check();
 
     println!("=== Provider Registration ===");
@@ -63,47 +63,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let mut provider_client = ProviderClient::new(config, ss58_address)?;
+    let mut provider_client = ProviderClient::new(config, ss58_address.clone())?;
     provider_client.connect().await?;
     provider_client.set_signer(keypair.clone())?;
 
     // Step 1: Register (idempotent — skip if already registered).
     const STAKE: u128 = 1_000_000_000_000_000; // 1000 tokens (MinProviderStake, 12 decimals)
 
+    let provider_info = provider_client.get_provider_info(&account).await?;
+    if provider_info.is_some() {
+        println!("Provider already existed");
+        println!("{:?}", provider_info.unwrap());
+        return Ok(());
+    }
+
     println!("Registering provider...");
-    #[allow(unused_assignments)]
-    let mut is_continue = false;
     match provider_client
         .register(multiaddr, public_key_bytes.to_vec(), STAKE)
         .await
     {
-        Ok(()) => {
-            println!("  Provider registered");
-            is_continue = true;
-        }
-        Err(e) if e.to_string().contains("ProviderAlreadyRegistered") => {
-            println!("  Provider already registered");
-            is_continue = false;
-        }
+        Ok(()) => println!("  Provider registered"),
         Err(e) => return Err(e.into()),
     }
 
     // Step 2: Update settings.
-    if is_continue {
-        println!("Updating provider settings...");
-        provider_client
-            .update_settings(ProviderSettings {
-                price_per_byte: 1,
-                min_duration: 10,
-                max_duration: 100_000,
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 0, // 0 = unlimited
-            })
-            .await?;
-        println!("  Settings updated");
-    }
+    println!("Updating provider settings...");
+    provider_client
+        .update_settings(ProviderSettings {
+            price_per_byte: 1,
+            min_duration: 10,
+            max_duration: 100_000,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 0, // 0 = unlimited
+        })
+        .await?;
+    println!("  Settings updated");
 
     println!();
     println!("=== Done ===");

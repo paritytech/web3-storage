@@ -8,9 +8,12 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::extrinsics;
+use crate::discovery::ProviderInfo;
+use crate::substrate::{extrinsics, storage};
 use sp_core::H256;
+use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
+use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for storage providers.
 pub struct ProviderClient {
@@ -110,6 +113,110 @@ impl ProviderClient {
 
         tracing::info!("Provider registered successfully");
         Ok(())
+    }
+
+    /// Query a provider's current settings from the chain.
+    ///
+    /// Returns `None` if the provider is not registered.
+    pub async fn get_provider_info(
+        &self,
+        account: &AccountId32,
+    ) -> ClientResult<Option<ProviderInfo>> {
+        let chain = self.base.chain()?;
+
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::provider_info(account))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+
+        let Some(thunk) = thunk else {
+            return Ok(None);
+        };
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
+
+        // Decode top-level fields.
+        let multiaddr = named_field(&value, "multiaddr")
+            .map(|v| match &v.value {
+                ValueDef::Composite(Composite::Unnamed(items)) => {
+                    let bytes: Vec<u8> = items
+                        .iter()
+                        .filter_map(|b| b.as_u128().map(|n| n as u8))
+                        .collect();
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+
+        let stake = named_field(&value, "stake")
+            .and_then(|v| v.as_u128())
+            .ok_or_else(|| ClientError::Chain("Missing 'stake'".to_string()))?;
+
+        let committed_bytes = named_field(&value, "committed_bytes")
+            .and_then(|v| v.as_u128())
+            .ok_or_else(|| ClientError::Chain("Missing 'committed_bytes'".to_string()))?
+            as u64;
+
+        // Decode settings sub-composite.
+        let settings = named_field(&value, "settings")
+            .ok_or_else(|| ClientError::Chain("Missing 'settings' in ProviderInfo".to_string()))?;
+
+        let replica_sync_price =
+            named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
+                ValueDef::Variant(Variant { name, values }) if name == "Some" => {
+                    values.values().next().and_then(|v| v.as_u128())
+                }
+                _ => None,
+            });
+
+        // Decode stats sub-composite.
+        let stats = named_field(&value, "stats");
+        let agreements_total = stats
+            .and_then(|s| named_field(s, "agreements_total"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+        let challenges_failed = stats
+            .and_then(|s| named_field(s, "challenges_failed"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        Ok(Some(ProviderInfo {
+            multiaddr,
+            stake,
+            committed_bytes,
+            max_capacity: named_field(settings, "max_capacity")
+                .and_then(|v| v.as_u128())
+                .ok_or_else(|| ClientError::Chain("Missing 'max_capacity'".to_string()))?
+                as u64,
+            min_duration: named_field(settings, "min_duration")
+                .and_then(|v| v.as_u128())
+                .ok_or_else(|| ClientError::Chain("Missing 'min_duration'".to_string()))?
+                as u32,
+            max_duration: named_field(settings, "max_duration")
+                .and_then(|v| v.as_u128())
+                .ok_or_else(|| ClientError::Chain("Missing 'max_duration'".to_string()))?
+                as u32,
+            price_per_byte: named_field(settings, "price_per_byte")
+                .and_then(|v| v.as_u128())
+                .ok_or_else(|| ClientError::Chain("Missing 'price_per_byte'".to_string()))?,
+            accepting_primary: named_field(settings, "accepting_primary")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| ClientError::Chain("Missing 'accepting_primary'".to_string()))?,
+            replica_sync_price,
+            accepting_extensions: named_field(settings, "accepting_extensions")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| ClientError::Chain("Missing 'accepting_extensions'".to_string()))?,
+            agreements_total,
+            challenges_failed,
+        }))
     }
 
     /// Update provider settings.
@@ -328,6 +435,18 @@ impl ProviderClient {
     pub async fn get_reputation(&self) -> ClientResult<u8> {
         let stats = self.get_stats().await?;
         Ok(stats.reputation)
+    }
+}
+
+fn named_field<'a>(
+    value: &'a subxt::ext::scale_value::Value<u32>,
+    field: &str,
+) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
+    match &value.value {
+        ValueDef::Composite(Composite::Named(fields)) => {
+            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
+        }
+        _ => None,
     }
 }
 
