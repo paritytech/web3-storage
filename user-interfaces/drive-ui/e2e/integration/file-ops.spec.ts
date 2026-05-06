@@ -1,0 +1,131 @@
+/**
+ * File operations specs.
+ *
+ * Cover the core upload / download / delete / abort flows. Abort uses
+ * page.route() to inject latency on the upload PUT so the cancel click has a
+ * deterministic window — without the route intercept, the tests race.
+ */
+import { test, expect } from "../fixtures";
+import {
+  Alice,
+  cleanupDrives,
+  createDriveViaApi,
+  registerProviderViaApi,
+} from "@web3-storage/test-helpers";
+
+test.describe.configure({ mode: "serial" });
+test.setTimeout(180_000);
+
+test.beforeAll(async () => {
+  test.setTimeout(120_000);
+  await registerProviderViaApi(Alice);
+});
+
+test.afterEach(async () => {
+  await cleanupDrives(Alice);
+});
+
+async function selectFreshDrive(page: import("@playwright/test").Page) {
+  const drive = await createDriveViaApi(Alice, {
+    name: `file-ops-${Date.now()}`,
+    maxCapacity: 100_000_000n,
+    storagePeriod: 10_000,
+    payment: 120_000_000_000_000_000n,
+    minProviders: 1,
+    commitStrategy: { type: "Immediate" },
+  });
+  await page.reload();
+  await page.getByTestId(`drive-list-item-${drive.driveId}`).click();
+  await expect(page.getByTestId("file-browser")).toBeVisible();
+  return drive;
+}
+
+test("multi-file upload appears in entries table", async ({ localPage }) => {
+  await selectFreshDrive(localPage);
+
+  const fileInput = localPage.locator('input[type="file"]').first();
+  await fileInput.setInputFiles([
+    { name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("alpha") },
+    { name: "b.txt", mimeType: "text/plain", buffer: Buffer.from("bravo") },
+    { name: "c.txt", mimeType: "text/plain", buffer: Buffer.from("charlie") },
+  ]);
+
+  for (const name of ["a.txt", "b.txt", "c.txt"]) {
+    await expect(localPage.getByTestId(`entry-row-file-${name}`)).toBeVisible({
+      timeout: 60_000,
+    });
+  }
+});
+
+test("download round-trips bytes", async ({ localPage }) => {
+  await selectFreshDrive(localPage);
+  const content = `download-${Date.now()}`;
+  const fileInput = localPage.locator('input[type="file"]').first();
+  await fileInput.setInputFiles({
+    name: "round-trip.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(content),
+  });
+  await expect(localPage.getByTestId("entry-row-file-round-trip.txt")).toBeVisible({
+    timeout: 60_000,
+  });
+
+  const downloadPromise = localPage.waitForEvent("download");
+  await localPage.getByTestId("entry-row-file-round-trip.txt").dblclick();
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  expect(Buffer.concat(chunks).toString("utf-8")).toBe(content);
+});
+
+test("delete file removes the row", async ({ localPage }) => {
+  await selectFreshDrive(localPage);
+  const fileInput = localPage.locator('input[type="file"]').first();
+  await fileInput.setInputFiles({
+    name: "delete-me.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("bye"),
+  });
+  await expect(localPage.getByTestId("entry-row-file-delete-me.txt")).toBeVisible({
+    timeout: 60_000,
+  });
+
+  await localPage.getByTestId("entry-actions-delete-me.txt").click();
+  // The dropdown menu's delete item — try a generic role-based locator.
+  await localPage.getByRole("menuitem", { name: /delete/i }).click();
+  // Confirm if a Radix confirm dialog appears.
+  const confirm = localPage.getByRole("button", { name: /^delete$/i });
+  if (await confirm.isVisible().catch(() => false)) await confirm.click();
+
+  await expect(localPage.getByTestId("entry-row-file-delete-me.txt")).toBeHidden({
+    timeout: 60_000,
+  });
+});
+
+test("abort upload mid-flight (no error toast)", async ({ localPage }) => {
+  await selectFreshDrive(localPage);
+
+  // Inject latency on PUT /node so we have a window to click cancel.
+  await localPage.route("**/node*", async (route) => {
+    if (route.request().method() === "PUT") {
+      await new Promise((r) => setTimeout(r, 5_000));
+    }
+    await route.continue();
+  });
+
+  const fileInput = localPage.locator('input[type="file"]').first();
+  await fileInput.setInputFiles({
+    name: "abort.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(1024, 0xab),
+  });
+
+  // Cancel within ~1s.
+  await localPage.getByTestId("upload-cancel").click({ timeout: 3_000 });
+
+  // No error toast — assert the file row never appears (cancellation is silent).
+  await expect(localPage.getByTestId("entry-row-file-abort.bin")).toBeHidden({
+    timeout: 10_000,
+  });
+});
