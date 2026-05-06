@@ -39,7 +39,7 @@ async fn list_and_verify(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tracing_subscriber::fmt::init();
 
     // Parse command line arguments (required)
     let args: Vec<String> = env::args().collect();
