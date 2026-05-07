@@ -391,6 +391,25 @@ pub mod extrinsics {
         )
     }
 
+    /// Create a challenge_replica extrinsic payload.
+    pub fn challenge_replica(
+        bucket_id: u64,
+        provider: AccountId32,
+        leaf_index: u64,
+        chunk_index: u64,
+    ) -> impl Payload {
+        subxt::dynamic::tx(
+            "StorageProvider",
+            "challenge_replica",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                subxt::dynamic::Value::u128(leaf_index as u128),
+                subxt::dynamic::Value::u128(chunk_index as u128),
+            ],
+        )
+    }
+
     /// Create a set_member extrinsic payload (add or update a bucket member's role).
     pub fn set_member(
         bucket_id: u64,
@@ -757,6 +776,20 @@ pub mod storage {
             "MemberBuckets",
             vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
+    }
+
+    /// Iterate all registered providers.
+    ///
+    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32];
+    /// account at [48..80].
+    pub fn all_providers() -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage("StorageProvider", "Providers", vec![])
     }
 
     /// Iterate all storage agreements (bucket_id × provider DoubleMap).
