@@ -68,8 +68,10 @@ test("download round-trips bytes", async ({ localPage }) => {
     timeout: 60_000,
   });
 
+  // Download is triggered via the actions dropdown, not via dblclick.
+  await localPage.getByTestId("entry-actions-round-trip.txt").click();
   const downloadPromise = localPage.waitForEvent("download");
-  await localPage.getByTestId("entry-row-file-round-trip.txt").dblclick();
+  await localPage.getByRole("menuitem", { name: /download/i }).click();
   const download = await downloadPromise;
   const stream = await download.createReadStream();
   const chunks: Buffer[] = [];

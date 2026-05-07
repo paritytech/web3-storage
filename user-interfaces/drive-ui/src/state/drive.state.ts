@@ -455,40 +455,50 @@ function subscribeToDriveEvents(): void {
     if (!watcher) continue;
     try {
       const sub = watcher.watch().subscribe({
-        next: (ev: unknown) => {
-          if (!ev || typeof ev !== "object") return;
-          // Tolerate either { value: { drive_id, owner } } or { drive_id, owner }.
-          const payload = ((ev as { value?: unknown }).value ?? ev) as {
-            drive_id?: bigint | number;
-            owner?: string;
-          };
-          if (!payload || typeof payload !== "object") return;
+        next: (tick: unknown) => {
+          if (!tick || typeof tick !== "object") return;
+          // polkadot-api 2.x delivers `{ block, events: PalletEvent<T>[] }`
+          // per tick; each PalletEvent has a `payload` with the decoded
+          // data. Tolerate both shapes (older versions emitted single
+          // events with payload-as-self) so we don't break on a runtime
+          // upgrade.
+          const tickEvents = (tick as { events?: unknown }).events;
+          const items: Array<{ payload?: unknown }> = Array.isArray(tickEvents)
+            ? (tickEvents as Array<{ payload?: unknown }>)
+            : [tick as { payload?: unknown }];
 
           const ownAddr = getSignerAddress();
-          const driveIdRaw = payload.drive_id;
-          const driveId =
-            typeof driveIdRaw === "bigint"
-              ? driveIdRaw
-              : typeof driveIdRaw === "number"
-                ? BigInt(driveIdRaw)
-                : undefined;
-          const eventOwner = payload.owner;
+          const tracked = new Set(drives$.getValue().map((d) => d.driveId));
 
-          // Only react to events involving the current signer or already-tracked
-          // drives. Owner is not present on every event variant; if absent, fall
-          // back to "we track this drive_id".
-          const isOwn = ownAddr && eventOwner === ownAddr;
-          const isTracked =
-            driveId !== undefined &&
-            drives$.getValue().some((d) => d.driveId === driveId);
-
-          if (isOwn || isTracked) {
-            eventTick$.next(eventTick$.getValue() + 1);
-            // Debounce-ish: schedule a refresh on next microtask so we coalesce
-            // bursts of events.
-            queueMicrotask(() => {
-              refreshDrives().catch(() => { /* swallow; loading$ surfaces error */ });
+          for (const item of items) {
+            const payload = ((item.payload ?? item) as {
+              drive_id?: bigint | number;
+              owner?: string;
             });
+            if (!payload || typeof payload !== "object") continue;
+
+            const driveIdRaw = payload.drive_id;
+            const driveId =
+              typeof driveIdRaw === "bigint"
+                ? driveIdRaw
+                : typeof driveIdRaw === "number"
+                  ? BigInt(driveIdRaw)
+                  : undefined;
+
+            // Only react to events involving the current signer or already-
+            // tracked drives. `owner` is absent on some event variants; in
+            // that case fall back to "we track this drive_id".
+            const isOwn = ownAddr && payload.owner === ownAddr;
+            const isTracked = driveId !== undefined && tracked.has(driveId);
+
+            if (isOwn || isTracked) {
+              eventTick$.next(eventTick$.getValue() + 1);
+              // Coalesce bursts of events into one refresh.
+              queueMicrotask(() => {
+                refreshDrives().catch(() => { /* swallow */ });
+              });
+              return;
+            }
           }
         },
         // Some events listed in the descriptor may not exist on the running
