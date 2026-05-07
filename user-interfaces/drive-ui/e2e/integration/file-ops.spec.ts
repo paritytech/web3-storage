@@ -105,8 +105,10 @@ test("delete file removes the row", async ({ localPage }) => {
 test("abort upload mid-flight (no error toast)", async ({ localPage }) => {
   await selectFreshDrive(localPage);
 
-  // Inject latency on PUT /node so we have a window to click cancel.
-  await localPage.route("**/node*", async (route) => {
+  // Inject latency on PUT to /fs/<bucketId>/file?path=... (drive-client's
+  // uploadFile target) so we have a window to click cancel before the
+  // upload completes and the button vanishes.
+  await localPage.route("**/fs/*/file*", async (route) => {
     if (route.request().method() === "PUT") {
       await new Promise((r) => setTimeout(r, 5_000));
     }
@@ -119,8 +121,10 @@ test("abort upload mid-flight (no error toast)", async ({ localPage }) => {
     buffer: Buffer.alloc(1024, 0xab),
   });
 
-  // Cancel within ~1s.
-  await localPage.getByTestId("upload-cancel").click({ timeout: 3_000 });
+  // Cancel button only renders while `uploading$` is true; with the 5s
+  // delay above it's visible for ~5s. Generous click timeout to absorb
+  // CI scheduler jitter.
+  await localPage.getByTestId("upload-cancel").click({ timeout: 8_000 });
 
   // No error toast — assert the file row never appears (cancellation is silent).
   await expect(localPage.getByTestId("entry-row-file-abort.bin")).toBeHidden({
