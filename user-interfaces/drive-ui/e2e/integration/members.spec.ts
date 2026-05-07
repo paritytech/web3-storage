@@ -88,8 +88,9 @@ test("add Reader → list refreshes without manual click", async ({ localPage })
 
   // After tx settles, Bob's row should appear without clicking refresh. The
   // ManageAccessDialog refresh hits chain immediately after handleAdd; on a
-  // fresh CI chain the inBlock + refresh round-trip can run ~12-30s.
+  // post-pollution chain (many tests have run by this point) the inBlock +
+  // finalization + refresh round-trip can run ~60-90s.
   await expect(localPage.getByTestId(`member-row-${Bob.address}`)).toBeVisible({
-    timeout: 60_000,
+    timeout: 90_000,
   });
 });

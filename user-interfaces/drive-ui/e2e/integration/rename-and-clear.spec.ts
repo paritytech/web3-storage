@@ -1,12 +1,18 @@
 /**
- * Rename + clear-contents specs.
+ * Rename + clear-contents specs — currently both `test.fixme`.
  *
- * Verify that:
- *  (a) renaming a drive surfaces the new name in the sidebar without manual
- *      refresh (i.e. the DriveNameUpdated event subscription works), and the
- *      on-chain `Drives.name` matches.
- *  (b) clear-contents resets the drive's root_cid to the empty-tree hash and
- *      the directory listing becomes empty.
+ * The file-system pallet was simplified to 4 extrinsics
+ * (`create_drive` / `delete_drive` / `share_drive` / `unshare_drive`); the
+ * `update_drive_name` and `clear_drive` extrinsics drive-ui's UI calls
+ * don't exist on the runtime anymore. Drive-ui still ships the
+ * RenameDriveDialog and the Clear context-menu item, so the UI surface
+ * is testable in principle, but the on-chain assertions can't be true
+ * until either:
+ *   (a) the runtime extrinsics come back, or
+ *   (b) drive-ui drops these surfaces and we delete these specs.
+ *
+ * Tracked as part of the drive-ui catch-up flagged in
+ * `user-interfaces/PAPI_OVERHAUL.md`.
  */
 import { test, expect } from "../fixtures";
 import {
@@ -29,7 +35,7 @@ test.afterEach(async () => {
   await cleanupDrives(Alice);
 });
 
-test("rename → DriveNameUpdated event reflects without manual refresh", async ({ localPage }) => {
+test.fixme("rename → DriveNameUpdated event reflects without manual refresh", async ({ localPage }) => {
   const initialName = `rename-${Date.now()}`;
   const drive = await createDriveViaApi(Alice, {
     name: initialName,
@@ -68,7 +74,7 @@ test("rename → DriveNameUpdated event reflects without manual refresh", async 
   expect(onchainName).toBe(newName);
 });
 
-test("clear contents → directory listing empty + root_cid resets", async ({ localPage }) => {
+test.fixme("clear contents → directory listing empty + root_cid resets", async ({ localPage }) => {
   const drive = await createDriveViaApi(Alice, {
     name: `clear-${Date.now()}`,
     maxCapacity: 10_000_000n,

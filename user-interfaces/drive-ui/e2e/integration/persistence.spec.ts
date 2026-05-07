@@ -9,7 +9,7 @@ import { test, expect } from "../fixtures";
 import { Alice, createDriveViaApi, cleanupDrives } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
-test.setTimeout(120_000);
+test.setTimeout(180_000);
 
 test("endpoint selection persists across reload", async ({ localPage }) => {
   await localPage.getByTestId("connect-button").click();

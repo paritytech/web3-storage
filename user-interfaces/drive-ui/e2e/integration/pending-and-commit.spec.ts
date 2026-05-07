@@ -1,11 +1,15 @@
 /**
- * Pending changes + commit specs.
+ * Pending changes + commit specs — currently both `test.fixme`.
  *
- * Manual strategy: upload triggers a pending-changes banner with "Commit Now";
- * clicking it commits to chain and the banner disappears.
+ * Both tests depend on chain-side state that the simplified file-system
+ * pallet no longer tracks: `commit_strategy`, `root_cid`, `pending_root_cid`,
+ * `last_committed_at`, plus the `commit_changes` / `update_root_cid`
+ * extrinsics. With those gone, the pending-changes-banner / commit-now
+ * UI surfaces (still in drive-ui) are no-ops — the spec assertions can't
+ * be honoured until drive-ui catches up.
  *
- * Batched strategy: banner shows ETA text matching the configured interval;
- * no Commit Now button is shown.
+ * Tracked alongside rename/clear in the drive-ui catch-up flagged in
+ * `user-interfaces/PAPI_OVERHAUL.md`.
  */
 import { test, expect } from "../fixtures";
 import {
@@ -38,7 +42,7 @@ async function uploadOneFile(page: import("@playwright/test").Page, content: str
   });
 }
 
-test("Manual: upload → banner + Commit Now → banner clears + chain root_cid updates", async ({
+test.fixme("Manual: upload → banner + Commit Now → banner clears + chain root_cid updates", async ({
   localPage,
 }) => {
   const drive = await createDriveViaApi(Alice, {
@@ -78,7 +82,7 @@ test("Manual: upload → banner + Commit Now → banner clears + chain root_cid 
   ).not.toMatch(/^0x0+$/);
 });
 
-test("Batched(10): banner shows ETA, no Commit Now button", async ({ localPage }) => {
+test.fixme("Batched(10): banner shows ETA, no Commit Now button", async ({ localPage }) => {
   const drive = await createDriveViaApi(Alice, {
     name: `batched-pending-${Date.now()}`,
     maxCapacity: 10_000_000n,

@@ -97,7 +97,11 @@ test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
   }
 });
 
-test("DriveNameUpdated cross-tab", async ({ browser }) => {
+// `update_drive_name` extrinsic + DriveNameUpdated event were removed in the
+// pallet simplification — see `user-interfaces/PAPI_OVERHAUL.md`. The other
+// two cross-tab events (DriveCreated / DriveDeleted) are still emitted, so
+// only this one is fixmed.
+test.fixme("DriveNameUpdated cross-tab", async ({ browser }) => {
   const { tabB, ctx: ctxB } = await openTabB(browser);
   try {
     const initial = `rt-rename-${Date.now()}`;

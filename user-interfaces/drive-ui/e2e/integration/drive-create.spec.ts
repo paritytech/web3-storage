@@ -1,9 +1,14 @@
 /**
  * Create-drive specs (slow ~30–90s each due to provider acceptance).
  *
- * Each test fills the new-drive form, picks a commit-strategy variant, submits,
- * waits for the dialog to close on success, then verifies the on-chain
- * commit_strategy matches what the user picked.
+ * Each test fills the new-drive form, picks a commit-strategy variant in the
+ * UI, submits, and verifies the drive appears on chain with the right name.
+ *
+ * The runtime no longer round-trips `commit_strategy` (the file-system pallet
+ * was simplified — see `user-interfaces/PAPI_OVERHAUL.md`), so we only assert
+ * what's still observable: the drive exists with the expected name. Until
+ * drive-ui catches up, the UI lets the user pick a strategy that the chain
+ * silently ignores; reflecting that in the spec keeps the test honest.
  */
 import { test, expect } from "../fixtures";
 import {
@@ -36,67 +41,58 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
 }
 
 /**
- * Wait for the new-drive flow to land on chain — both UserDrives gets the
- * new id AND Drives.getValue(id) returns a fully-populated struct. The
- * dialog auto-closes after createDrive resolves, but UserDrives can
- * appear momentarily before Drives.commit_strategy is readable in the
- * same finalized view, so poll on the inner field rather than just on
- * length. (Fresh chain's first drive has id 0n which is falsy — the
- * `id !== null` check must be explicit.)
+ * Wait for a freshly-created drive to land in Alice's UserDrives. Returns
+ * the latest drive id. Fresh chain's first drive has id 0n which is falsy
+ * in JS — poll on `length`, then read the id outside the poll.
  */
 async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
-  let id: bigint | null = null;
   await expect.poll(
     async () => {
       const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-      if (!ids || ids.length === 0) return null;
-      const candidate = BigInt(ids[ids.length - 1]);
-      const drive = await api.query.DriveRegistry.Drives.getValue(candidate);
-      const strat = (drive as { commit_strategy?: { type?: string } } | undefined)
-        ?.commit_strategy?.type;
-      if (strat) {
-        id = candidate;
-        return strat;
-      }
-      return null;
+      return ids?.length ?? 0;
     },
     { timeout: 120_000, intervals: [1000, 2000, 3000] },
-  ).not.toBeNull();
-  return id!;
+  ).toBeGreaterThan(0);
+  const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
+  return BigInt(ids![ids!.length - 1]);
 }
 
-test("Immediate strategy round-trips to chain", async ({ localPage }) => {
-  await fillBaseFields(localPage, `immediate-${Date.now()}`);
+async function expectDriveOnChain(driveId: bigint, expectedName: string) {
+  const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
+  expect(drive).toBeTruthy();
+  // `drive.name` decodes to a Uint8Array (Option<BoundedVec<u8, _>> on chain).
+  const onchainName = drive?.name ? new TextDecoder().decode(drive.name) : null;
+  expect(onchainName).toBe(expectedName);
+}
+
+test("Immediate strategy: drive lands on chain", async ({ localPage }) => {
+  const name = `immediate-${Date.now()}`;
+  await fillBaseFields(localPage, name);
   await localPage.getByTestId("commit-strategy-immediate").click();
   await localPage.getByTestId("new-drive-submit").click();
 
   const driveId = await waitForCreatedDriveId();
-  const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
-  expect(drive).toBeTruthy();
-  expect(drive!.commit_strategy.type).toBe("Immediate");
+  await expectDriveOnChain(driveId, name);
 });
 
-test("Batched(50) strategy round-trips to chain", async ({ localPage }) => {
-  await fillBaseFields(localPage, `batched-${Date.now()}`);
+test("Batched(50) strategy: drive lands on chain", async ({ localPage }) => {
+  const name = `batched-${Date.now()}`;
+  await fillBaseFields(localPage, name);
   await localPage.getByTestId("commit-strategy-batched").click();
   await localPage.getByTestId("commit-strategy-batched-interval").fill("50");
   await localPage.getByTestId("new-drive-submit").click();
 
   const driveId = await waitForCreatedDriveId();
-  const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
-  expect(drive).toBeTruthy();
-  expect(drive!.commit_strategy.type).toBe("Batched");
-  expect(Number((drive!.commit_strategy as { value: { interval: number } }).value.interval)).toBe(50);
+  await expectDriveOnChain(driveId, name);
 });
 
-test("Manual strategy round-trips to chain", async ({ localPage }) => {
-  await fillBaseFields(localPage, `manual-${Date.now()}`);
+test("Manual strategy: drive lands on chain", async ({ localPage }) => {
+  const name = `manual-${Date.now()}`;
+  await fillBaseFields(localPage, name);
   await localPage.getByTestId("commit-strategy-manual").click();
   await localPage.getByTestId("new-drive-submit").click();
 
   const driveId = await waitForCreatedDriveId();
-  const drive = await getApi().query.DriveRegistry.Drives.getValue(driveId);
-  expect(drive).toBeTruthy();
-  expect(drive!.commit_strategy.type).toBe("Manual");
+  await expectDriveOnChain(driveId, name);
 });
