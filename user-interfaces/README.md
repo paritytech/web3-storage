@@ -65,11 +65,10 @@ Examples in use across the three UIs:
 - `connect-button`, `connect-dialog`, `connect-endpoint-input`, `connect-submit`
 - `account-button`, `account-dialog`, `account-dialog-alice`, `signer-address`, `balance-display`
 - `block-number` (chain-connection indicator — present in all three UIs)
-- `drive-list`, `drive-list-item-{id}`, `drive-list-rename-{id}`, `drive-list-clear-{id}`, `drive-list-delete-{id}`
-- `new-drive-dialog`, `new-drive-name`, `commit-strategy-{kind}`, `new-drive-submit`
-- `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`
-- `pending-changes-banner`, `commit-now-button`
-- `checkpoint-panel`, `checkpoint-trigger`, `checkpoint-refresh`, `root-cid`, `last-committed-at`, `commit-strategy-display`
+- `drive-list`, `drive-list-item-{id}`, `drive-list-delete-{id}`
+- `new-drive-dialog`, `new-drive-name`, `new-drive-submit`
+- `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`, `upload-input`
+- `checkpoint-panel`, `checkpoint-trigger`, `checkpoint-refresh`
 - `manage-access-dialog`, `members-table`, `member-row-{address}`, `add-member-address`, `add-member-role`, `add-member-submit`, `add-member-error`
 - `upload-button`, `upload-cancel`, `view-mode-toggle`, `refresh-button`, `new-folder-button`
 

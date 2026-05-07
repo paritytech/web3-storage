@@ -70,28 +70,6 @@ export default function CheckpointPanel() {
         </div>
 
         <div className="space-y-1 text-xs">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Root CID</span>
-            <span data-testid="root-cid" className="font-mono">
-              {truncateHash(drive.rootCid, 8, 6)}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Last commit</span>
-            <span data-testid="last-committed-at">
-              {drive.lastCommittedAt > 0 ? `block #${drive.lastCommittedAt}` : "never"}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Strategy</span>
-            <span data-testid="commit-strategy-display">
-              {drive.commitStrategy.type}
-              {drive.commitStrategy.type === "Batched" && ` (${drive.commitStrategy.interval})`}
-            </span>
-          </div>
-        </div>
-
-        <div className="border-t pt-3 space-y-1 text-xs">
           <div className="flex items-center gap-2 mb-1">
             <Shield className="h-3 w-3 text-muted-foreground" />
             <span className="font-medium text-muted-foreground">Provider checkpoint</span>

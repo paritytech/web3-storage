@@ -45,10 +45,19 @@ export interface SubmitResult<E = unknown> {
 }
 
 /**
- * Sign + submit an extrinsic and wait for inclusion. Throws if any
- * `System.ExtrinsicFailed` event is in the result.
+ * Sign + submit an extrinsic and wait for the chain RPC's view to fully
+ * settle. Throws if any `System.ExtrinsicFailed` event is in the result.
  *
  * `tx` is whatever `api.tx.Pallet.method({...})` returns.
+ *
+ * Why the extra wait: polkadot-api's `signAndSubmit` resolves on tx
+ * inclusion in best-block, but the chain RPC's `system.accountNextIndex`
+ * view (used by the *next* signer call to compute nonce) lags briefly
+ * behind. Two consecutive same-signer submits — even from a single
+ * client — can race that gap and the second one gets rejected as
+ * `Invalid::Stale` (chain says the nonce is older than current). We
+ * await one fresh finalized block after submission so the RPC view is
+ * fully caught up before returning to the caller.
  */
 export async function submitExtrinsic<T extends { signAndSubmit: (s: PolkadotSigner) => Promise<unknown> }>(
   tx: T,
@@ -63,6 +72,10 @@ export async function submitExtrinsic<T extends { signAndSubmit: (s: PolkadotSig
     );
     throw new Error(`Extrinsic failed: ${err}`);
   }
+  // Wait for one fresh finalized block past the inclusion block so the
+  // RPC's nonce view is synced for any subsequent same-signer tx.
+  const inclusion = await getClient().getFinalizedBlock();
+  await waitForBlock(inclusion.number + 1, 30_000);
   return result;
 }
 

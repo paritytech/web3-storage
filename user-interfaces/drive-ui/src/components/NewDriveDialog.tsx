@@ -14,7 +14,6 @@ import {
   useCreations,
   dismissCreation,
   type CreationStatus,
-  type CommitStrategy,
 } from "@/state";
 import { formatBytes } from "@/lib/utils";
 
@@ -100,8 +99,6 @@ function CreationStatusCard({
   );
 }
 
-type StrategyKind = "Immediate" | "Batched" | "Manual";
-
 export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogProps) {
   const creations = useCreations();
 
@@ -110,27 +107,17 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   const [duration, setDuration] = useState("10000");
   const [payment, setPayment] = useState("120000000000000000");
   const [minProviders, setMinProviders] = useState("1");
-  const [strategyKind, setStrategyKind] = useState<StrategyKind>("Batched");
-  const [batchInterval, setBatchInterval] = useState("100");
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const commitStrategy: CommitStrategy =
-        strategyKind === "Immediate"
-          ? { type: "Immediate" }
-          : strategyKind === "Manual"
-            ? { type: "Manual" }
-            : { type: "Batched", interval: Math.max(1, parseInt(batchInterval, 10) || 100) };
-
       await createDrive({
         name: name || undefined,
         maxCapacity: BigInt(capacity),
         storagePeriod: parseInt(duration, 10),
         payment: BigInt(payment),
         minProviders: Math.max(1, Math.min(10, parseInt(minProviders, 10) || 1)),
-        commitStrategy,
       });
       setName("");
       onOpenChange(false);
@@ -204,45 +191,6 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
               />
               <p className="text-xs text-muted-foreground">1–10 required</p>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-medium">Commit strategy</label>
-            <div className="grid grid-cols-3 gap-2">
-              {(["Immediate", "Batched", "Manual"] as StrategyKind[]).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  data-testid={`commit-strategy-${kind.toLowerCase()}`}
-                  onClick={() => setStrategyKind(kind)}
-                  className={`rounded-md border px-2 py-1.5 text-xs transition-colors ${
-                    strategyKind === kind
-                      ? "border-primary bg-primary/10"
-                      : "border-input hover:bg-accent"
-                  }`}
-                >
-                  {kind}
-                </button>
-              ))}
-            </div>
-            {strategyKind === "Batched" && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">interval (blocks):</span>
-                <Input
-                  data-testid="commit-strategy-batched-interval"
-                  type="number"
-                  min={1}
-                  value={batchInterval}
-                  onChange={(e) => setBatchInterval(e.target.value)}
-                  className="w-24 h-7 text-xs"
-                />
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {strategyKind === "Immediate" && "Every change commits to the chain immediately. Highest transparency, highest gas."}
-              {strategyKind === "Batched" && "Changes are committed in batches. Default and recommended."}
-              {strategyKind === "Manual" && "You commit explicitly via the Commit button. Cheapest for many small ops."}
-            </p>
           </div>
 
           {creations.length > 0 && (

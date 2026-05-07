@@ -1,14 +1,9 @@
 /**
- * Create-drive specs (slow ~30–90s each due to provider acceptance).
+ * Create-drive spec (slow ~30–90s due to provider acceptance).
  *
- * Each test fills the new-drive form, picks a commit-strategy variant in the
- * UI, submits, and verifies the drive appears on chain with the right name.
- *
- * The runtime no longer round-trips `commit_strategy` (the file-system pallet
- * was simplified — see `user-interfaces/PAPI_OVERHAUL.md`), so we only assert
- * what's still observable: the drive exists with the expected name. Until
- * drive-ui catches up, the UI lets the user pick a strategy that the chain
- * silently ignores; reflecting that in the spec keeps the test honest.
+ * Walks the new-drive form, submits, and verifies the drive appears on chain
+ * with the right name. The runtime is the slim DriveInfo (8 fields), so the
+ * `name` is the only user-supplied content we can round-trip.
  */
 import { test, expect } from "../fixtures";
 import {
@@ -66,31 +61,9 @@ async function expectDriveOnChain(driveId: bigint, expectedName: string) {
   expect(onchainName).toBe(expectedName);
 }
 
-test("Immediate strategy: drive lands on chain", async ({ localPage }) => {
-  const name = `immediate-${Date.now()}`;
+test("drive lands on chain with the user-supplied name", async ({ localPage }) => {
+  const name = `create-${Date.now()}`;
   await fillBaseFields(localPage, name);
-  await localPage.getByTestId("commit-strategy-immediate").click();
-  await localPage.getByTestId("new-drive-submit").click();
-
-  const driveId = await waitForCreatedDriveId();
-  await expectDriveOnChain(driveId, name);
-});
-
-test("Batched(50) strategy: drive lands on chain", async ({ localPage }) => {
-  const name = `batched-${Date.now()}`;
-  await fillBaseFields(localPage, name);
-  await localPage.getByTestId("commit-strategy-batched").click();
-  await localPage.getByTestId("commit-strategy-batched-interval").fill("50");
-  await localPage.getByTestId("new-drive-submit").click();
-
-  const driveId = await waitForCreatedDriveId();
-  await expectDriveOnChain(driveId, name);
-});
-
-test("Manual strategy: drive lands on chain", async ({ localPage }) => {
-  const name = `manual-${Date.now()}`;
-  await fillBaseFields(localPage, name);
-  await localPage.getByTestId("commit-strategy-manual").click();
   await localPage.getByTestId("new-drive-submit").click();
 
   const driveId = await waitForCreatedDriveId();

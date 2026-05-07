@@ -12,8 +12,6 @@ import {
   createDriveViaApi,
   deleteDriveViaApi,
   registerProviderViaApi,
-  submitExtrinsic,
-  getApi,
   waitForConnection,
   waitForMinBlock,
 } from "@web3-storage/test-helpers";
@@ -97,40 +95,3 @@ test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
   }
 });
 
-// `update_drive_name` extrinsic + DriveNameUpdated event were removed in the
-// pallet simplification — see `user-interfaces/PAPI_OVERHAUL.md`. The other
-// two cross-tab events (DriveCreated / DriveDeleted) are still emitted, so
-// only this one is fixmed.
-test.fixme("DriveNameUpdated cross-tab", async ({ browser }) => {
-  const { tabB, ctx: ctxB } = await openTabB(browser);
-  try {
-    const initial = `rt-rename-${Date.now()}`;
-    const drive = await createDriveViaApi(Alice, {
-      name: initial,
-      maxCapacity: 10_000_000n,
-      storagePeriod: 10_000,
-      payment: 120_000_000_000_000_000n,
-      minProviders: 1,
-    });
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toContainText(
-      initial,
-      { timeout: 60_000 },
-    );
-
-    const renamed = `${initial}-renamed`;
-    await submitExtrinsic(
-      getApi().tx.DriveRegistry.update_drive_name({
-        drive_id: drive.driveId,
-        name: new TextEncoder().encode(renamed),
-      }),
-      Alice.signer,
-    );
-
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toContainText(
-      renamed,
-      { timeout: 60_000 },
-    );
-  } finally {
-    await ctxB.close();
-  }
-});

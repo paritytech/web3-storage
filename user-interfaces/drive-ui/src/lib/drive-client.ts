@@ -31,16 +31,7 @@ export interface DriveInfo {
   storagePeriod: bigint;
   expiresAt: bigint;
   payment: bigint;
-  rootCid: string;
-  pendingRootCid: string | null;
-  lastCommittedAt: number;
-  commitStrategy: CommitStrategy;
 }
-
-export type CommitStrategy =
-  | { type: "Immediate" }
-  | { type: "Batched"; interval: number }
-  | { type: "Manual" };
 
 export interface FsEntry {
   name: string;
@@ -56,7 +47,6 @@ export interface CreateDriveOptions {
   storagePeriod: number;
   payment: bigint;
   minProviders?: number;
-  commitStrategy?: CommitStrategy;
 }
 
 export type MemberRole = "Admin" | "Writer" | "Reader";
@@ -121,43 +111,6 @@ async function httpFetch(
     }
   }
   throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
-}
-
-/**
- * Convert the runtime's commit strategy enum (decoded by polkadot-api) into
- * our flat tagged-union shape.
- */
-function decodeCommitStrategy(value: unknown): CommitStrategy {
-  const v = value as { type: string; value?: { interval?: number } };
-  switch (v?.type) {
-    case "Immediate":
-      return { type: "Immediate" };
-    case "Manual":
-      return { type: "Manual" };
-    case "Batched":
-      return { type: "Batched", interval: Number(v.value?.interval ?? 100) };
-    default:
-      return { type: "Batched", interval: 100 };
-  }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function encodeCommitStrategy(s: CommitStrategy): any {
-  switch (s.type) {
-    case "Immediate":
-      return Enum("Immediate");
-    case "Manual":
-      return Enum("Manual");
-    case "Batched":
-      return Enum("Batched", { interval: s.interval });
-  }
-}
-
-function rootCidHex(bin: { asHex?: () => string } | string | undefined): string {
-  if (!bin) return "0x" + "00".repeat(32);
-  if (typeof bin === "string") return bin.startsWith("0x") ? bin : "0x" + bin;
-  if (typeof bin.asHex === "function") return bin.asHex();
-  return String(bin);
 }
 
 /**
@@ -395,7 +348,6 @@ export class DriveClient {
     const { address } = this.requireSigner();
 
     const nameArg = options.name ? Binary.fromText(options.name) : undefined;
-    const strategy = options.commitStrategy ?? { type: "Batched", interval: 100 };
 
     const tx = api.tx.DriveRegistry.create_drive({
       name: nameArg,
@@ -403,20 +355,17 @@ export class DriveClient {
       storage_period: options.storagePeriod,
       payment: options.payment,
       min_providers: options.minProviders ?? undefined,
-      commit_strategy: encodeCommitStrategy(strategy),
     });
 
     const result = await this.submitAndWatchBestBlock(tx);
 
     let driveId: bigint | null = null;
     let bucketId: bigint | null = null;
-    let rootCid: string | null = null;
     for (const event of result.events as Array<{ type: string; value: { type: string; value: Record<string, unknown> } }>) {
       if (event.type !== "DriveRegistry") continue;
-      if (event.value.type === "DriveCreated" || event.value.type === "DriveCreatedWithStorage") {
+      if (event.value.type === "DriveCreated") {
         driveId = BigInt(event.value.value.drive_id as bigint);
         bucketId = BigInt(event.value.value.bucket_id as bigint);
-        rootCid = rootCidHex(event.value.value.root_cid as { asHex?: () => string });
         break;
       }
     }
@@ -439,10 +388,6 @@ export class DriveClient {
       storagePeriod: BigInt(options.storagePeriod),
       expiresAt: 0n,
       payment: options.payment,
-      rootCid: rootCid ?? "0x" + "00".repeat(32),
-      pendingRootCid: null,
-      lastCommittedAt: 0,
-      commitStrategy: strategy,
     };
   }
 
@@ -477,10 +422,6 @@ export class DriveClient {
         storagePeriod: BigInt(drive.storage_period),
         expiresAt: BigInt(drive.expires_at),
         payment: BigInt(drive.payment),
-        rootCid: rootCidHex(drive.root_cid),
-        pendingRootCid: drive.pending_root_cid ? rootCidHex(drive.pending_root_cid) : null,
-        lastCommittedAt: Number(drive.last_committed_at ?? 0),
-        commitStrategy: decodeCommitStrategy(drive.commit_strategy),
       });
     }
     return drives;
@@ -509,37 +450,12 @@ export class DriveClient {
       storagePeriod: BigInt(drive.storage_period),
       expiresAt: BigInt(drive.expires_at),
       payment: BigInt(drive.payment),
-      rootCid: rootCidHex(drive.root_cid),
-      pendingRootCid: drive.pending_root_cid ? rootCidHex(drive.pending_root_cid) : null,
-      lastCommittedAt: Number(drive.last_committed_at ?? 0),
-      commitStrategy: decodeCommitStrategy(drive.commit_strategy),
     };
   }
 
   async deleteDrive(driveId: bigint): Promise<void> {
     const api = this.requireApi();
     const tx = api.tx.DriveRegistry.delete_drive({ drive_id: driveId });
-    await this.submitAndWatchBestBlock(tx);
-  }
-
-  async clearDrive(driveId: bigint): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.DriveRegistry.clear_drive({ drive_id: driveId });
-    await this.submitAndWatchBestBlock(tx);
-  }
-
-  async updateDriveName(driveId: bigint, name: string | null): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.DriveRegistry.update_drive_name({
-      drive_id: driveId,
-      name: name ? Binary.fromText(name) : undefined,
-    });
-    await this.submitAndWatchBestBlock(tx);
-  }
-
-  async commitChanges(driveId: bigint): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.DriveRegistry.commit_changes({ drive_id: driveId });
     await this.submitAndWatchBestBlock(tx);
   }
 
@@ -676,8 +592,9 @@ export class DriveClient {
     const snapshot = bucket.snapshot;
     if (!snapshot) return null;
 
+    const mmrRoot = (snapshot.mmr_root as { asHex?: () => string } | undefined);
     return {
-      mmrRoot: rootCidHex(snapshot.mmr_root),
+      mmrRoot: typeof mmrRoot?.asHex === "function" ? mmrRoot.asHex() : "0x" + "00".repeat(32),
       startSeq: BigInt(snapshot.start_seq ?? 0),
       leafCount: BigInt(snapshot.leaf_count ?? 0),
       checkpointBlock: Number(snapshot.checkpoint_block ?? 0),

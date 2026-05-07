@@ -1,4 +1,3 @@
-import { Enum } from "@polkadot-api/substrate-bindings";
 import { getApi, submitExtrinsic } from "./chain-api";
 import type { DevSigner } from "./signers";
 
@@ -63,18 +62,12 @@ export async function cleanupBuckets(signer: DevSigner): Promise<number> {
 
 // ─── Drives (drive-ui) ───────────────────────────────────────────────────────
 
-export type CommitStrategy =
-  | { type: "Immediate" }
-  | { type: "Batched"; interval: number }
-  | { type: "Manual" };
-
 export interface CreateDriveOptions {
   name?: string;
   maxCapacity: bigint;
   storagePeriod: number;
   payment: bigint;
   minProviders?: number;
-  commitStrategy?: CommitStrategy;
 }
 
 export interface DriveHandle {
@@ -83,23 +76,11 @@ export interface DriveHandle {
   name: string | undefined;
 }
 
-function encodeCommitStrategy(s: CommitStrategy): unknown {
-  switch (s.type) {
-    case "Immediate":
-      return Enum("Immediate");
-    case "Manual":
-      return Enum("Manual");
-    case "Batched":
-      return Enum("Batched", { interval: s.interval });
-  }
-}
-
 export async function createDriveViaApi(
   signer: DevSigner,
   opts: CreateDriveOptions,
 ): Promise<DriveHandle> {
   const api = getApi();
-  const strategy = opts.commitStrategy ?? { type: "Batched", interval: 100 };
 
   const nameBytes = opts.name ? new TextEncoder().encode(opts.name) : undefined;
   const result = await submitExtrinsic(
@@ -109,26 +90,14 @@ export async function createDriveViaApi(
       storage_period: opts.storagePeriod,
       payment: opts.payment,
       min_providers: opts.minProviders ?? undefined,
-      commit_strategy: encodeCommitStrategy(strategy) as never,
     }),
     signer.signer,
   );
 
-  let handle: DriveHandle | null = null;
   const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
-  if (created.length > 0) {
-    const { drive_id, bucket_id } = created[0].payload;
-    handle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
-  } else {
-    const createdWithStorage = api.event.DriveRegistry.DriveCreatedWithStorage.filter(
-      result.events as never,
-    );
-    if (createdWithStorage.length > 0) {
-      const { drive_id, bucket_id } = createdWithStorage[0].payload;
-      handle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
-    }
-  }
-  if (!handle) throw new Error("DriveCreated event not found");
+  if (created.length === 0) throw new Error("DriveCreated event not found");
+  const { drive_id, bucket_id } = created[0].payload;
+  const handle: DriveHandle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
 
   // create_drive auto-emits a request_agreement targeting the matched
   // provider. Until that agreement transitions Pending→Active, uploads to

@@ -57,5 +57,4 @@ export {
   type BucketHandle,
   type CreateDriveOptions,
   type DriveHandle,
-  type CommitStrategy,
 } from "./buckets";

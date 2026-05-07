@@ -13,7 +13,6 @@ import {
   type DriveInfo,
   type FsEntry,
   type CreateDriveOptions,
-  type CommitStrategy,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
 import { signer$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
@@ -136,12 +135,7 @@ export async function refreshDrives(): Promise<void> {
     const sel = selectedDrive$.getValue();
     if (sel) {
       const updated = list.find((d) => d.driveId === sel.driveId) ?? null;
-      if (updated && (
-        updated.rootCid !== sel.rootCid ||
-        updated.pendingRootCid !== sel.pendingRootCid ||
-        updated.name !== sel.name ||
-        updated.lastCommittedAt !== sel.lastCommittedAt
-      )) {
+      if (updated && updated.name !== sel.name) {
         selectedDrive$.next(updated);
       } else if (!updated) {
         selectedDrive$.next(null);
@@ -354,27 +348,6 @@ export async function deleteDrive(driveId: bigint): Promise<void> {
   await refreshBalance();
 }
 
-export async function renameDrive(driveId: bigint, newName: string): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.updateDriveName(driveId, newName.trim() || null);
-  await refreshDrives();
-}
-
-export async function clearDriveContents(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.clearDrive(driveId);
-  await refreshDrives();
-  if (selectedDrive$.getValue()?.driveId === driveId) {
-    await refreshDirectory();
-  }
-}
-
-export async function commitChanges(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.commitChanges(driveId);
-  await refreshDrives();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Members
 // ─────────────────────────────────────────────────────────────────────────────
@@ -399,10 +372,9 @@ export async function removeMember(bucketId: bigint, account: string): Promise<v
 // ─────────────────────────────────────────────────────────────────────────────
 // Real-time DriveRegistry event subscription
 //
-// Subscribed once when the api becomes available; refreshes drives whenever a
-// DriveCreated/RootCIDUpdated/DriveDeleted/DriveCleared/DriveNameUpdated/
-// ChangesCommitted/DriveCreatedWithStorage event fires that affects the
-// current signer (or any drive currently being tracked).
+// Subscribed once when the api becomes available; refreshes drives whenever
+// a DriveCreated / DriveDeleted event fires that affects the current signer
+// (or any drive currently being tracked).
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RegistryEventSubscription {
@@ -438,15 +410,7 @@ function subscribeToDriveEvents(): void {
     event: { DriveRegistry: Record<string, EventWatcher> };
   }).event.DriveRegistry;
 
-  const interesting = [
-    "DriveCreated",
-    "DriveCreatedWithStorage",
-    "RootCIDUpdated",
-    "DriveDeleted",
-    "DriveCleared",
-    "DriveNameUpdated",
-    "ChangesCommitted",
-  ];
+  const interesting = ["DriveCreated", "DriveDeleted"];
 
   const subscriptions: RegistryEventSubscription[] = [];
 
@@ -561,5 +525,3 @@ export function getSelectedDrive(): DriveInfo | null {
 export function getCurrentPath(): string {
   return currentPath$.getValue();
 }
-
-export type { CommitStrategy };
