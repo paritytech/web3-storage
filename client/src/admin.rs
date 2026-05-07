@@ -9,9 +9,11 @@
 //! - Deleting old data
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
+use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use storage_primitives::{BucketId, EndAction, Role};
+use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -86,16 +88,29 @@ impl AdminClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
-        // Wait for finalization and extract bucket ID from events
-        let _events = tx_progress
+        // Wait for finalization and parse all StorageProvider events.
+        let events = tx_progress
             .wait_for_finalized_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
-        // Extract bucket ID from BucketCreated event
-        // For now, return a placeholder - in production, parse the event
         tracing::info!("Bucket created successfully");
-        Ok(1) // TODO: Extract from event
+
+        // Block context is not needed here — we only care about the bucket_id
+        // field inside the event, not its position in the chain.
+        let parsed = StorageProviderEventParser::from_extrinsic_events(&events, H256::zero(), 0);
+
+        for event in parsed {
+            tracing::info!("Received event: {event:?}");
+            if let StorageEvent::BucketCreated { bucket_id, .. } = event {
+                tracing::info!("Bucket created with ID: {bucket_id}");
+                return Ok(bucket_id);
+            }
+        }
+
+        Err(ClientError::Chain(
+            "BucketCreated event not found in transaction".to_string(),
+        ))
     }
 
     /// Add a member to a bucket with a specific role.
@@ -105,9 +120,23 @@ impl AdminClient {
         member: String,
         role: Role,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let member_account = SubstrateClient::parse_account(&member)?;
+
+        let tx = extrinsics::set_member(bucket_id, member_account, role);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would add member {} to bucket {} with role {:?}",
+            "Added member {} to bucket {} with role {:?}",
             member,
             bucket_id,
             role
@@ -117,8 +146,22 @@ impl AdminClient {
 
     /// Remove a member from a bucket.
     pub async fn remove_member(&self, bucket_id: BucketId, member: String) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!("Would remove member {} from bucket {}", member, bucket_id);
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let member_account = SubstrateClient::parse_account(&member)?;
+
+        let tx = extrinsics::remove_bucket_member(bucket_id, member_account);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Removed member {} from bucket {}", member, bucket_id);
         Ok(())
     }
 
@@ -129,9 +172,23 @@ impl AdminClient {
         member: String,
         new_role: Role,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let member_account = SubstrateClient::parse_account(&member)?;
+
+        let tx = extrinsics::set_member(bucket_id, member_account, new_role);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would update member {} in bucket {} to role {:?}",
+            "Updated member {} in bucket {} to role {:?}",
             member,
             bucket_id,
             new_role
@@ -139,21 +196,32 @@ impl AdminClient {
         Ok(())
     }
 
-    /// Freeze a bucket at a specific sequence number.
+    /// Freeze a bucket using the current snapshot's start sequence.
     ///
-    /// After freezing, no data before `frozen_start_seq` can be deleted,
+    /// After freezing, no data before the snapshot's `start_seq` can be deleted,
     /// and anyone can extend agreements (permissionless persistence).
+    /// The `frozen_start_seq` parameter is informational — the chain derives it
+    /// from the bucket's latest checkpoint.
     pub async fn freeze_bucket(
         &self,
         bucket_id: BucketId,
-        frozen_start_seq: u64,
+        _frozen_start_seq: u64,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!(
-            "Would freeze bucket {} at seq {}",
-            bucket_id,
-            frozen_start_seq
-        );
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::freeze_bucket(bucket_id);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Froze bucket {}", bucket_id);
         Ok(())
     }
 
@@ -271,11 +339,30 @@ impl AdminClient {
         bucket_id: BucketId,
         provider: String,
         additional_duration: u32,
-        _max_payment: u128,
+        max_payment: u128,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+
+        let tx = extrinsics::extend_agreement(
+            bucket_id,
+            provider_account,
+            additional_duration,
+            max_payment,
+        );
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would extend agreement with {} for bucket {} by {} blocks",
+            "Extended agreement with {} for bucket {} by {} blocks",
             provider,
             bucket_id,
             additional_duration
@@ -289,11 +376,30 @@ impl AdminClient {
         bucket_id: BucketId,
         provider: String,
         additional_bytes: u64,
-        _max_payment: u128,
+        max_payment: u128,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+
+        let tx = extrinsics::top_up_agreement(
+            bucket_id,
+            provider_account,
+            additional_bytes,
+            max_payment,
+        );
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would top up agreement with {} for bucket {} by {} bytes",
+            "Topped up agreement with {} for bucket {} by {} bytes",
             provider,
             bucket_id,
             additional_bytes
@@ -310,9 +416,23 @@ impl AdminClient {
         provider: String,
         action: EndAction,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
+
+        let tx = extrinsics::end_agreement(bucket_id, provider_account, action);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would terminate agreement with {} for bucket {} with action {:?}",
+            "Terminated agreement with {} for bucket {} with action {:?}",
             provider,
             bucket_id,
             action
@@ -320,17 +440,32 @@ impl AdminClient {
         Ok(())
     }
 
-    /// Block extensions for a specific agreement.
+    /// Block extensions for a specific agreement (provider-side call).
     ///
-    /// Use this to prevent unwanted third-party extensions of your agreement.
+    /// Note: the pallet requires the caller to be the provider of the agreement.
+    /// This method is intended for cases where the admin is also the provider.
     pub async fn block_extensions(
         &self,
         bucket_id: BucketId,
         provider: String,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let _ = provider; // The signer must be the provider; `provider` param is for logging.
+        let tx = extrinsics::set_extensions_blocked(bucket_id, true);
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
         tracing::info!(
-            "Would block extensions for agreement with {} on bucket {}",
+            "Blocked extensions for agreement with {} on bucket {}",
             provider,
             bucket_id
         );
@@ -345,19 +480,22 @@ impl AdminClient {
     ///
     /// This reduces storage costs by removing data you no longer need.
     /// Cannot delete data before `frozen_start_seq` if bucket is frozen.
+    ///
+    /// Note: deletion is enforced off-chain. The admin signs a deletion payload and
+    /// provides it to providers out-of-band. Providers include the admin signature
+    /// in challenge responses to prove legitimate deletion. There is no direct
+    /// on-chain extrinsic for this operation.
     pub async fn delete_before(
         &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
+        _bucket_id: BucketId,
+        _new_start_seq: u64,
         _signature: Vec<u8>,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!(
-            "Would delete data before seq {} in bucket {}",
-            new_start_seq,
-            bucket_id
-        );
-        Ok(())
+        Err(ClientError::Chain(
+            "delete_before is enforced off-chain: sign a deletion payload and provide it to \
+             providers directly. There is no on-chain extrinsic for this operation."
+                .to_string(),
+        ))
     }
 
     /// Submit a checkpoint with provider signatures.
@@ -412,29 +550,229 @@ impl AdminClient {
 
     /// Get bucket information.
     pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<BucketInfo> {
-        // TODO: Query via Runtime API
+        let chain = self.base.chain()?;
+
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::bucket_info(bucket_id))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+
+        let min_providers = named_field(&value, "min_providers")
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let frozen_start_seq =
+            named_field(&value, "frozen_start_seq").and_then(|v| match &v.value {
+                ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
+                ValueDef::Variant(Variant {
+                    name,
+                    values: Composite::Unnamed(items),
+                }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u64),
+                _ => None,
+            });
+
+        let members = named_field(&value, "members")
+            .and_then(|v| match &v.value {
+                ValueDef::Composite(Composite::Unnamed(items)) => Some(items),
+                _ => None,
+            })
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        let account_bytes =
+                            named_field(item, "account").and_then(decode_account_bytes)?;
+                        let account = format!("0x{}", hex::encode(&account_bytes));
+                        let role = named_field(item, "role").and_then(|r| match &r.value {
+                            ValueDef::Variant(Variant { name, .. }) => match name.as_str() {
+                                "Admin" => Some(Role::Admin),
+                                "Writer" => Some(Role::Writer),
+                                "Reader" => Some(Role::Reader),
+                                _ => None,
+                            },
+                            _ => None,
+                        })?;
+                        Some(MemberInfo { account, role })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let snapshot = named_field(&value, "snapshot").and_then(|v| match &v.value {
+            ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
+            ValueDef::Variant(Variant {
+                name,
+                values: Composite::Unnamed(items),
+            }) if name == "Some" => {
+                let snap = items.first()?;
+                let mmr_root_bytes = named_field(snap, "mmr_root")
+                    .and_then(decode_account_bytes)
+                    .filter(|b| b.len() == 32)?;
+                let mut mmr_root = [0u8; 32];
+                mmr_root.copy_from_slice(&mmr_root_bytes);
+                let start_seq = named_field(snap, "start_seq")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as u64;
+                let leaf_count = named_field(snap, "leaf_count")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as u64;
+                let checkpoint_block = named_field(snap, "checkpoint_block")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as u32;
+                Some(SnapshotInfo {
+                    mmr_root: H256::from(mmr_root),
+                    start_seq,
+                    leaf_count,
+                    checkpoint_block,
+                })
+            }
+            _ => None,
+        });
+
         Ok(BucketInfo {
             bucket_id,
-            members: vec![],
-            frozen_start_seq: None,
-            min_providers: 0,
-            snapshot: None,
+            members,
+            frozen_start_seq,
+            min_providers,
+            snapshot,
         })
     }
 
     /// List all agreements for a bucket.
     pub async fn list_bucket_agreements(
         &self,
-        _bucket_id: BucketId,
+        bucket_id: BucketId,
     ) -> ClientResult<Vec<AgreementInfo>> {
-        // TODO: Query via Runtime API
-        Ok(vec![])
+        let chain = self.base.chain()?;
+
+        let storage = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+
+        let mut iter = storage
+            .iter(storage::agreements_for_bucket(bucket_id))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
+
+        let mut agreements = Vec::new();
+
+        while let Some(result) = iter.next().await {
+            let kv =
+                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+
+            // Key layout: [pallet_hash=16][storage_hash=16][blake2_128(bucket_id)=16][bucket_id=8]
+            //             [blake2_128(provider)=16][provider=32]; provider at [72..104]
+            let key = &kv.key_bytes;
+            let provider = if key.len() >= 104 {
+                format!("0x{}", hex::encode(&key[72..104]))
+            } else {
+                String::new()
+            };
+
+            let value = match kv.value.to_value() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to decode agreement: {e}");
+                    continue;
+                }
+            };
+
+            let max_bytes = named_field(&value, "max_bytes")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u64;
+
+            let payment_locked = named_field(&value, "payment_locked")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0);
+
+            let expires_at = named_field(&value, "expires_at")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u32;
+
+            let is_primary = named_field(&value, "role")
+                .map(|r| {
+                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
+                })
+                .unwrap_or(false);
+
+            agreements.push(AgreementInfo {
+                provider,
+                max_bytes,
+                payment_locked,
+                expires_at,
+                is_primary,
+            });
+        }
+
+        Ok(agreements)
     }
 
-    /// Get your buckets.
+    /// Get the buckets this admin account is a member of.
     pub async fn list_my_buckets(&self) -> ClientResult<Vec<BucketId>> {
-        // TODO: Query chain storage
-        Ok(vec![])
+        let chain = self.base.chain()?;
+        let admin_account = SubstrateClient::parse_account(&self.admin_account)?;
+
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::member_buckets(&admin_account))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
+
+        let Some(thunk) = thunk else {
+            return Ok(vec![]);
+        };
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
+
+        let bucket_ids = match &value.value {
+            ValueDef::Composite(Composite::Unnamed(items)) => items
+                .iter()
+                .filter_map(|v| v.as_u128().map(|n| n as BucketId))
+                .collect(),
+            _ => vec![],
+        };
+
+        Ok(bucket_ids)
+    }
+}
+
+fn named_field<'a>(
+    value: &'a subxt::ext::scale_value::Value<u32>,
+    field: &str,
+) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
+    match &value.value {
+        ValueDef::Composite(Composite::Named(fields)) => {
+            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
+        }
+        _ => None,
+    }
+}
+
+fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
+    match &value.value {
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
+        }
+        _ => None,
     }
 }
 

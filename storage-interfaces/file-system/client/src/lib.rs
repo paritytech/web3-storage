@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, StorageClient,
+    CheckpointManager, ClientConfig, StorageUserClient,
 };
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -106,7 +106,7 @@ pub type Result<T> = std::result::Result<T, FsClientError>;
 /// High-level file system client
 pub struct FileSystemClient {
     /// Layer 0 storage client for blob operations
-    storage_client: StorageClient,
+    storage_client: StorageUserClient,
     /// Substrate blockchain client
     substrate_client: SubstrateClient,
     /// In-memory cache of drive root CIDs (drive_id -> root_cid)
@@ -125,7 +125,11 @@ impl FileSystemClient {
     /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://127.0.0.1:2222")
     /// * `provider_endpoint` - Storage provider HTTP endpoint
     pub async fn new(chain_endpoint: &str, provider_endpoint: &str) -> Result<Self> {
-        let storage_client = StorageClient::new(provider_endpoint);
+        let storage_client = StorageUserClient::new(ClientConfig {
+            provider_urls: vec![provider_endpoint.to_string()],
+            ..Default::default()
+        })
+        .map_err(|e| FsClientError::Config(e.to_string()))?;
         let substrate_client = SubstrateClient::connect(chain_endpoint).await?;
 
         Ok(Self {
@@ -787,7 +791,7 @@ impl FileSystemClient {
 
         let data = self
             .storage_client
-            .read(&cid, 0, MAX_READ_LENGTH)
+            .download(&cid, 0, MAX_READ_LENGTH)
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 
