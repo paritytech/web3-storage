@@ -36,24 +36,34 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
 }
 
 /**
- * Wait for the new-drive flow to land on chain. The dialog auto-closes on
- * success (NewDriveDialog calls `onOpenChange(false)` after `createDrive`
- * resolves), so we poll the chain for a new drive in Alice's UserDrives
- * rather than chasing the transient `creation-card-*` testids inside the
- * dialog. Returns `length`, not the latest id directly: a fresh chain's
- * first drive has id 0n which is falsy in JS — we must check length.
+ * Wait for the new-drive flow to land on chain — both UserDrives gets the
+ * new id AND Drives.getValue(id) returns a fully-populated struct. The
+ * dialog auto-closes after createDrive resolves, but UserDrives can
+ * appear momentarily before Drives.commit_strategy is readable in the
+ * same finalized view, so poll on the inner field rather than just on
+ * length. (Fresh chain's first drive has id 0n which is falsy — the
+ * `id !== null` check must be explicit.)
  */
 async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
+  let id: bigint | null = null;
   await expect.poll(
     async () => {
       const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-      return ids?.length ?? 0;
+      if (!ids || ids.length === 0) return null;
+      const candidate = BigInt(ids[ids.length - 1]);
+      const drive = await api.query.DriveRegistry.Drives.getValue(candidate);
+      const strat = (drive as { commit_strategy?: { type?: string } } | undefined)
+        ?.commit_strategy?.type;
+      if (strat) {
+        id = candidate;
+        return strat;
+      }
+      return null;
     },
     { timeout: 120_000, intervals: [1000, 2000, 3000] },
-  ).toBeGreaterThan(0);
-  const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-  return BigInt(ids![ids!.length - 1]);
+  ).not.toBeNull();
+  return id!;
 }
 
 test("Immediate strategy round-trips to chain", async ({ localPage }) => {
