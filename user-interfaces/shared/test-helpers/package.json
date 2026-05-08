@@ -7,19 +7,15 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
-    "papi:check": "papi generate && git diff --exit-code .papi"
-  },
+  "scripts": {},
   "dependencies": {
-    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.20.1",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "polkadot-api": "^2.1.0"
   },
   "devDependencies": {
-    "@polkadot-api/cli": "^0.20.4",
     "@types/node": "^22.10.0"
   },
   "peerDependencies": {

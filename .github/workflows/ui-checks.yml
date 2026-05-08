@@ -37,14 +37,8 @@ jobs:
       - name: Install workspace deps
         working-directory: user-interfaces
         run: pnpm install --frozen-lockfile
-
-      - name: Generate console-ui PAPI descriptors
-        working-directory: user-interfaces
-        run: pnpm --filter @web3-storage/console-ui exec papi generate
-
-      - name: Generate drive-ui PAPI descriptors
-        working-directory: user-interfaces
-        run: pnpm --filter @web3-storage/drive-ui exec papi generate
+        # postinstall regenerates the shared @polkadot-api/descriptors
+        # dist/ from committed metadata — no per-UI generate step needed.
 
       - name: Run unit tests
         working-directory: user-interfaces
@@ -59,13 +53,10 @@ jobs:
         include:
           - ui: drive-ui
             filter: "@web3-storage/drive-ui"
-            papi: true
           - ui: console-ui
             filter: "@web3-storage/console-ui"
-            papi: true
           - ui: provider
             filter: provider-dashboard
-            papi: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -82,11 +73,6 @@ jobs:
       - name: Install workspace deps
         working-directory: user-interfaces
         run: pnpm install --frozen-lockfile
-
-      - name: Generate PAPI descriptors
-        if: matrix.papi
-        working-directory: user-interfaces
-        run: pnpm --filter ${{ matrix.filter }} exec papi generate
 
       - name: Build
         working-directory: user-interfaces

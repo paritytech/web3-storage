@@ -11,8 +11,8 @@ importers:
   console-ui:
     dependencies:
       '@polkadot-api/descriptors':
-        specifier: file:.papi/descriptors
-        version: file:console-ui/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))
+        specifier: workspace:*
+        version: link:../shared/papi/.papi/descriptors
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
@@ -86,9 +86,6 @@ importers:
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.59.1
-      '@polkadot-api/cli':
-        specifier: ^0.20.4
-        version: 0.20.4(esbuild@0.28.0)
       '@tailwindcss/vite':
         specifier: ^4.2.4
         version: 4.2.4(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1))
@@ -132,8 +129,8 @@ importers:
   drive-ui:
     dependencies:
       '@polkadot-api/descriptors':
-        specifier: file:.papi/descriptors
-        version: file:drive-ui/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))
+        specifier: workspace:*
+        version: link:../shared/papi/.papi/descriptors
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
@@ -204,9 +201,6 @@ importers:
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.59.1
-      '@polkadot-api/cli':
-        specifier: ^0.20.4
-        version: 0.20.4(esbuild@0.28.0)
       '@tailwindcss/vite':
         specifier: ^4.2.4
         version: 4.2.4(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1))
@@ -238,8 +232,8 @@ importers:
   provider:
     dependencies:
       '@polkadot-api/descriptors':
-        specifier: file:.papi/descriptors
-        version: file:provider/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))
+        specifier: workspace:*
+        version: link:../shared/papi/.papi/descriptors
       '@polkadot-labs/hdkd':
         specifier: ^0.0.28
         version: 0.0.28
@@ -310,9 +304,6 @@ importers:
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.59.1
-      '@polkadot-api/cli':
-        specifier: ^0.20.4
-        version: 0.20.4(esbuild@0.28.0)
       '@tailwindcss/vite':
         specifier: ^4.2.4
         version: 4.2.4(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1))
@@ -364,14 +355,30 @@ importers:
 
   shared/network-config: {}
 
+  shared/papi:
+    dependencies:
+      '@polkadot-api/descriptors':
+        specifier: file:.papi/descriptors
+        version: link:.papi/descriptors
+    devDependencies:
+      '@polkadot-api/cli':
+        specifier: ^0.20.4
+        version: 0.20.4(esbuild@0.28.0)
+
+  shared/papi/.papi/descriptors:
+    dependencies:
+      polkadot-api:
+        specifier: '>=2.0.0'
+        version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
+
   shared/test-helpers:
     dependencies:
       '@playwright/test':
         specifier: '>=1.59.0'
         version: 1.59.1
       '@polkadot-api/descriptors':
-        specifier: file:.papi/descriptors
-        version: file:shared/test-helpers/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))
+        specifier: workspace:*
+        version: link:../papi/.papi/descriptors
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
@@ -385,9 +392,6 @@ importers:
         specifier: ^2.1.0
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
     devDependencies:
-      '@polkadot-api/cli':
-        specifier: ^0.20.4
-        version: 0.20.4(esbuild@0.28.0)
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.17
@@ -712,26 +716,6 @@ packages:
 
   '@polkadot-api/codegen@0.22.4':
     resolution: {integrity: sha512-SHab4/zICOMzIwuZai3SBiKnWz62eEYCHOCvt6zSbAMddNGg3HgXANG0IEBVM5Ad+wX9YFIINAFkV8y1Pbwv5g==}
-
-  '@polkadot-api/descriptors@file:console-ui/.papi/descriptors':
-    resolution: {directory: console-ui/.papi/descriptors, type: directory}
-    peerDependencies:
-      polkadot-api: '>=2.0.0'
-
-  '@polkadot-api/descriptors@file:drive-ui/.papi/descriptors':
-    resolution: {directory: drive-ui/.papi/descriptors, type: directory}
-    peerDependencies:
-      polkadot-api: '>=2.0.0'
-
-  '@polkadot-api/descriptors@file:provider/.papi/descriptors':
-    resolution: {directory: provider/.papi/descriptors, type: directory}
-    peerDependencies:
-      polkadot-api: '>=2.0.0'
-
-  '@polkadot-api/descriptors@file:shared/test-helpers/.papi/descriptors':
-    resolution: {directory: shared/test-helpers/.papi/descriptors, type: directory}
-    peerDependencies:
-      polkadot-api: '>=2.0.0'
 
   '@polkadot-api/ink-contracts@0.6.1':
     resolution: {integrity: sha512-zBuvNSO8V8HLhhWeHvavLJDLrnHNauqfzzvZpqpxVDKEA/dEiyJkZOOtK8OuNdeipCseokwaOyIukTESQGQijg==}
@@ -3426,22 +3410,6 @@ snapshots:
       '@polkadot-api/metadata-compatibility': 0.6.2
       '@polkadot-api/substrate-bindings': 0.20.2
       '@polkadot-api/utils': 0.4.0
-
-  '@polkadot-api/descriptors@file:console-ui/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))':
-    dependencies:
-      polkadot-api: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
-
-  '@polkadot-api/descriptors@file:drive-ui/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))':
-    dependencies:
-      polkadot-api: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
-
-  '@polkadot-api/descriptors@file:provider/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))':
-    dependencies:
-      polkadot-api: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
-
-  '@polkadot-api/descriptors@file:shared/test-helpers/.papi/descriptors(polkadot-api@2.1.1(esbuild@0.28.0)(rxjs@7.8.2))':
-    dependencies:
-      polkadot-api: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
 
   '@polkadot-api/ink-contracts@0.6.1':
     dependencies:

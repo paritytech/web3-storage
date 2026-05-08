@@ -7,13 +7,11 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
-    "papi:check": "papi generate && git diff --exit-code .papi",
     "test": "playwright test",
     "test:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.20.1",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
@@ -39,7 +37,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
-    "@polkadot-api/cli": "^0.20.4",
     "@tailwindcss/vite": "^4.2.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

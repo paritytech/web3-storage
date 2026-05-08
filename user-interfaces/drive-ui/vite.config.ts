@@ -11,7 +11,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@polkadot-api/descriptors": path.resolve(__dirname, "./.papi/descriptors"),
     },
   },
   server: {
