@@ -22,7 +22,6 @@ export {
   waitForBlock,
   getBlockNumber,
   type ParachainApi,
-  type SubmitResult,
 } from "./chain-api";
 
 export {

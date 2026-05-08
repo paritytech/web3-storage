@@ -26,6 +26,7 @@ export async function createBucketViaApi(
       min_providers: opts.minProviders ?? 1,
     }),
     signer.signer,
+    signer.address,
   );
 
   const events = api.event.S3Registry.S3BucketCreated.filter(result.events as never);
@@ -41,6 +42,7 @@ export async function deleteBucketViaApi(signer: DevSigner, s3BucketId: bigint):
   await submitExtrinsic(
     api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId }),
     signer.signer,
+    signer.address,
   );
 }
 
@@ -92,6 +94,7 @@ export async function createDriveViaApi(
       min_providers: opts.minProviders ?? undefined,
     }),
     signer.signer,
+    signer.address,
   );
 
   const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
@@ -100,26 +103,20 @@ export async function createDriveViaApi(
   const handle: DriveHandle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
 
   // create_drive auto-emits a request_agreement targeting the matched
-  // provider. Until that agreement transitions Pending→Active, uploads to
-  // the bucket fail because the provider has no committed multiaddr yet.
-  // The provider node's agreement-coordinator auto-accepts asynchronously
-  // (~6-12s), but tests racing the upload right after createDriveViaApi
-  // hit the gap. Force-accept here from the same signer (in test setups,
-  // Alice is both drive owner and the running provider node, so she can
-  // sign accept_agreement on her own bucket). Best-effort — if the
-  // coordinator already accepted, the runtime returns NoPendingAgreement
-  // which we ignore.
-  try {
-    await submitExtrinsic(
-      api.tx.StorageProvider.accept_agreement({ bucket_id: handle.bucketId }),
-      signer.signer,
-    );
-  } catch {
-    // already accepted by the provider's coordinator, or signer isn't the
-    // provider — leave it to the chain.
+  // provider. Only the provider can call accept_agreement (the drive owner
+  // can't), so we wait for the provider node's auto-coordinator to settle
+  // it. The coordinator runs every ~6-12s; 60s gives comfortable headroom
+  // even when the chain is post-pollution.
+  const start = Date.now();
+  const timeoutMs = 60_000;
+  while (Date.now() - start < timeoutMs) {
+    const bucket = await api.query.StorageProvider.Buckets.getValue(handle.bucketId);
+    if (bucket && bucket.primary_providers.length > 0) return handle;
+    await new Promise((r) => setTimeout(r, 1500));
   }
-
-  return handle;
+  throw new Error(
+    `createDriveViaApi: bucket ${handle.bucketId} primary_providers stayed empty after ${timeoutMs}ms — provider node may not be running or not auto-accepting.`,
+  );
 }
 
 export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Promise<void> {
@@ -127,6 +124,7 @@ export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Pro
   await submitExtrinsic(
     api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
     signer.signer,
+    signer.address,
   );
 }
 

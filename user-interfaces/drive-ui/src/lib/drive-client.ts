@@ -5,19 +5,12 @@
  * method per documented operation.
  */
 
-import { Binary, Enum, type PolkadotSigner } from "polkadot-api";
+import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import type { ParachainApi } from "@/state/chain.state";
+import { type ParachainApi, getClient } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
 
-interface TxResult {
-  blockHash: string;
-  blockNumber: number;
-  events: unknown[];
-}
-
-const TX_TIMEOUT_MS = 120_000;
 const HTTP_RETRY_ATTEMPTS = 3;
 const HTTP_RETRY_BASE_MS = 250;
 
@@ -27,9 +20,10 @@ export interface DriveInfo {
   owner: string;
   name: string | null;
   maxCapacity: bigint;
-  createdAt: bigint;
-  storagePeriod: bigint;
-  expiresAt: bigint;
+  // block-number fields are u32 on chain → number in PAPI's typed API
+  createdAt: number;
+  storagePeriod: number;
+  expiresAt: number;
   payment: bigint;
 }
 
@@ -118,6 +112,15 @@ async function httpFetch(
  * HTTP URL. Picks the FIRST matching host/port pair so multi-`/tcp/` addrs
  * with multiple host candidates resolve deterministically.
  */
+function decodeName(name: Uint8Array | undefined): string | null {
+  if (!name) return null;
+  try {
+    return new TextDecoder().decode(name);
+  } catch {
+    return null;
+  }
+}
+
 export function parseMultiaddrToHttp(multiaddr: string): string | null {
   const parts = multiaddr.split("/").filter(Boolean);
   let host: string | null = null;
@@ -183,66 +186,39 @@ export class DriveClient {
 
   // ── Tx submission ─────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private submitAndWatchBestBlock(tx: any): Promise<TxResult> {
-    const { signer } = this.requireSigner();
-    return new Promise((resolve, reject) => {
-      let resolved = false;
-
-      const watch = (tx as unknown as { signSubmitAndWatch: (s: Signer) => { subscribe: (h: { next: (e: unknown) => void; error: (e: unknown) => void }) => { unsubscribe: () => void } } })
-        .signSubmitAndWatch(signer);
-
-      const subscription = watch.subscribe({
-        next: (ev: unknown) => {
-          const evObj = ev as {
-            type?: string;
-            found?: boolean;
-            block?: { hash: string; number: number };
-            events?: unknown[];
-          };
-          if (evObj.type === "txBestBlocksState" && evObj.found && !resolved) {
-            resolved = true;
-            subscription.unsubscribe();
-
-            const events = evObj.events ?? [];
-            const failedEvent = (events as Array<{ type: string; value?: { type?: string; value?: { dispatch_error?: unknown } } }>).find(
-              (e) => e.type === "System" && e.value?.type === "ExtrinsicFailed",
-            );
-            if (failedEvent) {
-              const dispatchError = failedEvent.value?.value?.dispatch_error;
-              const errorStr = dispatchError
-                ? JSON.stringify(dispatchError, (_k, v) =>
-                    typeof v === "bigint" ? v.toString() : v,
-                  )
-                : "unknown dispatch error";
-              reject(new Error(`Transaction failed on-chain: ${errorStr}`));
-              return;
-            }
-
-            resolve({
-              blockHash: evObj.block!.hash,
-              blockNumber: evObj.block!.number,
-              events,
-            });
-          }
-        },
-        error: (err: unknown) => {
-          if (!resolved) {
-            resolved = true;
-            subscription.unsubscribe();
-            reject(err);
-          }
-        },
-      });
-
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          subscription.unsubscribe();
-          reject(new Error("Transaction timed out"));
-        }
-      }, TX_TIMEOUT_MS);
-    });
+  /**
+   * Sign + submit + wait for finalization. Throws on chain-side failure or
+   * signing/connection error.
+   *
+   * Resolves the next nonce via the legacy `system_accountNextIndex` JSON-RPC
+   * method directly against the node, bypassing PAPI's chainHead. PAPI's
+   * default and the runtime-API/storage variants both compute nonce from a
+   * specific block on the client's locally-observed chainHead, which can lag
+   * behind the chain's actual state when the page has just reloaded and a
+   * different connection (e.g. tests' api setup) has been submitting
+   * same-signer txs. `system_accountNextIndex` queries the node directly and
+   * accounts for pending pool state → always returns the correct next nonce.
+   */
+  private async submit(tx: Transaction): Promise<TxFinalizedPayload> {
+    const { signer, address } = this.requireSigner();
+    const client = getClient();
+    if (!client) throw new Error("Not connected to chain");
+    // Resolve next nonce via the legacy `system_accountNextIndex` JSON-RPC
+    // method, bypassing PAPI's chainHead. PAPI's defaults (and its
+    // typed-API/storage variants) compute nonce from a block on the local
+    // chainHead, which can lag behind the chain's actual state when the
+    // page just reloaded and a different connection (e.g. test setup via
+    // api helpers) has been submitting same-signer txs. This RPC queries
+    // the node directly and accounts for pool state.
+    const nonce = await client._request<number>("system_accountNextIndex", [address]);
+    const result = await tx.signAndSubmit(signer, { nonce });
+    if (!result.ok) {
+      const err = JSON.stringify(result.dispatchError, (_k, v) =>
+        typeof v === "bigint" ? v.toString() : v,
+      );
+      throw new Error(`Transaction failed on-chain: ${err}`);
+    }
+    return result;
   }
 
   // ── Provider resolution ───────────────────────────────────────────────────
@@ -252,7 +228,7 @@ export class DriveClient {
     const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
 
-    const providers: string[] = bucket.primary_providers ?? [];
+    const providers = bucket.primary_providers;
     if (providers.length === 0) {
       throw new Error(`Bucket ${bucketId} has no primary providers`);
     }
@@ -335,10 +311,7 @@ export class DriveClient {
   async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
     const api = this.requireApi();
     const account = await api.query.System.Account.getValue(address);
-    return {
-      free: BigInt(account.data.free),
-      reserved: BigInt(account.data.reserved),
-    };
+    return { free: account.data.free, reserved: account.data.reserved };
   }
 
   // ── Drive on-chain operations ─────────────────────────────────────────────
@@ -357,36 +330,27 @@ export class DriveClient {
       min_providers: options.minProviders ?? undefined,
     });
 
-    const result = await this.submitAndWatchBestBlock(tx);
+    const result = await this.submit(tx);
 
-    let driveId: bigint | null = null;
-    let bucketId: bigint | null = null;
-    for (const event of result.events as Array<{ type: string; value: { type: string; value: Record<string, unknown> } }>) {
-      if (event.type !== "DriveRegistry") continue;
-      if (event.value.type === "DriveCreated") {
-        driveId = BigInt(event.value.value.drive_id as bigint);
-        bucketId = BigInt(event.value.value.bucket_id as bigint);
-        break;
-      }
-    }
-
-    if (driveId === null || bucketId === null) {
+    const created = api.event.DriveRegistry.DriveCreated.filter(result.events);
+    if (created.length === 0) {
       const drives = await this.listDrives();
       if (drives.length > 0) return drives[drives.length - 1];
       throw new Error(
         "DriveCreated event not found. The runtime descriptor may be stale — run: pnpm papi:generate",
       );
     }
+    const { drive_id, bucket_id } = created[0].payload;
 
     return {
-      driveId,
-      bucketId,
+      driveId: drive_id,
+      bucketId: bucket_id,
       owner: address,
       name: options.name ?? null,
       maxCapacity: options.maxCapacity,
-      createdAt: 0n,
-      storagePeriod: BigInt(options.storagePeriod),
-      expiresAt: 0n,
+      createdAt: 0,
+      storagePeriod: options.storagePeriod,
+      expiresAt: 0,
       payment: options.payment,
     };
   }
@@ -396,32 +360,22 @@ export class DriveClient {
     const { address } = this.requireSigner();
 
     const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address);
-    if (!driveIds || driveIds.length === 0) return [];
+    if (driveIds.length === 0) return [];
 
     const drives: DriveInfo[] = [];
     for (const driveId of driveIds) {
       const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
       if (!drive) continue;
-
-      let driveName: string | null = null;
-      if (drive.name) {
-        try {
-          driveName = new TextDecoder().decode(drive.name);
-        } catch {
-          driveName = null;
-        }
-      }
-
       drives.push({
-        driveId: BigInt(driveId),
-        bucketId: BigInt(drive.bucket_id),
-        owner: String(drive.owner),
-        name: driveName,
-        maxCapacity: BigInt(drive.max_capacity),
-        createdAt: BigInt(drive.created_at),
-        storagePeriod: BigInt(drive.storage_period),
-        expiresAt: BigInt(drive.expires_at),
-        payment: BigInt(drive.payment),
+        driveId,
+        bucketId: drive.bucket_id,
+        owner: drive.owner,
+        name: decodeName(drive.name),
+        maxCapacity: drive.max_capacity,
+        createdAt: drive.created_at,
+        storagePeriod: drive.storage_period,
+        expiresAt: drive.expires_at,
+        payment: drive.payment,
       });
     }
     return drives;
@@ -431,32 +385,23 @@ export class DriveClient {
     const api = this.requireApi();
     const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
     if (!drive) return null;
-
-    let driveName: string | null = null;
-    if (drive.name) {
-      try {
-        driveName = new TextDecoder().decode(drive.name);
-      } catch {
-        driveName = null;
-      }
-    }
     return {
       driveId,
-      bucketId: BigInt(drive.bucket_id),
-      owner: String(drive.owner),
-      name: driveName,
-      maxCapacity: BigInt(drive.max_capacity),
-      createdAt: BigInt(drive.created_at),
-      storagePeriod: BigInt(drive.storage_period),
-      expiresAt: BigInt(drive.expires_at),
-      payment: BigInt(drive.payment),
+      bucketId: drive.bucket_id,
+      owner: drive.owner,
+      name: decodeName(drive.name),
+      maxCapacity: drive.max_capacity,
+      createdAt: drive.created_at,
+      storagePeriod: drive.storage_period,
+      expiresAt: drive.expires_at,
+      payment: drive.payment,
     };
   }
 
   async deleteDrive(driveId: bigint): Promise<void> {
     const api = this.requireApi();
     const tx = api.tx.DriveRegistry.delete_drive({ drive_id: driveId });
-    await this.submitAndWatchBestBlock(tx);
+    await this.submit(tx);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────
@@ -570,7 +515,7 @@ export class DriveClient {
       member: account,
       role: Enum(role),
     });
-    await this.submitAndWatchBestBlock(tx);
+    await this.submit(tx);
   }
 
   async removeMember(bucketId: bigint, account: string): Promise<void> {
@@ -579,7 +524,7 @@ export class DriveClient {
       bucket_id: bucketId,
       member: account,
     });
-    await this.submitAndWatchBestBlock(tx);
+    await this.submit(tx);
   }
 
   // ── Checkpoint ────────────────────────────────────────────────────────────
@@ -592,12 +537,11 @@ export class DriveClient {
     const snapshot = bucket.snapshot;
     if (!snapshot) return null;
 
-    const mmrRoot = (snapshot.mmr_root as { asHex?: () => string } | undefined);
     return {
-      mmrRoot: typeof mmrRoot?.asHex === "function" ? mmrRoot.asHex() : "0x" + "00".repeat(32),
-      startSeq: BigInt(snapshot.start_seq ?? 0),
-      leafCount: BigInt(snapshot.leaf_count ?? 0),
-      checkpointBlock: Number(snapshot.checkpoint_block ?? 0),
+      mmrRoot: snapshot.mmr_root,
+      startSeq: snapshot.start_seq,
+      leafCount: snapshot.leaf_count,
+      checkpointBlock: snapshot.checkpoint_block,
     };
   }
 

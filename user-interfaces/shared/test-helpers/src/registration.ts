@@ -58,6 +58,7 @@ export async function registerProviderViaApi(
         stake: opts.stake ?? DEFAULT_STAKE,
       }),
       account.signer,
+      account.address,
     );
   }
 
@@ -65,6 +66,7 @@ export async function registerProviderViaApi(
   await submitExtrinsic(
     api.tx.StorageProvider.update_provider_settings({ settings }),
     account.signer,
+    account.address,
   );
 
   return { alreadyRegistered: !!existing, address: account.address };

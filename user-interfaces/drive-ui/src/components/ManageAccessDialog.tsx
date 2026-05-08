@@ -126,6 +126,7 @@ export default function ManageAccessDialog({
       });
       await refresh();
     } catch (err) {
+      console.error("[ManageAccessDialog] addMember failed:", err);
       toast({
         title: "Failed to add member",
         description: err instanceof Error ? err.message : "Error",

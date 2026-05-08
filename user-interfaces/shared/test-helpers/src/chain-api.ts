@@ -1,4 +1,4 @@
-import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
+import { createClient, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
 import type { PolkadotSigner } from "polkadot-api/signer";
@@ -38,44 +38,30 @@ export function disconnect(): void {
   cachedWs = null;
 }
 
-export interface SubmitResult<E = unknown> {
-  events: E[];
-  blockHash: string;
-  txHash: string;
-}
-
 /**
- * Sign + submit an extrinsic and wait for the chain RPC's view to fully
- * settle. Throws if any `System.ExtrinsicFailed` event is in the result.
+ * Sign + submit an extrinsic, wait for finalization, throw if it failed.
  *
- * `tx` is whatever `api.tx.Pallet.method({...})` returns.
- *
- * Why the extra wait: polkadot-api's `signAndSubmit` resolves on tx
- * inclusion in best-block, but the chain RPC's `system.accountNextIndex`
- * view (used by the *next* signer call to compute nonce) lags briefly
- * behind. Two consecutive same-signer submits — even from a single
- * client — can race that gap and the second one gets rejected as
- * `Invalid::Stale` (chain says the nonce is older than current). We
- * await one fresh finalized block after submission so the RPC view is
- * fully caught up before returning to the caller.
+ * Computes the next nonce from the legacy `system_accountNextIndex` JSON-RPC
+ * method, bypassing PAPI's chainHead-cached "latest finalized" view. PAPI's
+ * default reads nonce from a block on the local chainHead, which can lag
+ * behind the chain's actual state when same-signer txs were submitted
+ * recently — leading to `Invalid::Stale` rejections. The RPC queries the
+ * node directly and accounts for pool state.
  */
-export async function submitExtrinsic<T extends { signAndSubmit: (s: PolkadotSigner) => Promise<unknown> }>(
-  tx: T,
+export async function submitExtrinsic(
+  tx: Transaction,
   signer: PolkadotSigner,
-): Promise<SubmitResult> {
-  const result = (await tx.signAndSubmit(signer)) as SubmitResult;
-  const api = getApi();
-  const failed = api.event.System.ExtrinsicFailed.filter(result.events as never);
-  if (failed.length > 0) {
-    const err = JSON.stringify(failed[0], (_, v) =>
+  signerAddress: string,
+): Promise<TxFinalizedPayload> {
+  const client = getClient();
+  const nonce = await client._request<number>("system_accountNextIndex", [signerAddress]);
+  const result = await tx.signAndSubmit(signer, { nonce });
+  if (!result.ok) {
+    const err = JSON.stringify(result.dispatchError, (_, v) =>
       typeof v === "bigint" ? v.toString() : v,
     );
     throw new Error(`Extrinsic failed: ${err}`);
   }
-  // Wait for one fresh finalized block past the inclusion block so the
-  // RPC's nonce view is synced for any subsequent same-signer tx.
-  const inclusion = await getClient().getFinalizedBlock();
-  await waitForBlock(inclusion.number + 1, 30_000);
   return result;
 }
 

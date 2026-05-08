@@ -6,7 +6,7 @@
  * to DriveRegistry events for real-time updates.
  */
 
-import { BehaviorSubject, combineLatest, distinctUntilChanged } from "rxjs";
+import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } from "rxjs";
 import { bind } from "@react-rxjs/core";
 import {
   DriveClient,
@@ -377,108 +377,40 @@ export async function removeMember(bucketId: bigint, account: string): Promise<v
 // (or any drive currently being tracked).
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface RegistryEventSubscription {
-  unsubscribe: () => void;
-}
-
-let eventSub: RegistryEventSubscription | null = null;
+let eventSub: Subscription | null = null;
 
 function subscribeToDriveEvents(): void {
-  if (eventSub) {
-    eventSub.unsubscribe();
-    eventSub = null;
-  }
+  eventSub?.unsubscribe();
+  eventSub = null;
   const api = getApi();
   if (!api) return;
 
-  // polkadot-api's typed event watcher delivers the decoded payload at the top
-  // of the emitted object (no `value` wrapper) — but the precise shape can
-  // vary between runtime versions, so accept whatever comes and pluck fields
-  // defensively.
-  type EventObserver = {
-    next: (ev: unknown) => void;
-    error?: (err: unknown) => void;
+  // React to events that involve the current signer's drives or any drive
+  // we're already tracking — otherwise ignore (e.g. another user's drive on
+  // a shared chain). Coalesce bursts of events into a single refresh via
+  // queueMicrotask so back-to-back events in one block don't trigger
+  // multiple list reads.
+  const handle = (driveId: bigint, owner: string): void => {
+    const ownAddr = getSignerAddress();
+    const tracked = new Set(drives$.getValue().map((d) => d.driveId));
+    if (owner !== ownAddr && !tracked.has(driveId)) return;
+    eventTick$.next(eventTick$.getValue() + 1);
+    queueMicrotask(() => refreshDrives().catch(() => {}));
   };
-  type EventWatcher = {
-    watch: () => {
-      subscribe: (
-        handler: ((ev: unknown) => void) | EventObserver,
-      ) => RegistryEventSubscription;
-    };
-  };
-  const events = (api as unknown as {
-    event: { DriveRegistry: Record<string, EventWatcher> };
-  }).event.DriveRegistry;
 
-  const interesting = ["DriveCreated", "DriveDeleted"];
-
-  const subscriptions: RegistryEventSubscription[] = [];
-
-  for (const name of interesting) {
-    const watcher = events[name];
-    if (!watcher) continue;
-    try {
-      const sub = watcher.watch().subscribe({
-        next: (tick: unknown) => {
-          if (!tick || typeof tick !== "object") return;
-          // polkadot-api 2.x delivers `{ block, events: PalletEvent<T>[] }`
-          // per tick; each PalletEvent has a `payload` with the decoded
-          // data. Tolerate both shapes (older versions emitted single
-          // events with payload-as-self) so we don't break on a runtime
-          // upgrade.
-          const tickEvents = (tick as { events?: unknown }).events;
-          const items: Array<{ payload?: unknown }> = Array.isArray(tickEvents)
-            ? (tickEvents as Array<{ payload?: unknown }>)
-            : [tick as { payload?: unknown }];
-
-          const ownAddr = getSignerAddress();
-          const tracked = new Set(drives$.getValue().map((d) => d.driveId));
-
-          for (const item of items) {
-            const payload = ((item.payload ?? item) as {
-              drive_id?: bigint | number;
-              owner?: string;
-            });
-            if (!payload || typeof payload !== "object") continue;
-
-            const driveIdRaw = payload.drive_id;
-            const driveId =
-              typeof driveIdRaw === "bigint"
-                ? driveIdRaw
-                : typeof driveIdRaw === "number"
-                  ? BigInt(driveIdRaw)
-                  : undefined;
-
-            // Only react to events involving the current signer or already-
-            // tracked drives. `owner` is absent on some event variants; in
-            // that case fall back to "we track this drive_id".
-            const isOwn = ownAddr && payload.owner === ownAddr;
-            const isTracked = driveId !== undefined && tracked.has(driveId);
-
-            if (isOwn || isTracked) {
-              eventTick$.next(eventTick$.getValue() + 1);
-              // Coalesce bursts of events into one refresh.
-              queueMicrotask(() => {
-                refreshDrives().catch(() => { /* swallow */ });
-              });
-              return;
-            }
-          }
-        },
-        // Some events listed in the descriptor may not exist on the running
-        // runtime ("Runtime entry Event(DriveRegistry.X) not found"). Swallow
-        // — that event variant just isn't deliverable here.
-        error: () => { /* swallow */ },
-      });
-      subscriptions.push(sub);
-    } catch {
-      // event name not in current runtime version; skip
-    }
-  }
-
-  eventSub = {
-    unsubscribe: () => subscriptions.forEach((s) => s.unsubscribe()),
-  };
+  eventSub = new Subscription();
+  eventSub.add(
+    api.event.DriveRegistry.DriveCreated.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+      error: () => {},
+    }),
+  );
+  eventSub.add(
+    api.event.DriveRegistry.DriveDeleted.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+      error: () => {},
+    }),
+  );
 }
 
 api$$.subscribe(() => {

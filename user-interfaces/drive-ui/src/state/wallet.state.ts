@@ -102,10 +102,7 @@ export async function refreshBalance(): Promise<void> {
 
   try {
     const account = await api.query.System.Account.getValue(address);
-    balance$.next({
-      free: BigInt(account.data.free),
-      reserved: BigInt(account.data.reserved),
-    });
+    balance$.next({ free: account.data.free, reserved: account.data.reserved });
   } catch {
     /* leave previous balance in place on transient failure */
   }
