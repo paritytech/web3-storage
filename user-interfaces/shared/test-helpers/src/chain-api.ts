@@ -56,6 +56,43 @@ export async function submitExtrinsic(
 }
 
 /**
+ * Sign + submit an extrinsic, resolve as soon as it's included in a best
+ * block (~6s) instead of finalized (~12-24s). Use for fire-and-forget
+ * cleanup paths where the caller doesn't need finality guarantees and
+ * just wants the chain to acknowledge the tx.
+ */
+export async function submitExtrinsicBestBlock(
+  tx: Transaction,
+  signer: PolkadotSigner,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const sub = tx.signSubmitAndWatch(signer).subscribe({
+      next: (ev: any) => {
+        if (ev.type === "txBestBlocksState" && ev.found && !settled) {
+          settled = true;
+          sub.unsubscribe();
+          if (ev.ok === false) {
+            const err = JSON.stringify(ev.dispatchError, (_, v) =>
+              typeof v === "bigint" ? v.toString() : v,
+            );
+            reject(new Error(`Extrinsic failed at best block: ${err}`));
+          } else {
+            resolve();
+          }
+        }
+      },
+      error: (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      },
+    });
+  });
+}
+
+/**
  * Wait until the chain has produced a block at or after `target`.
  * Useful when a test needs to wait for a checkpoint window etc.
  */

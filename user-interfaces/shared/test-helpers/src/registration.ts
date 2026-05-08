@@ -1,5 +1,5 @@
-import { getApi, submitExtrinsic } from "./chain-api";
-import type { DevSigner } from "./signers";
+import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
+import { devSigners, type DevAccountName, type DevSigner } from "./signers";
 
 export interface ProviderSettings {
   min_duration: number;
@@ -92,8 +92,48 @@ export async function deregisterProviderViaApi(account: DevSigner): Promise<void
       `deregisterProviderViaApi: ${account.name} has committed_bytes=${existing.committed_bytes}; deregister rejected by runtime`,
     );
   }
-  await submitExtrinsic(
+  await submitExtrinsicBestBlock(
     api.tx.StorageProvider.deregister_provider(),
     account.signer,
   );
+}
+
+/**
+ * Deregister every dev-known provider whose account is NOT in `keepAccounts`.
+ * Skips registrations with committed_bytes > 0 (runtime would reject the
+ * deregister anyway) and skips registrations whose signer we don't have
+ * (non-dev accounts the test infra didn't create).
+ *
+ * Why this exists: the runtime's drive-creation flow picks
+ * `available_primary_providers[0]` (storage-map iteration order, hash-based)
+ * to target with the agreement request. Across test runs, suites accumulate
+ * provider registrations from prior runs (e.g. provider-e2e's wizard
+ * registers Ferdie, drive-ui keeps Alice, etc.), and the runtime may pick a
+ * provider that has no node behind it — the agreement request then sits
+ * unaccepted and `createDriveViaApi` times out. Calling this in each
+ * suite's globalSetup ensures only the providers a suite actually needs
+ * survive on chain when its tests run.
+ */
+export async function cleanProviderRegistry(
+  keepAccounts: DevSigner[],
+): Promise<void> {
+  const api = getApi();
+  const keep = new Set(keepAccounts.map((a) => a.address));
+  const knownDev: Record<string, DevSigner> = {};
+  for (const name of Object.keys(devSigners) as DevAccountName[]) {
+    knownDev[devSigners[name].address] = devSigners[name];
+  }
+
+  const entries = await api.query.StorageProvider.Providers.getEntries();
+  for (const { keyArgs, value } of entries) {
+    const address = keyArgs[0] as string;
+    if (keep.has(address)) continue;
+    const signer = knownDev[address];
+    if (!signer) continue;
+    if ((value as { committed_bytes: bigint }).committed_bytes !== 0n) continue;
+    await submitExtrinsicBestBlock(
+      api.tx.StorageProvider.deregister_provider(),
+      signer.signer,
+    );
+  }
 }

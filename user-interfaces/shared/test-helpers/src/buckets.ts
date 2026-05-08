@@ -1,4 +1,4 @@
-import { getApi, submitExtrinsic } from "./chain-api";
+import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
 import type { DevSigner } from "./signers";
 
 // ─── S3 Buckets (console-ui) ─────────────────────────────────────────────────
@@ -38,7 +38,7 @@ export async function createBucketViaApi(
 
 export async function deleteBucketViaApi(signer: DevSigner, s3BucketId: bigint): Promise<void> {
   const api = getApi();
-  await submitExtrinsic(
+  await submitExtrinsicBestBlock(
     api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId }),
     signer.signer,
   );
@@ -102,10 +102,12 @@ export async function createDriveViaApi(
   // create_drive auto-emits a request_agreement targeting the matched
   // provider. Only the provider can call accept_agreement (the drive owner
   // can't), so we wait for the provider node's auto-coordinator to settle
-  // it. The coordinator runs every ~6-12s; 60s gives comfortable headroom
-  // even when the chain is post-pollution.
+  // it. The coordinator polls every ~6s; accept_agreement finalizes in
+  // ~12-24s — typical end-to-end is 30-36s, worst case ~50s under nonce
+  // contention from rapid prior cleanup. 90s absorbs the worst case and
+  // adds <30s to the worst-case test (which we'd happily pay vs. a flake).
   const start = Date.now();
-  const timeoutMs = 60_000;
+  const timeoutMs = 90_000;
   while (Date.now() - start < timeoutMs) {
     const bucket = await api.query.StorageProvider.Buckets.getValue(handle.bucketId);
     if (bucket && bucket.primary_providers.length > 0) return handle;
@@ -118,7 +120,7 @@ export async function createDriveViaApi(
 
 export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Promise<void> {
   const api = getApi();
-  await submitExtrinsic(
+  await submitExtrinsicBestBlock(
     api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
     signer.signer,
   );

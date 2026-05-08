@@ -4,6 +4,11 @@
  * Verify the ManageAccessDialog handles SS58 validation, duplicate-member
  * detection, and adds a Reader whose row appears in the members table after
  * the tx settles (no manual refresh).
+ *
+ * All three tests share a single drive created in beforeAll. Tests 1 + 2
+ * are pure UI assertions on the dialog; test 3 mutates members (adds
+ * Charlie) — declaration order is 1 → 2 → 3 in serial mode so Bob is
+ * still the sole member when the duplicate-check test runs.
  */
 import { test, expect } from "../fixtures";
 import {
@@ -14,36 +19,36 @@ import {
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
-// Each test creates a drive via the api helper (~30s incl. provider auto-
-// accept) before touching the UI. Plus the actual UI tx (signAndSubmit
-// waits for finalization, ~24-40s on local zombienet). Plus reload +
-// dialog open + fill + click. 150s past the 120s wall the slow case bumps.
 test.setTimeout(150_000);
 
-test.afterEach(async () => {
+let driveId: bigint;
+
+test.beforeAll(async () => {
+  test.setTimeout(120_000);
+  const drive = await createDriveViaApi(Bob, {
+    name: `members-${Date.now()}`,
+    maxCapacity: 10_000_000n,
+    storagePeriod: 10_000,
+    payment: 120_000_000_000_000_000n,
+    minProviders: 1,
+  });
+  driveId = drive.driveId;
+});
+
+test.afterAll(async () => {
+  test.setTimeout(60_000);
   await cleanupDrives(Bob);
 });
 
-async function openAccessDialog(
-  page: import("@playwright/test").Page,
-  driveId: bigint,
-) {
+async function openAccessDialog(page: import("@playwright/test").Page) {
+  await page.reload();
   await page.getByTestId(`drive-list-item-${driveId}`).hover();
   await page.getByTestId(`drive-list-access-${driveId}`).click();
   await expect(page.getByTestId("manage-access-dialog")).toBeVisible();
 }
 
 test("SS58 validation rejects garbage input", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Bob, {
-    name: `members-ss58-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-  });
-  await localPage.reload();
-
-  await openAccessDialog(localPage, drive.driveId);
+  await openAccessDialog(localPage);
   // ManageAccessDialog updates `validationError` synchronously on input change
   // and disables the submit button — there's nothing to click here, just
   // assert the inline error appears.
@@ -53,16 +58,7 @@ test("SS58 validation rejects garbage input", async ({ localPage }) => {
 });
 
 test("duplicate-member check rejects already-member address", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Bob, {
-    name: `members-dup-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-  });
-  await localPage.reload();
-
-  await openAccessDialog(localPage, drive.driveId);
+  await openAccessDialog(localPage);
   // Bob is the owner and an implicit Admin member.
   await localPage.getByTestId("add-member-address").fill(Bob.address);
   await expect(localPage.getByTestId("add-member-error")).toContainText(/already.*member/i);
@@ -70,16 +66,7 @@ test("duplicate-member check rejects already-member address", async ({ localPage
 });
 
 test("add Reader → list refreshes without manual click", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Bob, {
-    name: `members-add-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-  });
-  await localPage.reload();
-
-  await openAccessDialog(localPage, drive.driveId);
+  await openAccessDialog(localPage);
   await localPage.getByTestId("add-member-address").fill(Charlie.address);
   await localPage.getByTestId("add-member-role").selectOption("Reader");
   await localPage.getByTestId("add-member-submit").click();

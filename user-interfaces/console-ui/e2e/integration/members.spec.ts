@@ -11,7 +11,6 @@ import {
   Bob,
   cleanupBuckets,
   createBucketViaApi,
-  registerProviderViaApi,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -21,7 +20,6 @@ let bucketName: string;
 
 test.beforeAll(async () => {
   test.setTimeout(120_000);
-  await registerProviderViaApi(Alice);
   bucketName = `members-${Date.now()}`;
   await createBucketViaApi(Alice, { name: bucketName });
 });

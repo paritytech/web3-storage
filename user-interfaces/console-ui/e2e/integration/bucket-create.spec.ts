@@ -8,17 +8,14 @@ import { test, expect } from "../fixtures";
 import {
   Alice,
   cleanupBuckets,
-  registerProviderViaApi,
   getApi,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  await registerProviderViaApi(Alice);
-});
+// Alice is registered as the provider in playwright globalSetup; no
+// per-spec beforeAll registration needed.
 
 test.afterAll(async () => {
   test.setTimeout(90_000);
