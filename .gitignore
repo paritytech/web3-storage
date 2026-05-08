@@ -46,8 +46,12 @@ zombienet/storage-local-spec.json
 **/dist/
 
 # Playwright artefacts
-user-interfaces/*/playwright-report/
-user-interfaces/*/test-results/
+user-interfaces/**/playwright-report/
+user-interfaces/**/test-results/
+
+# Local Claude state (per-developer)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 
 # Lockfiles are per-project, not committed
 # (each UI project has its own package manager)
