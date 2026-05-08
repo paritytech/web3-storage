@@ -16,15 +16,12 @@ importers:
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
-      '@polkadot/keyring':
-        specifier: ^14.0.3
-        version: 14.0.3(@polkadot/util-crypto@14.0.3(@polkadot/util@14.0.3))(@polkadot/util@14.0.3)
-      '@polkadot/util':
-        specifier: ^14.0.3
-        version: 14.0.3
-      '@polkadot/util-crypto':
-        specifier: ^14.0.3
-        version: 14.0.3(@polkadot/util@14.0.3)
+      '@polkadot-labs/hdkd':
+        specifier: ^0.0.28
+        version: 0.0.28
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.30
+        version: 0.0.30
       '@radix-ui/react-dialog':
         specifier: ^1.1.15
         version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -140,12 +137,12 @@ importers:
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
-      '@polkadot/keyring':
-        specifier: ^14.0.3
-        version: 14.0.3(@polkadot/util-crypto@14.0.3(@polkadot/util@14.0.3))(@polkadot/util@14.0.3)
-      '@polkadot/util-crypto':
-        specifier: ^14.0.3
-        version: 14.0.3(@polkadot/util@14.0.3)
+      '@polkadot-labs/hdkd':
+        specifier: ^0.0.28
+        version: 0.0.28
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.30
+        version: 0.0.30
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -252,9 +249,6 @@ importers:
       '@polkadot/extension-dapp':
         specifier: ^0.63.1
         version: 0.63.1(@polkadot/api@16.5.6)(@polkadot/util-crypto@14.0.3(@polkadot/util@14.0.3))(@polkadot/util@14.0.3)
-      '@polkadot/util-crypto':
-        specifier: ^14.0.3
-        version: 14.0.3(@polkadot/util@14.0.3)
       '@radix-ui/react-dialog':
         specifier: ^1.1.15
         version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)

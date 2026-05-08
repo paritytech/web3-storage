@@ -21,6 +21,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  test.setTimeout(90_000);
   await cleanupBuckets(Alice);
 });
 
@@ -43,15 +44,22 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
     timeout: 90_000,
   });
 
-  // Verify on chain.
+  // Verify on chain. The UI submits at best-block, but test-helpers' getApi
+  // is a separate ws connection — finalization can lag, so poll instead of
+  // doing an immediate getValue.
   const api = getApi();
-  const userBuckets = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
-  expect(userBuckets).toBeTruthy();
-  expect(userBuckets!.length).toBeGreaterThan(0);
+  await expect.poll(
+    async () => {
+      const ids = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
+      return ids?.length ?? 0;
+    },
+    { timeout: 60_000, intervals: [1000, 2000, 3000] },
+  ).toBeGreaterThan(0);
 
+  const userBuckets = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
   const latestId = userBuckets![userBuckets!.length - 1];
   const bucket = await api.query.S3Registry.S3Buckets.getValue(latestId);
   expect(bucket).toBeTruthy();
-  const bucketName = new TextDecoder().decode(bucket!.name.asBytes());
+  const bucketName = new TextDecoder().decode(bucket!.name);
   expect(bucketName).toBe(name);
 });

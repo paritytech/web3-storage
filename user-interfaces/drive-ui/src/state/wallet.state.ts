@@ -10,10 +10,9 @@
 
 import { BehaviorSubject, combineLatest, map } from "rxjs";
 import { bind } from "@react-rxjs/core";
-import { Keyring } from "@polkadot/keyring";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { getApi } from "@/state/chain.state";
+import { seedToKeypair, toSs58 } from "@/lib/crypto";
 
 export type Signer = ReturnType<typeof getPolkadotSigner>;
 
@@ -56,16 +55,15 @@ export const [useHasSigner] = bind(
 export async function setSigner(seed: string, name?: string): Promise<string> {
   settingSigner$.next(true);
   try {
-    await cryptoWaitReady();
-    const keyring = new Keyring({ type: "sr25519" });
-    const account = keyring.addFromUri(seed);
+    const keypair = seedToKeypair(seed);
+    const address = toSs58(keypair.publicKey);
 
-    const newSigner = getPolkadotSigner(account.publicKey, "Sr25519", (input) =>
-      account.sign(input),
+    const newSigner = getPolkadotSigner(keypair.publicKey, "Sr25519", (input) =>
+      keypair.sign(input),
     );
 
     signer$.next(newSigner);
-    signerAddress$.next(account.address);
+    signerAddress$.next(address);
     signerName$.next(name ?? null);
 
     if (name) {
@@ -75,7 +73,7 @@ export async function setSigner(seed: string, name?: string): Promise<string> {
     }
 
     await refreshBalance();
-    return account.address;
+    return address;
   } finally {
     settingSigner$.next(false);
   }

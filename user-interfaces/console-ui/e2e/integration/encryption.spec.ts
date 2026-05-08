@@ -25,6 +25,10 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // cleanupBuckets awaits finalization per bucket (~12-24s) and Alice may
+  // have accumulated buckets when an earlier spec's afterAll missed —
+  // give it room rather than the playwright default of 30s.
+  test.setTimeout(90_000);
   await cleanupBuckets(Alice);
 });
 

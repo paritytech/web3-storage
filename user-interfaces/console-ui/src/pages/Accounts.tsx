@@ -26,11 +26,10 @@ interface Account {
   name: string;
   seed: string;
   address: string;
-  isActive: boolean;
 }
 
 // Pre-configured dev accounts
-const DEV_ACCOUNTS: Omit<Account, "isActive">[] = [
+const DEV_ACCOUNTS: Account[] = [
   {
     name: "Alice",
     seed: "//Alice",
@@ -50,17 +49,14 @@ const DEV_ACCOUNTS: Omit<Account, "isActive">[] = [
 
 export default function Accounts() {
   const { connected } = useChain();
-  const { setSigner, loading } = useStorage();
+  const { setSigner, signerAddress, loading } = useStorage();
 
-  const [accounts, setAccounts] = useState<Account[]>(
-    DEV_ACCOUNTS.map((acc) => ({
-      ...acc,
-      isActive: false,
-    }))
-  );
+  const [accounts, setAccounts] = useState<Account[]>(DEV_ACCOUNTS);
   const [customSeed, setCustomSeed] = useState("");
   const [customName, setCustomName] = useState("");
   const [settingAccount, setSettingAccount] = useState<string | null>(null);
+
+  const isActive = (account: Account) => account.address === signerAddress;
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -80,12 +76,6 @@ export default function Accounts() {
     setSettingAccount(account.address);
     try {
       await setSigner(account.seed);
-      setAccounts(
-        accounts.map((a) => ({
-          ...a,
-          isActive: a.address === account.address,
-        }))
-      );
       toast({ title: "Success", description: `Active account set to ${account.name}` });
     } catch (err) {
       toast({
@@ -119,19 +109,13 @@ export default function Accounts() {
     }
 
     try {
-      // Import keyring to derive address
-      const { Keyring } = await import("@polkadot/keyring");
-      const { cryptoWaitReady } = await import("@polkadot/util-crypto");
-      await cryptoWaitReady();
-
-      const keyring = new Keyring({ type: "sr25519" });
-      const account = keyring.addFromUri(customSeed);
+      const { seedToKeypair, toSs58 } = await import("@/lib/crypto");
+      const keypair = seedToKeypair(customSeed);
 
       const newAccount: Account = {
         name: customName || `Account ${accounts.length + 1}`,
         seed: customSeed,
-        address: account.address,
-        isActive: false,
+        address: toSs58(keypair.publicKey),
       };
 
       setAccounts([...accounts, newAccount]);
@@ -162,7 +146,7 @@ export default function Accounts() {
     toast({ title: "Success", description: "Account removed" });
   };
 
-  const activeAccount = accounts.find((a) => a.isActive);
+  const activeAccount = accounts.find(isActive);
 
   return (
     <div className="space-y-6">
@@ -297,13 +281,13 @@ export default function Accounts() {
                 key={account.address}
                 data-testid={`accounts-list-row-${account.name}`}
                 className={`flex items-center justify-between rounded-lg border p-4 ${
-                  account.isActive ? "border-primary bg-primary/5" : ""
+                  isActive(account) ? "border-primary bg-primary/5" : ""
                 }`}
               >
                 <div className="flex items-center gap-4">
                   <div
                     className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                      account.isActive
+                      isActive(account)
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted"
                     }`}
@@ -313,7 +297,7 @@ export default function Accounts() {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-medium">{account.name}</p>
-                      {account.isActive && (
+                      {isActive(account) && (
                         <span data-testid={`accounts-active-badge-${account.name}`} className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
                           Active
                         </span>
@@ -331,7 +315,7 @@ export default function Accounts() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {!account.isActive && connected && (
+                  {!isActive(account) && connected && (
                     <Button
                       data-testid={`accounts-set-active-${account.name}`}
                       variant="outline"

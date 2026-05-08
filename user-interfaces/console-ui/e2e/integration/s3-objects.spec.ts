@@ -25,6 +25,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  test.setTimeout(90_000);
   await cleanupBuckets(Alice);
 });
 

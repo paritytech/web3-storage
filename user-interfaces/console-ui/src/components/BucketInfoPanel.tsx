@@ -76,13 +76,34 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
   }, [expanded, bucketId, refreshMembers, refreshProviders]);
 
   const handleAddMember = async () => {
-    if (!newMemberAccount.trim()) return;
+    const trimmed = newMemberAccount.trim();
+    if (!trimmed) return;
+    // The runtime's set_member updates an existing member's role rather
+    // than rejecting; surface the duplicate at the UI layer so users get
+    // an obvious "already a member" message instead of a silent role swap.
+    if (members.some((m) => m.account === trimmed)) {
+      toast({
+        title: "Failed to add member",
+        description: `${truncateHash(trimmed)} is already a member`,
+        variant: "destructive",
+      });
+      return;
+    }
     setAdding(true);
     try {
-      await addBucketMember(bucketId, newMemberAccount.trim(), newMemberRole);
+      await addBucketMember(bucketId, trimmed, newMemberRole);
       setNewMemberAccount("");
       toast({ title: "Member added", description: `${truncateHash(newMemberAccount)} as ${newMemberRole}` });
-      refreshMembers();
+      // Optimistic insert: tx resolved at best-block, but chainHead can
+      // lag a few hundred ms behind. Don't call refreshMembers here — it
+      // races chainHead and would clobber this insert with the pre-tx
+      // list. Reconciliation happens on the next expand or via the
+      // manual refresh button. Mirrors useStorage.createBucket.
+      setMembers((prev) =>
+        prev.some((m) => m.account === trimmed)
+          ? prev
+          : [...prev, { account: trimmed, role: newMemberRole }],
+      );
     } catch (err) {
       toast({
         title: "Failed to add member",
