@@ -140,4 +140,10 @@ sp-keyring = { version = "46.0.0", default-features = false }
 sp-keystore = { version = "0.46.0", default-features = false }
 
 [profile.release]
+opt-level = 3
 panic = "unwind"
+
+[profile.production]
+inherits = "release"
+lto = true
+codegen-units = 1

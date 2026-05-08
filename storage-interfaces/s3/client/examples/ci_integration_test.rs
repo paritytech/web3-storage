@@ -23,7 +23,7 @@ const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tracing_subscriber::fmt::init();
 
     let args: Vec<String> = env::args().collect();
     let chain_ws = args.get(1).map(|s| s.as_str()).unwrap_or(DEFAULT_CHAIN_WS);

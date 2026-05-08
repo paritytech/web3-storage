@@ -13,7 +13,7 @@ use sp_keyring::AccountKeyring;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     println!("==================================================");
     println!("  ADMIN WORKFLOW: Setting up Storage Infrastructure");

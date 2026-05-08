@@ -10,6 +10,7 @@ use crate::substrate::SubstrateClient;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use subxt_signer::sr25519::Keypair;
 use thiserror::Error;
 
 /// Client errors.
@@ -126,6 +127,21 @@ impl BaseClient {
         if let Some(client) = self.chain_client.as_mut() {
             let client = Arc::make_mut(client);
             *client = client.clone().with_dev_signer(name)?;
+            Ok(())
+        } else {
+            Err(ClientError::Config(
+                "Must connect to chain before setting signer".to_string(),
+            ))
+        }
+    }
+
+    /// Set a custom keypair signer for submitting extrinsics.
+    ///
+    /// Must be called after `connect_chain()`.
+    pub fn set_signer(&mut self, signer: Keypair) -> Result<(), ClientError> {
+        if let Some(client) = self.chain_client.as_mut() {
+            let client = Arc::make_mut(client);
+            *client = client.clone().with_signer(signer);
             Ok(())
         } else {
             Err(ClientError::Config(

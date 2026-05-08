@@ -879,53 +879,38 @@ impl FileSystemClient {
 
         // Sign and submit
         let signer = self.substrate_client.signer()?;
-        let mut progress = self
+        let events = self
             .substrate_client
             .api()
             .tx()
             .sign_and_submit_then_watch_default(&call, signer)
             .await
-            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?;
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| {
+                tracing::error!("create_drive extrinsic failed: {e}");
+                FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
+            })?;
 
-        // Wait for finalization and extract drive_id from event
-        while let Some(event) = progress.next().await {
-            let event =
-                event.map_err(|e| FsClientError::Blockchain(format!("Transaction error: {e}")))?;
+        // Scan finalized events for the DriveRegistry drive-created event.
+        for ev in events.iter() {
+            let ev =
+                ev.map_err(|e| FsClientError::Blockchain(format!("Event decode error: {e}")))?;
 
-            if let Some(finalized) = event.as_finalized() {
-                // Fetch events from the finalized block
-                let events = finalized.fetch_events().await.map_err(|e| {
-                    FsClientError::Blockchain(format!("Failed to fetch events: {e}"))
-                })?;
+            tracing::info!("Received event: {}.{}", ev.pallet_name(), ev.variant_name());
 
-                // Find DriveCreated or DriveCreatedOnBucket event
-                for ev in events.iter() {
-                    let ev = ev.map_err(|e| {
-                        FsClientError::Blockchain(format!("Event decode error: {e}"))
-                    })?;
-
-                    // Check if this is a DriveRegistry event
-                    if ev.pallet_name() == "DriveRegistry" {
-                        // Try to decode as dynamic value
-                        if let Ok(value) = ev.field_values() {
-                            // Extract drive_id from first field (all drive events have drive_id as first field)
-                            if let Some(drive_id_value) = value.at(0) {
-                                if let Some(drive_id) = drive_id_value.as_u128() {
-                                    tracing::info!("Drive created with ID: {drive_id}");
-                                    return Ok(drive_id as DriveId);
-                                }
-                            }
-                        }
+            if ev.pallet_name() == "DriveRegistry" {
+                if let Ok(value) = ev.field_values() {
+                    if let Some(drive_id) = value.at(0).and_then(|v| v.as_u128()) {
+                        tracing::info!("Drive created with ID: {drive_id}");
+                        return Ok(drive_id as DriveId);
                     }
                 }
-
-                return Err(FsClientError::EventNotFound);
             }
         }
 
-        Err(FsClientError::Blockchain(
-            "Transaction did not finalize".to_string(),
-        ))
+        Err(FsClientError::EventNotFound)
     }
 
     /// Query bucket_id for a drive from on-chain storage
