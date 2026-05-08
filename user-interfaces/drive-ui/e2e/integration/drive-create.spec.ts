@@ -7,25 +7,21 @@
  */
 import { test, expect } from "../fixtures";
 import {
-  Alice,
+  Bob,
   cleanupDrives,
-  registerProviderViaApi,
   getApi,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  // Make sure Alice is registered as a provider so agreement requests
-  // emitted by drive creation can be auto-accepted by the local provider node
-  // (which runs as `//Alice` per `just start-provider`'s default).
-  await registerProviderViaApi(Alice);
-});
+// Provider registration happens once in playwright globalSetup. Don't
+// re-register from per-spec beforeAll — that submits an extra Alice tx
+// per spec and races the provider node's auto-coordinator on Alice's
+// nonce, which then refuses to accept_agreement for our drives.
 
 test.afterEach(async () => {
-  await cleanupDrives(Alice);
+  await cleanupDrives(Bob);
 });
 
 async function fillBaseFields(page: import("@playwright/test").Page, name: string) {
@@ -36,7 +32,7 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
 }
 
 /**
- * Wait for a freshly-created drive to land in Alice's UserDrives. Returns
+ * Wait for a freshly-created drive to land in Bob's UserDrives. Returns
  * the latest drive id. Fresh chain's first drive has id 0n which is falsy
  * in JS — poll on `length`, then read the id outside the poll.
  */
@@ -44,13 +40,13 @@ async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
   await expect.poll(
     async () => {
-      const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-      return ids?.length ?? 0;
+      const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
+      return ids.length;
     },
     { timeout: 120_000, intervals: [1000, 2000, 3000] },
   ).toBeGreaterThan(0);
-  const ids = await api.query.DriveRegistry.UserDrives.getValue(Alice.address);
-  return BigInt(ids![ids!.length - 1]);
+  const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
+  return ids[ids.length - 1];
 }
 
 async function expectDriveOnChain(driveId: bigint, expectedName: string) {

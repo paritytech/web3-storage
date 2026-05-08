@@ -3,10 +3,10 @@
  *
  * Verifies that user-facing state survives a page reload via the documented
  * localStorage keys: endpoint, account name, view mode, selected drive,
- * and current path. Tests run serially and share Alice as the signer.
+ * and current path. Tests run serially and share Bob as the signer.
  */
 import { test, expect } from "../fixtures";
-import { Alice, createDriveViaApi, cleanupDrives } from "@web3-storage/test-helpers";
+import { Bob, createDriveViaApi, cleanupDrives } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -29,16 +29,16 @@ test("endpoint selection persists across reload", async ({ localPage }) => {
 });
 
 test("account name persists across reload", async ({ localPage }) => {
-  // Alice is pre-injected by the fixture's localStorage.
-  await expect(localPage.getByTestId("signer-address")).toHaveText("Alice");
+  // Bob is pre-injected by the fixture's localStorage.
+  await expect(localPage.getByTestId("signer-address")).toHaveText("Bob");
   await localPage.reload();
-  await expect(localPage.getByTestId("signer-address")).toHaveText("Alice");
+  await expect(localPage.getByTestId("signer-address")).toHaveText("Bob");
 });
 
 test("view mode toggle persists across reload", async ({ localPage }) => {
   // The view mode toggle is in the file-browser; only renders when a drive is
   // selected. Create a throwaway drive via api so we have something to select.
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `view-mode-${Date.now()}`,
     maxCapacity: 10_000_000n,
     storagePeriod: 10_000,
@@ -62,12 +62,12 @@ test("view mode toggle persists across reload", async ({ localPage }) => {
     const stored = await localPage.evaluate(() => localStorage.getItem("drive-ui-view-mode"));
     expect(stored === "grid" || stored === "list").toBe(true);
   } finally {
-    await cleanupDrives(Alice);
+    await cleanupDrives(Bob);
   }
 });
 
 test("selected drive persists across reload", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `selected-${Date.now()}`,
     maxCapacity: 10_000_000n,
     storagePeriod: 10_000,
@@ -88,6 +88,6 @@ test("selected drive persists across reload", async ({ localPage }) => {
     );
     expect(stored).toBe(drive.driveId.toString());
   } finally {
-    await cleanupDrives(Alice);
+    await cleanupDrives(Bob);
   }
 });

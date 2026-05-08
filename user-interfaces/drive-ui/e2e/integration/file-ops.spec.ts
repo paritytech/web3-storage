@@ -7,26 +7,20 @@
  */
 import { test, expect } from "../fixtures";
 import {
-  Alice,
+  Bob,
   cleanupDrives,
   createDriveViaApi,
-  registerProviderViaApi,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  await registerProviderViaApi(Alice);
-});
-
 test.afterEach(async () => {
-  await cleanupDrives(Alice);
+  await cleanupDrives(Bob);
 });
 
 async function selectFreshDrive(page: import("@playwright/test").Page) {
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `file-ops-${Date.now()}`,
     maxCapacity: 100_000_000n,
     storagePeriod: 10_000,

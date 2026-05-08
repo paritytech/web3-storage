@@ -7,11 +7,10 @@
  */
 import { test, expect } from "../fixtures";
 import {
-  Alice,
+  Bob,
   cleanupDrives,
   createDriveViaApi,
   deleteDriveViaApi,
-  registerProviderViaApi,
   waitForConnection,
   waitForMinBlock,
 } from "@web3-storage/test-helpers";
@@ -19,13 +18,8 @@ import {
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  await registerProviderViaApi(Alice);
-});
-
 test.afterEach(async () => {
-  await cleanupDrives(Alice);
+  await cleanupDrives(Bob);
 });
 
 async function openTabB(browser: import("@playwright/test").Browser) {
@@ -33,7 +27,7 @@ async function openTabB(browser: import("@playwright/test").Browser) {
   const ctx = await browser.newContext();
   await ctx.addInitScript(() => {
     localStorage.setItem("web3-storage-selected-network", "local");
-    localStorage.setItem("drive-ui-account-name", "Alice");
+    localStorage.setItem("drive-ui-account-name", "Bob");
   });
   const tabB = await ctx.newPage();
   await tabB.goto("http://localhost:5174/");
@@ -47,7 +41,7 @@ async function openTabB(browser: import("@playwright/test").Browser) {
 test("DriveCreated cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Alice, {
+    const drive = await createDriveViaApi(Bob, {
       name: `rt-create-${Date.now()}`,
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
@@ -71,7 +65,7 @@ test("DriveCreated cross-tab", async ({ localPage, browser }) => {
 test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Alice, {
+    const drive = await createDriveViaApi(Bob, {
       name: `rt-delete-${Date.now()}`,
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
@@ -82,7 +76,7 @@ test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
       timeout: 90_000,
     });
 
-    await deleteDriveViaApi(Alice, drive.driveId);
+    await deleteDriveViaApi(Bob, drive.driveId);
 
     await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
       timeout: 90_000,

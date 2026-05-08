@@ -7,23 +7,21 @@
  */
 import { test, expect } from "../fixtures";
 import {
-  Alice,
   Bob,
+  Charlie,
   cleanupDrives,
   createDriveViaApi,
-  registerProviderViaApi,
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
-test.setTimeout(180_000);
-
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  await registerProviderViaApi(Alice);
-});
+// Each test creates a drive via the api helper (~30s incl. provider auto-
+// accept) before touching the UI. Plus the actual UI tx (signAndSubmit
+// waits for finalization, ~24-40s on local zombienet). Plus reload +
+// dialog open + fill + click. 150s past the 120s wall the slow case bumps.
+test.setTimeout(150_000);
 
 test.afterEach(async () => {
-  await cleanupDrives(Alice);
+  await cleanupDrives(Bob);
 });
 
 async function openAccessDialog(
@@ -36,7 +34,7 @@ async function openAccessDialog(
 }
 
 test("SS58 validation rejects garbage input", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `members-ss58-${Date.now()}`,
     maxCapacity: 10_000_000n,
     storagePeriod: 10_000,
@@ -55,7 +53,7 @@ test("SS58 validation rejects garbage input", async ({ localPage }) => {
 });
 
 test("duplicate-member check rejects already-member address", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `members-dup-${Date.now()}`,
     maxCapacity: 10_000_000n,
     storagePeriod: 10_000,
@@ -65,14 +63,14 @@ test("duplicate-member check rejects already-member address", async ({ localPage
   await localPage.reload();
 
   await openAccessDialog(localPage, drive.driveId);
-  // Alice is the owner and an implicit Admin member.
-  await localPage.getByTestId("add-member-address").fill(Alice.address);
+  // Bob is the owner and an implicit Admin member.
+  await localPage.getByTestId("add-member-address").fill(Bob.address);
   await expect(localPage.getByTestId("add-member-error")).toContainText(/already.*member/i);
   await expect(localPage.getByTestId("add-member-submit")).toBeDisabled();
 });
 
 test("add Reader → list refreshes without manual click", async ({ localPage }) => {
-  const drive = await createDriveViaApi(Alice, {
+  const drive = await createDriveViaApi(Bob, {
     name: `members-add-${Date.now()}`,
     maxCapacity: 10_000_000n,
     storagePeriod: 10_000,
@@ -82,15 +80,14 @@ test("add Reader → list refreshes without manual click", async ({ localPage })
   await localPage.reload();
 
   await openAccessDialog(localPage, drive.driveId);
-  await localPage.getByTestId("add-member-address").fill(Bob.address);
+  await localPage.getByTestId("add-member-address").fill(Charlie.address);
   await localPage.getByTestId("add-member-role").selectOption("Reader");
   await localPage.getByTestId("add-member-submit").click();
 
-  // After tx settles, Bob's row should appear without clicking refresh. The
-  // ManageAccessDialog refresh hits chain immediately after handleAdd; on a
-  // post-pollution chain (many tests have run by this point) the inBlock +
-  // finalization + refresh round-trip can run >90s. Bump generously.
-  await expect(localPage.getByTestId(`member-row-${Bob.address}`)).toBeVisible({
-    timeout: 120_000,
+  // After tx settles, Charlie's row should appear without clicking refresh.
+  // signAndSubmit waits for finalization (~24s on local zombienet) and the
+  // refresh follows. 45s is comfortable headroom.
+  await expect(localPage.getByTestId(`member-row-${Charlie.address}`)).toBeVisible({
+    timeout: 45_000,
   });
 });
