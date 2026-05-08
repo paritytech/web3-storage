@@ -33,6 +33,7 @@
 
 use crate::ClientError;
 use futures::Stream;
+use scale_value::{At, Composite, Primitive, ValueDef};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashSet;
@@ -865,9 +866,11 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
         block_hash: H256,
         block_number: u32,
     ) -> Option<StorageEvent> {
+        tracing::info!("event.pallet_name() {:?}", event.pallet_name());
         if event.pallet_name() != "StorageProvider" {
             return None;
         }
+        tracing::info!("{:?} Should goes here", event.pallet_name());
 
         // We log decode failures at TRACE level so callers don't need to
         // worry about noisy warnings for known-unhandled variants.
@@ -878,6 +881,8 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 return None;
             }
         };
+
+        tracing::info!("event variant: {:?}", event.variant_name());
 
         match event.variant_name() {
             // ── Checkpoint ────────────────────────────────────────────────────
@@ -1016,6 +1021,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
     }
 }
 
+// TODO(Tung): Bump subtxt then re-visit to check if this can be a common module
 // Private SCALE decoding helpers live on the struct as inherent methods so they
 // don't pollute the trait surface and can't be called by external code.
 impl StorageProviderEventParser {
@@ -1025,32 +1031,26 @@ impl StorageProviderEventParser {
     // `.at(name)` on a `Composite<u32>` yields `Option<&Value<u32>>`.
 
     fn field_u64(fields: &scale_value::Composite<u32>, name: &str) -> Option<u64> {
-        use scale_value::At;
         fields.at(name)?.as_u128().map(|v| v as u64)
     }
 
     fn field_u32(fields: &scale_value::Composite<u32>, name: &str) -> Option<u32> {
-        use scale_value::At;
         fields.at(name)?.as_u128().map(|v| v as u32)
     }
 
     fn field_u128(fields: &scale_value::Composite<u32>, name: &str) -> Option<u128> {
-        use scale_value::At;
         fields.at(name)?.as_u128()
     }
 
     fn field_account(fields: &scale_value::Composite<u32>, name: &str) -> Option<AccountId32> {
-        use scale_value::At;
         Self::decode_account(fields.at(name)?)
     }
 
     fn field_h256(fields: &scale_value::Composite<u32>, name: &str) -> Option<H256> {
-        use scale_value::At;
         Self::decode_h256(fields.at(name)?)
     }
 
     fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Option<(u32, u16)> {
-        use scale_value::At;
         let v = fields.at(name)?;
         let deadline = v.at("deadline")?.as_u128()? as u32;
         let index = v.at("index")?.as_u128()? as u16;
@@ -1058,7 +1058,6 @@ impl StorageProviderEventParser {
     }
 
     fn field_accounts(fields: &scale_value::Composite<u32>, name: &str) -> Vec<AccountId32> {
-        use scale_value::At;
         fields
             .at(name)
             .map(Self::decode_account_vec)
@@ -1066,7 +1065,6 @@ impl StorageProviderEventParser {
     }
 
     fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> String {
-        use scale_value::At;
         fields
             .at(name)
             .and_then(Self::decode_removal_reason)
@@ -1077,40 +1075,60 @@ impl StorageProviderEventParser {
     //
     // These accept `&Value<u32>` — the type yielded by `.at()` on a composite.
 
-    /// Decode an `AccountId32` from a SCALE unnamed composite of 32 `u8` items.
+    /// Decode an `AccountId32` from a SCALE value.
+    ///
+    /// `AccountId32` is a newtype struct in the SCALE type system, so subxt
+    /// decodes it as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
+    /// `collect_le_bytes` handles arbitrary nesting depth.
     fn decode_account(v: &scale_value::Value<u32>) -> Option<AccountId32> {
-        use scale_value::{Composite, ValueDef};
-        match &v.value {
-            ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
-                let mut bytes = [0u8; 32];
-                for (i, item) in items.iter().enumerate() {
-                    bytes[i] = item.as_u128()? as u8;
-                }
-                Some(AccountId32::new(bytes))
-            }
-            _ => None,
+        let mut bytes = [0u8; 32];
+        if Self::collect_le_bytes(v, &mut bytes, 0) == 32 {
+            Some(AccountId32::new(bytes))
+        } else {
+            None
         }
     }
 
-    /// Decode an `H256` from a SCALE unnamed composite of 32 `u8` items.
+    /// Decode an `H256` from a SCALE value (same nesting as `AccountId32`).
     fn decode_h256(v: &scale_value::Value<u32>) -> Option<H256> {
-        use scale_value::{Composite, ValueDef};
+        let mut bytes = [0u8; 32];
+        if Self::collect_le_bytes(v, &mut bytes, 0) == 32 {
+            Some(H256::from(bytes))
+        } else {
+            None
+        }
+    }
+
+    /// Recursively collect raw bytes from a SCALE value into `buf`, starting at
+    /// `offset`. Returns the new offset (i.e. `offset + bytes_written`).
+    ///
+    /// Handles `Primitive::U128` leaves (each contributes one byte) and
+    /// `Composite::Unnamed` nodes (recurse into children), which covers both
+    /// flat arrays of bytes and newtype-wrapped arrays like `AccountId32`.
+    fn collect_le_bytes(v: &scale_value::Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
         match &v.value {
-            ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
-                let mut bytes = [0u8; 32];
-                for (i, item) in items.iter().enumerate() {
-                    bytes[i] = item.as_u128()? as u8;
+            ValueDef::Primitive(Primitive::U128(n)) => {
+                if offset < 32 {
+                    buf[offset] = *n as u8;
+                    offset + 1
+                } else {
+                    offset
                 }
-                Some(H256::from(bytes))
             }
-            _ => None,
+            ValueDef::Composite(Composite::Unnamed(items)) => {
+                let mut pos = offset;
+                for item in items {
+                    pos = Self::collect_le_bytes(item, buf, pos);
+                }
+                pos
+            }
+            _ => offset,
         }
     }
 
     /// Decode a `Vec<AccountId32>` from a SCALE unnamed composite of account
     /// composites (i.e. a `Vec<AccountId32>` on the wire).
     fn decode_account_vec(v: &scale_value::Value<u32>) -> Vec<AccountId32> {
-        use scale_value::{Composite, ValueDef};
         match &v.value {
             ValueDef::Composite(Composite::Unnamed(items)) => {
                 items.iter().filter_map(Self::decode_account).collect()
@@ -1121,7 +1139,6 @@ impl StorageProviderEventParser {
 
     /// Decode a `RemovalReason` variant name from a SCALE variant value.
     fn decode_removal_reason(v: &scale_value::Value<u32>) -> Option<String> {
-        use scale_value::ValueDef;
         match &v.value {
             ValueDef::Variant(var) => Some(var.name.clone()),
             _ => None,

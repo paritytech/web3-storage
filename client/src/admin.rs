@@ -88,17 +88,35 @@ impl AdminClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
-        // Wait for finalization and parse all StorageProvider events.
-        let events = tx_progress
-            .wait_for_finalized_success()
+        // Wait for finalization, capture the block hash, then check success.
+        let tx_in_block = tx_progress
+            .wait_for_finalized()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        let raw_block_hash = tx_in_block.block_hash();
+
+        let events = tx_in_block
+            .wait_for_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!("Bucket created successfully");
 
-        // Block context is not needed here — we only care about the bucket_id
-        // field inside the event, not its position in the chain.
-        let parsed = StorageProviderEventParser::from_extrinsic_events(&events, H256::zero(), 0);
+        // Convert subxt's H256 (primitive_types 0.12) to sp_core::H256 (0.13) via raw bytes.
+        let block_hash = H256::from_slice(raw_block_hash.as_bytes());
+        let block_number = chain
+            .api()
+            .blocks()
+            .at(raw_block_hash)
+            .await
+            .map(|b| b.number())
+            .unwrap_or(0);
+
+        let parsed =
+            StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
+
+        tracing::info!("Parsed events: {:?}", parsed);
 
         for event in parsed {
             tracing::info!("Received event: {event:?}");
@@ -583,7 +601,14 @@ impl AdminClient {
 
         let members = named_field(&value, "members")
             .and_then(|v| match &v.value {
-                ValueDef::Composite(Composite::Unnamed(items)) => Some(items),
+                // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
+                // Peel one level to reach the actual Vec contents.
+                ValueDef::Composite(Composite::Unnamed(outer)) => {
+                    outer.first().and_then(|inner| match &inner.value {
+                        ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
+                        _ => None,
+                    })
+                }
                 _ => None,
             })
             .map(|items| {
@@ -743,11 +768,21 @@ impl AdminClient {
             .to_value()
             .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
 
+        // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
         let bucket_ids = match &value.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => items
-                .iter()
-                .filter_map(|v| v.as_u128().map(|n| n as BucketId))
-                .collect(),
+            ValueDef::Composite(Composite::Unnamed(outer)) => outer
+                .first()
+                .and_then(|inner| match &inner.value {
+                    ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
+                    _ => None,
+                })
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|v| v.as_u128().map(|n| n as BucketId))
+                        .collect()
+                })
+                .unwrap_or_default(),
             _ => vec![],
         };
 
@@ -767,12 +802,31 @@ fn named_field<'a>(
     }
 }
 
+/// Decode raw bytes from a SCALE value, handling `AccountId32`'s newtype nesting.
+///
+/// `AccountId32` is decoded by subxt as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
+/// This function recurses through any level of `Composite::Unnamed` wrapping to collect
+/// all `Primitive::U128` leaf values as bytes.
 fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    collect_bytes_recursive(value, &mut buf);
+    if buf.is_empty() {
+        None
+    } else {
+        Some(buf)
+    }
+}
+
+fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value<u32>, buf: &mut Vec<u8>) {
+    use subxt::ext::scale_value::Primitive;
     match &value.value {
+        ValueDef::Primitive(Primitive::U128(n)) => buf.push(*n as u8),
         ValueDef::Composite(Composite::Unnamed(items)) => {
-            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
+            for item in items {
+                collect_bytes_recursive(item, buf);
+            }
         }
-        _ => None,
+        _ => {}
     }
 }
 
