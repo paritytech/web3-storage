@@ -3468,6 +3468,36 @@ pub mod pallet {
                 });
             }
 
+            // Drain any still-pending AgreementRequests for this bucket and
+            // refund the requesters' locked funds. Without this the entries
+            // outlive the bucket: the provider's auto-coordinator keeps
+            // trying to accept them and every accept reverts with
+            // BucketNotFound, jamming the coordinator's queue. The map is
+            // double-keyed (provider, bucket) so we have to scan to find
+            // entries for this bucket; in practice there is one per
+            // matched provider per bucket, bounded by MaxPrimaryProviders.
+            let pending: Vec<(T::AccountId, AgreementRequest<T>)> = AgreementRequests::<T>::iter()
+                .filter(|(_, b_id, _)| *b_id == bucket_id)
+                .map(|(provider, _, request)| (provider, request))
+                .collect();
+            for (provider, request) in pending {
+                AgreementRequests::<T>::remove(&provider, bucket_id);
+                let total_locked = if let Some(ref replica_params) = request.replica_params {
+                    request
+                        .payment_locked
+                        .checked_add(&replica_params.sync_balance)
+                        .unwrap_or(request.payment_locked)
+                } else {
+                    request.payment_locked
+                };
+                T::Currency::unreserve(&request.requester, total_locked);
+                Self::deposit_event(Event::AgreementRequestWithdrawn {
+                    bucket_id,
+                    provider,
+                    payment_returned: total_locked,
+                });
+            }
+
             // Remove the bucket itself
             Buckets::<T>::remove(bucket_id);
 
