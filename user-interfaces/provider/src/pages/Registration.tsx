@@ -57,6 +57,16 @@ function getMinStake(): bigint {
   return (globalThis as any).__minProviderStake ?? 1_000_000_000_000_000n
 }
 
+// Mirror of the runtime's `MinStakePerByte` constant (raw units / byte).
+// The runtime rejects register_provider with `InsufficientStakeForCapacity`
+// if `stake < max_capacity * MIN_STAKE_PER_BYTE`. Hardcoded for now;
+// could be plumbed from chain consts in a follow-up.
+const MIN_STAKE_PER_BYTE = 1_000n
+
+function requiredStakeForCapacity(maxCapacity: bigint): bigint {
+  return maxCapacity * MIN_STAKE_PER_BYTE
+}
+
 // Registration wizard steps
 type WizardStep = 'connect' | 'stake' | 'settings' | 'confirm' | 'complete'
 
@@ -87,7 +97,7 @@ export function Registration() {
     acceptingReplica: false,
     replicaSyncPrice: null,
     acceptingExtensions: true,
-    maxCapacity: 1_073_741_824_000n, // 1 TB
+    maxCapacity: 1_000_000_000_000n, // 1 TB (10^12 bytes; matches runtime's SI convention)
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -569,6 +579,21 @@ export function Registration() {
               </p>
             </div>
 
+            {stakeAmount < requiredStakeForCapacity(settings.maxCapacity) && (
+              <div
+                data-testid="registration-stake-too-low"
+                className="flex items-start gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/30"
+              >
+                <AlertCircle className="h-4 w-4 text-red-500 mt-0.5" />
+                <p className="text-sm text-red-400">
+                  Stake of {formatTokens(stakeAmount)} is insufficient for{' '}
+                  {formatBytes(Number(settings.maxCapacity))} capacity. The runtime requires at
+                  least {formatTokens(requiredStakeForCapacity(settings.maxCapacity))}. Go back and
+                  raise the stake or lower the capacity.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setStep('settings')}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
@@ -578,7 +603,10 @@ export function Registration() {
                 data-testid="registration-submit"
                 className="flex-1"
                 onClick={handleRegister}
-                disabled={isSubmitting}
+                disabled={
+                  isSubmitting ||
+                  stakeAmount < requiredStakeForCapacity(settings.maxCapacity)
+                }
               >
                 {isSubmitting ? (
                   <>
@@ -767,7 +795,7 @@ function SettingsManager() {
           <h1 className="text-2xl font-bold">Provider Settings</h1>
           <p className="text-gray-400">Update your provider configuration</p>
         </div>
-        <Badge variant="success">Registered</Badge>
+        <Badge data-testid="provider-registered-badge" variant="success">Registered</Badge>
       </div>
 
       {error && (

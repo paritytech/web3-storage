@@ -1,36 +1,27 @@
 /**
  * Provider registration spec (slow ~30s each).
  *
- * Walks Eve through the registration wizard if she's not yet registered;
- * otherwise auto-skips with a clear message. Then verifies on-chain
- * `Providers.getValue(eve)` matches the form values, and that updating
- * pricePerByte via Settings round-trips to chain.
- *
- * NOTE: registration is one-shot per chain. Re-runs against a non-fresh
- * chain skip the fresh-registration test rather than failing.
+ * Wizard test uses Ferdie; globalSetup deregisters Ferdie before every
+ * suite run so this test always exercises the fresh-registration flow.
+ * Settings test uses Eve, who's pre-registered by globalSetup. Both tests
+ * run on every invocation — no skip-on-already-registered guards.
  */
 import { test, expect } from "../fixtures";
-import { Eve, getApi, isProviderRegistered } from "@web3-storage/test-helpers";
+import { Eve, Ferdie, getApi } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-async function switchToEve(page: import("@playwright/test").Page) {
-  // Open the account dropdown and select Eve.
+async function switchToFerdie(page: import("@playwright/test").Page) {
   await page.getByTestId("provider-account-button").click();
-  await page.getByTestId("provider-account-select-Eve (Dev)").click();
-  await expect(page.getByTestId("provider-account-name")).toContainText("Eve", {
+  await page.getByTestId("provider-account-select-Ferdie (Dev)").click();
+  await expect(page.getByTestId("provider-account-name")).toContainText("Ferdie", {
     timeout: 30_000,
   });
 }
 
-test("fresh registration with Eve via wizard", async ({ localPage }) => {
-  test.skip(
-    await isProviderRegistered(Eve.address),
-    "Eve already registered — re-run against a fresh chain to exercise this spec",
-  );
-
-  await switchToEve(localPage);
+test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
+  await switchToFerdie(localPage);
   await localPage.getByTestId("nav-registration").click();
 
   // Step 1: connect (already connected; the wizard auto-advances).
@@ -49,24 +40,22 @@ test("fresh registration with Eve via wizard", async ({ localPage }) => {
   // Step 4: confirm + submit.
   await localPage.getByTestId("registration-submit").click();
 
-  // Step 5: complete.
-  await expect(localPage.getByTestId("registration-complete")).toBeVisible({
+  // After registration, the wizard redirects to SettingsManager (there's no
+  // dedicated "complete" step — the Registered badge in the settings header
+  // is the only "you're registered" notification the UI exposes).
+  await expect(localPage.getByTestId("provider-registered-badge")).toBeVisible({
     timeout: 120_000,
   });
 
-  const onchain = await getApi().query.StorageProvider.Providers.getValue(Eve.address);
+  const onchain = await getApi().query.StorageProvider.Providers.getValue(Ferdie.address);
   expect(onchain).toBeTruthy();
 });
 
 test("settings update post-registration: pricePerByte round-trips", async ({
   localPage,
 }) => {
-  test.skip(
-    !(await isProviderRegistered(Eve.address)),
-    "Eve must be registered first — run the fresh registration spec or use the api helper",
-  );
-
-  await switchToEve(localPage);
+  // Eve is pre-registered by globalSetup and the active account via
+  // fixture localStorage; just navigate.
   await localPage.getByTestId("nav-registration").click();
 
   // Already-registered providers see the SettingsManager view, not the wizard.

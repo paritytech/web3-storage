@@ -39,6 +39,7 @@ export {
 
 export {
   registerProviderViaApi,
+  deregisterProviderViaApi,
   isProviderRegistered,
   type ProviderSettings,
   type RegistrationOptions,

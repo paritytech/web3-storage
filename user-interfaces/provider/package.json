@@ -5,22 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "papi && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
+    "papi:check": "papi generate && git diff --exit-code .papi"
   },
   "dependencies": {
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "@polkadot/api": "^16.5.6",
     "@polkadot/extension-dapp": "^0.63.1",
-    "@polkadot/keyring": "^14.0.3",
-    "@polkadot/util": "^14.0.3",
     "@polkadot/util-crypto": "^14.0.3",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
