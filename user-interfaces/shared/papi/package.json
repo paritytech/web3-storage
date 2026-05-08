@@ -7,7 +7,7 @@
   "scripts": {
     "papi:install": "papi generate",
     "papi:generate": "papi add -w ws://127.0.0.1:2222 parachain && papi generate",
-    "papi:check": "papi add -w ws://127.0.0.1:2222 parachain && papi generate && git diff --exit-code .papi"
+    "papi:check": "papi add -w ws://127.0.0.1:2222 parachain && papi generate && git diff --exit-code .papi/metadata"
   },
   "devDependencies": {
     "@polkadot-api/cli": "^0.20.4"

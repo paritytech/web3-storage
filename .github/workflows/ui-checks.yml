@@ -37,8 +37,6 @@ jobs:
       - name: Install workspace deps
         working-directory: user-interfaces
         run: pnpm install --frozen-lockfile
-        # postinstall regenerates the shared @polkadot-api/descriptors
-        # dist/ from committed metadata — no per-UI generate step needed.
 
       - name: Run unit tests
         working-directory: user-interfaces
