@@ -7,7 +7,7 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { type ParachainApi, getClient } from "@/state/chain.state";
+import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
 
@@ -200,18 +200,8 @@ export class DriveClient {
    * accounts for pending pool state → always returns the correct next nonce.
    */
   private async submit(tx: Transaction): Promise<TxFinalizedPayload> {
-    const { signer, address } = this.requireSigner();
-    const client = getClient();
-    if (!client) throw new Error("Not connected to chain");
-    // Resolve next nonce via the legacy `system_accountNextIndex` JSON-RPC
-    // method, bypassing PAPI's chainHead. PAPI's defaults (and its
-    // typed-API/storage variants) compute nonce from a block on the local
-    // chainHead, which can lag behind the chain's actual state when the
-    // page just reloaded and a different connection (e.g. test setup via
-    // api helpers) has been submitting same-signer txs. This RPC queries
-    // the node directly and accounts for pool state.
-    const nonce = await client._request<number>("system_accountNextIndex", [address]);
-    const result = await tx.signAndSubmit(signer, { nonce });
+    const { signer } = this.requireSigner();
+    const result = await tx.signAndSubmit(signer);
     if (!result.ok) {
       const err = JSON.stringify(result.dispatchError, (_k, v) =>
         typeof v === "bigint" ? v.toString() : v,

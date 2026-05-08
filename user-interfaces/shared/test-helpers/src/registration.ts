@@ -66,7 +66,6 @@ export async function registerProviderViaApi(
   await submitExtrinsic(
     api.tx.StorageProvider.update_provider_settings({ settings }),
     account.signer,
-    account.address,
   );
 
   return { alreadyRegistered: !!existing, address: account.address };

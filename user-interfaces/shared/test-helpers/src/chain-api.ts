@@ -40,22 +40,12 @@ export function disconnect(): void {
 
 /**
  * Sign + submit an extrinsic, wait for finalization, throw if it failed.
- *
- * Computes the next nonce from the legacy `system_accountNextIndex` JSON-RPC
- * method, bypassing PAPI's chainHead-cached "latest finalized" view. PAPI's
- * default reads nonce from a block on the local chainHead, which can lag
- * behind the chain's actual state when same-signer txs were submitted
- * recently — leading to `Invalid::Stale` rejections. The RPC queries the
- * node directly and accounts for pool state.
  */
 export async function submitExtrinsic(
   tx: Transaction,
   signer: PolkadotSigner,
-  signerAddress: string,
 ): Promise<TxFinalizedPayload> {
-  const client = getClient();
-  const nonce = await client._request<number>("system_accountNextIndex", [signerAddress]);
-  const result = await tx.signAndSubmit(signer, { nonce });
+  const result = await tx.signAndSubmit(signer);
   if (!result.ok) {
     const err = JSON.stringify(result.dispatchError, (_, v) =>
       typeof v === "bigint" ? v.toString() : v,

@@ -26,7 +26,6 @@ export async function createBucketViaApi(
       min_providers: opts.minProviders ?? 1,
     }),
     signer.signer,
-    signer.address,
   );
 
   const events = api.event.S3Registry.S3BucketCreated.filter(result.events as never);
@@ -42,7 +41,6 @@ export async function deleteBucketViaApi(signer: DevSigner, s3BucketId: bigint):
   await submitExtrinsic(
     api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId }),
     signer.signer,
-    signer.address,
   );
 }
 
@@ -94,7 +92,6 @@ export async function createDriveViaApi(
       min_providers: opts.minProviders ?? undefined,
     }),
     signer.signer,
-    signer.address,
   );
 
   const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
@@ -124,7 +121,6 @@ export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Pro
   await submitExtrinsic(
     api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
     signer.signer,
-    signer.address,
   );
 }
 
