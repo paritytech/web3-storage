@@ -12,6 +12,8 @@ use std::sync::Arc;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::{dev, Keypair};
 
+pub const PALLET_NAME: &str = "StorageProvider";
+
 /// Substrate client for chain interactions.
 #[derive(Clone)]
 pub struct SubstrateClient {
@@ -111,7 +113,7 @@ pub mod extrinsics {
     /// Create a register_provider extrinsic payload.
     pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "register_provider",
             vec![
                 subxt::dynamic::Value::from_bytes(multiaddr),
@@ -150,7 +152,7 @@ pub mod extrinsics {
         };
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "update_provider_settings",
             vec![subxt::dynamic::Value::named_composite([
                 (
@@ -185,7 +187,7 @@ pub mod extrinsics {
     /// Create an accept_agreement extrinsic payload.
     pub fn accept_agreement(bucket_id: u64) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "accept_agreement",
             vec![subxt::dynamic::Value::u128(bucket_id as u128)],
         )
@@ -194,7 +196,7 @@ pub mod extrinsics {
     /// Create a create_bucket extrinsic payload.
     pub fn create_bucket(min_providers: u32) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "create_bucket",
             vec![subxt::dynamic::Value::u128(min_providers as u128)],
         )
@@ -209,7 +211,7 @@ pub mod extrinsics {
         payment: u128,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "request_primary_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -233,7 +235,7 @@ pub mod extrinsics {
         min_sync_interval: u32,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "request_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -275,7 +277,7 @@ pub mod extrinsics {
             .collect();
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "checkpoint",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -295,7 +297,7 @@ pub mod extrinsics {
         chunk_index: u64,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "challenge_checkpoint",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -320,7 +322,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         // MultiSignature::Sr25519 variant index is 0
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "challenge_offchain",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -341,7 +343,7 @@ pub mod extrinsics {
     /// Create an add_stake extrinsic payload.
     pub fn add_stake(amount: u128) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "add_stake",
             vec![subxt::dynamic::Value::u128(amount)],
         )
@@ -350,7 +352,7 @@ pub mod extrinsics {
     /// Create a deregister_provider extrinsic payload.
     pub fn deregister_provider() -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "deregister_provider",
             Vec::<subxt::dynamic::Value>::new(),
         )
@@ -381,7 +383,7 @@ pub mod extrinsics {
         );
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "confirm_replica_sync",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -399,7 +401,7 @@ pub mod extrinsics {
         chunk_index: u64,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "challenge_replica",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -429,7 +431,7 @@ pub mod extrinsics {
         };
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "set_member",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -442,7 +444,7 @@ pub mod extrinsics {
     /// Create a remove_member extrinsic payload.
     pub fn remove_bucket_member(bucket_id: u64, member: AccountId32) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "remove_member",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -456,7 +458,7 @@ pub mod extrinsics {
     /// The chain uses the current snapshot's start_seq to set the freeze point.
     pub fn freeze_bucket(bucket_id: u64) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "freeze_bucket",
             vec![subxt::dynamic::Value::u128(bucket_id as u128)],
         )
@@ -470,7 +472,7 @@ pub mod extrinsics {
         max_payment: u128,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "extend_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -489,7 +491,7 @@ pub mod extrinsics {
         max_payment: u128,
     ) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "top_up_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -522,7 +524,7 @@ pub mod extrinsics {
         };
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "end_agreement",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -535,7 +537,7 @@ pub mod extrinsics {
     /// Create a set_extensions_blocked extrinsic payload (provider-side call).
     pub fn set_extensions_blocked(bucket_id: u64, blocked: bool) -> impl Payload {
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "set_extensions_blocked",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -656,7 +658,7 @@ pub mod extrinsics {
         );
 
         subxt::dynamic::tx(
-            "StorageProvider",
+            PALLET_NAME,
             "respond_to_challenge",
             vec![challenge_id_value, response],
         )
@@ -678,7 +680,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "Providers",
             vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
@@ -695,7 +697,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "Buckets",
             vec![subxt::dynamic::Value::u128(bucket_id as u128)],
         )
@@ -713,7 +715,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "StorageAgreements",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
@@ -736,7 +738,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "AgreementRequests",
             vec![subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8])],
         )
@@ -755,7 +757,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "StorageAgreements",
             vec![subxt::dynamic::Value::u128(bucket_id as u128)],
         )
@@ -772,7 +774,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "MemberBuckets",
             vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
@@ -789,7 +791,7 @@ pub mod storage {
         subxt::utils::Yes,
         subxt::utils::Yes,
     > {
-        subxt::dynamic::storage("StorageProvider", "Providers", vec![])
+        subxt::dynamic::storage(PALLET_NAME, "Providers", vec![])
     }
 
     /// Iterate all storage agreements (bucket_id × provider DoubleMap).
@@ -803,7 +805,7 @@ pub mod storage {
         subxt::utils::Yes,
         subxt::utils::Yes,
     > {
-        subxt::dynamic::storage("StorageProvider", "StorageAgreements", vec![])
+        subxt::dynamic::storage(PALLET_NAME, "StorageAgreements", vec![])
     }
 
     /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
@@ -817,7 +819,7 @@ pub mod storage {
         subxt::utils::Yes,
         subxt::utils::Yes,
     > {
-        subxt::dynamic::storage("StorageProvider", "Challenges", vec![])
+        subxt::dynamic::storage(PALLET_NAME, "Challenges", vec![])
     }
 
     /// Query challenges at a deadline block.
@@ -831,7 +833,7 @@ pub mod storage {
         subxt::utils::Yes,
     > {
         subxt::dynamic::storage(
-            "StorageProvider",
+            PALLET_NAME,
             "Challenges",
             vec![subxt::dynamic::Value::u128(deadline_block as u128)],
         )

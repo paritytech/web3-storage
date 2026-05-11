@@ -197,8 +197,8 @@ async fn test_analyze_provider() {
 
     assert!(analysis.reputation <= 100, "reputation should be 0-100");
     assert!(
-        (0.0..=1.0).contains(&analysis.challenge_success_rate),
-        "challenge_success_rate out of [0,1] range"
+        (0.0..=100.0).contains(&analysis.challenge_success_rate),
+        "challenge_success_rate out of [0,100] range"
     );
     assert_eq!(
         analysis.provider, setup.alice_ss58,

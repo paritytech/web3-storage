@@ -32,6 +32,7 @@
 //! ```
 
 use crate::scale_decode;
+use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
 use sp_core::H256;
@@ -584,7 +585,7 @@ impl EventSubscriber {
                                 match event_result {
                                     Ok(event) => {
                                         // Only process StorageProvider pallet events
-                                        if event.pallet_name() == "StorageProvider" {
+                                        if event.pallet_name() == PALLET_NAME {
                                             if let Some(storage_event) =
                                                 Self::parse_event(&event, block_hash, block_number)
                                             {
@@ -867,11 +868,9 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
         block_hash: H256,
         block_number: u32,
     ) -> Option<StorageEvent> {
-        tracing::info!("event.pallet_name() {:?}", event.pallet_name());
-        if event.pallet_name() != "StorageProvider" {
+        if event.pallet_name() != PALLET_NAME {
             return None;
         }
-        tracing::info!("{:?} Should goes here", event.pallet_name());
 
         // We log decode failures at TRACE level so callers don't need to
         // worry about noisy warnings for known-unhandled variants.
@@ -882,8 +881,6 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 return None;
             }
         };
-
-        tracing::info!("event variant: {:?}", event.variant_name());
 
         match event.variant_name() {
             // ── Checkpoint ────────────────────────────────────────────────────

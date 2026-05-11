@@ -7,6 +7,8 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{storage, SubstrateClient};
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::AccountId32;
 use subxt::ext::scale_value::{Composite, Primitive, ValueDef, Variant};
 
 /// Storage requirements for provider matching.
@@ -192,13 +194,9 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]
-            // account at [48..80]
-            let key = &kv.key_bytes;
-            let account_str = if key.len() >= 80 {
-                format!("0x{}", hex::encode(&key[48..80]))
-            } else {
-                String::new()
+            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+                Some(s) => s,
+                None => continue,
             };
 
             let value = match kv.value.to_value() {
@@ -216,6 +214,12 @@ impl DiscoveryClient {
                     continue;
                 }
             };
+
+            // Hard filter: enforce the caller's price ceiling. Other partial-match
+            // conditions (capacity, duration) still surface via score_provider.
+            if info.price_per_byte > requirements.max_price_per_byte {
+                continue;
+            }
 
             let matched = score_provider(account_str, info, &requirements);
             results.push(matched);
@@ -285,11 +289,9 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let key = &kv.key_bytes;
-            let account_str = if key.len() >= 80 {
-                format!("0x{}", hex::encode(&key[48..80]))
-            } else {
-                continue;
+            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+                Some(s) => s,
+                None => continue,
             };
 
             let value = match kv.value.to_value() {
@@ -515,11 +517,9 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let key = &kv.key_bytes;
-            let account_str = if key.len() >= 80 {
-                format!("0x{}", hex::encode(&key[48..80]))
-            } else {
-                continue;
+            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+                Some(s) => s,
+                None => continue,
             };
 
             let value = match kv.value.to_value() {
@@ -545,6 +545,21 @@ impl DiscoveryClient {
 // ─────────────────────────────────────────────────────────────────────────────
 // Private helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Extract the provider's `AccountId32` from a `Providers` storage key and render it as
+/// SS58.
+///
+/// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]`,
+/// so the raw account bytes live at `[48..80]`. Returns `None` when the key is too short
+/// to contain the account suffix.
+fn account_ss58_from_key(key: &[u8]) -> Option<String> {
+    if key.len() < 80 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&key[48..80]);
+    Some(AccountId32::from(bytes).to_ss58check())
+}
 
 fn named_field<'a>(
     value: &'a subxt::ext::scale_value::Value<u32>,
@@ -715,6 +730,3 @@ fn score_provider(
         partial_reason,
     }
 }
-
-// Re-export AccountId32 so callers can build typed account IDs if needed.
-pub use sp_runtime::AccountId32 as ProviderAccountId;

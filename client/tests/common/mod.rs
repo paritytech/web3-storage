@@ -1,5 +1,7 @@
 //! Shared test helpers for integration tests.
 
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
 use storage_client::{
     AdminClient, ChallengerClient, ClientConfig, DiscoveryClient, ProviderClient, ProviderSettings,
@@ -44,8 +46,15 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 /// `set_dev_signer` uses internally, so the account and signer always match.
 #[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
-    use sp_core::crypto::Ss58Codec as _;
-    use sp_runtime::AccountId32;
+    dev_account(name).to_ss58check()
+}
+
+/// Derive the typed `AccountId32` for a dev account by name ("alice", "bob", …).
+///
+/// Same derivation as [`dev_ss58`], just without the SS58 round-trip — useful for
+/// storage queries / parser APIs that take `&AccountId32` directly.
+#[allow(dead_code)]
+pub fn dev_account(name: &str) -> AccountId32 {
     use subxt_signer::sr25519::dev;
 
     let keypair = match name {
@@ -57,8 +66,7 @@ pub fn dev_ss58(name: &str) -> String {
         "ferdie" => dev::ferdie(),
         other => panic!("unknown dev account: {other}"),
     };
-    let bytes: [u8; 32] = keypair.public_key().0;
-    AccountId32::from(bytes).to_ss58check()
+    AccountId32::from(keypair.public_key().0)
 }
 
 // ─── Chain client config ──────────────────────────────────────────────────────
@@ -88,8 +96,8 @@ pub struct ChainSetup {
 /// Set up the minimum on-chain state needed to exercise admin, challenger, and
 /// discovery clients against an otherwise empty dev chain:
 ///
-/// 1. Registers Alice as a storage provider (idempotent — already-registered
-///    errors are silently ignored).
+/// 1. Registers Alice as a storage provider (skipped when she is already
+///    registered — avoids burning an extrinsic on every test rerun).
 /// 2. Updates Alice's settings so she is accepting primary agreements.
 /// 3. Creates a fresh bucket owned by Alice.
 ///
@@ -107,26 +115,33 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     }
     provider.set_dev_signer("alice").ok()?;
 
-    // Idempotent: ignore "already registered" errors so tests survive reruns.
-    let _ = provider
-        .register(
-            "/ip4/127.0.0.1/tcp/3333".to_string(),
-            vec![0u8; 32],
-            MIN_STAKE,
-        )
-        .await;
+    let already_registered = matches!(
+        provider.get_provider_info(&dev_account("alice")).await,
+        Ok(Some(_))
+    );
 
-    let _ = provider
-        .update_settings(ProviderSettings {
-            price_per_byte: 1_000_000,
-            min_duration: 1,
-            max_duration: 1_000_000,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            max_capacity: 10 * 1024 * 1024 * 1024, // 10 GiB
-        })
-        .await;
+    if !already_registered {
+        // Idempotent: ignore "already registered" errors so tests survive races.
+        let _ = provider
+            .register(
+                "/ip4/127.0.0.1/tcp/3333".to_string(),
+                vec![0u8; 32],
+                MIN_STAKE,
+            )
+            .await;
+
+        let _ = provider
+            .update_settings(ProviderSettings {
+                price_per_byte: 1_000_000,
+                min_duration: 1,
+                max_duration: 1_000_000,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 10 * 1024 * 1024 * 1024, // 10 GiB
+            })
+            .await;
+    }
 
     // ── Create a fresh bucket as Alice ────────────────────────────────────────
     let mut admin = AdminClient::new(chain_config(), alice_ss58.clone()).ok()?;
@@ -160,6 +175,17 @@ pub async fn alice_admin() -> Option<AdminClient> {
 #[allow(dead_code)]
 pub async fn alice_challenger() -> Option<ChallengerClient> {
     let mut client = ChallengerClient::new(chain_config(), dev_ss58("alice")).ok()?;
+    if client.connect().await.is_err() {
+        return None;
+    }
+    client.set_dev_signer("alice").ok()?;
+    Some(client)
+}
+
+/// Build a `ProviderClient` signed by Alice. Returns `None` if the chain is down.
+#[allow(dead_code)]
+pub async fn alice_provider() -> Option<ProviderClient> {
+    let mut client = ProviderClient::new(chain_config(), dev_ss58("alice")).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
