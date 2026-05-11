@@ -567,6 +567,8 @@ mod benches {
         [pallet_session, SessionBench::<Runtime>]
         [pallet_sudo, Sudo]
         [pallet_storage_provider, StorageProvider]
+        [pallet_drive_registry, DriveRegistry]
+        [pallet_s3_registry, S3Registry]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]
