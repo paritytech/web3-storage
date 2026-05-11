@@ -102,6 +102,7 @@ pub mod discovery;
 pub mod encryption;
 pub mod event_subscription;
 pub mod provider;
+pub mod scale_decode;
 pub mod storage_user;
 pub mod substrate;
 pub mod verification;

@@ -40,13 +40,15 @@ mod substrate;
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
+use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, ClientConfig, StorageUserClient,
+    CheckpointManager, ClientConfig, EventParser, StorageUserClient,
 };
+use substrate::{FileSystemEvent, FileSystemEventParser};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -868,8 +870,6 @@ impl FileSystemClient {
         payment: u128,
         min_providers: Option<u8>,
     ) -> Result<DriveId> {
-        use subxt::dynamic::At;
-
         let name_bytes = name.map(|n| n.as_bytes().to_vec());
 
         // Build the extrinsic
@@ -897,20 +897,13 @@ impl FileSystemClient {
                 FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
             })?;
 
-        // Scan finalized events for the DriveRegistry drive-created event.
-        for ev in events.iter() {
-            let ev =
-                ev.map_err(|e| FsClientError::Blockchain(format!("Event decode error: {e}")))?;
-
-            tracing::info!("Received event: {}.{}", ev.pallet_name(), ev.variant_name());
-
-            if ev.pallet_name() == "DriveRegistry" {
-                if let Ok(value) = ev.field_values() {
-                    if let Some(drive_id) = value.at(0).and_then(|v| v.as_u128()) {
-                        tracing::info!("Drive created with ID: {drive_id}");
-                        return Ok(drive_id as DriveId);
-                    }
-                }
+        // Scan finalized events for the DriveRegistry::DriveCreated event.
+        // ExtrinsicEvents doesn't carry block hash / number, and this caller only needs
+        // the drive_id, so pass placeholders for the parser's block-context fields.
+        for parsed in FileSystemEventParser::from_extrinsic_events(&events, H256::zero(), 0) {
+            tracing::info!("DriveRegistry event: {parsed:?}");
+            if let FileSystemEvent::DriveCreated { drive_id, .. } = parsed {
+                return Ok(drive_id);
             }
         }
 

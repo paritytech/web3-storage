@@ -31,9 +31,9 @@
 //! # }
 //! ```
 
+use crate::scale_decode;
 use crate::ClientError;
 use futures::Stream;
-use scale_value::{At, Composite, Primitive, ValueDef};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashSet;
@@ -42,6 +42,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use storage_primitives::BucketId;
+use subxt::ext::scale_value::{self, At};
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
@@ -887,47 +888,47 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
         match event.variant_name() {
             // ── Checkpoint ────────────────────────────────────────────────────
             "BucketCheckpointed" => Some(StorageEvent::BucketCheckpointed {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                mmr_root: Self::field_h256(&fields, "mmr_root")?,
-                start_seq: Self::field_u64(&fields, "start_seq")?,
-                leaf_count: Self::field_u64(&fields, "leaf_count")?,
-                providers: Self::field_accounts(&fields, "providers"),
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                mmr_root: scale_decode::field_h256(&fields, "mmr_root")?,
+                start_seq: scale_decode::field_u64(&fields, "start_seq")?,
+                leaf_count: scale_decode::field_u64(&fields, "leaf_count")?,
+                providers: scale_decode::field_accounts(&fields, "providers"),
                 block_hash,
                 block_number,
             }),
 
             // ── Challenges ────────────────────────────────────────────────────
             "ChallengeCreated" => {
-                let (deadline, index) = Self::field_challenge_id(&fields, "challenge_id")?;
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
                 Some(StorageEvent::ChallengeCreated {
                     challenge_id: (deadline, index),
-                    bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                    provider: Self::field_account(&fields, "provider")?,
-                    challenger: Self::field_account(&fields, "challenger")?,
-                    respond_by: Self::field_u32(&fields, "respond_by")?,
+                    bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    challenger: scale_decode::field_account(&fields, "challenger")?,
+                    respond_by: scale_decode::field_u32(&fields, "respond_by")?,
                     block_hash,
                     block_number,
                 })
             }
             "ChallengeDefended" => {
-                let (deadline, index) = Self::field_challenge_id(&fields, "challenge_id")?;
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
                 Some(StorageEvent::ChallengeDefended {
                     challenge_id: (deadline, index),
-                    provider: Self::field_account(&fields, "provider")?,
-                    response_time_blocks: Self::field_u32(&fields, "response_time_blocks")?,
-                    challenger_cost: Self::field_u128(&fields, "challenger_cost")?,
-                    provider_cost: Self::field_u128(&fields, "provider_cost")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    response_time_blocks: scale_decode::field_u32(&fields, "response_time_blocks")?,
+                    challenger_cost: scale_decode::field_u128(&fields, "challenger_cost")?,
+                    provider_cost: scale_decode::field_u128(&fields, "provider_cost")?,
                     block_hash,
                     block_number,
                 })
             }
             "ChallengeSlashed" => {
-                let (deadline, index) = Self::field_challenge_id(&fields, "challenge_id")?;
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
                 Some(StorageEvent::ChallengeSlashed {
                     challenge_id: (deadline, index),
-                    provider: Self::field_account(&fields, "provider")?,
-                    slashed_amount: Self::field_u128(&fields, "slashed_amount")?,
-                    challenger_reward: Self::field_u128(&fields, "challenger_reward")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    slashed_amount: scale_decode::field_u128(&fields, "slashed_amount")?,
+                    challenger_reward: scale_decode::field_u128(&fields, "challenger_reward")?,
                     block_hash,
                     block_number,
                 })
@@ -935,77 +936,77 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 
             // ── Providers ─────────────────────────────────────────────────────
             "ProviderRegistered" => Some(StorageEvent::ProviderRegistered {
-                provider: Self::field_account(&fields, "provider")?,
-                stake: Self::field_u128(&fields, "stake")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                stake: scale_decode::field_u128(&fields, "stake")?,
                 block_hash,
                 block_number,
             }),
             "ProviderAddedToBucket" => Some(StorageEvent::ProviderAddedToBucket {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
                 block_hash,
                 block_number,
             }),
             "PrimaryProviderRemoved" => Some(StorageEvent::PrimaryProviderRemoved {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
-                reason: Self::field_removal_reason(&fields, "reason"),
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                reason: field_removal_reason(&fields, "reason"),
                 block_hash,
                 block_number,
             }),
 
             // ── Agreements ────────────────────────────────────────────────────
             "AgreementRequested" => Some(StorageEvent::AgreementRequested {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
-                requester: Self::field_account(&fields, "requester")?,
-                max_bytes: Self::field_u64(&fields, "max_bytes")?,
-                payment_locked: Self::field_u128(&fields, "payment_locked")?,
-                duration: Self::field_u32(&fields, "duration")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                requester: scale_decode::field_account(&fields, "requester")?,
+                max_bytes: scale_decode::field_u64(&fields, "max_bytes")?,
+                payment_locked: scale_decode::field_u128(&fields, "payment_locked")?,
+                duration: scale_decode::field_u32(&fields, "duration")?,
                 block_hash,
                 block_number,
             }),
             "AgreementAccepted" => Some(StorageEvent::AgreementAccepted {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
-                expires_at: Self::field_u32(&fields, "expires_at")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                expires_at: scale_decode::field_u32(&fields, "expires_at")?,
                 block_hash,
                 block_number,
             }),
             "AgreementEnded" => Some(StorageEvent::AgreementEnded {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
-                payment_to_provider: Self::field_u128(&fields, "payment_to_provider")?,
-                burned: Self::field_u128(&fields, "burned")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                payment_to_provider: scale_decode::field_u128(&fields, "payment_to_provider")?,
+                burned: scale_decode::field_u128(&fields, "burned")?,
                 block_hash,
                 block_number,
             }),
 
             // ── Buckets ───────────────────────────────────────────────────────
             "BucketCreated" => Some(StorageEvent::BucketCreated {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                admin: Self::field_account(&fields, "admin")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                admin: scale_decode::field_account(&fields, "admin")?,
                 block_hash,
                 block_number,
             }),
             "BucketFrozen" => Some(StorageEvent::BucketFrozen {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                frozen_start_seq: Self::field_u64(&fields, "frozen_start_seq")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                frozen_start_seq: scale_decode::field_u64(&fields, "frozen_start_seq")?,
                 block_hash,
                 block_number,
             }),
             "BucketDeleted" => Some(StorageEvent::BucketDeleted {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
                 block_hash,
                 block_number,
             }),
 
             // ── Replicas ──────────────────────────────────────────────────────
             "ReplicaSynced" => Some(StorageEvent::ReplicaSynced {
-                bucket_id: Self::field_u64(&fields, "bucket_id")?,
-                provider: Self::field_account(&fields, "provider")?,
-                mmr_root: Self::field_h256(&fields, "mmr_root")?,
-                sync_payment: Self::field_u128(&fields, "sync_payment")?,
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                mmr_root: scale_decode::field_h256(&fields, "mmr_root")?,
+                sync_payment: scale_decode::field_u128(&fields, "sync_payment")?,
                 block_hash,
                 block_number,
             }),
@@ -1021,129 +1022,26 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
     }
 }
 
-// TODO(Tung): Bump subtxt then re-visit to check if this can be a common module
-// Private SCALE decoding helpers live on the struct as inherent methods so they
-// don't pollute the trait surface and can't be called by external code.
-impl StorageProviderEventParser {
-    // ── Field extraction helpers ─────────────────────────────────────────────
-    //
-    // `field_values()` returns `Composite<u32>` (field index as context).
-    // `.at(name)` on a `Composite<u32>` yields `Option<&Value<u32>>`.
+// Parser-specific field helpers — these encode shapes from the StorageProvider pallet
+// (the `ChallengeId` struct and `RemovalReason` enum) and so stay alongside the parser
+// rather than in [`crate::scale_decode`].
 
-    fn field_u64(fields: &scale_value::Composite<u32>, name: &str) -> Option<u64> {
-        fields.at(name)?.as_u128().map(|v| v as u64)
-    }
+/// Read the StorageProvider pallet's `ChallengeId` named composite as a `(deadline, index)`
+/// pair.
+fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Option<(u32, u16)> {
+    let v = fields.at(name)?;
+    let deadline = v.at("deadline")?.as_u128()? as u32;
+    let index = v.at("index")?.as_u128()? as u16;
+    Some((deadline, index))
+}
 
-    fn field_u32(fields: &scale_value::Composite<u32>, name: &str) -> Option<u32> {
-        fields.at(name)?.as_u128().map(|v| v as u32)
-    }
-
-    fn field_u128(fields: &scale_value::Composite<u32>, name: &str) -> Option<u128> {
-        fields.at(name)?.as_u128()
-    }
-
-    fn field_account(fields: &scale_value::Composite<u32>, name: &str) -> Option<AccountId32> {
-        Self::decode_account(fields.at(name)?)
-    }
-
-    fn field_h256(fields: &scale_value::Composite<u32>, name: &str) -> Option<H256> {
-        Self::decode_h256(fields.at(name)?)
-    }
-
-    fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Option<(u32, u16)> {
-        let v = fields.at(name)?;
-        let deadline = v.at("deadline")?.as_u128()? as u32;
-        let index = v.at("index")?.as_u128()? as u16;
-        Some((deadline, index))
-    }
-
-    fn field_accounts(fields: &scale_value::Composite<u32>, name: &str) -> Vec<AccountId32> {
-        fields
-            .at(name)
-            .map(Self::decode_account_vec)
-            .unwrap_or_default()
-    }
-
-    fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> String {
-        fields
-            .at(name)
-            .and_then(Self::decode_removal_reason)
-            .unwrap_or_else(|| "Unknown".to_string())
-    }
-
-    // ── Value decoders ───────────────────────────────────────────────────────
-    //
-    // These accept `&Value<u32>` — the type yielded by `.at()` on a composite.
-
-    /// Decode an `AccountId32` from a SCALE value.
-    ///
-    /// `AccountId32` is a newtype struct in the SCALE type system, so subxt
-    /// decodes it as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
-    /// `collect_le_bytes` handles arbitrary nesting depth.
-    fn decode_account(v: &scale_value::Value<u32>) -> Option<AccountId32> {
-        let mut bytes = [0u8; 32];
-        if Self::collect_le_bytes(v, &mut bytes, 0) == 32 {
-            Some(AccountId32::new(bytes))
-        } else {
-            None
-        }
-    }
-
-    /// Decode an `H256` from a SCALE value (same nesting as `AccountId32`).
-    fn decode_h256(v: &scale_value::Value<u32>) -> Option<H256> {
-        let mut bytes = [0u8; 32];
-        if Self::collect_le_bytes(v, &mut bytes, 0) == 32 {
-            Some(H256::from(bytes))
-        } else {
-            None
-        }
-    }
-
-    /// Recursively collect raw bytes from a SCALE value into `buf`, starting at
-    /// `offset`. Returns the new offset (i.e. `offset + bytes_written`).
-    ///
-    /// Handles `Primitive::U128` leaves (each contributes one byte) and
-    /// `Composite::Unnamed` nodes (recurse into children), which covers both
-    /// flat arrays of bytes and newtype-wrapped arrays like `AccountId32`.
-    fn collect_le_bytes(v: &scale_value::Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
-        match &v.value {
-            ValueDef::Primitive(Primitive::U128(n)) => {
-                if offset < 32 {
-                    buf[offset] = *n as u8;
-                    offset + 1
-                } else {
-                    offset
-                }
-            }
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                let mut pos = offset;
-                for item in items {
-                    pos = Self::collect_le_bytes(item, buf, pos);
-                }
-                pos
-            }
-            _ => offset,
-        }
-    }
-
-    /// Decode a `Vec<AccountId32>` from a SCALE unnamed composite of account
-    /// composites (i.e. a `Vec<AccountId32>` on the wire).
-    fn decode_account_vec(v: &scale_value::Value<u32>) -> Vec<AccountId32> {
-        match &v.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                items.iter().filter_map(Self::decode_account).collect()
-            }
-            _ => vec![],
-        }
-    }
-
-    /// Decode a `RemovalReason` variant name from a SCALE variant value.
-    fn decode_removal_reason(v: &scale_value::Value<u32>) -> Option<String> {
-        match &v.value {
-            ValueDef::Variant(var) => Some(var.name.clone()),
-            _ => None,
-        }
-    }
+/// Read a `RemovalReason`-shaped variant field, falling back to `"Unknown"` when the field
+/// is missing or not a variant.
+fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> String {
+    fields
+        .at(name)
+        .and_then(scale_decode::variant_name)
+        .unwrap_or_else(|| "Unknown".to_string())
 }
 
 // ============================================================================

@@ -15,8 +15,8 @@ tower-http = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
-subxt = "0.37"
-subxt-signer = "0.37"
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
 base64 = "0.22"
 thiserror = "2.0"
 tracing = "0.1"
