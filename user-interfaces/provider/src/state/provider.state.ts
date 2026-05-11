@@ -120,7 +120,7 @@ export interface BucketDetail {
     status: 'active' | 'expired' | 'terminated'
   }
   checkpointConfig: { interval: number; gracePeriod: number; enabled: boolean } | null
-  lastCheckpointWindow: number | null
+  lastCheckpointWindow: bigint | null
   checkpointPoolBalance: bigint
   checkpointReward: bigint
   isCheckpointOverdue: boolean
@@ -218,9 +218,8 @@ export async function loadProviderData(address: string): Promise<void> {
   try {
     // Clear stale challenge cache if chain restarted (different genesis)
     try {
-      const { getPolkadotApi } = await import('@/lib/chain-client')
-      const api = getPolkadotApi()
-      if (api) clearStaleCache(api.genesisHash.toHex())
+      const { getGenesisHash } = await import('@/lib/chain-client')
+      clearStaleCache(await getGenesisHash())
     } catch { /* ignore */ }
 
     // Query provider info and settings in a single RPC call
@@ -275,8 +274,8 @@ export async function loadProviderData(address: string): Promise<void> {
             const agr = agreementsByBucket.get(bd.bucketId)
             let isOverdue = false
             if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && currentBlock > 0) {
-              const expectedWindow = Math.floor(currentBlock / bd.checkpointConfig.interval)
-              isOverdue = expectedWindow > bd.lastCheckpointWindow + 1
+              const expectedWindow = BigInt(Math.floor(currentBlock / bd.checkpointConfig.interval))
+              isOverdue = expectedWindow > bd.lastCheckpointWindow + 1n
             }
             return convertBucketDetail(bd, agr || null, isOverdue)
           }).sort((a, b) => a.bucketId - b.bucketId)
@@ -445,30 +444,15 @@ export async function addStake(
  * Respond to a challenge (submits extrinsic via wallet)
  */
 export async function respondToChallenge(
-  challengeId: number,
-  proof: Uint8Array,
-  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
+  _challengeId: number,
+  _proof: Uint8Array,
+  _signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
 ): Promise<void> {
-  isLoading$.next(true)
-  error$.next(null)
-
-  try {
-    const { submitChallengeResponse } = await import('@/lib/chain-client')
-    await submitChallengeResponse(challengeId, proof, signer)
-
-    // Update challenge status locally
-    const currentChallenges = challenges$.getValue()
-    challenges$.next(
-      currentChallenges.map((c) =>
-        c.id === challengeId ? { ...c, status: 'responded' as const } : c
-      )
-    )
-  } catch (err) {
-    error$.next(err instanceof Error ? err.message : 'Challenge response failed')
-    throw err
-  } finally {
-    isLoading$.next(false)
-  }
+  // The runtime extrinsic takes a structured `ChallengeResponse` payload and
+  // a `ChallengeId { deadline, index }`, not just bytes + a number. The
+  // submission helper was removed during the PAPI v2 migration; add it back
+  // when implementing the manual challenge-response UI flow.
+  throw new Error('respondToChallenge: not implemented in current build')
 }
 
 export function clearProviderState(): void {

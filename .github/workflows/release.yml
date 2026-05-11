@@ -17,7 +17,7 @@ jobs:
       name: ${{ steps.config.outputs.name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Determine runtime from tag
         id: config
@@ -42,7 +42,7 @@ jobs:
 
       - name: Build ${{ steps.config.outputs.name }} runtime
         id: srtool_build
-        uses: chevdor/srtool-actions@v0.9.2
+        uses: chevdor/srtool-actions@48e9baed50ca414936dfac59d34d8b9bbe581abd # v0.9.2
         with:
           chain: ${{ steps.config.outputs.name }}
           package: ${{ steps.config.outputs.package }}
@@ -57,7 +57,7 @@ jobs:
           echo "$SRTOOL_JSON" | jq > "${NAME}_srtool_output.json"
 
       - name: Upload ${{ steps.config.outputs.name }} wasm
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.config.outputs.name }}-runtime
           path: |
@@ -71,10 +71,10 @@ jobs:
     needs: [build-runtime]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
@@ -115,7 +115,7 @@ jobs:
           cat RELEASE_NOTES.md
 
       - name: Create release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           name: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
           files: |

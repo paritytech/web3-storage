@@ -82,7 +82,7 @@ function AgreementsContent() {
           {activeAgreements.length === 0 ? (
             <p className="text-gray-500 text-center py-8">No active agreements</p>
           ) : (
-            <Table>
+            <Table data-testid="agreements-table">
               <TableHeader>
                 <TableRow>
                   <TableHead>Bucket</TableHead>
@@ -96,7 +96,7 @@ function AgreementsContent() {
               </TableHeader>
               <TableBody>
                 {activeAgreements.map((agreement) => (
-                  <TableRow key={agreement.id}>
+                  <TableRow key={agreement.id} data-testid={`agreements-row-${agreement.bucketId}`}>
                     <TableCell className="font-mono">#{agreement.bucketId}</TableCell>
                     <TableCell>
                       <span className="font-mono">{formatAddress(agreement.user)}</span>

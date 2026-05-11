@@ -76,13 +76,34 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
   }, [expanded, bucketId, refreshMembers, refreshProviders]);
 
   const handleAddMember = async () => {
-    if (!newMemberAccount.trim()) return;
+    const trimmed = newMemberAccount.trim();
+    if (!trimmed) return;
+    // The runtime's set_member updates an existing member's role rather
+    // than rejecting; surface the duplicate at the UI layer so users get
+    // an obvious "already a member" message instead of a silent role swap.
+    if (members.some((m) => m.account === trimmed)) {
+      toast({
+        title: "Failed to add member",
+        description: `${truncateHash(trimmed)} is already a member`,
+        variant: "destructive",
+      });
+      return;
+    }
     setAdding(true);
     try {
-      await addBucketMember(bucketId, newMemberAccount.trim(), newMemberRole);
+      await addBucketMember(bucketId, trimmed, newMemberRole);
       setNewMemberAccount("");
       toast({ title: "Member added", description: `${truncateHash(newMemberAccount)} as ${newMemberRole}` });
-      refreshMembers();
+      // Optimistic insert: tx resolved at best-block, but chainHead can
+      // lag a few hundred ms behind. Don't call refreshMembers here — it
+      // races chainHead and would clobber this insert with the pre-tx
+      // list. Reconciliation happens on the next expand or via the
+      // manual refresh button. Mirrors useStorage.createBucket.
+      setMembers((prev) =>
+        prev.some((m) => m.account === trimmed)
+          ? prev
+          : [...prev, { account: trimmed, role: newMemberRole }],
+      );
     } catch (err) {
       toast({
         title: "Failed to add member",
@@ -122,8 +143,9 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
   };
 
   return (
-    <Card>
+    <Card data-testid="bucket-info-panel">
       <button
+        data-testid="bucket-info-toggle"
         className="w-full flex items-center gap-2 p-4 text-left"
         onClick={() => setExpanded(!expanded)}
       >
@@ -197,7 +219,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
             {members.length === 0 ? (
               <p className="text-xs text-muted-foreground">No members found</p>
             ) : (
-              <table className="w-full text-xs">
+              <table data-testid="bucket-members-table" className="w-full text-xs">
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-1 font-medium">Account</th>
@@ -207,7 +229,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                 </thead>
                 <tbody>
                   {members.map((m) => (
-                    <tr key={m.account} className="border-b last:border-0">
+                    <tr key={m.account} data-testid={`bucket-member-row-${m.account}`} className="border-b last:border-0">
                       <td className="py-1.5 font-mono text-muted-foreground">
                         {truncateHash(m.account)}
                       </td>
@@ -216,6 +238,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                         <td className="py-1.5 text-right">
                           {m.account !== signerAddress && (
                             <Button
+                              data-testid={`bucket-member-remove-${m.account}`}
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 text-muted-foreground hover:text-destructive"
@@ -236,12 +259,14 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
             {isAdmin && (
               <div className="flex items-center gap-2 mt-2">
                 <Input
+                  data-testid="bucket-add-member-address"
                   placeholder="Account address"
                   value={newMemberAccount}
                   onChange={(e) => setNewMemberAccount(e.target.value)}
                   className="flex-1 text-xs h-8"
                 />
                 <select
+                  data-testid="bucket-add-member-role"
                   className="rounded-md border border-input bg-background px-2 py-1 text-xs h-8"
                   value={newMemberRole}
                   onChange={(e) => setNewMemberRole(e.target.value as 'Admin' | 'Writer' | 'Reader')}
@@ -251,6 +276,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                   <option value="Reader">Reader</option>
                 </select>
                 <Button
+                  data-testid="bucket-add-member-submit"
                   size="sm"
                   className="h-8 text-xs"
                   onClick={handleAddMember}

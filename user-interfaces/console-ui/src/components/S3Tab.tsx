@@ -386,6 +386,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       {/* Bucket bar */}
       <div className="flex items-center gap-3">
         <select
+          data-testid="s3-bucket-selector"
           className="flex-1 max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
           value={selectedBucket?.s3BucketId.toString() || ""}
           onChange={(e) => {
@@ -404,23 +405,23 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
             </option>
           ))}
         </select>
-        <Button variant="outline" size="sm" onClick={() => setShowCreateBucket(true)}>
+        <Button data-testid="s3-new-bucket" variant="outline" size="sm" onClick={() => setShowCreateBucket(true)}>
           <Plus className="mr-2 h-4 w-4" />
           New Bucket
         </Button>
         {selectedBucket && canAdmin && (
           confirmDelete ? (
             <div className="flex items-center gap-1">
-              <Button variant="destructive" size="sm" onClick={handleDeleteBucket} disabled={deleting}>
+              <Button data-testid="s3-delete-confirm" variant="destructive" size="sm" onClick={handleDeleteBucket} disabled={deleting}>
                 {deleting ? <RefreshCw className="mr-1 h-3 w-3 animate-spin" /> : null}
                 Delete
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+              <Button data-testid="s3-delete-cancel" variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
                 Cancel
               </Button>
             </div>
           ) : (
-            <Button variant="ghost" size="sm" onClick={handleDeleteBucket} className="text-muted-foreground hover:text-destructive">
+            <Button data-testid="s3-delete-bucket" variant="ghost" size="sm" onClick={handleDeleteBucket} className="text-muted-foreground hover:text-destructive">
               <Trash2 className="h-4 w-4" />
             </Button>
           )
@@ -429,13 +430,14 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
 
       {/* Create Bucket Dialog */}
       {showCreateBucket && (
-        <Card>
+        <Card data-testid="s3-create-bucket-form">
           <CardHeader>
             <CardTitle>Create New S3 Bucket</CardTitle>
             <CardDescription>Names must be 3-63 chars, lowercase, S3 naming rules</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Input
+              data-testid="s3-bucket-name-input"
               placeholder="my-bucket-name"
               value={newBucketName}
               onChange={(e) => setNewBucketName(e.target.value.toLowerCase())}
@@ -443,26 +445,26 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium">Capacity (bytes)</label>
-                <Input type="number" value={bucketCapacity} onChange={(e) => setBucketCapacity(e.target.value)} />
+                <Input data-testid="s3-bucket-capacity-input" type="number" value={bucketCapacity} onChange={(e) => setBucketCapacity(e.target.value)} />
                 <p className="text-xs text-muted-foreground">{formatBytes(parseInt(bucketCapacity, 10) || 0)}</p>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium">Duration (blocks)</label>
-                <Input type="number" value={bucketDuration} onChange={(e) => setBucketDuration(e.target.value)} />
+                <Input data-testid="s3-bucket-duration-input" type="number" value={bucketDuration} onChange={(e) => setBucketDuration(e.target.value)} />
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium">Max Payment</label>
-                <Input type="number" value={bucketMaxPayment} onChange={(e) => setBucketMaxPayment(e.target.value)} />
+                <Input data-testid="s3-bucket-maxpayment-input" type="number" value={bucketMaxPayment} onChange={(e) => setBucketMaxPayment(e.target.value)} />
               </div>
             </div>
             {createError && (
-              <p className="text-sm text-destructive">{createError}</p>
+              <p data-testid="s3-create-error" className="text-sm text-destructive">{createError}</p>
             )}
             <div className="flex gap-2">
-              <Button onClick={handleCreateBucket} disabled={creating || loading}>
+              <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={creating || loading}>
                 {creating ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Submitting...</> : "Create"}
               </Button>
-              <Button variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }} disabled={creating}>Cancel</Button>
+              <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }} disabled={creating}>Cancel</Button>
             </div>
           </CardContent>
         </Card>
@@ -509,12 +511,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
           {/* Toolbar */}
           <div className="flex items-center gap-2">
             {canWrite && (
-              <Button variant="outline" size="sm" onClick={() => { setShowUpload(true); setUploadKey(currentPrefix); }}>
+              <Button data-testid="s3-upload-button" variant="outline" size="sm" onClick={() => { setShowUpload(true); setUploadKey(currentPrefix); }}>
                 <Upload className="mr-2 h-4 w-4" />
                 Upload Object
               </Button>
             )}
             <Button
+              data-testid="s3-encryption-toggle"
               variant={isEncrypted ? "default" : "outline"}
               size="sm"
               onClick={() => isEncrypted ? handleDisableEncryption() : setShowEncryption(!showEncryption)}
@@ -523,32 +526,33 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
               {isEncrypted ? <Lock className="mr-2 h-4 w-4" /> : <LockOpen className="mr-2 h-4 w-4" />}
               {isEncrypted ? "Encrypted" : "Encrypt"}
             </Button>
-            <Button variant="ghost" size="sm" onClick={refreshObjects} disabled={loadingObjects}>
+            <Button data-testid="s3-refresh-objects" variant="ghost" size="sm" onClick={refreshObjects} disabled={loadingObjects}>
               <RefreshCw className={`h-4 w-4 ${loadingObjects ? "animate-spin" : ""}`} />
             </Button>
             {userRole && !canAdmin && (
-              <span className="text-xs text-muted-foreground ml-2">Role: {userRole}</span>
+              <span data-testid="s3-user-role" className="text-xs text-muted-foreground ml-2">Role: {userRole}</span>
             )}
           </div>
 
           {/* Encryption key setup */}
           {showEncryption && !isEncrypted && (
-            <Card>
+            <Card data-testid="s3-encryption-form">
               <CardContent className="pt-4 space-y-3">
                 <div className="space-y-1">
                   <label className="text-xs font-medium">Encryption Key (64 hex chars = 32 bytes)</label>
                   <div className="flex items-center gap-2">
                     <Input
+                      data-testid="s3-encryption-key-input"
                       placeholder="Enter or generate a 256-bit hex key"
                       value={encryptionKeyHex}
                       onChange={(e) => setEncryptionKeyHex(e.target.value.replace(/[^0-9a-fA-F]/g, "").slice(0, 64))}
                       className="font-mono text-xs"
                     />
-                    <Button variant="outline" size="sm" onClick={handleGenerateKey} title="Generate random key">
+                    <Button data-testid="s3-encryption-generate" variant="outline" size="sm" onClick={handleGenerateKey} title="Generate random key">
                       Generate
                     </Button>
                     {encryptionKeyHex && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
+                      <Button data-testid="s3-encryption-copy" variant="ghost" size="icon" className="h-8 w-8" onClick={() => {
                         navigator.clipboard.writeText(encryptionKeyHex);
                         toast({ title: "Copied", description: "Key copied to clipboard" });
                       }} title="Copy key">
@@ -561,11 +565,11 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={handleEnableEncryption} disabled={encryptionKeyHex.length !== 64}>
+                  <Button data-testid="s3-encryption-enable" size="sm" onClick={handleEnableEncryption} disabled={encryptionKeyHex.length !== 64}>
                     <Lock className="mr-2 h-4 w-4" />
                     Enable Encryption
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setShowEncryption(false)}>Cancel</Button>
+                  <Button data-testid="s3-encryption-cancel" variant="ghost" size="sm" onClick={() => setShowEncryption(false)}>Cancel</Button>
                 </div>
               </CardContent>
             </Card>
@@ -573,18 +577,19 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
 
           {/* Upload inline */}
           {showUpload && (
-            <Card>
+            <Card data-testid="s3-upload-form">
               <CardContent className="pt-4 space-y-3">
                 <Input
+                  data-testid="s3-upload-key-input"
                   placeholder="Object key (e.g. uploads/photo.jpg)"
                   value={uploadKey}
                   onChange={(e) => setUploadKey(e.target.value)}
                 />
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                  <Button data-testid="s3-upload-choose-file" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
                     {uploadFile ? uploadFile.name : "Choose File"}
                   </Button>
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => {
+                  <input data-testid="s3-upload-file-input" ref={fileInputRef} type="file" className="hidden" onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
                       setUploadFile(file);
@@ -594,8 +599,8 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                       }
                     }
                   }} />
-                  <Button size="sm" onClick={handleUploadObject} disabled={!uploadFile || !uploadKey}>Upload</Button>
-                  <Button variant="ghost" size="sm" onClick={() => { setShowUpload(false); setUploadFile(null); }}>Cancel</Button>
+                  <Button data-testid="s3-upload-submit" size="sm" onClick={handleUploadObject} disabled={!uploadFile || !uploadKey}>Upload</Button>
+                  <Button data-testid="s3-upload-cancel" variant="ghost" size="sm" onClick={() => { setShowUpload(false); setUploadFile(null); }}>Cancel</Button>
                 </div>
               </CardContent>
             </Card>
@@ -615,7 +620,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                 <p className="text-sm">Upload objects to get started</p>
               </div>
             ) : (
-              <table className="w-full">
+              <table data-testid="s3-objects-table" className="w-full">
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="px-4 py-2 text-left text-sm font-medium">Key</th>
@@ -630,7 +635,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                   {folders.map((prefix) => {
                     const folderName = prefix.slice(currentPrefix.length).replace(/\/$/, "");
                     return (
-                      <tr key={prefix} className="border-b hover:bg-muted/30">
+                      <tr key={prefix} data-testid={`s3-folder-row-${folderName}`} className="border-b hover:bg-muted/30">
                         <td className="px-4 py-2" colSpan={4}>
                           <button
                             className="flex items-center gap-2 hover:underline"
@@ -646,7 +651,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                   })}
                   {/* Object rows */}
                   {currentFiles.map((obj) => (
-                    <tr key={obj.key} className="border-b hover:bg-muted/30">
+                    <tr key={obj.key} data-testid={`s3-object-row-${obj.key}`} className="border-b hover:bg-muted/30">
                       <td className="px-4 py-2">
                         <span className="flex items-center gap-2 text-sm">
                           <File className="h-4 w-4 text-muted-foreground" />
@@ -662,11 +667,11 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                       </td>
                       <td className="px-4 py-2 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDownloadObject(obj)}>
+                          <Button data-testid={`s3-download-${obj.key}`} variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDownloadObject(obj)}>
                             <Download className="h-3.5 w-3.5" />
                           </Button>
                           {canWrite && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteObject(obj)}>
+                            <Button data-testid={`s3-delete-object-${obj.key}`} variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteObject(obj)}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           )}

@@ -57,23 +57,61 @@ just test-ui
 
 ### Test-id naming convention
 
-Add `data-testid="{area}-{element}"` to interactive elements. `area` is the UI region (`connect`, `account`, `drive-list`, `file-browser`, `manage-access`, `checkpoint`, `commit-strategy`, …). `element` is the role (`button`, `submit`, `dialog`, `input`, `row-{id}`).
+Add `data-testid="{area}-{element}"` to interactive elements. `area` is the UI region (`connect`, `account`, `drive-list`, `file-browser`, `manage-access`, `checkpoint`, `commit-strategy`, `s3`, `bucket`, `accounts`, `nav`, `provider`, `registration`, `settings`, …). `element` is the role (`button`, `submit`, `dialog`, `input`, `row-{id}`).
 
-Examples already in use:
+Examples in use across the three UIs:
+
+**drive-ui** (post PR 1):
 - `connect-button`, `connect-dialog`, `connect-endpoint-input`, `connect-submit`
 - `account-button`, `account-dialog`, `account-dialog-alice`, `signer-address`, `balance-display`
 - `block-number` (chain-connection indicator — present in all three UIs)
-- `drive-list`, `drive-list-item-{id}`, `drive-list-rename-{id}`, `drive-list-clear-{id}`, `drive-list-delete-{id}`
-- `new-drive-dialog`, `new-drive-name`, `commit-strategy-{kind}`, `new-drive-submit`
-- `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`
-- `pending-changes-banner`, `commit-now-button`
-- `checkpoint-panel`, `checkpoint-trigger`, `checkpoint-refresh`, `root-cid`, `last-committed-at`, `commit-strategy-display`
+- `drive-list`, `drive-list-item-{id}`, `drive-list-delete-{id}`
+- `new-drive-dialog`, `new-drive-name`, `new-drive-submit`
+- `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`, `upload-input`
+- `checkpoint-panel`, `checkpoint-trigger`, `checkpoint-refresh`
 - `manage-access-dialog`, `members-table`, `member-row-{address}`, `add-member-address`, `add-member-role`, `add-member-submit`, `add-member-error`
 - `upload-button`, `upload-cancel`, `view-mode-toggle`, `refresh-button`, `new-folder-button`
 
-### CI gate (planned)
+**console-ui**:
+- `nav-{name}` (sidebar nav links: dashboard / storage / explorer / accounts), `layout-disconnect`, `signer-name`, `signer-address`, `balance-display`
+- `connect-button`, `connect-dialog`, `connect-ws-input`, `connect-submit`, `connect-cancel`
+- `s3-bucket-selector`, `s3-new-bucket`, `s3-delete-bucket`, `s3-delete-confirm`, `s3-delete-cancel`
+- `s3-create-bucket-form`, `s3-bucket-name-input`, `s3-bucket-capacity-input`, `s3-bucket-duration-input`, `s3-bucket-maxpayment-input`, `s3-create-submit`, `s3-create-cancel`, `s3-create-error`
+- `s3-upload-button`, `s3-upload-form`, `s3-upload-key-input`, `s3-upload-file-input`, `s3-upload-choose-file`, `s3-upload-submit`, `s3-upload-cancel`
+- `s3-encryption-toggle`, `s3-encryption-form`, `s3-encryption-key-input`, `s3-encryption-generate`, `s3-encryption-enable`, `s3-encryption-cancel`, `s3-encryption-copy`
+- `s3-refresh-objects`, `s3-objects-table`, `s3-folder-row-{name}`, `s3-object-row-{key}`, `s3-download-{key}`, `s3-delete-object-{key}`, `s3-user-role`
+- `bucket-info-panel`, `bucket-info-toggle`, `bucket-members-table`, `bucket-member-row-{address}`, `bucket-member-remove-{address}`, `bucket-add-member-{address,role,submit}`
+- `accounts-custom-form`, `accounts-custom-name-input`, `accounts-custom-seed-input`, `accounts-custom-submit`
+- `accounts-list`, `accounts-list-row-{name}`, `accounts-active-badge-{name}`, `accounts-set-active-{name}`, `accounts-copy-{name}`, `accounts-delete-{name}`
 
-`pnpm papi:check` per UI — runs `papi generate` and fails if `.papi/descriptors` drifts from the runtime's metadata. Stops PRs from landing with stale codecs.
+**provider**:
+- `nav-{label}` (overview / registration / agreements / buckets / checkpoints / challenges / earnings)
+- `provider-account-button`, `provider-account-name`, `provider-account-select-{name}`, `provider-disconnect`
+- `provider-connect-button`, `provider-connect-dev`, `provider-connect-wallet`
+- `registration-stake-input`, `registration-stake-continue`, `registration-multiaddr-input`, `registration-priceperbyte-input`, `registration-maxcapacity-input`, `registration-minduration-input`, `registration-maxduration-input`, `registration-settings-continue`, `registration-submit`, `registration-complete`
+- `settings-multiaddr-input`, `settings-multiaddr-update`, `settings-priceperbyte-input`, `settings-maxcapacity-input`, `settings-update`
+- `provider-info`, `stat-card-{slug}`, `stat-value-{slug}`
+- `buckets-table`, `buckets-row-{id}`, `agreements-table`, `agreements-row-{id}`
+
+### Running the feature-level e2e suite (PR 3)
+
+PR 3 adds a feature-level Playwright suite covering bucket / drive / member / file / registration flows. Specs live in `e2e/integration/` per UI. Tests need a live local chain + provider.
+
+```bash
+just start-chain         # terminal 1
+just start-provider      # terminal 2
+just test-ui-drive       # terminal 3 — drive-ui specs (~21 feature + 5 smoke)
+just test-ui-console     # terminal 3 — console-ui specs (~11 feature + 3 smoke)
+just test-ui-provider    # terminal 3 — provider specs (~8 feature + 3 smoke)
+```
+
+Tests are idempotent: chain-state collisions (already-registered provider, leftover drives/buckets) are detected and either reused or auto-skipped with a clear message. Re-running without restarting the chain should stay green.
+
+### CI gates
+
+- **Tier 1 — `ui-checks.yml`**: typecheck + Vite build + Vitest. Runs on every PR touching `user-interfaces/**`. ~2-3 min.
+- **Tier 2 — `ui-e2e.yml`**: full Playwright e2e against zombienet + provider. Runs on PRs touching `user-interfaces/**`, `pallet/**`, `runtime/**`, `storage-interfaces/**`, or `provider-node/**`. **Required from day 1** — robustness comes from idempotent test setup, generous CI timeouts, and detect-and-skip for state collisions, not from softening the gate.
+- `pnpm papi:check` per UI runs in tier 2 to catch descriptor drift before merge.
 
 ## Workspace gotchas
 

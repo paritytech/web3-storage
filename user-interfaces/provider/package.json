@@ -15,13 +15,10 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "@polkadot/api": "^16.5.6",
     "@polkadot/extension-dapp": "^0.63.1",
-    "@polkadot/keyring": "^14.0.3",
-    "@polkadot/util": "^14.0.3",
-    "@polkadot/util-crypto": "^14.0.3",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-select": "^2.2.6",
@@ -43,7 +40,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
-    "@polkadot-api/cli": "^0.20.4",
     "@tailwindcss/vite": "^4.2.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

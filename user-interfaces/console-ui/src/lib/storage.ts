@@ -6,13 +6,10 @@
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
-import { Keyring } from "@polkadot/keyring";
-import type { KeyringPair } from "@polkadot/keyring/types";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
-import { u8aToHex } from "@polkadot/util";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
 import { EncryptionKey } from "./encryption";
+import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
 // Transaction result from best-block watching
 interface TxResult {
@@ -117,7 +114,7 @@ export class StorageClient {
   private api: ParachainApi | null = null;
   private signer: ReturnType<typeof getPolkadotSigner> | null = null;
   private signerAddress: string | null = null;
-  private keyringPair: KeyringPair | null = null;
+  private keypair: Keypair | null = null;
   private providerUrlCache: Map<string, string> = new Map();
   private encryptionKey: EncryptionKey | null = null;
 
@@ -127,7 +124,6 @@ export class StorageClient {
 
   async connect(): Promise<void> {
     console.log("[StorageClient] Connecting to chain:", this.chainWs);
-    await cryptoWaitReady();
     this.client = createClient(getWsProvider(this.chainWs));
     console.log("[StorageClient] Client created, getting typed API with parachain descriptor...");
     try {
@@ -140,15 +136,13 @@ export class StorageClient {
   }
 
   async setSigner(seed: string): Promise<string> {
-    await cryptoWaitReady();
-    const keyring = new Keyring({ type: "sr25519" });
-    const account = keyring.addFromUri(seed);
-    this.keyringPair = account;
-    this.signer = getPolkadotSigner(account.publicKey, "Sr25519", (input) =>
-      account.sign(input)
+    const keypair = seedToKeypair(seed);
+    this.keypair = keypair;
+    this.signer = getPolkadotSigner(keypair.publicKey, "Sr25519", (input) =>
+      keypair.sign(input),
     );
-    this.signerAddress = account.address;
-    return account.address;
+    this.signerAddress = toSs58(keypair.publicKey);
+    return this.signerAddress;
   }
 
   getAddress(): string | null {
@@ -197,13 +191,13 @@ export class StorageClient {
    * Signed message: web3storage:<method>:<bucketId>:<timestamp>
    */
   private signRequest(method: string, bucketId: bigint): Record<string, string> {
-    if (!this.keyringPair) return {};
+    if (!this.keypair) return {};
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `web3storage:${method}:${Number(bucketId)}:${timestamp}`;
     const msgBytes = new TextEncoder().encode(message);
-    const sig = this.keyringPair.sign(msgBytes);
-    const pubHex = u8aToHex(this.keyringPair.publicKey);
-    const sigHex = u8aToHex(sig);
+    const sig = this.keypair.sign(msgBytes);
+    const pubHex = toHex(this.keypair.publicKey);
+    const sigHex = toHex(sig);
     return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
   }
 
@@ -232,8 +226,22 @@ export class StorageClient {
             console.log("[StorageClient]   Event:", event.type, event.value?.type, event.value?.value);
           }
 
-          // Check for dispatch error (tx reverted on-chain)
-          // Look for System.ExtrinsicFailed event which contains the error
+          // Check for dispatch error. Two ways the tx can fail and we
+          // need to catch both: (a) ev.ok === false means PAPI saw a
+          // dispatch error directly, (b) some runtimes only surface it
+          // via a System.ExtrinsicFailed event in events[]. When events
+          // fail to decode (events.length === 0 with a stale descriptor),
+          // path (a) is the only signal we have.
+          if (ev.ok === false) {
+            const errorStr = ev.dispatchError
+              ? JSON.stringify(ev.dispatchError, (_k, v) =>
+                  typeof v === "bigint" ? v.toString() : v
+                )
+              : "dispatch error (no detail)";
+            console.error("[StorageClient] tx ok=false:", errorStr);
+            reject(new Error(`Transaction failed on-chain: ${errorStr}`));
+            return;
+          }
           const failedEvent = events.find(
             (e: any) => e.type === "System" && e.value?.type === "ExtrinsicFailed"
           );

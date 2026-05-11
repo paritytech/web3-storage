@@ -70,9 +70,6 @@ export {
   createFolder,
   createDrive,
   deleteDrive,
-  renameDrive,
-  clearDriveContents,
-  commitChanges,
   fetchMembers,
   addMember,
   removeMember,
@@ -81,7 +78,7 @@ export {
   getSelectedDrive,
   getCurrentPath,
 } from "./drive.state";
-export type { CreationStage, CreationStatus, ViewMode, CommitStrategy } from "./drive.state";
+export type { CreationStage, CreationStatus, ViewMode } from "./drive.state";
 
 export {
   useCheckpointInfo,
