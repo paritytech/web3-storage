@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Edit2, Eraser, HardDrive, MoreHorizontal, Plus, Trash2, Users } from "lucide-react";
+import { HardDrive, MoreHorizontal, Plus, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -15,20 +14,12 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import {
-  useDrives,
-  useSelectedDrive,
-  selectDrive,
-  deleteDrive,
-  renameDrive,
-  clearDriveContents,
-} from "@/state";
+import { useDrives, useSelectedDrive, selectDrive, deleteDrive } from "@/state";
 import { formatBytes } from "@/lib/utils";
 import type { DriveInfo } from "@/lib/drive-client";
 import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";
 import NewDriveDialog from "./NewDriveDialog";
-import RenameDriveDialog from "./RenameDriveDialog";
 import ManageAccessDialog from "./ManageAccessDialog";
 
 export default function DriveList() {
@@ -36,8 +27,6 @@ export default function DriveList() {
   const selected = useSelectedDrive();
   const [showNewDrive, setShowNewDrive] = useState(false);
   const [driveToDelete, setDriveToDelete] = useState<DriveInfo | null>(null);
-  const [driveToClear, setDriveToClear] = useState<DriveInfo | null>(null);
-  const [driveToRename, setDriveToRename] = useState<DriveInfo | null>(null);
   const [accessDrive, setAccessDrive] = useState<DriveInfo | null>(null);
 
   const handleDelete = async () => {
@@ -48,34 +37,6 @@ export default function DriveList() {
     } catch (err) {
       toast({
         title: "Delete failed",
-        description: err instanceof Error ? err.message : "Error",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleClear = async () => {
-    if (!driveToClear) return;
-    try {
-      await clearDriveContents(driveToClear.driveId);
-      toast({ title: "Drive cleared", description: driveToClear.name ?? "" });
-    } catch (err) {
-      toast({
-        title: "Clear failed",
-        description: err instanceof Error ? err.message : "Error",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleRename = async (newName: string) => {
-    if (!driveToRename) return;
-    try {
-      await renameDrive(driveToRename.driveId, newName);
-      toast({ title: "Drive renamed", description: newName });
-    } catch (err) {
-      toast({
-        title: "Rename failed",
         description: err instanceof Error ? err.message : "Error",
         variant: "destructive",
       });
@@ -141,21 +102,6 @@ export default function DriveList() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                         <DropdownMenuItem
-                          data-testid={`drive-list-rename-${drive.driveId}`}
-                          onClick={() => setDriveToRename(drive)}
-                        >
-                          <Edit2 className="mr-2 h-4 w-4" />
-                          Rename
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          data-testid={`drive-list-clear-${drive.driveId}`}
-                          onClick={() => setDriveToClear(drive)}
-                        >
-                          <Eraser className="mr-2 h-4 w-4" />
-                          Clear contents
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
                           data-testid={`drive-list-delete-${drive.driveId}`}
                           onClick={() => setDriveToDelete(drive)}
                           className="text-destructive focus:text-destructive"
@@ -169,17 +115,9 @@ export default function DriveList() {
                 </div>
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem onClick={() => setDriveToRename(drive)}>
-                  <Edit2 className="mr-2 h-4 w-4" />
-                  Rename
-                </ContextMenuItem>
                 <ContextMenuItem onClick={() => setAccessDrive(drive)}>
                   <Users className="mr-2 h-4 w-4" />
                   Manage access
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => setDriveToClear(drive)}>
-                  <Eraser className="mr-2 h-4 w-4" />
-                  Clear contents
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem
@@ -204,25 +142,6 @@ export default function DriveList() {
         description="This will permanently delete the drive and all its files. Storage agreements will be terminated with prorated refunds."
         onConfirm={handleDelete}
       />
-
-      <ConfirmDialog
-        open={!!driveToClear}
-        onOpenChange={() => setDriveToClear(null)}
-        title={`Clear "${driveToClear?.name ?? `Drive ${driveToClear?.driveId}`}"?`}
-        description="This empties the drive's directory tree (root CID resets) but keeps the drive and its storage agreements. Provider chunks may persist until garbage collected."
-        confirmLabel="Clear"
-        onConfirm={handleClear}
-      />
-
-      {driveToRename && (
-        <RenameDriveDialog
-          open={!!driveToRename}
-          onOpenChange={() => setDriveToRename(null)}
-          currentName={driveToRename.name ?? ""}
-          driveId={driveToRename.driveId}
-          onConfirm={handleRename}
-        />
-      )}
 
       {accessDrive && (
         <ManageAccessDialog

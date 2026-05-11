@@ -82,7 +82,7 @@ function BucketsContent() {
               </p>
             </div>
           ) : (
-            <Table>
+            <Table data-testid="buckets-table">
               <TableHeader>
                 <TableRow>
                   <TableHead>Bucket</TableHead>
@@ -103,6 +103,7 @@ function BucketsContent() {
                   return (
                     <Fragment key={bucket.bucketId}>
                       <TableRow
+                        data-testid={`buckets-row-${bucket.bucketId}`}
                         className="cursor-pointer hover:bg-gray-800/50"
                         onClick={() => setExpandedBucket(isExpanded ? null : bucket.bucketId)}
                       >

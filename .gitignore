@@ -28,12 +28,11 @@ Thumbs.db
 node_modules/
 package-lock.json
 .papi/
-# Exception: commit per-UI PAPI config + metadata for CI builds
-# (papi generate needs these to produce descriptors without a running chain)
-!user-interfaces/console-ui/.papi/
-user-interfaces/console-ui/.papi/descriptors/dist/
-!user-interfaces/drive-ui/.papi/
-user-interfaces/drive-ui/.papi/descriptors/dist/
+# Single source of truth lives in shared/papi/.papi/. Track its config +
+# metadata so CI can build without a running chain; descriptor dist/ is
+# regenerated, never tracked.
+!user-interfaces/shared/papi/.papi/
+user-interfaces/shared/papi/.papi/descriptors/dist/
 .vite/
 *.tsbuildinfo
 
@@ -44,8 +43,12 @@ zombienet/storage-local-spec.json
 **/dist/
 
 # Playwright artefacts
-user-interfaces/*/playwright-report/
-user-interfaces/*/test-results/
+user-interfaces/**/playwright-report/
+user-interfaces/**/test-results/
+
+# Local Claude state (per-developer)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 
 # Lockfiles are per-project, not committed
 # (each UI project has its own package manager)

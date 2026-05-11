@@ -58,7 +58,6 @@ import NewFolderDialog from "./NewFolderDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./EmptyState";
 import CheckpointPanel from "./CheckpointPanel";
-import PendingChangesBanner from "./PendingChangesBanner";
 
 function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -297,8 +296,6 @@ export default function FileBrowser() {
             </Button>
           </div>
         </div>
-
-        <PendingChangesBanner />
 
         {showCheckpoint && (
           <div className="pt-4">

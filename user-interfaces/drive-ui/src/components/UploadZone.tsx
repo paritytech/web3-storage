@@ -76,6 +76,7 @@ export default function UploadZone({ children }: UploadZoneProps) {
 
       <input
         ref={fileInputRef}
+        data-testid="upload-input"
         type="file"
         multiple
         className="hidden"

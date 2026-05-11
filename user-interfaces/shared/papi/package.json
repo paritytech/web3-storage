@@ -1,0 +1,18 @@
+{
+  "name": "@web3-storage/papi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Single source of truth for the parachain runtime descriptors. Owns the only tracked metadata snapshot in the repo. The internally-named @polkadot-api/descriptors package under .papi/descriptors is what the UIs consume via workspace:*.",
+  "type": "module",
+  "scripts": {
+    "papi:install": "papi generate",
+    "papi:generate": "papi add -w ws://127.0.0.1:2222 parachain && papi generate",
+    "papi:check": "papi add -w ws://127.0.0.1:2222 parachain && papi generate && git diff --exit-code .papi/metadata"
+  },
+  "devDependencies": {
+    "@polkadot-api/cli": "^0.20.4"
+  },
+  "dependencies": {
+    "@polkadot-api/descriptors": "file:.papi/descriptors"
+  }
+}

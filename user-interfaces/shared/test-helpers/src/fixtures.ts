@@ -1,0 +1,78 @@
+import { test as base, expect, type Page } from "@playwright/test";
+import { getApi, disconnect, type ParachainApi } from "./chain-api";
+
+const PROVIDER_HEALTH_URL =
+  process.env.PROVIDER_HEALTH_URL ?? "http://127.0.0.1:3333/health";
+
+const DEFAULT_MIN_BLOCK_TIMEOUT = process.env.CI ? 60_000 : 60_000;
+
+export async function waitForConnection(page: Page, timeout = 30_000): Promise<void> {
+  await expect(page.getByTestId("block-number")).toBeVisible({ timeout });
+}
+
+/**
+ * Wait for the chain to produce enough blocks so mortal transactions have a
+ * valid era. Submitting at block 1 on a freshly started --dev chain yields
+ * "Stale" errors. CI gets a longer default than local because zombienet boot
+ * variance can push the first finalized block past 30s on slow runners.
+ */
+export async function waitForMinBlock(
+  page: Page,
+  minBlock = 3,
+  timeout = DEFAULT_MIN_BLOCK_TIMEOUT,
+): Promise<void> {
+  await expect(async () => {
+    const text = await page.getByTestId("block-number").textContent();
+    const digits = (text ?? "").replace(/\D/g, "");
+    const num = digits ? parseInt(digits, 10) : NaN;
+    expect(num).toBeGreaterThanOrEqual(minBlock);
+  }).toPass({ timeout });
+}
+
+export async function probeProviderHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(PROVIDER_HEALTH_URL);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface LocalPageFixtureOptions {
+  localStorage: Record<string, string>;
+  baseURL?: string;
+}
+
+/**
+ * Build a Playwright `test` instance with two fixtures:
+ *  - `localPage` (page + localStorage injection + chain ready check)
+ *  - `api` (typed PAPI client; lazy singleton across all tests in a worker)
+ *
+ * Each UI calls this to get a customised fixture.
+ */
+export function makeLocalPageFixture(opts: LocalPageFixtureOptions) {
+  return base.extend<{ localPage: Page; api: ParachainApi }>({
+    localPage: async ({ page }, use) => {
+      await page.addInitScript((entries: Record<string, string>) => {
+        for (const [k, v] of Object.entries(entries)) {
+          localStorage.setItem(k, v);
+        }
+      }, opts.localStorage);
+      await page.goto(opts.baseURL ?? "/");
+      await waitForConnection(page);
+      await waitForMinBlock(page);
+      await use(page);
+    },
+    api: async ({}, use) => {
+      await use(getApi());
+    },
+  });
+}
+
+/**
+ * Tear down the cached PAPI client. Call from `globalTeardown` if a workflow
+ * needs deterministic cleanup; otherwise the worker exit is fine.
+ */
+export function teardownChain(): void {
+  disconnect();
+}

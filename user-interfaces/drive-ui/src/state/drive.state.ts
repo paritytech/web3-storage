@@ -6,14 +6,13 @@
  * to DriveRegistry events for real-time updates.
  */
 
-import { BehaviorSubject, combineLatest, distinctUntilChanged } from "rxjs";
+import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } from "rxjs";
 import { bind } from "@react-rxjs/core";
 import {
   DriveClient,
   type DriveInfo,
   type FsEntry,
   type CreateDriveOptions,
-  type CommitStrategy,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
 import { signer$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
@@ -136,12 +135,7 @@ export async function refreshDrives(): Promise<void> {
     const sel = selectedDrive$.getValue();
     if (sel) {
       const updated = list.find((d) => d.driveId === sel.driveId) ?? null;
-      if (updated && (
-        updated.rootCid !== sel.rootCid ||
-        updated.pendingRootCid !== sel.pendingRootCid ||
-        updated.name !== sel.name ||
-        updated.lastCommittedAt !== sel.lastCommittedAt
-      )) {
+      if (updated && updated.name !== sel.name) {
         selectedDrive$.next(updated);
       } else if (!updated) {
         selectedDrive$.next(null);
@@ -354,27 +348,6 @@ export async function deleteDrive(driveId: bigint): Promise<void> {
   await refreshBalance();
 }
 
-export async function renameDrive(driveId: bigint, newName: string): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.updateDriveName(driveId, newName.trim() || null);
-  await refreshDrives();
-}
-
-export async function clearDriveContents(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.clearDrive(driveId);
-  await refreshDrives();
-  if (selectedDrive$.getValue()?.driveId === driveId) {
-    await refreshDirectory();
-  }
-}
-
-export async function commitChanges(driveId: bigint): Promise<void> {
-  if (!client.hasApi() || !client.hasSigner()) return;
-  await client.commitChanges(driveId);
-  await refreshDrives();
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Members
 // ─────────────────────────────────────────────────────────────────────────────
@@ -399,112 +372,45 @@ export async function removeMember(bucketId: bigint, account: string): Promise<v
 // ─────────────────────────────────────────────────────────────────────────────
 // Real-time DriveRegistry event subscription
 //
-// Subscribed once when the api becomes available; refreshes drives whenever a
-// DriveCreated/RootCIDUpdated/DriveDeleted/DriveCleared/DriveNameUpdated/
-// ChangesCommitted/DriveCreatedWithStorage event fires that affects the
-// current signer (or any drive currently being tracked).
+// Subscribed once when the api becomes available; refreshes drives whenever
+// a DriveCreated / DriveDeleted event fires that affects the current signer
+// (or any drive currently being tracked).
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface RegistryEventSubscription {
-  unsubscribe: () => void;
-}
-
-let eventSub: RegistryEventSubscription | null = null;
+let eventSub: Subscription | null = null;
 
 function subscribeToDriveEvents(): void {
-  if (eventSub) {
-    eventSub.unsubscribe();
-    eventSub = null;
-  }
+  eventSub?.unsubscribe();
+  eventSub = null;
   const api = getApi();
   if (!api) return;
 
-  // polkadot-api's typed event watcher delivers the decoded payload at the top
-  // of the emitted object (no `value` wrapper) — but the precise shape can
-  // vary between runtime versions, so accept whatever comes and pluck fields
-  // defensively.
-  type EventObserver = {
-    next: (ev: unknown) => void;
-    error?: (err: unknown) => void;
+  // React to events that involve the current signer's drives or any drive
+  // we're already tracking — otherwise ignore (e.g. another user's drive on
+  // a shared chain). Coalesce bursts of events into a single refresh via
+  // queueMicrotask so back-to-back events in one block don't trigger
+  // multiple list reads.
+  const handle = (driveId: bigint, owner: string): void => {
+    const ownAddr = getSignerAddress();
+    const tracked = new Set(drives$.getValue().map((d) => d.driveId));
+    if (owner !== ownAddr && !tracked.has(driveId)) return;
+    eventTick$.next(eventTick$.getValue() + 1);
+    queueMicrotask(() => refreshDrives().catch(() => {}));
   };
-  type EventWatcher = {
-    watch: () => {
-      subscribe: (
-        handler: ((ev: unknown) => void) | EventObserver,
-      ) => RegistryEventSubscription;
-    };
-  };
-  const events = (api as unknown as {
-    event: { DriveRegistry: Record<string, EventWatcher> };
-  }).event.DriveRegistry;
 
-  const interesting = [
-    "DriveCreated",
-    "DriveCreatedWithStorage",
-    "RootCIDUpdated",
-    "DriveDeleted",
-    "DriveCleared",
-    "DriveNameUpdated",
-    "ChangesCommitted",
-  ];
-
-  const subscriptions: RegistryEventSubscription[] = [];
-
-  for (const name of interesting) {
-    const watcher = events[name];
-    if (!watcher) continue;
-    try {
-      const sub = watcher.watch().subscribe({
-        next: (ev: unknown) => {
-          if (!ev || typeof ev !== "object") return;
-          // Tolerate either { value: { drive_id, owner } } or { drive_id, owner }.
-          const payload = ((ev as { value?: unknown }).value ?? ev) as {
-            drive_id?: bigint | number;
-            owner?: string;
-          };
-          if (!payload || typeof payload !== "object") return;
-
-          const ownAddr = getSignerAddress();
-          const driveIdRaw = payload.drive_id;
-          const driveId =
-            typeof driveIdRaw === "bigint"
-              ? driveIdRaw
-              : typeof driveIdRaw === "number"
-                ? BigInt(driveIdRaw)
-                : undefined;
-          const eventOwner = payload.owner;
-
-          // Only react to events involving the current signer or already-tracked
-          // drives. Owner is not present on every event variant; if absent, fall
-          // back to "we track this drive_id".
-          const isOwn = ownAddr && eventOwner === ownAddr;
-          const isTracked =
-            driveId !== undefined &&
-            drives$.getValue().some((d) => d.driveId === driveId);
-
-          if (isOwn || isTracked) {
-            eventTick$.next(eventTick$.getValue() + 1);
-            // Debounce-ish: schedule a refresh on next microtask so we coalesce
-            // bursts of events.
-            queueMicrotask(() => {
-              refreshDrives().catch(() => { /* swallow; loading$ surfaces error */ });
-            });
-          }
-        },
-        // Some events listed in the descriptor may not exist on the running
-        // runtime ("Runtime entry Event(DriveRegistry.X) not found"). Swallow
-        // — that event variant just isn't deliverable here.
-        error: () => { /* swallow */ },
-      });
-      subscriptions.push(sub);
-    } catch {
-      // event name not in current runtime version; skip
-    }
-  }
-
-  eventSub = {
-    unsubscribe: () => subscriptions.forEach((s) => s.unsubscribe()),
-  };
+  eventSub = new Subscription();
+  eventSub.add(
+    api.event.DriveRegistry.DriveCreated.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+      error: () => {},
+    }),
+  );
+  eventSub.add(
+    api.event.DriveRegistry.DriveDeleted.watch().subscribe({
+      next: ({ events }) => events.forEach(({ payload }) => handle(payload.drive_id, payload.owner)),
+      error: () => {},
+    }),
+  );
 }
 
 api$$.subscribe(() => {
@@ -551,5 +457,3 @@ export function getSelectedDrive(): DriveInfo | null {
 export function getCurrentPath(): string {
   return currentPath$.getValue();
 }
-
-export type { CommitStrategy };

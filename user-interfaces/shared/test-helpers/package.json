@@ -7,6 +7,17 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {},
+  "dependencies": {
+    "@polkadot-api/descriptors": "workspace:*",
+    "@polkadot-api/substrate-bindings": "^0.20.1",
+    "@polkadot-labs/hdkd": "^0.0.28",
+    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "polkadot-api": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  },
   "peerDependencies": {
     "@playwright/test": ">=1.59.0"
   }

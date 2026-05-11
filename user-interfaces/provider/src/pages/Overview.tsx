@@ -38,14 +38,16 @@ function StatCard({
     destructive: 'text-red-400',
   }
 
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
   return (
-    <Card>
+    <Card data-testid={`stat-card-${slug}`}>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-sm font-medium text-gray-400">{title}</CardTitle>
         <Icon className={`h-4 w-4 ${variantClasses[variant]}`} />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+        <div data-testid={`stat-value-${slug}`} className="text-2xl font-bold">{value}</div>
         {description && <p className="text-xs text-gray-500 mt-1">{description}</p>}
       </CardContent>
     </Card>
@@ -86,7 +88,7 @@ function OverviewContent() {
   }
 
   return (
-    <div className="space-y-6">
+    <div data-testid="provider-info" className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

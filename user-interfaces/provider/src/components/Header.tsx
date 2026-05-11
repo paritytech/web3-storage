@@ -140,6 +140,7 @@ export function Header() {
               <Link
                 key={path}
                 to={path}
+                data-testid={`nav-${label.toLowerCase()}`}
                 className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   location.pathname === path
                     ? 'bg-purple-500/20 text-purple-400'
@@ -177,6 +178,7 @@ export function Header() {
             {selectedAccount ? (
               <div className="relative">
                 <Button
+                  data-testid="provider-account-button"
                   variant="outline"
                   size="sm"
                   onClick={() => setShowAccountPicker(!showAccountPicker)}
@@ -185,7 +187,7 @@ export function Header() {
                   {walletMode === 'dev' && (
                     <TestTube className="h-3 w-3 text-yellow-500" />
                   )}
-                  <span>{selectedAccount.name || formatAddress(selectedAccount.address)}</span>
+                  <span data-testid="provider-account-name">{selectedAccount.name || formatAddress(selectedAccount.address)}</span>
                   <ChevronDown className="h-4 w-4" />
                 </Button>
 
@@ -225,6 +227,7 @@ export function Header() {
                         {accounts.map((account) => (
                           <button
                             key={account.address}
+                            data-testid={`provider-account-select-${account.name || account.address}`}
                             onClick={() => handleAccountSelect(account.address)}
                             className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-700 ${
                               account.address === selectedAccount.address
@@ -244,6 +247,7 @@ export function Header() {
                     )}
 
                     <button
+                      data-testid="provider-disconnect"
                       onClick={handleDisconnect}
                       className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-700 border-t border-gray-700"
                     >
@@ -255,6 +259,7 @@ export function Header() {
             ) : (
               <div className="relative">
                 <Button
+                  data-testid="provider-connect-button"
                   size="sm"
                   onClick={handleConnectClick}
                   disabled={walletStatus === 'connecting'}
@@ -278,6 +283,7 @@ export function Header() {
 
                     {/* Dev Accounts Option */}
                     <button
+                      data-testid="provider-connect-dev"
                       onClick={handleDevConnect}
                       className="w-full text-left px-3 py-3 hover:bg-gray-700 border-b border-gray-700"
                     >
@@ -293,6 +299,7 @@ export function Header() {
 
                     {/* Browser Extension Option */}
                     <button
+                      data-testid="provider-connect-wallet"
                       onClick={handleExtensionConnectClick}
                       className="w-full text-left px-3 py-3 hover:bg-gray-700"
                     >

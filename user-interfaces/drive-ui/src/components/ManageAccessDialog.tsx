@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
-import { decodeAddress } from "@polkadot/util-crypto";
+import { isValidSs58 } from "@/lib/crypto";
 import {
   Dialog,
   DialogContent,
@@ -40,15 +40,6 @@ function roleBadge(role: string) {
       {role}
     </span>
   );
-}
-
-function isValidSs58(address: string): boolean {
-  try {
-    decodeAddress(address);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export default function ManageAccessDialog({
@@ -126,6 +117,7 @@ export default function ManageAccessDialog({
       });
       await refresh();
     } catch (err) {
+      console.error("[ManageAccessDialog] addMember failed:", err);
       toast({
         title: "Failed to add member",
         description: err instanceof Error ? err.message : "Error",

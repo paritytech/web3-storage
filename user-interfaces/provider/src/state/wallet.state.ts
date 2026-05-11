@@ -137,10 +137,17 @@ export async function connectDevAccounts(): Promise<void> {
     accountsSubject.next(devAccounts)
     connectedExtensionSubject.next(undefined)
 
-    // Auto-select Alice
-    const alice = devAccounts.find((a) => a.name?.includes('Alice'))
-    if (alice) {
-      await selectAccount(alice.address)
+    // Restore previously selected account if it's a known dev account, else
+    // default to Alice. Mirrors the extension-mode hydration so a persisted
+    // choice survives reload.
+    const savedAddress = localStorage.getItem(STORAGE_KEY_ACCOUNT)
+    const savedAccount = savedAddress
+      ? devAccounts.find((a) => a.address === savedAddress)
+      : undefined
+    const accountToSelect =
+      savedAccount ?? devAccounts.find((a) => a.name?.includes('Alice'))
+    if (accountToSelect) {
+      await selectAccount(accountToSelect.address)
     }
 
     localStorage.setItem(STORAGE_KEY_MODE, 'dev')
