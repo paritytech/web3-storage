@@ -3468,6 +3468,7 @@ pub mod pallet {
                 });
             }
 
+            // TODO: Re-visit this code to optimize weight usage. Ref: https://github.com/paritytech/web3-storage/pull/70#discussion_r3216172761
             // Drain any still-pending AgreementRequests for this bucket and
             // refund the requesters' locked funds. Without this the entries
             // outlive the bucket: the provider's auto-coordinator keeps
