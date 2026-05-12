@@ -5033,6 +5033,7 @@ name = "pallet-drive-registry"
 version = "0.1.0"
 dependencies = [
  "file-system-primitives",
+ "frame-benchmarking",
  "frame-support",
  "frame-system",
  "pallet-balances",
@@ -5158,6 +5159,7 @@ dependencies = [
 name = "pallet-s3-registry"
 version = "0.1.0"
 dependencies = [
+ "frame-benchmarking",
  "frame-support",
  "frame-system",
  "pallet-balances",

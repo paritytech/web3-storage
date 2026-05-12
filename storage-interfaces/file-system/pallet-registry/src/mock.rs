@@ -117,6 +117,7 @@ impl pallet_drive_registry::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type MaxDrivesPerUser = MaxDrivesPerUser;
     type MaxDriveNameLength = MaxDriveNameLength;
+    type WeightInfo = ();
 }
 
 // Build genesis storage according to the mock runtime.

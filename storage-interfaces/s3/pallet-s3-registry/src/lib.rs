@@ -8,6 +8,11 @@ extern crate alloc;
 
 pub use pallet::*;
 
+#[cfg(feature = "runtime-benchmarks")]
+pub mod benchmarking;
+pub mod weights;
+pub use weights::WeightInfo;
+
 #[cfg(test)]
 mod mock;
 
@@ -53,6 +58,9 @@ pub mod pallet {
         /// Maximum number of objects per bucket.
         #[pallet::constant]
         type MaxObjectsPerBucket: Get<u32>;
+
+        /// Weight information for extrinsics in this pallet.
+        type WeightInfo: WeightInfo;
     }
 
     /// S3 bucket registry: S3BucketId -> S3BucketInfo
@@ -172,7 +180,7 @@ pub mod pallet {
         /// - `name`: S3 bucket name (3-63 chars, lowercase alphanumeric + hyphens)
         /// - `min_providers`: Minimum number of storage providers required
         #[pallet::call_index(0)]
-        #[pallet::weight(Weight::from_parts(100_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::create_s3_bucket())]
         pub fn create_s3_bucket(
             origin: OriginFor<T>,
             name: Vec<u8>,
@@ -245,7 +253,7 @@ pub mod pallet {
         ///
         /// The bucket must be empty and caller must be the owner.
         #[pallet::call_index(1)]
-        #[pallet::weight(Weight::from_parts(50_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::delete_s3_bucket())]
         pub fn delete_s3_bucket(origin: OriginFor<T>, s3_bucket_id: S3BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -270,7 +278,7 @@ pub mod pallet {
 
         /// Store or update object metadata.
         #[pallet::call_index(2)]
-        #[pallet::weight(Weight::from_parts(50_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::put_object_metadata())]
         pub fn put_object_metadata(
             origin: OriginFor<T>,
             s3_bucket_id: S3BucketId,
@@ -367,7 +375,7 @@ pub mod pallet {
 
         /// Delete object metadata.
         #[pallet::call_index(3)]
-        #[pallet::weight(Weight::from_parts(50_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::delete_object_metadata())]
         pub fn delete_object_metadata(
             origin: OriginFor<T>,
             s3_bucket_id: S3BucketId,
@@ -402,7 +410,7 @@ pub mod pallet {
 
         /// Copy object metadata from one location to another.
         #[pallet::call_index(4)]
-        #[pallet::weight(Weight::from_parts(50_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::copy_object_metadata())]
         pub fn copy_object_metadata(
             origin: OriginFor<T>,
             src_bucket_id: S3BucketId,
@@ -484,7 +492,7 @@ pub mod pallet {
         /// - `duration`: Storage duration in blocks
         /// - `max_payment`: Maximum payment for the storage agreement
         #[pallet::call_index(5)]
-        #[pallet::weight(Weight::from_parts(150_000_000, 0))]
+        #[pallet::weight(<T as Config>::WeightInfo::create_s3_bucket_with_storage())]
         pub fn create_s3_bucket_with_storage(
             origin: OriginFor<T>,
             name: Vec<u8>,
