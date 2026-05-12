@@ -146,6 +146,7 @@ runtime-benchmarks = [
 	"frame-system/runtime-benchmarks",
 	"pallet-balances/runtime-benchmarks",
 	"pallet-collator-selection/runtime-benchmarks",
+	"pallet-drive-registry/runtime-benchmarks",
 	"pallet-message-queue/runtime-benchmarks",
 	"pallet-s3-registry/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",

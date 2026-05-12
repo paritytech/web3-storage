@@ -33,6 +33,11 @@ extern crate alloc;
 
 pub use pallet::*;
 
+#[cfg(feature = "runtime-benchmarks")]
+pub mod bechmarking;
+pub mod weights;
+pub use weights::WeightInfo;
+
 #[cfg(test)]
 mod mock;
 
@@ -58,7 +63,9 @@ pub mod pallet {
 
     /// Configuration trait
     #[pallet::config]
-    pub trait Config: frame_system::Config + pallet_storage_provider::Config {
+    pub trait Config:
+        frame_system::Config<RuntimeEvent: From<Event<Self>>> + pallet_storage_provider::Config
+    {
         /// The overarching event type
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
@@ -69,6 +76,9 @@ pub mod pallet {
         /// Maximum length of drive name
         #[pallet::constant]
         type MaxDriveNameLength: Get<u32>;
+
+        /// Weight information for extrinsics in this pallet.
+        type WeightInfo: WeightInfo;
     }
 
     /// Balance type for this pallet (inherited from Currency)
@@ -188,7 +198,7 @@ pub mod pallet {
         /// - `payment`: Upfront payment tokens for storage agreements
         /// - `min_providers`: Optional minimum number of providers (default: auto)
         #[pallet::call_index(0)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(<T as Config>::WeightInfo::create_drive())]
         pub fn create_drive(
             origin: OriginFor<T>,
             name: Option<Vec<u8>>,
@@ -280,7 +290,7 @@ pub mod pallet {
         /// Parameters:
         /// - `drive_id`: The drive to delete
         #[pallet::call_index(2)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(<T as Config>::WeightInfo::delete_drive())]
         pub fn delete_drive(origin: OriginFor<T>, drive_id: DriveId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -327,7 +337,7 @@ pub mod pallet {
         /// - `member`: Account to add
         /// - `role`: Role to assign (Admin, Writer, or Reader)
         #[pallet::call_index(3)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(<T as Config>::WeightInfo::share_drive())]
         pub fn share_drive(
             origin: OriginFor<T>,
             drive_id: DriveId,
@@ -369,7 +379,7 @@ pub mod pallet {
         /// - `drive_id`: The drive to unshare
         /// - `member`: Account to remove
         #[pallet::call_index(4)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(<T as Config>::WeightInfo::unshare_drive())]
         pub fn unshare_drive(
             origin: OriginFor<T>,
             drive_id: DriveId,

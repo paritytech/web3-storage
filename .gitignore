@@ -28,6 +28,10 @@ Thumbs.db
 node_modules/
 package-lock.json
 .papi/
+
+# Python
+__pycache__
+
 # Single source of truth lives in shared/papi/.papi/. Track its config +
 # metadata so CI can build without a running chain; descriptor dist/ is
 # regenerated, never tracked.
