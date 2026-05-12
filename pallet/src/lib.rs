@@ -175,15 +175,18 @@ pub mod pallet {
         StorageAgreement<T>,
     >;
 
-    /// Pending agreement requests (provider → bucket → request).
+    /// Pending agreement requests (bucket → provider → request).
+    ///
+    /// Keyed bucket-first so `delete_bucket` can `drain_prefix(bucket_id)`
+    /// instead of scanning every entry on chain.
     #[pallet::storage]
     #[pallet::getter(fn agreement_requests)]
     pub type AgreementRequests<T: Config> = StorageDoubleMap<
         _,
         Blake2_128Concat,
-        T::AccountId,
-        Blake2_128Concat,
         BucketId,
+        Blake2_128Concat,
+        T::AccountId,
         AgreementRequest<T>,
     >;
 
@@ -1468,11 +1471,11 @@ pub mod pallet {
             };
 
             ensure!(
-                !AgreementRequests::<T>::contains_key(&provider, bucket_id),
+                !AgreementRequests::<T>::contains_key(bucket_id, &provider),
                 Error::<T>::AgreementRequestAlreadyExists
             );
 
-            AgreementRequests::<T>::insert(&provider, bucket_id, request);
+            AgreementRequests::<T>::insert(bucket_id, &provider, request);
 
             Self::deposit_event(Event::AgreementRequested {
                 bucket_id,
@@ -1541,11 +1544,11 @@ pub mod pallet {
             };
 
             ensure!(
-                !AgreementRequests::<T>::contains_key(&provider, bucket_id),
+                !AgreementRequests::<T>::contains_key(bucket_id, &provider),
                 Error::<T>::AgreementRequestAlreadyExists
             );
 
-            AgreementRequests::<T>::insert(&provider, bucket_id, request);
+            AgreementRequests::<T>::insert(bucket_id, &provider, request);
 
             Self::deposit_event(Event::AgreementRequested {
                 bucket_id,
@@ -1570,7 +1573,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotFound
             );
 
-            let request = AgreementRequests::<T>::take(&who, bucket_id)
+            let request = AgreementRequests::<T>::take(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementRequestNotFound)?;
 
             let current_block = frame_system::Pallet::<T>::block_number();
@@ -1687,7 +1690,7 @@ pub mod pallet {
         pub fn reject_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let request = AgreementRequests::<T>::take(&who, bucket_id)
+            let request = AgreementRequests::<T>::take(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementRequestNotFound)?;
 
             // Calculate total locked (storage payment + sync balance for replicas)
@@ -1722,12 +1725,12 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let request = AgreementRequests::<T>::get(&provider, bucket_id)
+            let request = AgreementRequests::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementRequestNotFound)?;
 
             ensure!(request.requester == who, Error::<T>::NotAgreementOwner);
 
-            AgreementRequests::<T>::remove(&provider, bucket_id);
+            AgreementRequests::<T>::remove(bucket_id, &provider);
 
             // Calculate total locked
             let total_locked = if let Some(ref replica_params) = request.replica_params {
@@ -3468,21 +3471,12 @@ pub mod pallet {
                 });
             }
 
-            // TODO: Re-visit this code to optimize weight usage. Ref: https://github.com/paritytech/web3-storage/pull/70#discussion_r3216172761
             // Drain any still-pending AgreementRequests for this bucket and
             // refund the requesters' locked funds. Without this the entries
-            // outlive the bucket: the provider's auto-coordinator keeps
-            // trying to accept them and every accept reverts with
-            // BucketNotFound, jamming the coordinator's queue. The map is
-            // double-keyed (provider, bucket) so we have to scan to find
-            // entries for this bucket; in practice there is one per
-            // matched provider per bucket, bounded by MaxPrimaryProviders.
-            let pending: Vec<(T::AccountId, AgreementRequest<T>)> = AgreementRequests::<T>::iter()
-                .filter(|(_, b_id, _)| *b_id == bucket_id)
-                .map(|(provider, _, request)| (provider, request))
-                .collect();
-            for (provider, request) in pending {
-                AgreementRequests::<T>::remove(&provider, bucket_id);
+            // outlive the bucket and the provider's auto-coordinator keeps
+            // trying to accept them, every accept reverting with
+            // BucketNotFound and jamming the coordinator's queue.
+            for (provider, request) in AgreementRequests::<T>::drain_prefix(bucket_id) {
                 let total_locked = if let Some(ref replica_params) = request.replica_params {
                     request
                         .payment_locked
@@ -4142,11 +4136,11 @@ pub mod pallet {
             };
 
             ensure!(
-                !AgreementRequests::<T>::contains_key(provider, bucket_id),
+                !AgreementRequests::<T>::contains_key(bucket_id, provider),
                 Error::<T>::AgreementRequestAlreadyExists
             );
 
-            AgreementRequests::<T>::insert(provider, bucket_id, request);
+            AgreementRequests::<T>::insert(bucket_id, provider, request);
 
             Self::deposit_event(Event::AgreementRequested {
                 bucket_id,
@@ -4230,11 +4224,11 @@ pub mod pallet {
             };
 
             ensure!(
-                !AgreementRequests::<T>::contains_key(provider, bucket_id),
+                !AgreementRequests::<T>::contains_key(bucket_id, provider),
                 Error::<T>::AgreementRequestAlreadyExists
             );
 
-            AgreementRequests::<T>::insert(provider, bucket_id, request);
+            AgreementRequests::<T>::insert(bucket_id, provider, request);
 
             Self::deposit_event(Event::AgreementRequested {
                 bucket_id,
