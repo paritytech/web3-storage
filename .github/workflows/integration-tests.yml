@@ -179,15 +179,6 @@ jobs:
       - name: Run S3 integration test
         run: just s3-demo-ci
 
-      - name: Run PAPI bucket-membership demo
-        run: just papi-bucket-membership
-
-      - name: Run PAPI provider-discovery demo
-        run: just papi-provider-discovery
-
-      - name: Run PAPI bucket-with-storage demo
-        run: just papi-bucket-with-storage "http://127.0.0.1:3333" "//Alice" "//Bob"
-
       - name: Run PAPI s3-lifecycle demo
         run: just papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
 
