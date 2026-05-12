@@ -500,6 +500,7 @@ impl pallet_drive_registry::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type MaxDriveNameLength = ConstU32<128>;
     type MaxDrivesPerUser = ConstU32<100>;
+    type WeightInfo = pallet_drive_registry::weights::SubstrateWeight<Runtime>;
 }
 
 // --------------------------------
@@ -509,6 +510,7 @@ impl pallet_drive_registry::Config for Runtime {
 impl pallet_s3_registry::Config for Runtime {
     type MaxBucketsPerUser = ConstU32<100>;
     type MaxObjectsPerBucket = ConstU32<10000>;
+    type WeightInfo = pallet_s3_registry::weights::SubstrateWeight<Runtime>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
