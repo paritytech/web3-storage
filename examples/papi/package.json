@@ -4,7 +4,12 @@
   "type": "module",
   "scripts": {
     "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
-    "demo": "node full-flow.js"
+    "demo": "node full-flow.js",
+    "demo:bucket-membership": "node bucket-membership.js",
+    "demo:provider-discovery": "node provider-discovery.js",
+    "demo:bucket-with-storage": "node bucket-with-storage.js",
+    "demo:s3-lifecycle": "node s3-lifecycle.js",
+    "demo:drive-lifecycle": "node drive-lifecycle.js"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
