@@ -28,6 +28,7 @@ import {
   providerFetch,
   ensureProviderRegistered,
   requireOneEvent,
+  submitTx,
 } from "./common.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -36,9 +37,11 @@ const PROVIDER_SEED = process.argv[4] || "//Alice";
 const CLIENT_SEED = process.argv[5] || "//Bob";
 
 async function createBucketWithStorage(api, client, params) {
-  const result = await api.tx.StorageProvider.create_bucket_with_storage(
-    params
-  ).signAndSubmit(client.signer);
+  const result = await submitTx(
+    api.tx.StorageProvider.create_bucket_with_storage(params),
+    client.signer,
+    "create_bucket_with_storage"
+  );
   const created = requireOneEvent(
     result.events,
     api.event.StorageProvider.BucketCreated,
@@ -79,25 +82,31 @@ async function submitCheckpoint(api, provider, client, bucketId) {
   const ck = await providerFetch(PROVIDER_URL, "/checkpoint-signature", {
     params: { bucket_id: Number(bucketId) },
   });
-  await api.tx.StorageProvider.checkpoint({
-    bucket_id: bucketId,
-    mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
-    start_seq: BigInt(ck.start_seq),
-    leaf_count: BigInt(ck.leaf_count),
-    signatures: [
-      [
-        provider.address,
-        Enum("Sr25519", Binary.fromBytes(hexToBytes(ck.provider_signature))),
+  await submitTx(
+    api.tx.StorageProvider.checkpoint({
+      bucket_id: bucketId,
+      mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
+      start_seq: BigInt(ck.start_seq),
+      leaf_count: BigInt(ck.leaf_count),
+      signatures: [
+        [
+          provider.address,
+          Enum("Sr25519", Binary.fromBytes(hexToBytes(ck.provider_signature))),
+        ],
       ],
-    ],
-  }).signAndSubmit(client.signer);
+    }),
+    client.signer,
+    "checkpoint"
+  );
   console.log("  Checkpoint submitted (leaf_count=%s)", ck.leaf_count);
 }
 
 async function freezeBucket(api, client, bucketId) {
-  const result = await api.tx.StorageProvider.freeze_bucket({
-    bucket_id: bucketId,
-  }).signAndSubmit(client.signer);
+  const result = await submitTx(
+    api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId }),
+    client.signer,
+    "freeze_bucket"
+  );
   const event = requireOneEvent(
     result.events,
     api.event.StorageProvider.BucketFrozen,

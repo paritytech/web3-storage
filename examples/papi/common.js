@@ -45,6 +45,30 @@ export async function connect(chainWs) {
   return { papi, api };
 }
 
+/**
+ * Sign + submit a transaction and assert it dispatched successfully.
+ *
+ * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }` and
+ * does NOT throw when dispatch fails — only when the tx is invalid (bad
+ * signature, low nonce, etc). Without this helper, a failed extrinsic looks
+ * indistinguishable from a successful one with no events, and the failure
+ * surfaces later as a confusing "Expected exactly 1 X event, got 0".
+ */
+export async function submitTx(tx, signer, label) {
+  const result = await tx.signAndSubmit(signer);
+  if (!result.ok) {
+    const err = result.dispatchError;
+    const detail =
+      err && typeof err === "object"
+        ? `${err.type ?? "DispatchError"}` +
+          (err.value?.type ? `::${err.value.type}` : "") +
+          (err.value?.value?.type ? `::${err.value.value.type}` : "")
+        : String(err);
+    throw new Error(`${label} dispatch failed: ${detail}`);
+  }
+  return result;
+}
+
 export async function providerFetch(providerUrl, path, opts = {}) {
   const url = new URL(path, providerUrl);
   if (opts.params) {
@@ -78,24 +102,53 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     const port = new URL(providerUrl).port;
     const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${port}`);
     console.log("  Registering provider", provider.address);
-    await api.tx.StorageProvider.register_provider({
-      multiaddr: Binary.fromBytes(multiaddr),
-      public_key: Binary.fromBytes(provider.publicKey),
-      stake: 1_000_000_000_000_000n,
-    }).signAndSubmit(provider.signer);
+    await submitTx(
+      api.tx.StorageProvider.register_provider({
+        multiaddr: Binary.fromBytes(multiaddr),
+        public_key: Binary.fromBytes(provider.publicKey),
+        stake: 1_000_000_000_000_000n,
+      }),
+      provider.signer,
+      "register_provider"
+    );
+  } else {
+    // Provider already registered (likely by an earlier demo on the same
+    // chain). Sanity-check that the on-chain public_key matches the keyring's
+    // — if it doesn't, off-chain signatures produced by the provider node
+    // will fail to verify and the failure surfaces as a missing event much
+    // later. Better to fail loudly here.
+    const onChainKey = existing.public_key?.asBytes
+      ? existing.public_key.asBytes()
+      : existing.public_key;
+    if (!bytesEq(onChainKey, provider.publicKey)) {
+      throw new Error(
+        `Provider ${provider.address} is already registered with a different public_key. ` +
+          `Restart the chain, or run this script with a fresh provider seed.`
+      );
+    }
   }
   // Always (re)apply settings so price/acceptance are correct for this demo.
-  await api.tx.StorageProvider.update_provider_settings({
-    settings: {
-      min_duration: 10,
-      max_duration: maxDuration,
-      price_per_byte: pricePerByte,
-      accepting_primary: true,
-      replica_sync_price: undefined,
-      accepting_extensions: true,
-      max_capacity: 0n,
-    },
-  }).signAndSubmit(provider.signer);
+  await submitTx(
+    api.tx.StorageProvider.update_provider_settings({
+      settings: {
+        min_duration: 10,
+        max_duration: maxDuration,
+        price_per_byte: pricePerByte,
+        accepting_primary: true,
+        replica_sync_price: undefined,
+        accepting_extensions: true,
+        max_capacity: 0n,
+      },
+    }),
+    provider.signer,
+    "update_provider_settings"
+  );
+}
+
+function bytesEq(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 export function fmtRole(role) {
@@ -115,9 +168,11 @@ export function utf8(s) {
 }
 
 export async function acceptAgreement(api, provider, bucketId) {
-  await api.tx.StorageProvider.accept_agreement({
-    bucket_id: bucketId,
-  }).signAndSubmit(provider.signer);
+  await submitTx(
+    api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
+    provider.signer,
+    "accept_agreement"
+  );
 }
 
 export async function printBucketMembers(api, bucketId, label = "members") {
