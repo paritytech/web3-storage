@@ -190,6 +190,32 @@ papi-setup:
     npm run papi:generate
 
 # ============================================================
+# PAPI single-purpose demos
+# ============================================================
+# Each script exercises one pallet workflow via the typed PAPI client.
+# All assume the chain (and the provider, for non-read-only ones) is running.
+
+# Bucket ACL flow: create_bucket -> set_member -> promote -> remove_member (pure on-chain)
+papi-bucket-membership ADMIN="//Alice" WRITER="//Eve" READER="//Ferdie": papi-setup
+    node examples/papi/bucket-membership.js "{{ CHAIN_WS }}" "{{ ADMIN }}" "{{ WRITER }}" "{{ READER }}"
+
+# Marketplace-style read-only walk of the Providers storage map
+papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
+    node examples/papi/provider-discovery.js "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
+
+# Atomic create_bucket_with_storage -> upload -> checkpoint -> freeze_bucket
+papi-bucket-with-storage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/bucket-with-storage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# S3 registry workflow: create_s3_bucket -> put/copy/delete object metadata -> delete_s3_bucket
+papi-s3-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/s3-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Drive registry workflow: create_drive -> share -> unshare -> delete_drive
+papi-drive-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" OWNER_SEED="//Bob" MEMBER_SEED="//Ferdie": papi-setup
+    node examples/papi/drive-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ OWNER_SEED }}" "{{ MEMBER_SEED }}"
+
+# ============================================================
 # File System (Layer 1)
 # ============================================================
 
