@@ -176,9 +176,6 @@ pub mod pallet {
     >;
 
     /// Pending agreement requests (bucket → provider → request).
-    ///
-    /// Keyed bucket-first so `delete_bucket` can `drain_prefix(bucket_id)`
-    /// instead of scanning every entry on chain.
     #[pallet::storage]
     #[pallet::getter(fn agreement_requests)]
     pub type AgreementRequests<T: Config> = StorageDoubleMap<
