@@ -27,7 +27,9 @@ import {
   hexToBytes,
   providerFetch,
   ensureProviderRegistered,
+  ensureSoleAcceptingProvider,
   requireOneEvent,
+  sameAddress,
   submitTx,
 } from "./common.js";
 
@@ -55,7 +57,10 @@ async function createBucketWithStorage(api, client, params) {
   console.log("  bucket_id        =", created.bucket_id);
   console.log("  matched provider =", accepted.provider);
   console.log("  expires_at       =", accepted.expires_at);
-  return { bucketId: created.bucket_id, provider: accepted.provider };
+  return {
+    bucketId: created.bucket_id,
+    matchedProvider: accepted.provider,
+  };
 }
 
 async function uploadChunk(providerUrl, bucketId, payload) {
@@ -127,16 +132,34 @@ async function main() {
 
   const { papi, api } = await connect(CHAIN_WS);
 
+  let restoreOthers = null;
   try {
     console.log("\n=== Step 1: Ensure provider is registered & accepting ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
+    // CI runs a second provider node (//Charlie) on a different port; both
+    // end up registered with accepting_primary=true and create_bucket_with_storage
+    // picks the cheapest, breaking ties by Providers::iter() hash order — which
+    // made the demo flake when //Charlie won the tie. Silence every other
+    // accepting provider for the duration of this demo so the match is
+    // deterministic.
+    restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
     console.log("\n=== Step 2: create_bucket_with_storage (atomic) ===");
-    const { bucketId } = await createBucketWithStorage(api, client, {
-      max_bytes: 1_048_576n,
-      duration: 50,
-      max_price_per_byte: 10n,
-    });
+    const { bucketId, matchedProvider } = await createBucketWithStorage(
+      api,
+      client,
+      {
+        max_bytes: 1_048_576n,
+        duration: 50,
+        max_price_per_byte: 10n,
+      }
+    );
+    if (!sameAddress(matchedProvider, provider.address)) {
+      throw new Error(
+        `create_bucket_with_storage matched ${matchedProvider}, expected ${provider.address}. ` +
+          `The provider node at ${PROVIDER_URL} can only sign for ${PROVIDER_SEED}.`
+      );
+    }
 
     console.log("\n=== Step 3: Upload one chunk ===");
     await uploadChunk(
@@ -157,6 +180,13 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
+    if (restoreOthers) {
+      try {
+        await restoreOthers();
+      } catch (err) {
+        console.error("WARN: failed to restore other providers:", err.message || err);
+      }
+    }
     papi.destroy();
   }
 }

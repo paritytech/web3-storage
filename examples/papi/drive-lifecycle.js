@@ -29,10 +29,12 @@ import {
   bytesToUtf8,
   fmtRole,
   ensureProviderRegistered,
-  acceptAgreement,
+  ensureSoleAcceptingProvider,
+  waitForAgreementAcceptance,
   printBucketMembers,
   requireOneEvent,
   sameAddress,
+  submitTx,
 } from "./common.js";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 
@@ -43,18 +45,34 @@ const OWNER_SEED = process.argv[5] || "//Bob";
 const MEMBER_SEED = process.argv[6] || "//Charlie";
 
 async function createDrive(api, owner, name, params) {
-  const result = await api.tx.DriveRegistry.create_drive({
-    name: Binary.fromBytes(utf8(name)),
-    ...params,
-  }).signAndSubmit(owner.signer);
+  const result = await submitTx(
+    api.tx.DriveRegistry.create_drive({
+      name: Binary.fromBytes(utf8(name)),
+      ...params,
+    }),
+    owner.signer,
+    "create_drive"
+  );
   const event = requireOneEvent(
     result.events,
     api.event.DriveRegistry.DriveCreated,
     "DriveCreated"
   );
-  console.log("  drive_id  =", event.drive_id);
-  console.log("  bucket_id =", event.bucket_id);
-  return { driveId: event.drive_id, bucketId: event.bucket_id };
+  // create_drive issues a Layer 0 AgreementRequested under the hood — pull
+  // the matched provider out so the caller can verify it's the one whose
+  // node we'll be calling.
+  const requested = api.event.StorageProvider.AgreementRequested.filter(
+    result.events
+  );
+  const matchedProvider = requested[0]?.provider;
+  console.log("  drive_id         =", event.drive_id);
+  console.log("  bucket_id        =", event.bucket_id);
+  console.log("  matched provider =", matchedProvider);
+  return {
+    driveId: event.drive_id,
+    bucketId: event.bucket_id,
+    matchedProvider,
+  };
 }
 
 async function printDriveInfo(api, owner, driveId, bucketId) {
@@ -86,11 +104,15 @@ async function printDriveInfo(api, owner, driveId, bucketId) {
 }
 
 async function shareDrive(api, owner, driveId, member, role) {
-  const result = await api.tx.DriveRegistry.share_drive({
-    drive_id: driveId,
-    member: member.address,
-    role: Enum(role),
-  }).signAndSubmit(owner.signer);
+  const result = await submitTx(
+    api.tx.DriveRegistry.share_drive({
+      drive_id: driveId,
+      member: member.address,
+      role: Enum(role),
+    }),
+    owner.signer,
+    `share_drive(${role})`
+  );
   const event = requireOneEvent(
     result.events,
     api.event.DriveRegistry.DriveShared,
@@ -104,10 +126,14 @@ async function shareDrive(api, owner, driveId, member, role) {
 }
 
 async function unshareDrive(api, owner, driveId, member) {
-  const result = await api.tx.DriveRegistry.unshare_drive({
-    drive_id: driveId,
-    member: member.address,
-  }).signAndSubmit(owner.signer);
+  const result = await submitTx(
+    api.tx.DriveRegistry.unshare_drive({
+      drive_id: driveId,
+      member: member.address,
+    }),
+    owner.signer,
+    "unshare_drive"
+  );
   requireOneEvent(
     result.events,
     api.event.DriveRegistry.DriveUnshared,
@@ -116,9 +142,11 @@ async function unshareDrive(api, owner, driveId, member) {
 }
 
 async function deleteDrive(api, owner, driveId) {
-  const result = await api.tx.DriveRegistry.delete_drive({
-    drive_id: driveId,
-  }).signAndSubmit(owner.signer);
+  const result = await submitTx(
+    api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
+    owner.signer,
+    "delete_drive"
+  );
   const event = requireOneEvent(
     result.events,
     api.event.DriveRegistry.DriveDeleted,
@@ -147,14 +175,19 @@ async function main() {
 
   const { papi, api } = await connect(CHAIN_WS);
 
+  let restoreOthers = null;
   try {
     console.log("\n=== Step 1: Ensure provider is ready ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
+    // create_drive selects via query_available_providers[0] (hash-iter
+    // order), so silence every other accepting dev provider — without this
+    // the demo flakes when a co-registered //Charlie wins the iteration.
+    restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
     console.log("\n=== Step 2: create_drive ===");
     const maxCapacity = 1_048_576n; // 1 MiB
     const storagePeriod = 200; // < 1000 -> auto-selects 1 provider
-    const { driveId, bucketId } = await createDrive(
+    const { driveId, bucketId, matchedProvider } = await createDrive(
       api,
       owner,
       `papi-demo-${Date.now()}`,
@@ -165,9 +198,17 @@ async function main() {
         min_providers: 1,
       }
     );
+    if (!sameAddress(matchedProvider, provider.address)) {
+      throw new Error(
+        `create_drive matched ${matchedProvider}, expected ${provider.address}. ` +
+          `Only ${PROVIDER_SEED} can accept this agreement.`
+      );
+    }
 
-    console.log("\n=== Step 3: Provider accepts pending agreement ===");
-    await acceptAgreement(api, provider, bucketId);
+    console.log("\n=== Step 3: Wait for provider to auto-accept agreement ===");
+    // The provider node's agreement_coordinator polls every ~6s and accepts
+    // pending requests automatically. Avoid racing it from the script.
+    await waitForAgreementAcceptance(api, provider.address, bucketId);
     console.log("  Agreement accepted by", provider.address);
 
     console.log("\n=== Step 4: Query drive state ===");
@@ -206,6 +247,13 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
+    if (restoreOthers) {
+      try {
+        await restoreOthers();
+      } catch (err) {
+        console.error("WARN: failed to restore other providers:", err.message || err);
+      }
+    }
     papi.destroy();
   }
 }

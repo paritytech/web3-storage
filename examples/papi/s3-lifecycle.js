@@ -28,8 +28,11 @@ import {
   utf8,
   providerFetch,
   ensureProviderRegistered,
-  acceptAgreement,
+  ensureSoleAcceptingProvider,
+  waitForAgreementAcceptance,
   requireOneEvent,
+  sameAddress,
+  submitTx,
 } from "./common.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -45,20 +48,33 @@ const OBJECT_KEYS = {
 };
 
 async function createS3Bucket(api, client, name, params) {
-  const result = await api.tx.S3Registry.create_s3_bucket_with_storage({
-    name: Binary.fromBytes(utf8(name)),
-    ...params,
-  }).signAndSubmit(client.signer);
+  const result = await submitTx(
+    api.tx.S3Registry.create_s3_bucket_with_storage({
+      name: Binary.fromBytes(utf8(name)),
+      ...params,
+    }),
+    client.signer,
+    "create_s3_bucket_with_storage"
+  );
   const event = requireOneEvent(
     result.events,
     api.event.S3Registry.S3BucketCreated,
     "S3BucketCreated"
   );
+  // Find the matched provider from the Layer 0 AgreementRequested event so the
+  // caller can verify the provider node at PROVIDER_URL is the one that will
+  // need to accept it.
+  const requested = api.event.StorageProvider.AgreementRequested.filter(
+    result.events
+  );
+  const matchedProvider = requested[0]?.provider;
   console.log("  s3_bucket_id     =", event.s3_bucket_id);
   console.log("  layer0_bucket_id =", event.layer0_bucket_id);
+  console.log("  matched provider =", matchedProvider);
   return {
     s3BucketId: event.s3_bucket_id,
     layer0BucketId: event.layer0_bucket_id,
+    matchedProvider,
   };
 }
 
@@ -78,26 +94,34 @@ async function uploadObject(providerUrl, layer0BucketId, payload) {
 }
 
 async function putObject(api, client, s3BucketId, key, obj, contentType, userMetadata = []) {
-  await api.tx.S3Registry.put_object_metadata({
-    s3_bucket_id: s3BucketId,
-    key: Binary.fromBytes(utf8(key)),
-    cid: Binary.fromBytes(obj.cid),
-    size: obj.size,
-    content_type: Binary.fromBytes(utf8(contentType)),
-    user_metadata: userMetadata.map(([k, v]) => [
-      Binary.fromBytes(utf8(k)),
-      Binary.fromBytes(utf8(v)),
-    ]),
-  }).signAndSubmit(client.signer);
+  await submitTx(
+    api.tx.S3Registry.put_object_metadata({
+      s3_bucket_id: s3BucketId,
+      key: Binary.fromBytes(utf8(key)),
+      cid: Binary.fromBytes(obj.cid),
+      size: obj.size,
+      content_type: Binary.fromBytes(utf8(contentType)),
+      user_metadata: userMetadata.map(([k, v]) => [
+        Binary.fromBytes(utf8(k)),
+        Binary.fromBytes(utf8(v)),
+      ]),
+    }),
+    client.signer,
+    `put_object_metadata(${key})`
+  );
 }
 
 async function copyObject(api, client, srcBucketId, srcKey, dstBucketId, dstKey) {
-  await api.tx.S3Registry.copy_object_metadata({
-    src_bucket_id: srcBucketId,
-    src_key: Binary.fromBytes(utf8(srcKey)),
-    dst_bucket_id: dstBucketId,
-    dst_key: Binary.fromBytes(utf8(dstKey)),
-  }).signAndSubmit(client.signer);
+  await submitTx(
+    api.tx.S3Registry.copy_object_metadata({
+      src_bucket_id: srcBucketId,
+      src_key: Binary.fromBytes(utf8(srcKey)),
+      dst_bucket_id: dstBucketId,
+      dst_key: Binary.fromBytes(utf8(dstKey)),
+    }),
+    client.signer,
+    `copy_object_metadata(${srcKey} -> ${dstKey})`
+  );
 }
 
 async function listObjects(api, s3BucketId) {
@@ -123,16 +147,22 @@ async function listObjects(api, s3BucketId) {
 }
 
 async function deleteObject(api, client, s3BucketId, key) {
-  await api.tx.S3Registry.delete_object_metadata({
-    s3_bucket_id: s3BucketId,
-    key: Binary.fromBytes(utf8(key)),
-  }).signAndSubmit(client.signer);
+  await submitTx(
+    api.tx.S3Registry.delete_object_metadata({
+      s3_bucket_id: s3BucketId,
+      key: Binary.fromBytes(utf8(key)),
+    }),
+    client.signer,
+    `delete_object_metadata(${key})`
+  );
 }
 
 async function deleteS3Bucket(api, client, s3BucketId) {
-  const result = await api.tx.S3Registry.delete_s3_bucket({
-    s3_bucket_id: s3BucketId,
-  }).signAndSubmit(client.signer);
+  const result = await submitTx(
+    api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId }),
+    client.signer,
+    "delete_s3_bucket"
+  );
   requireOneEvent(
     result.events,
     api.event.S3Registry.S3BucketDeleted,
@@ -154,14 +184,21 @@ async function main() {
 
   const { papi, api } = await connect(CHAIN_WS);
 
+  let restoreOthers = null;
   try {
     console.log("\n=== Step 1: Ensure provider is ready ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
+    // create_s3_bucket_with_storage picks query_available_providers[0],
+    // which iterates in storage-hash order. With multiple registered
+    // providers (CI registers //Alice and //Charlie) the match is
+    // non-deterministic — silence the others so the demo always matches
+    // the one whose HTTP endpoint we'll talk to.
+    restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
     console.log("\n=== Step 2: create_s3_bucket_with_storage ===");
     const maxCapacity = 1_048_576n; // 1 MiB
     const duration = 100;
-    const { s3BucketId, layer0BucketId } = await createS3Bucket(
+    const { s3BucketId, layer0BucketId, matchedProvider } = await createS3Bucket(
       api,
       client,
       BUCKET_NAME,
@@ -171,9 +208,19 @@ async function main() {
         max_payment: maxCapacity * BigInt(duration) * 2n,
       }
     );
+    if (!sameAddress(matchedProvider, provider.address)) {
+      throw new Error(
+        `create_s3_bucket_with_storage matched ${matchedProvider}, expected ${provider.address}. ` +
+          `The provider node at ${PROVIDER_URL} can only accept for ${PROVIDER_SEED}.`
+      );
+    }
 
-    console.log("\n=== Step 3: Provider accepts pending agreement ===");
-    await acceptAgreement(api, provider, layer0BucketId);
+    console.log("\n=== Step 3: Wait for provider to auto-accept agreement ===");
+    // The provider node's agreement_coordinator polls every ~6s and accepts
+    // pending requests automatically. Don't try to submit accept_agreement
+    // ourselves — that races the coordinator and intermittently fails with
+    // AgreementRequestNotFound when the coordinator wins.
+    await waitForAgreementAcceptance(api, provider.address, layer0BucketId);
     console.log("  Agreement accepted by", provider.address);
 
     console.log("\n=== Step 4: Upload two objects to the provider ===");
@@ -228,6 +275,13 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
+    if (restoreOthers) {
+      try {
+        await restoreOthers();
+      } catch (err) {
+        console.error("WARN: failed to restore other providers:", err.message || err);
+      }
+    }
     papi.destroy();
   }
 }
