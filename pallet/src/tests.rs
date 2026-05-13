@@ -688,7 +688,7 @@ mod agreement_tests {
                 1000  // max_payment
             ));
 
-            let request = AgreementRequests::<Test>::get(2, 0).unwrap();
+            let request = AgreementRequests::<Test>::get(0, 2).unwrap();
             assert_eq!(request.requester, 1);
             assert_eq!(request.max_bytes, 1000);
             assert_eq!(request.duration, 100);
@@ -752,7 +752,7 @@ mod agreement_tests {
             assert_eq!(provider.stats.agreements_total, 1);
 
             // Check request removed
-            assert!(AgreementRequests::<Test>::get(2, 0).is_none());
+            assert!(AgreementRequests::<Test>::get(0, 2).is_none());
         });
     }
 
@@ -810,7 +810,7 @@ mod agreement_tests {
             assert_eq!(Balances::free_balance(1), balance_before);
 
             // Request should be removed
-            assert!(AgreementRequests::<Test>::get(2, 0).is_none());
+            assert!(AgreementRequests::<Test>::get(0, 2).is_none());
         });
     }
 
@@ -840,7 +840,7 @@ mod agreement_tests {
             assert_eq!(Balances::free_balance(1), balance_before);
 
             // Request removed
-            assert!(AgreementRequests::<Test>::get(2, 0).is_none());
+            assert!(AgreementRequests::<Test>::get(0, 2).is_none());
         });
     }
 
