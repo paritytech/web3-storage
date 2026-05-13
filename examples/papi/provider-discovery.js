@@ -22,7 +22,13 @@
  */
 
 import { cryptoWaitReady } from "@polkadot/util-crypto";
-import { connect, bytesToUtf8 } from "./common.js";
+import {
+  bytesToUtf8,
+  connect,
+  waitForBlockProduction,
+  waitForChainReady,
+  waitForNextBlock,
+} from "./common.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const BYTES_NEEDED = BigInt(process.argv[3] || 1_073_741_824n); // 1 GiB
@@ -113,6 +119,9 @@ async function main() {
   console.log("  max_price_per_byte =", req.maxPricePerByte);
 
   const { papi, api } = await connect(CHAIN_WS);
+  await waitForChainReady(api);
+  await waitForBlockProduction(api);
+  await waitForNextBlock(papi);
 
   try {
     const ranked = await fetchAndRankProviders(api, req);

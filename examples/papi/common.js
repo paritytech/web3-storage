@@ -46,25 +46,288 @@ export async function connect(chainWs) {
 }
 
 /**
- * Sign + submit a transaction and assert it dispatched successfully.
+ * Verify the chain's runtime is reachable by reading a constant. Catches the
+ * "RPC handshake completed but the runtime metadata isn't loaded yet" window
+ * that occurs right after zombienet startup, before any submit would fail
+ * cryptically downstream.
+ */
+export async function waitForChainReady(
+  api,
+  { maxRetries = 10, retryDelayMs = 2_000 } = {}
+) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const version = api.constants.System.Version;
+      // Reading the property may throw if metadata isn't ready yet.
+      // Touching `.spec_version` forces resolution.
+      const spec = await version();
+      console.log(
+        `✅ Chain ready: ${spec.spec_name} v${spec.spec_version}`
+      );
+      return true;
+    } catch (error) {
+      if (attempt === maxRetries) {
+        throw new Error(
+          `Chain not ready after ${maxRetries} attempts: ${error?.message ?? error}`
+        );
+      }
+      console.log(
+        `⏳ Chain not ready (attempt ${attempt}/${maxRetries}): ${error?.message ?? error}`
+      );
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  }
+  return false;
+}
+
+/**
+ * Poll `System.Number` until it crosses zero. Distinct from
+ * `waitForNextBlock`: this guards the case where the chain isn't producing
+ * blocks at all yet (zombienet warmup), where a subscription-based wait would
+ * block forever with no events to react to.
+ */
+export async function waitForBlockProduction(api, { timeoutSec = 300 } = {}) {
+  const pollIntervalMs = 2_000;
+  const deadline = Date.now() + timeoutSec * 1_000;
+  while (Date.now() < deadline) {
+    try {
+      const n = await api.query.System.Number.getValue();
+      const blockNumber = typeof n === "bigint" ? Number(n) : Number(n);
+      if (blockNumber > 0) {
+        console.log(`✅ Chain producing blocks (head=#${blockNumber})`);
+        return blockNumber;
+      }
+      console.log(`⏳ Block number is ${blockNumber}, waiting...`);
+    } catch (error) {
+      console.log(
+        `⏳ Cannot query block number yet: ${error?.message ?? error}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`Chain did not produce any blocks within ${timeoutSec}s`);
+}
+
+/**
+ * Sequence multiple transactions from the same signer without racing the
+ * RPC's nonce cache. Construct once after reading the on-chain nonce, then
+ * pass `{ nonce: nm.next() }` as `txOpts` when submitting back-to-back txs.
  *
- * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }` and
- * does NOT throw when dispatch fails — only when the tx is invalid (bad
+ * Ported from polkadot-bulletin-chain/examples/common.js NonceManager.
+ */
+export class NonceManager {
+  constructor(initialNonce) {
+    this.nonce = BigInt(initialNonce);
+  }
+  /** Return the current nonce, then advance. */
+  next() {
+    const current = this.nonce;
+    this.nonce += 1n;
+    return current;
+  }
+  /** Read the on-chain nonce for `address` and build a manager from it. */
+  static async forAccount(api, address) {
+    const account = await api.query.System.Account.getValue(address);
+    return new NonceManager(account.nonce);
+  }
+}
+
+/**
+ * Wait until the chain advances to a new finalized block.
+ *
+ * Run this once at the top of every example before submitting any extrinsic.
+ * The provider node runs background coordinators (agreement auto-accept,
+ * checkpoint) signed by the same dev key the demo uses, so two transactions
+ * can land in the pool with the same `(account, nonce)` and one is dropped as
+ * "Usurped". Aligning the demo's first submit to a fresh block boundary
+ * shrinks the collision window enough that the demos run cleanly.
+ */
+export async function waitForNextBlock(papi) {
+  return new Promise((resolve) => {
+    let initial = null;
+    const sub = papi.finalizedBlock$.subscribe((block) => {
+      if (initial === null) {
+        initial = block.number;
+        return;
+      }
+      if (block.number > initial) {
+        sub.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Default per-transaction timeout. 180s ≈ 30 blocks at 6s — enough headroom
+ * for a tx to be included even under CI load, but bounded so a stuck mempool
+ * surfaces as a clear error instead of an indefinite hang that later looks
+ * like a missing event downstream.
+ */
+export const DEFAULT_TX_TIMEOUT_MS = 180_000;
+
+/**
+ * Transaction "doneness" thresholds for `waitForTransaction`. Pick the
+ * loosest one your caller can tolerate — earlier modes return faster but
+ * before forks could roll the tx back.
+ */
+export const TX_MODE_IN_POOL = "in-tx-pool"; // broadcasted, not yet in a block
+export const TX_MODE_IN_BLOCK = "in-block"; // included in best block (default)
+export const TX_MODE_FINALIZED_BLOCK = "finalized-block"; // included in finalized block
+
+const TX_MODE_CONFIG = {
+  [TX_MODE_IN_POOL]: {
+    match: (ev) => ev.type === "broadcasted",
+    log: (label, ev) => `📦 ${label} broadcasted txHash=${ev.txHash}`,
+  },
+  [TX_MODE_IN_BLOCK]: {
+    match: (ev) => ev.type === "txBestBlocksState" && ev.found,
+    log: (label, ev) => `📦 ${label} included in block ${ev.block.hash}`,
+  },
+  [TX_MODE_FINALIZED_BLOCK]: {
+    match: (ev) => ev.type === "finalized",
+    log: (label, ev) => `📦 ${label} finalized in block ${ev.block.hash}`,
+  },
+};
+
+function formatDispatchError(err) {
+  if (!err || typeof err !== "object") return String(err);
+  let s = err.type ?? "DispatchError";
+  if (err.value?.type) s += `::${err.value.type}`;
+  if (err.value?.value?.type) s += `::${err.value.value.type}`;
+  return s;
+}
+
+/**
+ * Subscribe to a transaction observable and resolve when it reaches `txMode`,
+ * reject on dispatch error or after `timeoutMs`. Pattern ported from
+ * polkadot-bulletin-chain/examples/api.js — gives explicit "doneness" control
+ * and a hard timeout so a stuck mempool can't hang the example forever.
+ *
+ * Pass `signer = null` for unsigned txs (uses `tx.getBareTx()` +
+ * `client.submitAndWatch`). For signed txs, pass the PAPI client as `client`
+ * only if you need it; it's unused otherwise.
+ */
+export async function waitForTransaction(
+  tx,
+  signer,
+  label,
+  txMode = TX_MODE_IN_BLOCK,
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS,
+  client = null,
+  txOpts = {}
+) {
+  const config = TX_MODE_CONFIG[txMode];
+  if (!config) throw new Error(`Unhandled txMode: ${txMode}`);
+
+  let observable;
+  if (signer === null) {
+    if (Object.keys(txOpts).length > 0) {
+      throw new Error(
+        `${label}: txOpts not supported for unsigned transactions ` +
+          `(getBareTx accepts no options). See polkadot-api/polkadot-api#760.`
+      );
+    }
+    if (!client) {
+      throw new Error(
+        `${label}: unsigned submission requires the PAPI client (3rd-to-last arg).`
+      );
+    }
+    const bareTx = await tx.getBareTx();
+    observable = client.submitAndWatch(bareTx);
+  } else {
+    observable = tx.signSubmitAndWatch(signer, txOpts);
+  }
+
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    let sub;
+    const cleanup = () => {
+      resolved = true;
+      clearTimeout(timer);
+      if (sub) sub.unsubscribe();
+    };
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        cleanup();
+        reject(
+          new Error(
+            `${label}: timed out after ${timeoutMs}ms waiting for ${txMode}`
+          )
+        );
+      }
+    }, timeoutMs);
+
+    sub = observable.subscribe({
+      next: (ev) => {
+        if (resolved) return;
+        // PAPI surfaces dispatch errors on the in-block / finalized events as
+        // `ev.ok === false`. Catch them here so callers don't have to.
+        if (
+          (ev.type === "txBestBlocksState" && ev.found && ev.ok === false) ||
+          (ev.type === "finalized" && ev.ok === false)
+        ) {
+          cleanup();
+          reject(
+            new Error(
+              `${label} dispatch failed: ${formatDispatchError(ev.dispatchError)}`
+            )
+          );
+          return;
+        }
+        if (config.match(ev)) {
+          console.log(config.log(label, ev));
+          cleanup();
+          resolve(ev);
+        }
+      },
+      error: (err) => {
+        if (resolved) return;
+        cleanup();
+        reject(new Error(`${label} stream error: ${err}`));
+      },
+    });
+  });
+}
+
+/**
+ * Sign + submit a transaction, assert it dispatched successfully, and return
+ * the PAPI result (`{ ok, events, block, ... }`).
+ *
+ * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }`
+ * and does NOT throw when dispatch fails — only when the tx is invalid (bad
  * signature, low nonce, etc). Without this helper, a failed extrinsic looks
  * indistinguishable from a successful one with no events, and the failure
  * surfaces later as a confusing "Expected exactly 1 X event, got 0".
+ *
+ * Bounded by `timeoutMs` so a stuck mempool can't hang the example.
  */
-export async function submitTx(tx, signer, label) {
-  const result = await tx.signAndSubmit(signer);
+export async function submitTx(
+  tx,
+  signer,
+  label,
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS
+) {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(`${label}: signAndSubmit timed out after ${timeoutMs}ms`)
+        ),
+      timeoutMs
+    );
+  });
+  let result;
+  try {
+    result = await Promise.race([tx.signAndSubmit(signer), timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!result.ok) {
-    const err = result.dispatchError;
-    const detail =
-      err && typeof err === "object"
-        ? `${err.type ?? "DispatchError"}` +
-          (err.value?.type ? `::${err.value.type}` : "") +
-          (err.value?.value?.type ? `::${err.value.value.type}` : "")
-        : String(err);
-    throw new Error(`${label} dispatch failed: ${detail}`);
+    throw new Error(
+      `${label} dispatch failed: ${formatDispatchError(result.dispatchError)}`
+    );
   }
   return result;
 }

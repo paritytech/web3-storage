@@ -33,6 +33,9 @@ import {
   requireOneEvent,
   sameAddress,
   submitTx,
+  waitForBlockProduction,
+  waitForChainReady,
+  waitForNextBlock,
 } from "./common.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -183,6 +186,9 @@ async function main() {
   console.log("S3 bucket name:", BUCKET_NAME);
 
   const { papi, api } = await connect(CHAIN_WS);
+  await waitForChainReady(api);
+  await waitForBlockProduction(api);
+  await waitForNextBlock(papi);
 
   let restoreOthers = null;
   try {

@@ -170,17 +170,32 @@ jobs:
       - name: Run L0 demo (inmemory provider)
         run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
 
+      - name: Drain pool
+        run: bash scripts/drain-pool.sh ws://127.0.0.1:2222
+
       - name: Run L0 demo (disk provider)
         run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+
+      - name: Drain pool
+        run: bash scripts/drain-pool.sh ws://127.0.0.1:2222
 
       - name: Run file system integration test
         run: just fs-demo-ci
 
+      - name: Drain pool
+        run: bash scripts/drain-pool.sh ws://127.0.0.1:2222
+
       - name: Run S3 integration test
         run: just s3-demo-ci
 
+      - name: Drain pool
+        run: bash scripts/drain-pool.sh ws://127.0.0.1:2222
+
       - name: Run PAPI s3-lifecycle demo
         run: just papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Drain pool
+        run: bash scripts/drain-pool.sh ws://127.0.0.1:2222
 
       - name: Run PAPI drive-lifecycle demo
         run: just papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"

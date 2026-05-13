@@ -23,6 +23,9 @@ import {
   makeSigner,
   printBucketMembers,
   requireOneEvent,
+  waitForBlockProduction,
+  waitForChainReady,
+  waitForNextBlock,
 } from "./common.js";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 
@@ -85,6 +88,9 @@ async function main() {
   console.log("Reader (%s) => %s", READER_SEED, reader.address);
 
   const { papi, api } = await connect(CHAIN_WS);
+  await waitForChainReady(api);
+  await waitForBlockProduction(api);
+  await waitForNextBlock(papi);
 
   try {
     console.log("\n=== Step 1: Create bucket ===");

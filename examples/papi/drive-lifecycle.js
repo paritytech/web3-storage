@@ -35,6 +35,9 @@ import {
   requireOneEvent,
   sameAddress,
   submitTx,
+  waitForBlockProduction,
+  waitForChainReady,
+  waitForNextBlock,
 } from "./common.js";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 
@@ -174,6 +177,9 @@ async function main() {
   console.log("Member   (%s) => %s", MEMBER_SEED, member.address);
 
   const { papi, api } = await connect(CHAIN_WS);
+  await waitForChainReady(api);
+  await waitForBlockProduction(api);
+  await waitForNextBlock(papi);
 
   let restoreOthers = null;
   try {
