@@ -23,10 +23,9 @@ rand = "0.8"
 chacha20poly1305 = "0.10"
 hex = "0.4"
 async-trait = "0.1"
-subxt = "0.37"
-subxt-signer = { version = "0.37", features = ["sr25519"] }
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
 futures = "0.3"
-scale-value = "0.16"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

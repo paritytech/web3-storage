@@ -40,13 +40,15 @@ mod substrate;
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
+use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, StorageClient,
+    CheckpointManager, ClientConfig, EventParser, StorageUserClient,
 };
+use substrate::{FileSystemEvent, FileSystemEventParser};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -106,7 +108,7 @@ pub type Result<T> = std::result::Result<T, FsClientError>;
 /// High-level file system client
 pub struct FileSystemClient {
     /// Layer 0 storage client for blob operations
-    storage_client: StorageClient,
+    storage_client: StorageUserClient,
     /// Substrate blockchain client
     substrate_client: SubstrateClient,
     /// In-memory cache of drive root CIDs (drive_id -> root_cid)
@@ -125,7 +127,11 @@ impl FileSystemClient {
     /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://127.0.0.1:2222")
     /// * `provider_endpoint` - Storage provider HTTP endpoint
     pub async fn new(chain_endpoint: &str, provider_endpoint: &str) -> Result<Self> {
-        let storage_client = StorageClient::new(provider_endpoint);
+        let storage_client = StorageUserClient::new(ClientConfig {
+            provider_urls: vec![provider_endpoint.to_string()],
+            ..Default::default()
+        })
+        .map_err(|e| FsClientError::Config(e.to_string()))?;
         let substrate_client = SubstrateClient::connect(chain_endpoint).await?;
 
         Ok(Self {
@@ -787,7 +793,7 @@ impl FileSystemClient {
 
         let data = self
             .storage_client
-            .read(&cid, 0, MAX_READ_LENGTH)
+            .download(&cid, 0, MAX_READ_LENGTH)
             .await
             .map_err(|e| FsClientError::StorageClient(e.to_string()))?;
 
@@ -864,8 +870,6 @@ impl FileSystemClient {
         payment: u128,
         min_providers: Option<u8>,
     ) -> Result<DriveId> {
-        use subxt::dynamic::At;
-
         let name_bytes = name.map(|n| n.as_bytes().to_vec());
 
         // Build the extrinsic
@@ -893,20 +897,13 @@ impl FileSystemClient {
                 FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
             })?;
 
-        // Scan finalized events for the DriveRegistry drive-created event.
-        for ev in events.iter() {
-            let ev =
-                ev.map_err(|e| FsClientError::Blockchain(format!("Event decode error: {e}")))?;
-
-            tracing::info!("Received event: {}.{}", ev.pallet_name(), ev.variant_name());
-
-            if ev.pallet_name() == "DriveRegistry" {
-                if let Ok(value) = ev.field_values() {
-                    if let Some(drive_id) = value.at(0).and_then(|v| v.as_u128()) {
-                        tracing::info!("Drive created with ID: {drive_id}");
-                        return Ok(drive_id as DriveId);
-                    }
-                }
+        // Scan finalized events for the DriveRegistry::DriveCreated event.
+        // ExtrinsicEvents doesn't carry block hash / number, and this caller only needs
+        // the drive_id, so pass placeholders for the parser's block-context fields.
+        for parsed in FileSystemEventParser::from_extrinsic_events(&events, H256::zero(), 0) {
+            tracing::info!("DriveRegistry event: {parsed:?}");
+            if let FileSystemEvent::DriveCreated { drive_id, .. } = parsed {
+                return Ok(drive_id);
             }
         }
 

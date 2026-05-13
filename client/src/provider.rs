@@ -9,7 +9,7 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::discovery::ProviderInfo;
-use crate::substrate::{extrinsics, storage};
+use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
@@ -115,7 +115,7 @@ impl ProviderClient {
         Ok(())
     }
 
-    /// Query a provider's current settings from the chain.
+    /// Query a provider's current info from the chain.
     ///
     /// Returns `None` if the provider is not registered.
     pub async fn get_provider_info(
@@ -258,15 +258,51 @@ impl ProviderClient {
 
     /// Add more stake to your provider account.
     pub async fn add_stake(&self, additional_stake: u128) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!("Would add stake: {}", additional_stake);
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        tracing::info!(
+            "Adding stake {} for provider {}",
+            additional_stake,
+            self.provider_account
+        );
+
+        let tx = extrinsics::add_stake(additional_stake);
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Stake added successfully");
         Ok(())
     }
 
     /// Deregister as a provider (requires no active agreements).
     pub async fn deregister(&self) -> ClientResult<()> {
-        // TODO: Submit extrinsic
-        tracing::info!("Would deregister provider {}", self.provider_account);
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        tracing::info!("Deregistering provider {}", self.provider_account);
+
+        let tx = extrinsics::deregister_provider();
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Provider deregistered successfully");
         Ok(())
     }
 
@@ -319,14 +355,157 @@ impl ProviderClient {
 
     /// List all pending agreement requests for this provider.
     pub async fn list_pending_requests(&self) -> ClientResult<Vec<AgreementRequest>> {
-        // TODO: Query chain storage
-        Ok(vec![])
+        let chain = self.base.chain()?;
+        let provider_account = SubstrateClient::parse_account(&self.provider_account)
+            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+
+        let storage = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+
+        let mut iter = storage
+            .iter(storage::agreement_requests_for_provider(&provider_account))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to iterate requests: {e}")))?;
+
+        let mut requests = Vec::new();
+
+        while let Some(result) = iter.next().await {
+            let kv =
+                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+
+            // bucket_id is encoded at offset 96 in the full storage key
+            // layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(provider)=16]
+            //         [provider=32][blake2_128(bucket_id)=16][bucket_id=8]
+            let key = &kv.key_bytes;
+            if key.len() < 104 {
+                continue;
+            }
+            let bucket_id =
+                u64::from_le_bytes(key[96..104].try_into().unwrap_or([0u8; 8])) as BucketId;
+
+            let value = match kv.value.to_value() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to decode agreement request: {e}");
+                    continue;
+                }
+            };
+
+            let requester = named_field(&value, "requester")
+                .and_then(decode_account_bytes)
+                .map(|b| format!("0x{}", hex::encode(b)))
+                .unwrap_or_default();
+
+            let max_bytes = named_field(&value, "max_bytes")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u64;
+
+            let payment_locked = named_field(&value, "payment_locked")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0);
+
+            let duration = named_field(&value, "duration")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u32;
+
+            let expires_at = named_field(&value, "expires_at")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u32;
+
+            requests.push(AgreementRequest {
+                bucket_id,
+                requester,
+                max_bytes,
+                payment_locked,
+                duration,
+                expires_at,
+            });
+        }
+
+        Ok(requests)
     }
 
     /// List all active agreements for this provider.
     pub async fn list_active_agreements(&self) -> ClientResult<Vec<ActiveAgreement>> {
-        // TODO: Query chain storage via Runtime API
-        Ok(vec![])
+        let chain = self.base.chain()?;
+        let provider_account = SubstrateClient::parse_account(&self.provider_account)
+            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_bytes: &[u8] = provider_account.as_ref();
+
+        let storage = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+
+        let mut iter = storage
+            .iter(storage::all_storage_agreements())
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
+
+        let mut agreements = Vec::new();
+
+        while let Some(result) = iter.next().await {
+            let kv =
+                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+
+            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
+            //             [blake2_128(bucket_id)=16][bucket_id=8]
+            //             [blake2_128(provider)=16][provider=32]
+            // bucket_id at [48..56], provider at [72..104]
+            let key = &kv.key_bytes;
+            if key.len() < 104 {
+                continue;
+            }
+            if &key[72..104] != provider_bytes {
+                continue;
+            }
+
+            let bucket_id =
+                u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
+
+            let value = match kv.value.to_value() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to decode agreement: {e}");
+                    continue;
+                }
+            };
+
+            let owner = named_field(&value, "owner")
+                .and_then(decode_account_bytes)
+                .map(|b| format!("0x{}", hex::encode(b)))
+                .unwrap_or_default();
+
+            let max_bytes = named_field(&value, "max_bytes")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u64;
+
+            let expires_at = named_field(&value, "expires_at")
+                .and_then(|v| v.as_u128())
+                .unwrap_or(0) as u32;
+
+            let is_primary = named_field(&value, "role")
+                .map(|r| {
+                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
+                })
+                .unwrap_or(false);
+
+            agreements.push(ActiveAgreement {
+                bucket_id,
+                owner,
+                max_bytes,
+                expires_at,
+                is_primary,
+            });
+        }
+
+        Ok(agreements)
     }
 
     /// Confirm replica sync to receive payment.
@@ -337,14 +516,30 @@ impl ProviderClient {
         &self,
         bucket_id: BucketId,
         mmr_roots: [Option<H256>; 7],
-        _signature: Vec<u8>,
+        signature: Vec<u8>,
     ) -> ClientResult<()> {
-        // TODO: Submit extrinsic
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
         tracing::info!(
-            "Would confirm replica sync for bucket {} with {} roots",
+            "Confirming replica sync for bucket {} with {} roots",
             bucket_id,
             mmr_roots.iter().filter(|r| r.is_some()).count()
         );
+
+        let tx = extrinsics::confirm_replica_sync(bucket_id, mmr_roots, signature);
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Replica sync confirmed successfully");
         Ok(())
     }
 
@@ -400,8 +595,85 @@ impl ProviderClient {
 
     /// List all active challenges against this provider.
     pub async fn list_active_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
-        // TODO: Query chain storage
-        Ok(vec![])
+        let chain = self.base.chain()?;
+        let provider_account = SubstrateClient::parse_account(&self.provider_account)
+            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_bytes: Vec<u8> = AsRef::<[u8]>::as_ref(&provider_account).to_vec();
+
+        let storage = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+
+        let mut iter = storage
+            .iter(storage::all_challenges())
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
+
+        let mut challenges = Vec::new();
+
+        while let Some(result) = iter.next().await {
+            let kv =
+                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+
+            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
+            //             [blake2_128(deadline)=16][deadline=4]; deadline at [48..52]
+            let key = &kv.key_bytes;
+            if key.len() < 52 {
+                continue;
+            }
+            let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
+
+            let value = match kv.value.to_value() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to decode challenges at block {deadline}: {e}");
+                    continue;
+                }
+            };
+
+            // Value is Vec<Challenge>, decoded as an unnamed Composite
+            let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
+                continue;
+            };
+            let items: Vec<_> = items.iter().collect();
+
+            for (index, item) in items.iter().enumerate() {
+                let Some(pv) = named_field(item, "provider") else {
+                    continue;
+                };
+                let Some(pv_bytes) = decode_account_bytes(pv) else {
+                    continue;
+                };
+                if pv_bytes != provider_bytes {
+                    continue;
+                }
+
+                let bucket_id = named_field(item, "bucket_id")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as BucketId;
+
+                let leaf_index = named_field(item, "leaf_index")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as u64;
+
+                let chunk_index = named_field(item, "chunk_index")
+                    .and_then(|v| v.as_u128())
+                    .unwrap_or(0) as u64;
+
+                challenges.push(ChallengeInfo {
+                    challenge_id: (deadline, index as u16),
+                    bucket_id,
+                    deadline,
+                    leaf_index,
+                    chunk_index,
+                });
+            }
+        }
+
+        Ok(challenges)
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -410,23 +682,133 @@ impl ProviderClient {
 
     /// Get your provider statistics.
     pub async fn get_stats(&self) -> ClientResult<ProviderStats> {
-        // TODO: Query via Runtime API
-        Ok(ProviderStats::default())
+        let chain = self.base.chain()?;
+        let provider_account = SubstrateClient::parse_account(&self.provider_account)
+            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::provider_info(&provider_account))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+
+        let Some(thunk) = thunk else {
+            return Ok(ProviderStats::default());
+        };
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
+
+        let stake = named_field(&value, "stake")
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0);
+
+        let committed_bytes = named_field(&value, "committed_bytes")
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u64;
+
+        let stats = named_field(&value, "stats");
+
+        let agreements_total = stats
+            .and_then(|s| named_field(s, "agreements_total"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let agreements_extended = stats
+            .and_then(|s| named_field(s, "agreements_extended"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let challenges_received = stats
+            .and_then(|s| named_field(s, "challenges_received"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let challenges_failed = stats
+            .and_then(|s| named_field(s, "challenges_failed"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u32;
+
+        let reputation = if agreements_total > 0 {
+            let failure_rate = challenges_failed as f64 / agreements_total as f64;
+            ((1.0 - failure_rate) * 100.0).clamp(0.0, 100.0) as u8
+        } else {
+            100
+        };
+
+        Ok(ProviderStats {
+            stake,
+            committed_bytes,
+            agreements_total,
+            agreements_extended,
+            challenges_received,
+            challenges_failed,
+            reputation,
+        })
     }
 
     /// Get your total earnings (all time).
+    ///
+    /// Note: historical earnings are not stored on-chain; this returns 0.
     pub async fn get_total_earnings(&self) -> ClientResult<u128> {
-        // Calculate from finalized agreements
         Ok(0)
     }
 
     /// Get your current committed bytes vs available capacity.
     pub async fn get_capacity_info(&self) -> ClientResult<CapacityInfo> {
-        // TODO: Query chain storage
+        let chain = self.base.chain()?;
+        let provider_account = SubstrateClient::parse_account(&self.provider_account)
+            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::provider_info(&provider_account))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
+
+        let Some(thunk) = thunk else {
+            return Ok(CapacityInfo {
+                committed_bytes: 0,
+                available_bytes: 0,
+                stake: 0,
+                required_stake: 0,
+            });
+        };
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
+
+        let stake = named_field(&value, "stake")
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0);
+
+        let committed_bytes = named_field(&value, "committed_bytes")
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u64;
+
+        let settings = named_field(&value, "settings");
+
+        let max_capacity = settings
+            .and_then(|s| named_field(s, "max_capacity"))
+            .and_then(|v| v.as_u128())
+            .unwrap_or(0) as u64;
+
+        let available_bytes = max_capacity.saturating_sub(committed_bytes);
+
         Ok(CapacityInfo {
-            committed_bytes: 0,
-            available_bytes: 0,
-            stake: 0,
+            committed_bytes,
+            available_bytes,
+            stake,
             required_stake: 0,
         })
     }
@@ -445,6 +827,16 @@ fn named_field<'a>(
     match &value.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
+        }
+        _ => None,
+    }
+}
+
+/// Decode an AccountId32 from a scale_value unnamed composite of 32 u8 items.
+fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
+    match &value.value {
+        ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
+            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
         }
         _ => None,
     }

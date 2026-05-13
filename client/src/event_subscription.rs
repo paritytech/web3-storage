@@ -31,6 +31,8 @@
 //! # }
 //! ```
 
+use crate::scale_decode;
+use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
 use sp_core::H256;
@@ -41,6 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use storage_primitives::BucketId;
+use subxt::ext::scale_value::{self, At};
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
@@ -582,7 +585,7 @@ impl EventSubscriber {
                                 match event_result {
                                     Ok(event) => {
                                         // Only process StorageProvider pallet events
-                                        if event.pallet_name() == "StorageProvider" {
+                                        if event.pallet_name() == PALLET_NAME {
                                             if let Some(storage_event) =
                                                 Self::parse_event(&event, block_hash, block_number)
                                             {
@@ -620,125 +623,16 @@ impl EventSubscriber {
         Ok(())
     }
 
-    /// Parse a subxt event into a StorageEvent.
+    /// Parse a subxt event detail into a [`StorageEvent`].
+    ///
+    /// Delegates to [`StorageProviderEventParser`] so that the subscription
+    /// loop and one-shot callers share identical decoding logic.
     fn parse_event(
         event: &subxt::events::EventDetails<PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<StorageEvent> {
-        let variant = event.variant_name();
-
-        // Parse based on event variant name
-        // Note: In production, you would use proper decoding based on runtime metadata
-        match variant {
-            "BucketCheckpointed" => {
-                // Try to extract fields from event bytes
-                // This is a simplified version - proper implementation would decode SCALE
-                Some(StorageEvent::BucketCheckpointed {
-                    bucket_id: 0, // Would be decoded from event
-                    mmr_root: H256::zero(),
-                    start_seq: 0,
-                    leaf_count: 0,
-                    providers: vec![],
-                    block_hash,
-                    block_number,
-                })
-            }
-            "ChallengeCreated" => Some(StorageEvent::ChallengeCreated {
-                challenge_id: (0, 0),
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                challenger: AccountId32::new([0u8; 32]),
-                respond_by: 0,
-                block_hash,
-                block_number,
-            }),
-            "ChallengeDefended" => Some(StorageEvent::ChallengeDefended {
-                challenge_id: (0, 0),
-                provider: AccountId32::new([0u8; 32]),
-                response_time_blocks: 0,
-                challenger_cost: 0,
-                provider_cost: 0,
-                block_hash,
-                block_number,
-            }),
-            "ChallengeSlashed" => Some(StorageEvent::ChallengeSlashed {
-                challenge_id: (0, 0),
-                provider: AccountId32::new([0u8; 32]),
-                slashed_amount: 0,
-                challenger_reward: 0,
-                block_hash,
-                block_number,
-            }),
-            "ProviderRegistered" => Some(StorageEvent::ProviderRegistered {
-                provider: AccountId32::new([0u8; 32]),
-                stake: 0,
-                block_hash,
-                block_number,
-            }),
-            "ProviderAddedToBucket" => Some(StorageEvent::ProviderAddedToBucket {
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                block_hash,
-                block_number,
-            }),
-            "AgreementRequested" => Some(StorageEvent::AgreementRequested {
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                requester: AccountId32::new([0u8; 32]),
-                max_bytes: 0,
-                payment_locked: 0,
-                duration: 0,
-                block_hash,
-                block_number,
-            }),
-            "AgreementAccepted" => Some(StorageEvent::AgreementAccepted {
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                expires_at: 0,
-                block_hash,
-                block_number,
-            }),
-            "AgreementEnded" => Some(StorageEvent::AgreementEnded {
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                payment_to_provider: 0,
-                burned: 0,
-                block_hash,
-                block_number,
-            }),
-            "BucketCreated" => Some(StorageEvent::BucketCreated {
-                bucket_id: 0,
-                admin: AccountId32::new([0u8; 32]),
-                block_hash,
-                block_number,
-            }),
-            "BucketFrozen" => Some(StorageEvent::BucketFrozen {
-                bucket_id: 0,
-                frozen_start_seq: 0,
-                block_hash,
-                block_number,
-            }),
-            "BucketDeleted" => Some(StorageEvent::BucketDeleted {
-                bucket_id: 0,
-                block_hash,
-                block_number,
-            }),
-            "ReplicaSynced" => Some(StorageEvent::ReplicaSynced {
-                bucket_id: 0,
-                provider: AccountId32::new([0u8; 32]),
-                mmr_root: H256::zero(),
-                sync_payment: 0,
-                block_hash,
-                block_number,
-            }),
-            _ => Some(StorageEvent::Unknown {
-                pallet: "StorageProvider".to_string(),
-                variant: variant.to_string(),
-                block_hash,
-                block_number,
-            }),
-        }
+        StorageProviderEventParser::parse_event_detail(event, block_hash, block_number)
     }
 }
 
@@ -892,6 +786,259 @@ pub async fn subscribe_bucket_events(
     callback: EventCallback,
 ) -> Result<SubscriptionHandle, ClientError> {
     subscribe_with_callback(ws_url, EventFilter::bucket(bucket_id), callback).await
+}
+
+// ============================================================================
+// Event Parser
+// ============================================================================
+
+/// Trait for converting raw subxt events into a typed event enum.
+///
+/// Implement this for each pallet whose events you want to decode. The only
+/// required method is [`parse_event_detail`]; [`from_extrinsic_events`] is
+/// provided automatically and calls it for every event in the collection.
+///
+/// [`parse_event_detail`]: EventParser::parse_event_detail
+/// [`from_extrinsic_events`]: EventParser::from_extrinsic_events
+pub trait EventParser<EventType> {
+    /// Attempt to decode a single [`subxt::events::EventDetails`] into an
+    /// `EventType`. Return `None` to skip the event (wrong pallet, unknown
+    /// variant, decode failure, etc.).
+    fn parse_event_detail(
+        event: &subxt::events::EventDetails<PolkadotConfig>,
+        block_hash: H256,
+        block_number: u32,
+    ) -> Option<EventType>;
+
+    /// Parse all events from a finalized extrinsic, returning only the ones
+    /// that [`parse_event_detail`] accepts.
+    ///
+    /// The default implementation iterates the collection and calls
+    /// [`parse_event_detail`] for each event, so implementors rarely need to
+    /// override this.
+    ///
+    /// [`parse_event_detail`]: EventParser::parse_event_detail
+    fn from_extrinsic_events(
+        events: &subxt::blocks::ExtrinsicEvents<PolkadotConfig>,
+        block_hash: H256,
+        block_number: u32,
+    ) -> Vec<EventType> {
+        events
+            .iter()
+            .filter_map(|result| {
+                let event = result.ok()?;
+                Self::parse_event_detail(&event, block_hash, block_number)
+            })
+            .collect()
+    }
+}
+
+/// Parser for converting raw subxt events into typed [`StorageEvent`]s.
+///
+/// `StorageProviderEventParser` is a stateless helper: every method is either associated
+/// (takes no `self`) or free, so you can call it directly without constructing
+/// an [`EventSubscriber`].
+///
+/// # Example — parse a finalized extrinsic's events
+///
+/// ```no_run
+/// # use sp_core::H256;
+/// # use storage_client::event_subscription::{EventParser, StorageProviderEventParser};
+/// # use subxt::blocks::ExtrinsicEvents;
+/// # use subxt::PolkadotConfig;
+/// # async fn example(events: ExtrinsicEvents<PolkadotConfig>, block_hash: H256, block_number: u32) {
+/// let storage_events =
+///     StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
+/// for ev in storage_events {
+///     println!("{ev:?}");
+/// }
+/// # }
+/// ```
+pub struct StorageProviderEventParser;
+
+impl EventParser<StorageEvent> for StorageProviderEventParser {
+    /// Parse a single [`subxt::events::EventDetails`] into a [`StorageEvent`].
+    ///
+    /// Returns `None` when the event:
+    /// - comes from a pallet other than `StorageProvider`, or
+    /// - has a variant that is not covered (e.g. `ProviderDeregistered`), or
+    /// - cannot be decoded due to unexpected field structure.
+    fn parse_event_detail(
+        event: &subxt::events::EventDetails<PolkadotConfig>,
+        block_hash: H256,
+        block_number: u32,
+    ) -> Option<StorageEvent> {
+        if event.pallet_name() != PALLET_NAME {
+            return None;
+        }
+
+        // We log decode failures at TRACE level so callers don't need to
+        // worry about noisy warnings for known-unhandled variants.
+        let fields = match event.field_values() {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::trace!("Failed to decode fields for {}: {e}", event.variant_name());
+                return None;
+            }
+        };
+
+        match event.variant_name() {
+            // ── Checkpoint ────────────────────────────────────────────────────
+            "BucketCheckpointed" => Some(StorageEvent::BucketCheckpointed {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                mmr_root: scale_decode::field_h256(&fields, "mmr_root")?,
+                start_seq: scale_decode::field_u64(&fields, "start_seq")?,
+                leaf_count: scale_decode::field_u64(&fields, "leaf_count")?,
+                providers: scale_decode::field_accounts(&fields, "providers"),
+                block_hash,
+                block_number,
+            }),
+
+            // ── Challenges ────────────────────────────────────────────────────
+            "ChallengeCreated" => {
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
+                Some(StorageEvent::ChallengeCreated {
+                    challenge_id: (deadline, index),
+                    bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    challenger: scale_decode::field_account(&fields, "challenger")?,
+                    respond_by: scale_decode::field_u32(&fields, "respond_by")?,
+                    block_hash,
+                    block_number,
+                })
+            }
+            "ChallengeDefended" => {
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
+                Some(StorageEvent::ChallengeDefended {
+                    challenge_id: (deadline, index),
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    response_time_blocks: scale_decode::field_u32(&fields, "response_time_blocks")?,
+                    challenger_cost: scale_decode::field_u128(&fields, "challenger_cost")?,
+                    provider_cost: scale_decode::field_u128(&fields, "provider_cost")?,
+                    block_hash,
+                    block_number,
+                })
+            }
+            "ChallengeSlashed" => {
+                let (deadline, index) = field_challenge_id(&fields, "challenge_id")?;
+                Some(StorageEvent::ChallengeSlashed {
+                    challenge_id: (deadline, index),
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    slashed_amount: scale_decode::field_u128(&fields, "slashed_amount")?,
+                    challenger_reward: scale_decode::field_u128(&fields, "challenger_reward")?,
+                    block_hash,
+                    block_number,
+                })
+            }
+
+            // ── Providers ─────────────────────────────────────────────────────
+            "ProviderRegistered" => Some(StorageEvent::ProviderRegistered {
+                provider: scale_decode::field_account(&fields, "provider")?,
+                stake: scale_decode::field_u128(&fields, "stake")?,
+                block_hash,
+                block_number,
+            }),
+            "ProviderAddedToBucket" => Some(StorageEvent::ProviderAddedToBucket {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                block_hash,
+                block_number,
+            }),
+            "PrimaryProviderRemoved" => Some(StorageEvent::PrimaryProviderRemoved {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                reason: field_removal_reason(&fields, "reason"),
+                block_hash,
+                block_number,
+            }),
+
+            // ── Agreements ────────────────────────────────────────────────────
+            "AgreementRequested" => Some(StorageEvent::AgreementRequested {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                requester: scale_decode::field_account(&fields, "requester")?,
+                max_bytes: scale_decode::field_u64(&fields, "max_bytes")?,
+                payment_locked: scale_decode::field_u128(&fields, "payment_locked")?,
+                duration: scale_decode::field_u32(&fields, "duration")?,
+                block_hash,
+                block_number,
+            }),
+            "AgreementAccepted" => Some(StorageEvent::AgreementAccepted {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                expires_at: scale_decode::field_u32(&fields, "expires_at")?,
+                block_hash,
+                block_number,
+            }),
+            "AgreementEnded" => Some(StorageEvent::AgreementEnded {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                payment_to_provider: scale_decode::field_u128(&fields, "payment_to_provider")?,
+                burned: scale_decode::field_u128(&fields, "burned")?,
+                block_hash,
+                block_number,
+            }),
+
+            // ── Buckets ───────────────────────────────────────────────────────
+            "BucketCreated" => Some(StorageEvent::BucketCreated {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                admin: scale_decode::field_account(&fields, "admin")?,
+                block_hash,
+                block_number,
+            }),
+            "BucketFrozen" => Some(StorageEvent::BucketFrozen {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                frozen_start_seq: scale_decode::field_u64(&fields, "frozen_start_seq")?,
+                block_hash,
+                block_number,
+            }),
+            "BucketDeleted" => Some(StorageEvent::BucketDeleted {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                block_hash,
+                block_number,
+            }),
+
+            // ── Replicas ──────────────────────────────────────────────────────
+            "ReplicaSynced" => Some(StorageEvent::ReplicaSynced {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                mmr_root: scale_decode::field_h256(&fields, "mmr_root")?,
+                sync_payment: scale_decode::field_u128(&fields, "sync_payment")?,
+                block_hash,
+                block_number,
+            }),
+
+            // ── Everything else ───────────────────────────────────────────────
+            other => Some(StorageEvent::Unknown {
+                pallet: "StorageProvider".to_string(),
+                variant: other.to_string(),
+                block_hash,
+                block_number,
+            }),
+        }
+    }
+}
+
+// Parser-specific field helpers — these encode shapes from the StorageProvider pallet
+// (the `ChallengeId` struct and `RemovalReason` enum) and so stay alongside the parser
+// rather than in [`crate::scale_decode`].
+
+/// Read the StorageProvider pallet's `ChallengeId` named composite as a `(deadline, index)`
+/// pair.
+fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Option<(u32, u16)> {
+    let v = fields.at(name)?;
+    let deadline = v.at("deadline")?.as_u128()? as u32;
+    let index = v.at("index")?.as_u128()? as u16;
+    Some((deadline, index))
+}
+
+/// Read a `RemovalReason`-shaped variant field, falling back to `"Unknown"` when the field
+/// is missing or not a variant.
+fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> String {
+    fields
+        .at(name)
+        .and_then(scale_decode::variant_name)
+        .unwrap_or_else(|| "Unknown".to_string())
 }
 
 // ============================================================================
