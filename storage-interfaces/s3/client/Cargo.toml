@@ -14,14 +14,15 @@ storage-client = { workspace = true }
 
 # Substrate primitives
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 
 # Async/HTTP
 reqwest = { workspace = true }
 tokio = { workspace = true }
 
 # Subxt for chain interaction
-subxt = "0.44"
-subxt-signer = "0.44"
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
 bip39 = "2.0"
 
 # Utilities

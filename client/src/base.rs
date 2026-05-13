@@ -213,7 +213,13 @@ pub struct AgreementInfo {
 pub enum ChunkingStrategy {
     /// Fixed-size chunks (default: 256 KiB)
     Fixed(usize),
-    /// Content-defined chunking (not yet implemented)
+    /// TODO: Content-defined chunking (not yet implemented)
+    ///
+    /// ContentDefined {
+    ///     min_size: usize,
+    ///     target_size: usize,
+    ///     max_size: usize,
+    /// },
     ContentDefined,
 }
 

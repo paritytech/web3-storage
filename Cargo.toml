@@ -135,6 +135,10 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 # Crypto
 blake2 = { version = "0.10", default-features = false }
 
+# Subxt (chain interaction for off-chain clients)
+subxt = { version = "0.44.3" }
+subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }
 sp-keystore = { version = "0.46.0", default-features = false }
