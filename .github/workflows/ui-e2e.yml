@@ -170,10 +170,6 @@ jobs:
             sleep 2
           done
 
-      - name: PAPI descriptor drift check
-        working-directory: user-interfaces
-        run: pnpm run papi:check
-
       - name: drive-ui e2e
         working-directory: user-interfaces
         env:

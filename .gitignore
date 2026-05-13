@@ -62,3 +62,6 @@ user-interfaces/**/test-results/
 
 # Screenshots
 Screenshot.png
+
+# Python
+__pycache__

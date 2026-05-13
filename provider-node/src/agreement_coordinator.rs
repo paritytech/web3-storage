@@ -194,9 +194,9 @@ impl AgreementCoordinator {
         let our_bytes: [u8; 32] = our_account.into();
 
         // Iterate ALL AgreementRequests entries on chain.
-        // Storage layout: DoubleMap<Blake2_128Concat(AccountId), Blake2_128Concat(BucketId), Request>
-        // Key bytes: [16 pallet_hash][16 storage_hash][16 blake2_hash + 32 account][16 blake2_hash + 8 bucket_id]
-        // Total = 32 (prefix) + 48 (key1) + 24 (key2) = 104 bytes
+        // Storage layout: DoubleMap<Blake2_128Concat(BucketId), Blake2_128Concat(AccountId), Request>
+        // Key bytes: [16 pallet_hash][16 storage_hash][16 blake2_hash + 8 bucket_id][16 blake2_hash + 32 account]
+        // Total = 32 (prefix) + 24 (key1) + 48 (key2) = 104 bytes
         let storage_query = subxt::dynamic::storage("StorageProvider", "AgreementRequests", ());
         let storage = api
             .storage()
@@ -225,23 +225,23 @@ impl AgreementCoordinator {
             let key_bytes = &entry.key_bytes;
             let key_len = key_bytes.len();
 
-            // Expected key length: 32 (prefix) + 48 (key1) + 24 (key2) = 104
+            // Expected key length: 32 (prefix) + 24 (key1) + 48 (key2) = 104
             if key_len < 104 {
                 tracing::warn!("Unexpected key length {} (expected 104), skipping", key_len);
                 continue;
             }
 
-            // Account bytes at offset 48 (32 prefix + 16 blake2 hash)
-            let account_bytes = &key_bytes[48..80];
+            // Account bytes at offset 72 (32 prefix + 16 blake2 + 8 bucket + 16 blake2)
+            let account_bytes = &key_bytes[72..104];
 
             // Check if this request is for our provider
             if account_bytes != our_bytes.as_slice() {
                 continue;
             }
 
-            // Bucket ID at offset 96 (32 + 48 + 16 blake2 hash)
+            // Bucket ID at offset 48 (32 prefix + 16 blake2 hash)
             let bucket_id = u64::from_le_bytes(
-                key_bytes[96..104]
+                key_bytes[48..56]
                     .try_into()
                     .expect("slice is exactly 8 bytes"),
             );
