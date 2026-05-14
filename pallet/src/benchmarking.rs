@@ -170,13 +170,11 @@ mod benchmarks {
         }
 
         // Announce step.
-        let _ =
-            Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
+        let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
         let announce_block = System::<T>::block_number();
-        let complete_after =
-            announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
+        let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
         System::<T>::set_block_number(complete_after);
 
         #[extrinsic_call]
@@ -187,8 +185,7 @@ mod benchmarks {
     #[benchmark]
     fn cancel_deregister() {
         let provider = create_provider::<T>(0);
-        let _ =
-            Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
+        let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         #[extrinsic_call]
         cancel_deregister(RawOrigin::Signed(provider));
