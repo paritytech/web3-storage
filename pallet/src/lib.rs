@@ -139,6 +139,13 @@ pub mod pallet {
         #[pallet::constant]
         type MaxBucketsPerMember: Get<u32>;
 
+        /// Minimum number of blocks between announcing a deregistration and
+        /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
+        /// challenge against this provider that was created up to the
+        /// announcement block matures while the provider is still slashable.
+        #[pallet::constant]
+        type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: WeightInfo;
     }
@@ -214,15 +221,18 @@ pub mod pallet {
     pub type LastCheckpointWindow<T: Config> =
         StorageMap<_, Blake2_128Concat, BucketId, u64, OptionQuery>;
 
-    /// Pending checkpoint rewards per (bucket, provider).
+    /// Pending checkpoint rewards per (provider, bucket).
     /// Accumulates rewards for providers who submit or sign checkpoints.
+    /// Provider-first key order enables `iter_prefix(&provider)` so a
+    /// provider's pending rewards can be drained on deregistration without
+    /// scanning every bucket.
     #[pallet::storage]
     pub type CheckpointRewards<T: Config> = StorageDoubleMap<
         _,
         Blake2_128Concat,
-        BucketId,
-        Blake2_128Concat,
         T::AccountId,
+        Blake2_128Concat,
+        BucketId,
         BalanceOf<T>,
         ValueQuery,
     >;
@@ -286,6 +296,12 @@ pub mod pallet {
         pub settings: ProviderSettings<T>,
         /// Provider statistics.
         pub stats: ProviderStats<T>,
+        /// Block at which a previously-announced deregistration becomes
+        /// finalisable via `complete_deregister`. `None` means no
+        /// announcement is in progress. During the announcement window the
+        /// provider is still on-chain and still slashable for any pending
+        /// challenge — they only get their stake back after the window.
+        pub deregister_at: Option<BlockNumberFor<T>>,
     }
 
     /// Provider settings controlling pricing and availability.
@@ -500,6 +516,17 @@ pub mod pallet {
         ProviderDeregistered {
             provider: T::AccountId,
             stake_returned: BalanceOf<T>,
+        },
+        /// Provider has announced their intention to deregister. Stake stays
+        /// reserved and the provider remains on-chain (and slashable) until
+        /// `complete_after`, at which point they may call `complete_deregister`.
+        DeregisterAnnounced {
+            provider: T::AccountId,
+            complete_after: BlockNumberFor<T>,
+        },
+        /// Provider cancelled a previously-announced deregistration.
+        DeregisterCancelled {
+            provider: T::AccountId,
         },
         ProviderStakeAdded {
             provider: T::AccountId,
@@ -717,6 +744,14 @@ pub mod pallet {
         /// Provider settings specify `min_duration > max_duration`, which
         /// would silently brick the provider in `find_matching_provider`.
         MinDurationExceedsMaxDuration,
+        /// Provider has already announced a deregistration; the action is
+        /// rejected until they complete or cancel it.
+        DeregisterAnnounced,
+        /// Provider has no announced deregistration to complete or cancel.
+        DeregisterNotAnnounced,
+        /// `complete_deregister` called before `DeregisterAnnouncementPeriod`
+        /// elapsed.
+        DeregisterPeriodNotElapsed,
 
         // Bucket errors
         BucketNotFound,
@@ -861,6 +896,7 @@ pub mod pallet {
                     registered_at: current_block,
                     ..Default::default()
                 },
+                deregister_at: None,
             };
 
             Providers::<T>::insert(&who, provider_info);
@@ -901,27 +937,108 @@ pub mod pallet {
             })
         }
 
-        /// Deregister provider and withdraw stake.
+        /// Announce intent to deregister.
+        ///
+        /// This is the first step of a two-step exit:
+        ///
+        /// 1. `deregister_provider` (this call) — marks the provider as
+        ///    leaving, freezes them from accepting new agreements or
+        ///    extensions, and stamps `deregister_at = now + DeregisterAnnouncementPeriod`.
+        ///    Stake stays reserved; the provider remains on-chain and fully
+        ///    slashable for any pending or freshly-created challenge.
+        /// 2. `complete_deregister` — callable once `deregister_at` has
+        ///    elapsed (by which point any challenge created up to the
+        ///    announcement block has already matured, because the period
+        ///    must be `>= ChallengeTimeout`).
+        ///
+        /// The two-step flow closes the slashing race where a provider
+        /// could withdraw stake between the end of their last agreement
+        /// and the deadline of a challenge created against it.
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::deregister_provider())]
         pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
+            let current_block = frame_system::Pallet::<T>::block_number();
+            let complete_after =
+                current_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
+
+            Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
+                let provider = maybe_provider
+                    .as_mut()
+                    .ok_or(Error::<T>::ProviderNotFound)?;
+
+                ensure!(
+                    provider.committed_bytes == 0,
+                    Error::<T>::ProviderHasActiveAgreements
+                );
+                ensure!(
+                    provider.deregister_at.is_none(),
+                    Error::<T>::DeregisterAnnounced
+                );
+
+                // Freeze acceptance so the provider can't soak up new
+                // agreements (and therefore new challenge surface) during
+                // the announcement window.
+                provider.settings.accepting_primary = false;
+                provider.settings.accepting_extensions = false;
+                provider.deregister_at = Some(complete_after);
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::DeregisterAnnounced {
+                provider: who,
+                complete_after,
+            });
+
+            Ok(())
+        }
+
+        /// Finalise a previously-announced deregistration.
+        ///
+        /// Callable by the provider once `DeregisterAnnouncementPeriod` has
+        /// elapsed since their `deregister_provider` call. Drains any
+        /// pending `CheckpointRewards` into the provider's free balance,
+        /// unreserves the remaining stake, and removes the provider record.
+        ///
+        /// Still requires `committed_bytes == 0` — if the provider somehow
+        /// re-acquired commitments mid-window (they cannot today, since
+        /// announce forces `accepting_primary = false` and
+        /// `update_provider_settings` is blocked during the window) the
+        /// caller must wait for those agreements to end first.
+        #[pallet::call_index(6)]
+        #[pallet::weight(T::WeightInfo::complete_deregister())]
+        pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult {
+            let who = ensure_signed(origin)?;
 
             let provider = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
-
+            let deregister_at = provider
+                .deregister_at
+                .ok_or(Error::<T>::DeregisterNotAnnounced)?;
+            let current_block = frame_system::Pallet::<T>::block_number();
+            ensure!(
+                current_block >= deregister_at,
+                Error::<T>::DeregisterPeriodNotElapsed
+            );
             ensure!(
                 provider.committed_bytes == 0,
                 Error::<T>::ProviderHasActiveAgreements
             );
 
-            // TODO(Tung): We have to also make sure all agreements relating to provider to be cleaned up
-            // This would affect other functions that checks `Providers::<T>::contains_key(&who)` and then
-            // mutates `StorageAgreements::<T>::try_mutate(bucket_id, &provider, ...)`. 
-            // The agreement key is `(bucket_id, who)`, so `AgreementNotFound` does protect against a non-party caller
+            // Drain pending checkpoint rewards (provider-keyed thanks to the
+            // (AccountId, BucketId) layout of CheckpointRewards).
+            let mut total_rewards: BalanceOf<T> = Zero::zero();
+            let drained: Vec<BucketId> = CheckpointRewards::<T>::iter_prefix(&who)
+                .map(|(bucket_id, _)| bucket_id)
+                .collect();
+            for bucket_id in drained {
+                let amount = CheckpointRewards::<T>::take(&who, bucket_id);
+                total_rewards = total_rewards.saturating_add(amount);
+            }
+            if !total_rewards.is_zero() {
+                let _ = T::Currency::deposit_creating(&who, total_rewards);
+            }
 
-            // Unreserve stake
             T::Currency::unreserve(&who, provider.stake);
-
             Providers::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
@@ -929,6 +1046,36 @@ pub mod pallet {
                 stake_returned: provider.stake,
             });
 
+            Ok(())
+        }
+
+        /// Cancel a previously-announced deregistration.
+        ///
+        /// Restores `accepting_primary` / `accepting_extensions` to `true`
+        /// (mirroring what `deregister_provider` forced to `false` on
+        /// announce) and clears `deregister_at`. If the provider wants
+        /// different post-cancel settings they can call
+        /// `update_provider_settings` afterwards.
+        #[pallet::call_index(7)]
+        #[pallet::weight(T::WeightInfo::cancel_deregister())]
+        pub fn cancel_deregister(origin: OriginFor<T>) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
+                let provider = maybe_provider
+                    .as_mut()
+                    .ok_or(Error::<T>::ProviderNotFound)?;
+                ensure!(
+                    provider.deregister_at.is_some(),
+                    Error::<T>::DeregisterNotAnnounced
+                );
+                provider.deregister_at = None;
+                provider.settings.accepting_primary = true;
+                provider.settings.accepting_extensions = true;
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::DeregisterCancelled { provider: who });
             Ok(())
         }
 
@@ -949,6 +1096,16 @@ pub mod pallet {
                 let provider = maybe_provider
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
+
+                // While deregister announcement is in flight, settings are
+                // frozen — otherwise the provider could re-enable
+                // `accepting_primary` and start absorbing new agreements
+                // during the wait window. The caller must `cancel_deregister`
+                // first.
+                ensure!(
+                    provider.deregister_at.is_none(),
+                    Error::<T>::DeregisterAnnounced
+                );
 
                 // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
                 if settings.max_capacity > 0 {
@@ -1019,6 +1176,8 @@ pub mod pallet {
                 Error::<T>::ProviderNotFound
             );
 
+            let current_block = frame_system::Pallet::<T>::block_number();
+
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
                 &who,
@@ -1026,6 +1185,10 @@ pub mod pallet {
                     let agreement = maybe_agreement
                         .as_mut()
                         .ok_or(Error::<T>::AgreementNotFound)?;
+                    ensure!(
+                        current_block < agreement.expires_at,
+                        Error::<T>::AgreementExpired
+                    );
                     agreement.extensions_blocked = blocked;
                     Ok(())
                 },
@@ -1447,6 +1610,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             ensure!(
                 provider_info.settings.replica_sync_price.is_some(),
@@ -1527,6 +1691,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             ensure!(
                 provider_info.settings.accepting_primary,
@@ -1581,10 +1746,8 @@ pub mod pallet {
         pub fn accept_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            ensure!(
-                Providers::<T>::contains_key(&who),
-                Error::<T>::ProviderNotFound
-            );
+            let provider_info = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             let request = AgreementRequests::<T>::take(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementRequestNotFound)?;
@@ -1863,6 +2026,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
@@ -1953,6 +2117,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             // Check provider is accepting extensions
             ensure!(
@@ -2403,7 +2568,7 @@ pub mod pallet {
                     });
                     // Unreserve from pool and transfer to submitter
                     // Note: Pool funds are reserved by funder, we pay submitter directly
-                    CheckpointRewards::<T>::mutate(bucket_id, &who, |pending| {
+                    CheckpointRewards::<T>::mutate(&who, bucket_id, |pending| {
                         *pending = pending.saturating_add(reward);
                     });
                     reward
@@ -2550,7 +2715,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let rewards = CheckpointRewards::<T>::take(bucket_id, &who);
+            let rewards = CheckpointRewards::<T>::take(&who, bucket_id);
             ensure!(!rewards.is_zero(), Error::<T>::NoRewardsToClaim);
 
             // Transfer rewards to provider
@@ -3104,6 +3269,17 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Reject any path that would create a new commitment for a
+        /// provider who has announced deregistration. `deregister_provider`
+        /// also flips `accepting_primary`/`accepting_extensions` to `false`,
+        fn ensure_provider_active(provider: &ProviderInfo<T>) -> DispatchResult {
+            ensure!(
+                provider.deregister_at.is_none(),
+                Error::<T>::DeregisterAnnounced
+            );
+            Ok(())
+        }
+
         /// Add or update a member's role on a bucket (callable from other pallets).
         ///
         /// The `caller` must be an Admin of the bucket.
@@ -3240,6 +3416,14 @@ pub mod pallet {
             let mut best_match: Option<(T::AccountId, ProviderInfo<T>, BalanceOf<T>)> = None;
 
             for (account, info) in Providers::<T>::iter() {
+                // Skip providers in the middle of deregistering. The flag
+                // check below also catches this (announce forces it false),
+                // but check explicitly so we don't depend on flag-mutation
+                // ordering for the security guarantee.
+                if info.deregister_at.is_some() {
+                    continue;
+                }
+
                 // Must be accepting primary agreements
                 if !info.settings.accepting_primary {
                     continue;
@@ -4119,6 +4303,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             ensure!(
                 provider_info.settings.accepting_primary,
@@ -4195,6 +4380,7 @@ pub mod pallet {
 
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::ensure_provider_active(&provider_info)?;
 
             ensure!(
                 provider_info.settings.replica_sync_price.is_some(),

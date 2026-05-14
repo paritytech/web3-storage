@@ -105,6 +105,7 @@ impl pallet_storage_provider::Config for Test {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
+    type DeregisterAnnouncementPeriod = ConstU64<100>;
     type WeightInfo = ();
 }
 

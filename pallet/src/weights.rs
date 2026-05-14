@@ -56,6 +56,8 @@ use core::marker::PhantomData;
 pub trait WeightInfo {
 	fn register_provider() -> Weight;
 	fn deregister_provider() -> Weight;
+	fn complete_deregister() -> Weight;
+	fn cancel_deregister() -> Weight;
 	fn update_provider_settings() -> Weight;
 	fn add_stake() -> Weight;
 	fn block_extensions() -> Weight;
@@ -119,6 +121,19 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		Weight::from_parts(16_000_000, 3820)
 			.saturating_add(T::DbWeight::get().reads(2_u64))
 			.saturating_add(T::DbWeight::get().writes(2_u64))
+	}
+	/// Placeholder until benchmarked. Reads the provider, optionally drains
+	/// per-bucket `CheckpointRewards` entries, unreserves stake.
+	fn complete_deregister() -> Weight {
+		Weight::from_parts(20_000_000, 3820)
+			.saturating_add(T::DbWeight::get().reads(3_u64))
+			.saturating_add(T::DbWeight::get().writes(3_u64))
+	}
+	/// Placeholder until benchmarked. Single provider mutate.
+	fn cancel_deregister() -> Weight {
+		Weight::from_parts(7_000_000, 3820)
+			.saturating_add(T::DbWeight::get().reads(1_u64))
+			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(355), added: 2830, mode: `MaxEncodedLen`)
@@ -649,6 +664,16 @@ impl WeightInfo for () {
 		Weight::from_parts(16_000_000, 3820)
 			.saturating_add(RocksDbWeight::get().reads(2_u64))
 			.saturating_add(RocksDbWeight::get().writes(2_u64))
+	}
+	fn complete_deregister() -> Weight {
+		Weight::from_parts(20_000_000, 3820)
+			.saturating_add(RocksDbWeight::get().reads(3_u64))
+			.saturating_add(RocksDbWeight::get().writes(3_u64))
+	}
+	fn cancel_deregister() -> Weight {
+		Weight::from_parts(7_000_000, 3820)
+			.saturating_add(RocksDbWeight::get().reads(1_u64))
+			.saturating_add(RocksDbWeight::get().writes(1_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(355), added: 2830, mode: `MaxEncodedLen`)

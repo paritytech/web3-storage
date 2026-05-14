@@ -743,7 +743,7 @@ mod benchmarks {
 
         // Directly write rewards to storage
         let reward: BalanceOf<T> = 1000u32.into();
-        CheckpointRewards::<T>::insert(bucket_id, &provider, reward);
+        CheckpointRewards::<T>::insert(&provider, bucket_id, reward);
 
         #[extrinsic_call]
         claim_checkpoint_rewards(RawOrigin::Signed(provider), bucket_id);
