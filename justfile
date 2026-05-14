@@ -215,6 +215,16 @@ papi-s3-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED=
 papi-drive-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" OWNER_SEED="//Bob" MEMBER_SEED="//Ferdie": papi-setup
     node examples/papi/drive-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ OWNER_SEED }}" "{{ MEMBER_SEED }}"
 
+# Provider-initiated checkpoint + reward flow: configure_checkpoint_window ->
+# fund_checkpoint_pool -> provider_checkpoint -> claim_checkpoint_rewards.
+papi-checkpoint-rewards PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/checkpoint-rewards.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
+# wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
+papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/checkpoint-missed.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
 # ============================================================
 # File System (Layer 1)
 # ============================================================

@@ -9,7 +9,9 @@
     "demo:provider-discovery": "node provider-discovery.js",
     "demo:bucket-with-storage": "node bucket-with-storage.js",
     "demo:s3-lifecycle": "node s3-lifecycle.js",
-    "demo:drive-lifecycle": "node drive-lifecycle.js"
+    "demo:drive-lifecycle": "node drive-lifecycle.js",
+    "demo:checkpoint-rewards": "node checkpoint-rewards.js",
+    "demo:checkpoint-missed": "node checkpoint-missed.js"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",

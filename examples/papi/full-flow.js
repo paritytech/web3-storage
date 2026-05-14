@@ -22,20 +22,24 @@ import assert from "node:assert";
 import {
   connect,
   makeSigner,
+  parseProviderClientArgs,
   toHex,
   hexToBytes,
   providerFetch,
   ensureProviderRegistered,
   requireOneEvent,
+  waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
 } from "./common.js";
 
-const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
-const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const PROVIDER_SEED = process.argv[4] || "//Alice";
-const CLIENT_SEED = process.argv[5] || "//Bob";
+const {
+  chainWs: CHAIN_WS,
+  providerUrl: PROVIDER_URL,
+  providerSeed: PROVIDER_SEED,
+  clientSeed: CLIENT_SEED,
+} = parseProviderClientArgs();
 
 // ---------------------------------------------------------------------------
 // Step helpers
@@ -253,20 +257,6 @@ async function fetchChallengeProof(api, challengeId) {
       path: chunk.proof.path,
     },
   };
-}
-
-async function waitForBlock(papi, targetBlock) {
-  await new Promise((resolve) => {
-    const sub = papi.finalizedBlock$.subscribe((block) => {
-      if (block.number % 5 === 0) {
-        console.log("    Block %d / %d", block.number, targetBlock);
-      }
-      if (block.number > targetBlock) {
-        sub.unsubscribe();
-        resolve();
-      }
-    });
-  });
 }
 
 async function endAgreementWithPay(api, client, provider, bucketId) {

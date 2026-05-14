@@ -23,6 +23,7 @@ import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
 import {
   connect,
   makeSigner,
+  parseProviderClientArgs,
   toHex,
   hexToBytes,
   providerFetch,
@@ -36,10 +37,12 @@ import {
   waitForNextBlock,
 } from "./common.js";
 
-const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
-const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const PROVIDER_SEED = process.argv[4] || "//Alice";
-const CLIENT_SEED = process.argv[5] || "//Bob";
+const {
+  chainWs: CHAIN_WS,
+  providerUrl: PROVIDER_URL,
+  providerSeed: PROVIDER_SEED,
+  clientSeed: CLIENT_SEED,
+} = parseProviderClientArgs();
 
 async function createBucketWithStorage(api, client, params) {
   const result = await submitTx(

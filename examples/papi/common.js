@@ -11,6 +11,23 @@ import { Keyring } from "@polkadot/keyring";
 import { cryptoWaitReady, decodeAddress } from "@polkadot/util-crypto";
 import { parachain } from "@polkadot-api/descriptors";
 
+/**
+ * Default CLI arguments shared by examples that talk to both the chain and
+ * the provider node. Layout: `node script.js [chain_ws] [provider_url]
+ * [provider_seed] [client_seed]`.
+ *
+ * Centralised here so every example reads the same defaults — change them
+ * once and all the demos pick them up.
+ */
+export function parseProviderClientArgs(argv = process.argv) {
+  return {
+    chainWs: argv[2] || "ws://127.0.0.1:2222",
+    providerUrl: argv[3] || "http://127.0.0.1:3333",
+    providerSeed: argv[4] || "//Alice",
+    clientSeed: argv[5] || "//Bob",
+  };
+}
+
 export function makeSigner(seed) {
   const keyring = new Keyring({ type: "sr25519" });
   const account = keyring.addFromUri(seed);
@@ -151,6 +168,27 @@ export async function waitForNextBlock(papi) {
         return;
       }
       if (block.number > initial) {
+        sub.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Wait until the chain's finalized head is strictly greater than `target`.
+ *
+ * Examples that need to land an extrinsic at a specific block window (e.g.
+ * `provider_checkpoint`, `report_missed_checkpoint`) use this to time their
+ * submission so the runtime sees the block range they computed against.
+ */
+export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
+  await new Promise((resolve) => {
+    const sub = papi.finalizedBlock$.subscribe((block) => {
+      if (logEvery > 0 && block.number % logEvery === 0) {
+        console.log("    head=#%d (target > %d)", block.number, target);
+      }
+      if (block.number > target) {
         sub.unsubscribe();
         resolve();
       }
