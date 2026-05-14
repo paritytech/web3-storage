@@ -410,11 +410,13 @@ impl StorageUserClient {
         let duration = start.elapsed();
 
         match result {
-            Ok(_data) => {
+            Ok(data) if !data.is_empty() => {
                 self.verifier.record_request(&provider_url, duration, true);
                 Ok(true)
             }
-            Err(_) => {
+            _ => {
+                // Either download failed or the provider returned no data for this chunk,
+                // which means the data is unavailable.
                 self.verifier.record_request(&provider_url, duration, false);
                 Ok(false)
             }
@@ -515,6 +517,12 @@ impl StorageUserClient {
         bucket_id: BucketId,
         leaf_hashes: &[H256],
     ) -> ClientResult<H256> {
+        if leaf_hashes.is_empty() {
+            return Err(ClientError::Api(
+                "Cannot build Merkle tree with no leaves".to_string(),
+            ));
+        }
+
         let mut current_level = leaf_hashes.to_vec();
 
         while current_level.len() > 1 {
@@ -555,6 +563,82 @@ impl StorageUserClient {
             .iter()
             .flat_map(|h| h.as_bytes().to_vec())
             .collect()
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Provider Queries
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Check the provider's health status.
+    pub async fn health(&self) -> ClientResult<HealthResponse> {
+        let provider_url = self.base.get_provider_url()?;
+        let response = self
+            .base
+            .http
+            .get(format!("{provider_url}/health"))
+            .send()
+            .await?;
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Get the current MMR commitment for a bucket from the provider.
+    pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+        let provider_url = self.base.get_provider_url()?;
+        let response = self
+            .base
+            .http
+            .get(format!("{provider_url}/commitment"))
+            .query(&[("bucket_id", bucket_id.to_string())])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Api(format!(
+                "Commitment request failed: {}",
+                response.status()
+            )));
+        }
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
+    }
+
+    /// Check which data roots (hashes) exist on the provider.
+    pub async fn check_exists(
+        &self,
+        bucket_id: BucketId,
+        hashes: Vec<H256>,
+    ) -> ClientResult<ExistsResponse> {
+        let provider_url = self.base.get_provider_url()?;
+        let request = ExistsRequest {
+            bucket_id,
+            hashes: hashes
+                .iter()
+                .map(|h| BaseClient::hex_encode(h.as_bytes()))
+                .collect(),
+        };
+        let response = self
+            .base
+            .http
+            .post(format!("{provider_url}/exists"))
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Api(format!(
+                "Exists check failed: {}",
+                response.status()
+            )));
+        }
+        response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))
     }
 }
 
@@ -627,4 +711,31 @@ pub struct CheckpointSignatureResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct CommitmentResponse {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExistsResponse {
+    pub exists: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ExistsRequest {
+    bucket_id: BucketId,
+    hashes: Vec<String>,
 }
