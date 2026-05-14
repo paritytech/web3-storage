@@ -309,6 +309,96 @@ mod provider_tests {
     }
 
     #[test]
+    fn update_provider_settings_fails_when_min_duration_above_max() {
+        new_test_ext().execute_with(|| {
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(1),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            // min_duration > max_duration would silently brick the provider
+            // out of `find_matching_provider`; reject it at the entry point.
+            let bad_settings = ProviderSettings {
+                min_duration: 1000u64,
+                max_duration: 10u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            };
+
+            assert_noop!(
+                StorageProvider::update_provider_settings(RuntimeOrigin::signed(1), bad_settings),
+                Error::<Test>::MinDurationExceedsMaxDuration
+            );
+
+            // Equal endpoints are allowed (single-duration providers).
+            let edge_settings = ProviderSettings {
+                min_duration: 100u64,
+                max_duration: 100u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0,
+            };
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(1),
+                edge_settings
+            ));
+        });
+    }
+
+    #[test]
+    fn update_provider_settings_emits_event_with_new_settings() {
+        new_test_ext().execute_with(|| {
+            // System events are only collected after block 0.
+            frame_system::Pallet::<Test>::set_block_number(1);
+
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(1),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+
+            let new_settings = ProviderSettings {
+                min_duration: 10u64,
+                max_duration: 1000u64,
+                price_per_byte: 5u64,
+                accepting_primary: true,
+                replica_sync_price: Some(10u64),
+                accepting_extensions: true,
+                max_capacity: 0,
+            };
+
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(1),
+                new_settings.clone()
+            ));
+
+            // Indexers should not need a follow-up storage read — the event
+            // carries the full new settings payload.
+            let expected = RuntimeEvent::StorageProvider(crate::Event::ProviderSettingsUpdated {
+                provider: 1,
+                settings: new_settings,
+            });
+            assert!(
+                frame_system::Pallet::<Test>::events()
+                    .iter()
+                    .any(|r| r.event == expected),
+                "ProviderSettingsUpdated event with full settings was not emitted"
+            );
+        });
+    }
+
+    #[test]
     fn accept_agreement_fails_when_capacity_exceeded() {
         new_test_ext().execute_with(|| {
             // Setup provider with limited capacity

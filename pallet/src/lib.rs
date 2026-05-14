@@ -508,6 +508,7 @@ pub mod pallet {
         },
         ProviderSettingsUpdated {
             provider: T::AccountId,
+            settings: ProviderSettings<T>,
         },
         ProviderMultiaddrUpdated {
             provider: T::AccountId,
@@ -713,6 +714,9 @@ pub mod pallet {
         CapacityExceeded,
         /// Stake insufficient to back declared capacity.
         InsufficientStakeForCapacity,
+        /// Provider settings specify `min_duration > max_duration`, which
+        /// would silently brick the provider in `find_matching_provider`.
+        MinDurationExceedsMaxDuration,
 
         // Bucket errors
         BucketNotFound,
@@ -880,12 +884,12 @@ pub mod pallet {
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
 
-                T::Currency::reserve(&who, amount)?;
-
                 provider.stake = provider
                     .stake
                     .checked_add(&amount)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
+
+                T::Currency::reserve(&who, amount)?;
 
                 Self::deposit_event(Event::ProviderStakeAdded {
                     provider: who.clone(),
@@ -910,6 +914,11 @@ pub mod pallet {
                 Error::<T>::ProviderHasActiveAgreements
             );
 
+            // TODO(Tung): We have to also make sure all agreements relating to provider to be cleaned up
+            // This would affect other functions that checks `Providers::<T>::contains_key(&who)` and then
+            // mutates `StorageAgreements::<T>::try_mutate(bucket_id, &provider, ...)`. 
+            // The agreement key is `(bucket_id, who)`, so `AgreementNotFound` does protect against a non-party caller
+
             // Unreserve stake
             T::Currency::unreserve(&who, provider.stake);
 
@@ -931,6 +940,10 @@ pub mod pallet {
             settings: ProviderSettings<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+            ensure!(
+                settings.min_duration <= settings.max_duration,
+                Error::<T>::MinDurationExceedsMaxDuration
+            );
 
             Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
                 let provider = maybe_provider
@@ -956,11 +969,14 @@ pub mod pallet {
                     );
                 }
 
-                provider.settings = settings;
+                provider.settings = settings.clone();
                 Ok(())
             })?;
 
-            Self::deposit_event(Event::ProviderSettingsUpdated { provider: who });
+            Self::deposit_event(Event::ProviderSettingsUpdated {
+                provider: who,
+                settings,
+            });
 
             Ok(())
         }
