@@ -145,6 +145,55 @@ mod benchmarks {
         deregister_provider(RawOrigin::Signed(provider2));
     }
 
+    /// Worst case: provider has the maximum representative number of pending
+    /// `CheckpointRewards` entries, all drained via `iter_prefix` + `take`
+    /// before stake is unreserved and the record removed.
+    ///
+    /// The drain count is bounded by `MaxBucketsPerMember` — the closest
+    /// existing config-derived cap on "how many buckets one entity holds
+    /// state in." Not a strict semantic match (a provider isn't required to
+    /// be a bucket member), but it's the right order of magnitude and tracks
+    /// the runtime's storage-bloat tolerance for the same shape of data.
+    #[benchmark]
+    fn complete_deregister() {
+        let provider = create_provider::<T>(0);
+
+        // Seed reward entries across distinct buckets. We poke storage
+        // directly because exercising the real checkpoint-reward credit path
+        // requires a full multi-provider checkpoint setup per bucket, which
+        // would dominate the benchmark and obscure the drain cost we're
+        // actually measuring.
+        let reward: BalanceOf<T> = 1_000u32.into();
+        let n = T::MaxBucketsPerMember::get();
+        for i in 0..n {
+            CheckpointRewards::<T>::insert(&provider, i as BucketId, reward);
+        }
+
+        // Announce step.
+        let _ =
+            Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
+
+        // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
+        let announce_block = System::<T>::block_number();
+        let complete_after =
+            announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
+        System::<T>::set_block_number(complete_after);
+
+        #[extrinsic_call]
+        complete_deregister(RawOrigin::Signed(provider));
+    }
+
+    /// Single provider mutate: clears `deregister_at` and restores acceptance flags.
+    #[benchmark]
+    fn cancel_deregister() {
+        let provider = create_provider::<T>(0);
+        let _ =
+            Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
+
+        #[extrinsic_call]
+        cancel_deregister(RawOrigin::Signed(provider));
+    }
+
     #[benchmark]
     fn update_provider_settings() {
         let provider = create_provider::<T>(0);
