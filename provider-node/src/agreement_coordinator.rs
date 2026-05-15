@@ -1,15 +1,17 @@
-//! Agreement Coordinator - Auto-accept pending agreement requests.
+//! Agreement Coordinator — auto-accept pending agreement requests.
 //!
-//! This module provides a background service that polls for pending
-//! `AgreementRequests` on-chain and automatically accepts them on behalf
-//! of the provider.
+//! Subscribes to finalized blocks and reacts to `AgreementRequested` events targeted at
+//! this provider. On startup, performs a one-time storage snapshot at the first finalized
+//! block to pick up requests that existed before the subscription began.
 
 use crate::{Error, ProviderState};
-use sp_core::crypto::Ss58Codec;
+use sp_core::crypto::{AccountId32, Ss58Codec};
+use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
+use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef};
+use subxt::{dynamic::Value as DynamicValue, OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
 use tokio::sync::mpsc;
 
@@ -18,12 +20,12 @@ use tokio::sync::mpsc;
 pub struct AgreementCoordinatorConfig {
     /// WebSocket URL for the parachain.
     pub chain_ws_url: String,
-    /// How often to poll for pending agreement requests.
+    /// Delay between reconnect attempts if the finalized-block subscription drops.
+    /// Named `poll_interval` for backwards compatibility with the CLI flag.
     pub poll_interval: Duration,
     /// Whether to automatically accept agreement requests.
     pub auto_accept: bool,
     /// Seed phrase or derivation path for signing (e.g., "//Alice").
-    /// Used to create the subxt signer directly (avoids key conversion issues).
     pub seed: Option<String>,
 }
 
@@ -93,8 +95,6 @@ impl AgreementCoordinator {
 
         self.api = Some(api);
 
-        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
-        // This avoids key conversion issues between sp_core and subxt_signer.
         if let Some(ref seed) = self.config.seed {
             let uri: subxt_signer::SecretUri = seed
                 .parse()
@@ -140,76 +140,127 @@ impl AgreementCoordinator {
         })
     }
 
-    /// Main coordinator loop.
+    /// Main loop: handle Stop, run the subscription, reconnect on failure.
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<AgreementCommand>,
         running: Arc<AtomicBool>,
     ) {
-        let mut interval = tokio::time::interval(self.config.poll_interval);
-
         tracing::info!("Agreement coordinator started");
+
+        if !self.config.auto_accept {
+            // Wait for Stop (or channel close). Either way, exit.
+            let _ = command_rx.recv().await;
+            running.store(false, Ordering::SeqCst);
+            tracing::info!("Agreement coordinator stopping");
+            return;
+        }
+
+        loop {
+            match self.run_subscription(&mut command_rx).await {
+                Ok(()) => break,
+                Err(e) => {
+                    tracing::warn!(
+                        "Agreement subscription error: {}; reconnecting in {:?}",
+                        e,
+                        self.config.poll_interval
+                    );
+                    let sleep = tokio::time::sleep(self.config.poll_interval);
+                    tokio::pin!(sleep);
+                    tokio::select! {
+                        _ = &mut sleep => continue,
+                        cmd = command_rx.recv() => {
+                            match cmd {
+                                Some(AgreementCommand::Stop) | None => break,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        running.store(false, Ordering::SeqCst);
+        tracing::info!("Agreement coordinator stopping");
+    }
+
+    /// Subscribe to finalized blocks and process them. Returns `Ok(())` on graceful
+    /// shutdown via `Stop`; `Err` on subscription failure (caller reconnects).
+    async fn run_subscription(
+        &self,
+        command_rx: &mut mpsc::Receiver<AgreementCommand>,
+    ) -> Result<(), Error> {
+        let api = self
+            .api
+            .as_ref()
+            .ok_or_else(|| Error::Internal("Not connected".to_string()))?;
+
+        let mut blocks = api
+            .blocks()
+            .subscribe_finalized()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+
+        let our_bytes = self.our_account_bytes()?;
+        let mut bootstrapped = false;
 
         loop {
             tokio::select! {
                 cmd = command_rx.recv() => {
                     match cmd {
-                        Some(AgreementCommand::Stop) | None => {
-                            tracing::info!("Agreement coordinator stopping");
-                            running.store(false, Ordering::SeqCst);
-                            break;
-                        }
+                        Some(AgreementCommand::Stop) | None => return Ok(()),
                     }
                 }
-                _ = interval.tick() => {
-                    if !self.config.auto_accept {
+                next = blocks.next() => {
+                    let block = match next {
+                        Some(Ok(b)) => b,
+                        Some(Err(e)) => {
+                            return Err(Error::Internal(format!("Block subscription error: {e}")));
+                        }
+                        None => {
+                            return Err(Error::Internal("Block subscription ended".to_string()));
+                        }
+                    };
+
+                    if !bootstrapped {
+                        bootstrapped = true;
+                        self.initial_snapshot(api, block.hash(), &our_bytes).await?;
                         continue;
                     }
 
-                    if let Err(e) = self.poll_and_accept().await {
-                        tracing::warn!("Agreement poll error: {}", e);
-                    }
+                    self.process_events_in_block(api, block, &our_bytes).await;
                 }
             }
         }
     }
 
-    /// Poll for pending agreement requests and accept them.
-    async fn poll_and_accept(&self) -> Result<(), Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected".to_string()))?;
-        let signer = self
-            .signer
-            .as_ref()
-            .ok_or_else(|| Error::Internal("No signer".to_string()))?;
-
-        let provider_id = &self.state.provider_id;
-
-        // Convert our SS58 provider ID to raw AccountId32 bytes for key comparison
+    fn our_account_bytes(&self) -> Result<[u8; 32], Error> {
         let our_account: sp_core::crypto::AccountId32 =
-            sp_core::crypto::Ss58Codec::from_ss58check(provider_id)
+            sp_core::crypto::Ss58Codec::from_ss58check(&self.state.provider_id)
                 .map_err(|e| Error::Internal(format!("Invalid provider SS58 address: {e:?}")))?;
-        let our_bytes: [u8; 32] = our_account.into();
+        Ok(our_account.into())
+    }
 
-        // Iterate ALL AgreementRequests entries on chain.
+    /// Iterate `AgreementRequests` at a specific block and accept any pending requests
+    /// targeted at our provider. Runs once on startup so we don't miss requests created
+    /// before the subscription began.
+    async fn initial_snapshot(
+        &self,
+        api: &OnlineClient<PolkadotConfig>,
+        block_hash: H256,
+        our_bytes: &[u8; 32],
+    ) -> Result<(), Error> {
         // Storage layout: DoubleMap<Blake2_128Concat(BucketId), Blake2_128Concat(AccountId), Request>
         // Key bytes: [16 pallet_hash][16 storage_hash][16 blake2_hash + 8 bucket_id][16 blake2_hash + 32 account]
         // Total = 32 (prefix) + 24 (key1) + 48 (key2) = 104 bytes
         let storage_query = subxt::dynamic::storage("StorageProvider", "AgreementRequests", ());
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let storage = api.storage().at(block_hash);
 
         let mut entries = storage
             .iter(storage_query)
             .await
             .map_err(|e| Error::Internal(format!("Failed to iterate agreement requests: {e}")))?;
 
-        let mut bucket_ids_to_accept: Vec<u64> = Vec::new();
+        let mut bucket_ids: Vec<u64> = Vec::new();
         let mut entry_count = 0u32;
 
         while let Some(result) = entries.next().await {
@@ -223,23 +274,19 @@ impl AgreementCoordinator {
 
             entry_count += 1;
             let key_bytes = &entry.key_bytes;
-            let key_len = key_bytes.len();
-
-            // Expected key length: 32 (prefix) + 24 (key1) + 48 (key2) = 104
-            if key_len < 104 {
-                tracing::warn!("Unexpected key length {} (expected 104), skipping", key_len);
+            if key_bytes.len() < 104 {
+                tracing::warn!(
+                    "Unexpected key length {} (expected 104), skipping",
+                    key_bytes.len()
+                );
                 continue;
             }
 
-            // Account bytes at offset 72 (32 prefix + 16 blake2 + 8 bucket + 16 blake2)
             let account_bytes = &key_bytes[72..104];
-
-            // Check if this request is for our provider
             if account_bytes != our_bytes.as_slice() {
                 continue;
             }
 
-            // Bucket ID at offset 48 (32 prefix + 16 blake2 hash)
             let bucket_id = u64::from_le_bytes(
                 key_bytes[48..56]
                     .try_into()
@@ -247,62 +294,172 @@ impl AgreementCoordinator {
             );
 
             tracing::info!(
-                "Found pending agreement request for us: bucket {}",
+                "Initial snapshot: pending agreement request for us, bucket {}",
                 bucket_id
             );
-
-            bucket_ids_to_accept.push(bucket_id);
+            bucket_ids.push(bucket_id);
         }
 
-        if entry_count > 0 {
-            tracing::info!(
-                "Scanned {} agreement request entries, {} for us",
-                entry_count,
-                bucket_ids_to_accept.len()
-            );
-        }
+        tracing::info!(
+            "Initial snapshot at {:?}: scanned {} agreement request entries, {} for us",
+            block_hash,
+            entry_count,
+            bucket_ids.len()
+        );
 
-        // Accept each pending request
-        for bucket_id in bucket_ids_to_accept {
-            tracing::info!("Auto-accepting agreement for bucket {}", bucket_id);
-
-            let tx = subxt::dynamic::tx(
-                "StorageProvider",
-                "accept_agreement",
-                vec![Value::u128(bucket_id as u128)],
-            );
-
-            match api
-                .tx()
-                .sign_and_submit_then_watch_default(&tx, signer)
-                .await
-            {
-                Ok(progress) => match progress.wait_for_finalized_success().await {
-                    Ok(_events) => {
-                        tracing::info!(
-                            "Auto-accepted agreement for bucket {} (finalized)",
-                            bucket_id
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "accept_agreement tx failed for bucket {}: {}",
-                            bucket_id,
-                            e
-                        );
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to submit accept_agreement for bucket {}: {}",
-                        bucket_id,
-                        e
-                    );
-                }
-            }
+        for bucket_id in bucket_ids {
+            self.accept(api, bucket_id).await;
         }
 
         Ok(())
+    }
+
+    /// Walk a block's events, accepting any `AgreementRequested` whose `provider` field
+    /// matches ours.
+    async fn process_events_in_block(
+        &self,
+        api: &OnlineClient<PolkadotConfig>,
+        block: subxt::blocks::Block<PolkadotConfig, OnlineClient<PolkadotConfig>>,
+        our_bytes: &[u8; 32],
+    ) {
+        let block_number = block.number();
+        let events = match block.events().await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("Failed to fetch events at block {}: {}", block_number, e);
+                return;
+            }
+        };
+
+        for event_result in events.iter() {
+            let event = match event_result {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::trace!("Failed to decode event at block {}: {}", block_number, e);
+                    continue;
+                }
+            };
+
+            if event.pallet_name() != "StorageProvider"
+                || event.variant_name() != "AgreementRequested"
+            {
+                continue;
+            }
+
+            let fields = match event.field_values() {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("Failed to decode AgreementRequested fields: {}", e);
+                    continue;
+                }
+            };
+
+            let Some(provider) = field_account(&fields, "provider") else {
+                tracing::warn!("AgreementRequested missing provider field");
+                continue;
+            };
+            let provider_bytes: [u8; 32] = provider.into();
+            if &provider_bytes != our_bytes {
+                continue;
+            }
+
+            let Some(bucket_id) = field_u64(&fields, "bucket_id") else {
+                tracing::warn!("AgreementRequested missing bucket_id field");
+                continue;
+            };
+
+            tracing::info!(
+                "AgreementRequested for us at block {}: bucket {}",
+                block_number,
+                bucket_id
+            );
+            self.accept(api, bucket_id).await;
+        }
+    }
+
+    /// Submit `accept_agreement(bucket_id)` and wait for finalization.
+    async fn accept(&self, api: &OnlineClient<PolkadotConfig>, bucket_id: u64) {
+        let signer = match self.signer.as_ref() {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                    "No signer available, skipping accept for bucket {}",
+                    bucket_id
+                );
+                return;
+            }
+        };
+
+        tracing::info!("Auto-accepting agreement for bucket {}", bucket_id);
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "accept_agreement",
+            vec![DynamicValue::u128(bucket_id as u128)],
+        );
+
+        match api
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+        {
+            Ok(progress) => match progress.wait_for_finalized_success().await {
+                Ok(_) => tracing::info!(
+                    "Auto-accepted agreement for bucket {} (finalized)",
+                    bucket_id
+                ),
+                Err(e) => {
+                    tracing::warn!("accept_agreement tx failed for bucket {}: {}", bucket_id, e)
+                }
+            },
+            Err(e) => tracing::warn!(
+                "Failed to submit accept_agreement for bucket {}: {}",
+                bucket_id,
+                e
+            ),
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Local SCALE-value decode helpers — a subset of `storage_client::scale_decode`,
+// inlined here to avoid pulling the (cyclic) `storage-client` dependency.
+// ────────────────────────────────────────────────────────────────────────────
+
+fn field_u64(fields: &Composite<u32>, name: &str) -> Option<u64> {
+    fields.at(name)?.as_u128().map(|v| v as u64)
+}
+
+fn field_account(fields: &Composite<u32>, name: &str) -> Option<AccountId32> {
+    decode_account(fields.at(name)?)
+}
+
+fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
+    let mut bytes = [0u8; 32];
+    if collect_le_bytes(v, &mut bytes, 0) == 32 {
+        Some(AccountId32::new(bytes))
+    } else {
+        None
+    }
+}
+
+fn collect_le_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
+    match &v.value {
+        ValueDef::Primitive(Primitive::U128(n)) => {
+            if offset < 32 {
+                buf[offset] = *n as u8;
+                offset + 1
+            } else {
+                offset
+            }
+        }
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            let mut pos = offset;
+            for item in items {
+                pos = collect_le_bytes(item, buf, pos);
+            }
+            pos
+        }
+        _ => offset,
     }
 }
 
