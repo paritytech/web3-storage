@@ -196,7 +196,7 @@ impl ReplicaSyncCoordinatorHandle {
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
+    api: OnlineClient<PolkadotConfig>,
     signer: Option<Keypair>,
     /// HTTP client for fetching data from primaries (used by replica_sync).
     #[allow(dead_code)]
@@ -207,48 +207,39 @@ pub struct ReplicaSyncCoordinator {
 }
 
 impl ReplicaSyncCoordinator {
-    /// Create a new replica sync coordinator.
-    pub fn new(config: ReplicaSyncCoordinatorConfig, state: Arc<ProviderState>) -> Self {
+    /// Create a new replica sync coordinator with an already-connected chain client.
+    pub fn new(
+        config: ReplicaSyncCoordinatorConfig,
+        state: Arc<ProviderState>,
+        api: OnlineClient<PolkadotConfig>,
+    ) -> Result<Self, Error> {
+        let signer = match state.keypair.as_ref() {
+            Some(kp) => {
+                let raw = kp.to_raw_vec();
+                let secret_bytes: [u8; 32] = raw[..32]
+                    .try_into()
+                    .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
+                let signer = Keypair::from_secret_key(secret_bytes)
+                    .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+                Some(signer)
+            }
+            None => None,
+        };
+
         let replica_sync = ReplicaSync::new(state.storage.clone());
 
-        Self {
+        Ok(Self {
             config,
             state,
-            api: None,
-            signer: None,
+            api,
+            signer,
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client"),
             replica_sync,
             active_syncs: HashMap::new(),
-        }
-    }
-
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        // Set up signer from provider state if available
-        if let Some(ref kp) = self.state.keypair {
-            let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
-            let signer = Keypair::from_secret_key(secret_bytes)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Replica sync coordinator connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
+        })
     }
 
     /// Start the replica sync coordinator background service.
@@ -256,10 +247,6 @@ impl ReplicaSyncCoordinator {
         self,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) -> Result<ReplicaSyncCoordinatorHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
-
         let (command_tx, command_rx) = mpsc::channel::<SyncCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
@@ -288,16 +275,7 @@ impl ReplicaSyncCoordinator {
         let mut paused = false;
         tracing::info!("Replica sync coordinator started");
 
-        let api = match self.api.as_ref() {
-            Some(a) => a.clone(),
-            None => {
-                tracing::error!("Replica sync coordinator not connected to chain");
-                running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        let mut stream = ChainStream::new(api, self.config.poll_interval);
+        let mut stream = ChainStream::new(self.api.clone(), self.config.poll_interval);
 
         loop {
             tokio::select! {
@@ -400,10 +378,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get replica duties for buckets where this provider is a replica.
     async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let api = &self.api;
 
         let mut duties = Vec::new();
 
@@ -481,10 +456,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get sync duty for a specific bucket.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let api = &self.api;
 
         let our_account = self.get_our_account_id()?;
 
@@ -644,7 +616,7 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Build the 7-element roots array for confirm_replica_sync.
-    fn build_roots_array(&self, synced_root: H256) -> [Option<H256>; 7] {
+    fn build_roots_array(synced_root: H256) -> [Option<H256>; 7] {
         // Position 0: current root (what we synced to)
         // Positions 1-6: historical roots (we don't track these locally)
         let mut roots: [Option<H256>; 7] = [None; 7];
@@ -654,10 +626,7 @@ impl ReplicaSyncCoordinator {
 
     /// Submit confirm_replica_sync extrinsic.
     async fn submit_sync_confirmation(&self, duty: &SyncDuty) -> Result<(u8, u128), Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let api = &self.api;
 
         let signer = self
             .signer
@@ -665,7 +634,7 @@ impl ReplicaSyncCoordinator {
             .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
 
         // Build roots array
-        let roots = self.build_roots_array(duty.target_mmr_root);
+        let roots = Self::build_roots_array(duty.target_mmr_root);
 
         // Build roots as subxt values
         let roots_value: Vec<subxt::dynamic::Value> = roots
@@ -1420,12 +1389,7 @@ mod tests {
     #[test]
     fn test_build_roots_array() {
         let root = H256::repeat_byte(0xAB);
-        let storage = Arc::new(crate::Storage::new());
-        let state = Arc::new(crate::ProviderState::new(storage, "test".to_string()));
-        let config = ReplicaSyncCoordinatorConfig::default();
-        let coordinator = ReplicaSyncCoordinator::new(config, state);
-
-        let roots = coordinator.build_roots_array(root);
+        let roots = ReplicaSyncCoordinator::build_roots_array(root);
 
         assert_eq!(roots[0], Some(root));
         for item in roots.iter().skip(1) {

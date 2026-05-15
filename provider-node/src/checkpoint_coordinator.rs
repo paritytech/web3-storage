@@ -164,54 +164,44 @@ impl CheckpointCoordinatorHandle {
 pub struct CheckpointCoordinator {
     config: CheckpointCoordinatorConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
+    api: OnlineClient<PolkadotConfig>,
     signer: Option<Keypair>,
     http_client: reqwest::Client,
 }
 
 impl CheckpointCoordinator {
-    /// Create a new checkpoint coordinator.
-    pub fn new(config: CheckpointCoordinatorConfig, state: Arc<ProviderState>) -> Self {
-        Self {
+    /// Create a new checkpoint coordinator with an already-connected chain client.
+    pub fn new(
+        config: CheckpointCoordinatorConfig,
+        state: Arc<ProviderState>,
+        api: OnlineClient<PolkadotConfig>,
+    ) -> Result<Self, Error> {
+        let signer = match config.seed.as_deref() {
+            Some(seed) => {
+                let uri: subxt_signer::SecretUri = seed
+                    .parse()
+                    .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+                let kp = Keypair::from_uri(&uri)
+                    .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+                tracing::info!(
+                    "Checkpoint coordinator signer: {}",
+                    sp_core::crypto::AccountId32::from(kp.public_key().0).to_ss58check()
+                );
+                Some(kp)
+            }
+            None => None,
+        };
+
+        Ok(Self {
             config,
             state,
-            api: None,
-            signer: None,
+            api,
+            signer,
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("Failed to create HTTP client"),
-        }
-    }
-
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
-        // This avoids key conversion issues between sp_core and subxt_signer.
-        if let Some(ref seed) = self.config.seed {
-            let uri: subxt_signer::SecretUri = seed
-                .parse()
-                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-            let signer = Keypair::from_uri(&uri)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            tracing::info!(
-                "Checkpoint coordinator signer: {}",
-                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
-            );
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Checkpoint coordinator connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
+        })
     }
 
     /// Start the checkpoint coordinator background service.
@@ -219,10 +209,6 @@ impl CheckpointCoordinator {
         self,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) -> Result<CheckpointCoordinatorHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
-
         let (command_tx, command_rx) = mpsc::channel::<CoordinatorCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
@@ -254,16 +240,7 @@ impl CheckpointCoordinator {
         let mut paused = false;
         tracing::info!("Checkpoint coordinator started");
 
-        let api = match self.api.as_ref() {
-            Some(a) => a.clone(),
-            None => {
-                tracing::error!("Checkpoint coordinator not connected to chain");
-                running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        let mut stream = ChainStream::new(api, self.config.poll_interval);
+        let mut stream = ChainStream::new(self.api.clone(), self.config.poll_interval);
 
         loop {
             tokio::select! {
@@ -370,10 +347,7 @@ impl CheckpointCoordinator {
         }
 
         // Query chain for current block number and checkpoint config
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let api = &self.api;
 
         let current_block = {
             let block = api
@@ -579,10 +553,7 @@ impl CheckpointCoordinator {
         duty: &CheckpointDuty,
         signatures: Vec<(String, String)>,
     ) -> Result<H256, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let api = &self.api;
 
         let signer = self
             .signer

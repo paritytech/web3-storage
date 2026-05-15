@@ -64,29 +64,46 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Build the chain client once. All coordinators and the auth invalidator share
+    // clones of this `OnlineClient` (it's Arc-backed internally). This is the single
+    // place where the chain backend is constructed — making it the natural swap point
+    // for a future light-client transport.
+    let api = match OnlineClient::<PolkadotConfig>::from_url(&cli.rpc.chain_rpc).await {
+        Ok(a) => {
+            tracing::info!("Connected to chain at {}", cli.rpc.chain_rpc);
+            Some(a)
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to connect to chain at {}: {e}. Coordinators and auth invalidator will not start.",
+                cli.rpc.chain_rpc
+            );
+            None
+        }
+    };
+
     if cli.auth.enable_auth {
-        configure_auth(&mut state, &cli).await;
+        configure_auth(&mut state, &cli, api.clone()).await;
     }
 
     let state = Arc::new(state);
 
     // Start optional background services (failures are non-fatal)
-    let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
-    if let Some(ref handle) = checkpoint_handle {
-        state.set_checkpoint_handle(handle);
+    if let Some(api) = api.clone() {
+        let checkpoint_handle =
+            start_checkpoint_coordinator(&cli, &seed, state.clone(), api.clone()).await;
+        if let Some(ref handle) = checkpoint_handle {
+            state.set_checkpoint_handle(handle);
+        }
+        let _replica_sync_handle =
+            start_replica_sync_coordinator(&cli, state.clone(), api.clone()).await;
+        let _agreement_handle =
+            start_agreement_coordinator(&cli, &seed, state.clone(), api.clone()).await;
     }
-    let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
-    let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
 
-    // Sync on-chain multiaddr with actual bind address (requires signing key)
-    if let Some(seed) = &seed {
-        sync_multiaddr_on_chain(
-            &cli.rpc.chain_rpc,
-            seed,
-            &state.provider_id,
-            &cli.rpc.bind_addr,
-        )
-        .await;
+    // Sync on-chain multiaddr with actual bind address (requires signing key + connection)
+    if let (Some(seed), Some(api)) = (&seed, &api) {
+        sync_multiaddr_on_chain(api, seed, &state.provider_id, &cli.rpc.bind_addr).await;
     }
 
     tracing::info!("Starting storage provider node on {}", cli.rpc.bind_addr);
@@ -98,10 +115,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Build the membership cache, wire it onto `state`, and spawn the event-driven
-/// invalidator (best-effort — auth still works via the TTL backstop if the chain
-/// connection can't be established at boot).
-async fn configure_auth(state: &mut ProviderState, cli: &Cli) {
+/// Build the membership cache, wire it onto `state`, and (if a chain client is
+/// available) spawn the event-driven invalidator. Without a connection, auth still
+/// works via the TTL backstop — the cache just won't drop entries early on member
+/// changes.
+async fn configure_auth(
+    state: &mut ProviderState,
+    cli: &Cli,
+    api: Option<OnlineClient<PolkadotConfig>>,
+) {
     let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
     let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
     let cache = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
@@ -110,29 +132,26 @@ async fn configure_auth(state: &mut ProviderState, cli: &Cli) {
     state.membership_cache = Some(cache.clone());
     state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
 
-    match OnlineClient::<PolkadotConfig>::from_url(&cli.rpc.chain_rpc).await {
-        Ok(api) => {
-            let reconnect_delay = Duration::from_secs(6);
-            // The spawned task runs for the lifetime of the node. Dropping the JoinHandle
-            // does not cancel it (tokio only cancels via `.abort()`), so we explicitly
-            // drop here to satisfy `#[must_use]`.
-            drop(spawn_membership_invalidator(cache, api, reconnect_delay));
-            tracing::info!(
-                "Auth enabled (event-driven invalidation, cache_ttl={}s, max_skew={}s)",
-                cli.auth.auth_cache_ttl,
-                cli.auth.auth_max_skew
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Auth enabled but failed to connect chain for invalidator: {e}; falling back to TTL only"
-            );
-            tracing::info!(
-                "Auth enabled (TTL-only, cache_ttl={}s, max_skew={}s)",
-                cli.auth.auth_cache_ttl,
-                cli.auth.auth_max_skew
-            );
-        }
+    if let Some(api) = api {
+        let reconnect_delay = Duration::from_secs(6);
+        // The spawned task runs for the lifetime of the node. Dropping the JoinHandle
+        // does not cancel it (tokio only cancels via `.abort()`), so we explicitly
+        // drop here to satisfy `#[must_use]`.
+        drop(spawn_membership_invalidator(cache, api, reconnect_delay));
+        tracing::info!(
+            "Auth enabled (event-driven invalidation, cache_ttl={}s, max_skew={}s)",
+            cli.auth.auth_cache_ttl,
+            cli.auth.auth_max_skew
+        );
+    } else {
+        tracing::warn!(
+            "Auth enabled but no chain connection for invalidator; falling back to TTL only"
+        );
+        tracing::info!(
+            "Auth enabled (TTL-only, cache_ttl={}s, max_skew={}s)",
+            cli.auth.auth_cache_ttl,
+            cli.auth.auth_max_skew
+        );
     }
 }
 
@@ -140,6 +159,7 @@ async fn start_checkpoint_coordinator(
     cli: &Cli,
     seed: &Option<String>,
     state: Arc<ProviderState>,
+    api: OnlineClient<PolkadotConfig>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
         return None;
@@ -159,13 +179,13 @@ async fn start_checkpoint_coordinator(
         ..Default::default()
     };
 
-    let mut coordinator = CheckpointCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Checkpoint coordinator connected to chain");
+    let coordinator = match CheckpointCoordinator::new(config, state, api) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to build checkpoint coordinator: {e}");
+            return None;
+        }
+    };
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -182,6 +202,7 @@ async fn start_checkpoint_coordinator(
 async fn start_replica_sync_coordinator(
     cli: &Cli,
     state: Arc<ProviderState>,
+    api: OnlineClient<PolkadotConfig>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
         return None;
@@ -195,13 +216,13 @@ async fn start_replica_sync_coordinator(
         auto_confirm: true,
     };
 
-    let mut coordinator = ReplicaSyncCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect replica sync coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Replica sync coordinator connected to chain");
+    let coordinator = match ReplicaSyncCoordinator::new(config, state, api) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to build replica sync coordinator: {e}");
+            return None;
+        }
+    };
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -219,6 +240,7 @@ async fn start_agreement_coordinator(
     cli: &Cli,
     seed: &Option<String>,
     state: Arc<ProviderState>,
+    api: OnlineClient<PolkadotConfig>,
 ) -> Option<AgreementCoordinatorHandle> {
     if !cli.agreement.enable_agreement_coordinator {
         return None;
@@ -239,13 +261,13 @@ async fn start_agreement_coordinator(
         seed: Some(seed),
     };
 
-    let mut coordinator = AgreementCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect agreement coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Agreement coordinator connected to chain");
+    let coordinator = match AgreementCoordinator::new(config, state, api) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to build agreement coordinator: {e}");
+            return None;
+        }
+    };
 
     match coordinator.start().await {
         Ok(handle) => {
@@ -274,16 +296,13 @@ fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
 
 /// Ensure the on-chain multiaddr matches the actual bind address.
 /// If the provider is registered and the multiaddr differs, submit an update transaction.
-async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str, bind_addr: &str) {
+async fn sync_multiaddr_on_chain(
+    api: &OnlineClient<PolkadotConfig>,
+    seed: &str,
+    provider_id: &str,
+    bind_addr: &str,
+) {
     let expected_multiaddr = bind_addr_to_multiaddr(bind_addr);
-
-    let api = match OnlineClient::<PolkadotConfig>::from_url(chain_rpc).await {
-        Ok(api) => api,
-        Err(e) => {
-            tracing::warn!("Could not connect to chain for multiaddr sync: {}", e);
-            return;
-        }
-    };
 
     // Read current on-chain provider info
     let our_account: sp_core::crypto::AccountId32 =

@@ -72,54 +72,48 @@ impl AgreementCoordinatorHandle {
 pub struct AgreementCoordinator {
     config: AgreementCoordinatorConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
+    api: OnlineClient<PolkadotConfig>,
     signer: Option<Keypair>,
 }
 
 impl AgreementCoordinator {
-    /// Create a new agreement coordinator.
-    pub fn new(config: AgreementCoordinatorConfig, state: Arc<ProviderState>) -> Self {
-        Self {
+    /// Create a new agreement coordinator with an already-connected chain client.
+    ///
+    /// The chain client is constructed once at the node entry point (see
+    /// `command::run`) and cloned into each coordinator — this is what lets the
+    /// optional light-client transport share a single smoldot instance across
+    /// coordinators.
+    pub fn new(
+        config: AgreementCoordinatorConfig,
+        state: Arc<ProviderState>,
+        api: OnlineClient<PolkadotConfig>,
+    ) -> Result<Self, Error> {
+        let signer = match config.seed.as_deref() {
+            Some(seed) => {
+                let uri: subxt_signer::SecretUri = seed
+                    .parse()
+                    .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+                let kp = Keypair::from_uri(&uri)
+                    .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+                tracing::info!(
+                    "Agreement coordinator signer: {}",
+                    sp_core::crypto::AccountId32::from(kp.public_key().0).to_ss58check()
+                );
+                Some(kp)
+            }
+            None => None,
+        };
+
+        Ok(Self {
             config,
             state,
-            api: None,
-            signer: None,
-        }
-    }
-
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        if let Some(ref seed) = self.config.seed {
-            let uri: subxt_signer::SecretUri = seed
-                .parse()
-                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-            let signer = Keypair::from_uri(&uri)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            tracing::info!(
-                "Agreement coordinator signer: {}",
-                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
-            );
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Agreement coordinator connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
+            api,
+            signer,
+        })
     }
 
     /// Start the agreement coordinator background service.
     pub async fn start(self) -> Result<AgreementCoordinatorHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
         if self.signer.is_none() {
             return Err(Error::Internal(
                 "No signer available for agreement coordinator".to_string(),
@@ -156,14 +150,7 @@ impl AgreementCoordinator {
             return;
         }
 
-        let api = match self.api.as_ref() {
-            Some(a) => a.clone(),
-            None => {
-                tracing::error!("Agreement coordinator not connected to chain");
-                running.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
+        let api = self.api.clone();
 
         let our_bytes = match self.our_account_bytes() {
             Ok(b) => b,
@@ -414,18 +401,5 @@ mod tests {
         assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(6));
         assert!(config.auto_accept);
-    }
-
-    #[test]
-    fn test_coordinator_creation() {
-        let storage = Arc::new(crate::Storage::new());
-        let state = Arc::new(crate::ProviderState::new(
-            storage,
-            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
-        ));
-        let config = AgreementCoordinatorConfig::default();
-        let coordinator = AgreementCoordinator::new(config, state);
-        assert!(coordinator.api.is_none());
-        assert!(coordinator.signer.is_none());
     }
 }
