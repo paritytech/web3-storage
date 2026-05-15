@@ -1,7 +1,7 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    auth::{ChainMembershipResolver, MembershipCache},
+    auth::{spawn_membership_invalidator, ChainMembershipResolver, MembershipCache},
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
@@ -44,27 +44,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let state = match &seed {
+    let mut state = match &seed {
         Some(seed) => {
-            let mut state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-
-            // Wire up auth if enabled
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            Arc::new(state)
+            state
         }
         None => {
             let provider_id = cli
@@ -76,26 +60,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "No --keyfile set, using --provider-id without signing: {}",
                 provider_id
             );
-
-            let mut state = ProviderState::new(storage, provider_id);
-
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            Arc::new(state)
+            ProviderState::new(storage, provider_id)
         }
     };
+
+    if cli.auth.enable_auth {
+        configure_auth(&mut state, &cli).await;
+    }
+
+    let state = Arc::new(state);
 
     // Start optional background services (failures are non-fatal)
     let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
@@ -123,6 +96,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Build the membership cache, wire it onto `state`, and spawn the event-driven
+/// invalidator (best-effort — auth still works via the TTL backstop if the chain
+/// connection can't be established at boot).
+async fn configure_auth(state: &mut ProviderState, cli: &Cli) {
+    let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+    let cache = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
+
+    state.auth_enabled = true;
+    state.membership_cache = Some(cache.clone());
+    state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
+
+    match OnlineClient::<PolkadotConfig>::from_url(&cli.rpc.chain_rpc).await {
+        Ok(api) => {
+            let reconnect_delay = Duration::from_secs(6);
+            // The spawned task runs for the lifetime of the node. Dropping the JoinHandle
+            // does not cancel it (tokio only cancels via `.abort()`), so we explicitly
+            // drop here to satisfy `#[must_use]`.
+            drop(spawn_membership_invalidator(cache, api, reconnect_delay));
+            tracing::info!(
+                "Auth enabled (event-driven invalidation, cache_ttl={}s, max_skew={}s)",
+                cli.auth.auth_cache_ttl,
+                cli.auth.auth_max_skew
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Auth enabled but failed to connect chain for invalidator: {e}; falling back to TTL only"
+            );
+            tracing::info!(
+                "Auth enabled (TTL-only, cache_ttl={}s, max_skew={}s)",
+                cli.auth.auth_cache_ttl,
+                cli.auth.auth_max_skew
+            );
+        }
+    }
 }
 
 async fn start_checkpoint_coordinator(

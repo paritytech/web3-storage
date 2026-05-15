@@ -2,15 +2,25 @@
 //!
 //! Provides:
 //! - Request signature verification (sr25519)
-//! - Membership caching with TTL (queries chain via subxt)
+//! - Membership caching with event-driven invalidation (queries chain via subxt)
 //! - Role-based access control enforcement
+//!
+//! The membership cache is kept fresh by [`spawn_membership_invalidator`], which
+//! subscribes to finalized blocks via [`crate::chain_stream::ChainStream`] and drops
+//! cache entries whenever a `MemberSet` or `MemberRemoved` event fires. The TTL
+//! configured in [`MembershipCache::new`] is now a defensive backstop in case the
+//! invalidator isn't running (e.g. chain connection couldn't be established at boot).
 
+use crate::chain_stream::{field_u64, ChainStream};
 use crate::error::Error;
 use crate::ProviderState;
 use dashmap::DashMap;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::Role;
+use subxt::{OnlineClient, PolkadotConfig};
+use tokio::task::JoinHandle;
 
 /// Caller identity extracted from a signed request.
 #[derive(Debug, Clone)]
@@ -102,6 +112,86 @@ impl MembershipCache {
             }
         }
     }
+
+    /// Drop a single bucket's cached membership. Called by the event-driven invalidator
+    /// when a `MemberSet` or `MemberRemoved` event fires for that bucket.
+    pub fn invalidate(&self, bucket_id: u64) {
+        self.cache.remove(&bucket_id);
+    }
+
+    /// Drop every cached entry. Used after a (re)connect to the chain so that anything
+    /// modified while we were disconnected is re-fetched on next access.
+    pub fn clear_all(&self) {
+        self.cache.clear();
+    }
+}
+
+/// Spawn a background task that subscribes to finalized blocks and invalidates the
+/// membership cache whenever a `StorageProvider::MemberSet` or `MemberRemoved` event
+/// fires.
+///
+/// Drops the whole cache on every (re)connect — we may have missed events while the
+/// subscription was down, so the safe move is to re-fetch on next access.
+///
+/// The task exits when the [`ChainStream`] ends. Drop the returned [`JoinHandle`]
+/// (or call `.abort()`) to stop it; the [`Arc`] keeps the cache alive independently.
+pub fn spawn_membership_invalidator(
+    cache: Arc<MembershipCache>,
+    api: OnlineClient<PolkadotConfig>,
+    reconnect_delay: Duration,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut stream = ChainStream::new(api, reconnect_delay);
+        while let Some(tick) = stream.next().await {
+            if tick.is_first_after_reconnect {
+                cache.clear_all();
+                tracing::info!(
+                    "MembershipCache: cleared on (re)connect at block {}",
+                    tick.number()
+                );
+                continue;
+            }
+
+            let events = match tick.block.events().await {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        "MembershipCache invalidator: failed to fetch events at block {}: {}",
+                        tick.number(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            for event in events.iter().flatten() {
+                if event.pallet_name() != "StorageProvider" {
+                    continue;
+                }
+                let variant = event.variant_name();
+                if variant != "MemberSet" && variant != "MemberRemoved" {
+                    continue;
+                }
+
+                let fields = match event.field_values() {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+                let Some(bucket_id) = field_u64(&fields, "bucket_id") else {
+                    continue;
+                };
+
+                cache.invalidate(bucket_id);
+                tracing::debug!(
+                    "MembershipCache: invalidated bucket {} on {} at block {}",
+                    bucket_id,
+                    variant,
+                    tick.number()
+                );
+            }
+        }
+        tracing::info!("MembershipCache invalidator: chain stream ended");
+    })
 }
 
 fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<Role> {
