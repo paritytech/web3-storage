@@ -11,6 +11,7 @@
 pub mod agreement_coordinator;
 pub mod api;
 pub mod auth;
+pub mod chain_client;
 pub mod chain_stream;
 pub mod challenge_responder;
 pub mod checkpoint_coordinator;

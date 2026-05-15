@@ -73,6 +73,20 @@ pub struct RpcParams {
         env = "CHAIN_RPC"
     )]
     pub chain_rpc: String,
+
+    /// Use an embedded smoldot light client instead of the WebSocket RPC.
+    /// Requires building with `--features light-client` and providing
+    /// `--chain-relay-spec` + `--chain-parachain-spec`.
+    #[arg(long, env = "CHAIN_LIGHT_CLIENT")]
+    pub chain_light_client: bool,
+
+    /// Path to the relay chain spec JSON. Only used when `--chain-light-client` is set.
+    #[arg(long, value_name = "FILE", env = "CHAIN_RELAY_SPEC")]
+    pub chain_relay_spec: Option<PathBuf>,
+
+    /// Path to the parachain spec JSON. Only used when `--chain-light-client` is set.
+    #[arg(long, value_name = "FILE", env = "CHAIN_PARACHAIN_SPEC")]
+    pub chain_parachain_spec: Option<PathBuf>,
 }
 
 /// Parameters for provider identity and signing keys.

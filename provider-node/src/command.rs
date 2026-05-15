@@ -2,6 +2,7 @@
 
 use crate::{
     auth::{spawn_membership_invalidator, ChainMembershipResolver, MembershipCache},
+    chain_client,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
@@ -66,17 +67,30 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build the chain client once. All coordinators and the auth invalidator share
     // clones of this `OnlineClient` (it's Arc-backed internally). This is the single
-    // place where the chain backend is constructed — making it the natural swap point
-    // for a future light-client transport.
-    let api = match OnlineClient::<PolkadotConfig>::from_url(&cli.rpc.chain_rpc).await {
+    // place where the chain backend (WebSocket RPC vs. embedded smoldot light client)
+    // is chosen.
+    let transport = match chain_client::transport_from_cli(
+        &cli.rpc.chain_rpc,
+        cli.rpc.chain_light_client,
+        cli.rpc.chain_relay_spec.as_ref(),
+        cli.rpc.chain_parachain_spec.as_ref(),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Invalid chain transport configuration: {e}");
+            return Err(e.into());
+        }
+    };
+
+    let api = match chain_client::connect(&transport).await {
         Ok(a) => {
-            tracing::info!("Connected to chain at {}", cli.rpc.chain_rpc);
+            tracing::info!("Connected to chain via {}", transport.label());
             Some(a)
         }
         Err(e) => {
             tracing::error!(
-                "Failed to connect to chain at {}: {e}. Coordinators and auth invalidator will not start.",
-                cli.rpc.chain_rpc
+                "Failed to connect to chain via {}: {e}. Coordinators and auth invalidator will not start.",
+                transport.label()
             );
             None
         }

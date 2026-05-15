@@ -33,3 +33,10 @@ codec = { workspace = true, features = ["std"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 serde_json = { workspace = true }
+
+[features]
+default = []
+# Enable embedded smoldot light client transport (alternative to JSON-RPC over WebSocket).
+# Adds smoldot as a transitive dependency, which is sizeable (~5-10 MB of code) and pulls
+# in a relay-chain sync; use only when trust-minimized transport is required.
+light-client = ["subxt/unstable-light-client"]
