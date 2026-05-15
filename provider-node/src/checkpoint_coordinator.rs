@@ -4,6 +4,7 @@
 //! providers to autonomously submit checkpoints without requiring the
 //! client to be online.
 
+use crate::chain_stream::ChainStream;
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{crypto::Ss58Codec, Pair, H256};
@@ -243,7 +244,7 @@ impl CheckpointCoordinator {
         })
     }
 
-    /// Main coordinator loop.
+    /// Main coordinator loop — drained by a [`ChainStream`] of finalized blocks.
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<CoordinatorCommand>,
@@ -251,9 +252,18 @@ impl CheckpointCoordinator {
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
-
         tracing::info!("Checkpoint coordinator started");
+
+        let api = match self.api.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                tracing::error!("Checkpoint coordinator not connected to chain");
+                running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let mut stream = ChainStream::new(api, self.config.poll_interval);
 
         loop {
             tokio::select! {
@@ -292,12 +302,17 @@ impl CheckpointCoordinator {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                next = stream.next() => {
+                    if next.is_none() {
+                        tracing::warn!("Checkpoint coordinator: chain stream ended");
+                        running.store(false, Ordering::SeqCst);
+                        break;
+                    }
+
                     if paused || !self.config.auto_submit {
                         continue;
                     }
 
-                    // Get active checkpoint duties
                     match self.get_active_checkpoint_duties().await {
                         Ok(duties) => {
                             for duty in duties {
