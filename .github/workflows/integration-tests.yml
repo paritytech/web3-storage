@@ -85,11 +85,11 @@ jobs:
           node-version: "24"
 
       - name: Build runtime and provider
-        run: just build-runtime && just build-provider
+        run: just build-paseo-runtime && just build-provider
 
       - name: Start chain and wait for blocks
         run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml > /tmp/zombienet.log 2>&1 &
+          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml > /tmp/zombienet.log 2>&1 &
           ZOMBIE_PID=$!
           echo "Waiting for zombienet to set up nodes..."
           sleep 15
