@@ -454,6 +454,9 @@ parameter_types! {
     pub const DefaultCheckpointGrace: BlockNumber = 20;
     pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
     pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
+    /// Must be `>= ChallengeTimeout` so any challenge created up to the
+    /// announcement block matures before the provider can withdraw stake.
+    pub const DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
 }
 
 // Treasury account for slashed funds
@@ -489,6 +492,7 @@ impl pallet_storage_provider::Config for Runtime {
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
+    type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
     type WeightInfo = pallet_storage_provider::weights::SubstrateWeight<Runtime>;
 }
 
