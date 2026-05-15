@@ -20,17 +20,21 @@
  * Usage: node checkpoint-missed.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import assert from "node:assert";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import {
+  configureCheckpointWindow,
+  createBucket,
+  reportMissedCheckpoint,
+  requestPrimaryAgreement,
+} from "./api.js";
 import {
   connect,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
-  requireOneEvent,
   sameAddress,
-  submitTx,
   waitForAgreementAcceptance,
   waitForBlock,
   waitForBlockProduction,
@@ -50,85 +54,6 @@ const {
 // `interval` blocks (~60s at 6s blocks).
 const WINDOW_INTERVAL = 10;
 const WINDOW_GRACE = 5;
-
-async function createBucket(api, client) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket({ min_providers: 1 }),
-    client.signer,
-    "create_bucket"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  console.log("  Bucket created: id=%s", event.bucket_id);
-  return event.bucket_id;
-}
-
-async function setupAgreement(api, client, provider, bucketId) {
-  const maxBytes = 1_048_576n;
-  const duration = 200;
-  await submitTx(
-    api.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: provider.address,
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxBytes * BigInt(duration) * 2n,
-    }),
-    client.signer,
-    "request_primary_agreement"
-  );
-  await waitForAgreementAcceptance(api, provider.address, bucketId);
-  console.log("  Agreement accepted");
-}
-
-async function configureCheckpointWindow(api, admin, bucketId) {
-  const result = await submitTx(
-    api.tx.StorageProvider.configure_checkpoint_window({
-      bucket_id: bucketId,
-      interval: WINDOW_INTERVAL,
-      grace_period: WINDOW_GRACE,
-      enabled: true,
-    }),
-    admin.signer,
-    "configure_checkpoint_window"
-  );
-  requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointConfigUpdated,
-    "CheckpointConfigUpdated"
-  );
-  console.log(
-    "  Window configured: interval=%d grace=%d",
-    WINDOW_INTERVAL,
-    WINDOW_GRACE
-  );
-}
-
-async function reportMissedWindow(api, reporter, bucketId, window) {
-  const result = await submitTx(
-    api.tx.StorageProvider.report_missed_checkpoint({
-      bucket_id: bucketId,
-      window,
-    }),
-    reporter.signer,
-    "report_missed_checkpoint"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointMissPenalized,
-    "CheckpointMissPenalized"
-  );
-  console.log(
-    "  CheckpointMissPenalized: provider=%s window=%s penalty=%s",
-    event.provider,
-    event.window,
-    event.penalty.toString()
-  );
-  return event;
-}
 
 async function main() {
   await cryptoWaitReady();
@@ -150,8 +75,20 @@ async function main() {
     console.log("\n=== Step 1: Setup provider + bucket + agreement ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
     restoreOthers = await ensureSoleAcceptingProvider(api, provider);
+
     const bucketId = await createBucket(api, client);
-    await setupAgreement(api, client, provider, bucketId);
+    console.log("  Bucket created: id=%s", bucketId);
+
+    const maxBytes = 1_048_576n;
+    const duration = 200;
+    await requestPrimaryAgreement(api, client, provider, bucketId, {
+      max_bytes: maxBytes,
+      duration,
+      max_payment: maxBytes * BigInt(duration) * 2n,
+    });
+    await waitForAgreementAcceptance(api, provider.address, bucketId);
+    console.log("  Agreement accepted");
+
     const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
     assert.ok(
       bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
@@ -159,11 +96,18 @@ async function main() {
     );
 
     console.log("\n=== Step 2: configure_checkpoint_window (tight) ===");
-    await configureCheckpointWindow(api, client, bucketId);
+    await configureCheckpointWindow(api, client, bucketId, {
+      interval: WINDOW_INTERVAL,
+      gracePeriod: WINDOW_GRACE,
+    });
+    console.log(
+      "  Window configured: interval=%d grace=%d",
+      WINDOW_INTERVAL,
+      WINDOW_GRACE
+    );
 
     console.log("\n=== Step 3: Pick a window and let it elapse without a checkpoint ===");
-    const headRaw = await api.query.System.Number.getValue();
-    const head = Number(headRaw);
+    const head = Number(await api.query.System.Number.getValue());
     const missedWindow = BigInt(Math.floor(head / WINDOW_INTERVAL));
     // window_end = (missedWindow + 1) * interval ; need current_block > window_end
     const windowEnd = (Number(missedWindow) + 1) * WINDOW_INTERVAL;
@@ -183,16 +127,19 @@ async function main() {
     const reporterAcctBefore = await api.query.System.Account.getValue(
       client.address
     );
-    console.log(
-      "  Provider stake before: %s",
-      providerBefore.stake.toString()
-    );
+    console.log("  Provider stake before: %s", providerBefore.stake.toString());
     console.log(
       "  Reporter free before:  %s",
       reporterAcctBefore.data.free.toString()
     );
 
-    const event = await reportMissedWindow(api, client, bucketId, missedWindow);
+    const event = await reportMissedCheckpoint(api, client, bucketId, missedWindow);
+    console.log(
+      "  CheckpointMissPenalized: provider=%s window=%s penalty=%s",
+      event.provider,
+      event.window,
+      event.penalty.toString()
+    );
     assert.ok(
       sameAddress(event.provider, provider.address),
       `Leader should be the lone primary provider, got ${event.provider}`

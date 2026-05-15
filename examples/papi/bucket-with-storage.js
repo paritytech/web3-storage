@@ -18,20 +18,21 @@
  * Usage: node bucket-with-storage.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { Binary, Enum } from "@polkadot-api/substrate-bindings";
-import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import {
+  createBucketWithStorage,
+  fetchCheckpointSignature,
+  freezeBucket,
+  submitClientCheckpoint,
+  uploadChunk,
+} from "./api.js";
 import {
   connect,
-  makeSigner,
-  parseProviderClientArgs,
-  toHex,
-  hexToBytes,
-  providerFetch,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
-  requireOneEvent,
+  makeSigner,
+  parseProviderClientArgs,
   sameAddress,
-  submitTx,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -43,88 +44,6 @@ const {
   providerSeed: PROVIDER_SEED,
   clientSeed: CLIENT_SEED,
 } = parseProviderClientArgs();
-
-async function createBucketWithStorage(api, client, params) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket_with_storage(params),
-    client.signer,
-    "create_bucket_with_storage"
-  );
-  const created = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  const accepted = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.AgreementAccepted,
-    "AgreementAccepted"
-  );
-  console.log("  bucket_id        =", created.bucket_id);
-  console.log("  matched provider =", accepted.provider);
-  console.log("  expires_at       =", accepted.expires_at);
-  return {
-    bucketId: created.bucket_id,
-    matchedProvider: accepted.provider,
-  };
-}
-
-async function uploadChunk(providerUrl, bucketId, payload) {
-  const data = new TextEncoder().encode(payload);
-  const hash = toHex(blake2AsU8a(data));
-  await providerFetch(providerUrl, "/node", {
-    method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash,
-      data: Buffer.from(data).toString("base64"),
-      children: null,
-    },
-  });
-  const commit = await providerFetch(providerUrl, "/commit", {
-    method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash] },
-  });
-  console.log("  uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
-  return commit;
-}
-
-async function submitCheckpoint(api, provider, client, bucketId) {
-  const ck = await providerFetch(PROVIDER_URL, "/checkpoint-signature", {
-    params: { bucket_id: Number(bucketId) },
-  });
-  await submitTx(
-    api.tx.StorageProvider.checkpoint({
-      bucket_id: bucketId,
-      mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
-      start_seq: BigInt(ck.start_seq),
-      leaf_count: BigInt(ck.leaf_count),
-      signatures: [
-        [
-          provider.address,
-          Enum("Sr25519", Binary.fromBytes(hexToBytes(ck.provider_signature))),
-        ],
-      ],
-    }),
-    client.signer,
-    "checkpoint"
-  );
-  console.log("  Checkpoint submitted (leaf_count=%s)", ck.leaf_count);
-}
-
-async function freezeBucket(api, client, bucketId) {
-  const result = await submitTx(
-    api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId }),
-    client.signer,
-    "freeze_bucket"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketFrozen,
-    "BucketFrozen"
-  );
-  console.log("  BucketFrozen at start_seq=%s", event.frozen_start_seq);
-}
 
 async function main() {
   await cryptoWaitReady();
@@ -154,7 +73,7 @@ async function main() {
     restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
     console.log("\n=== Step 2: create_bucket_with_storage (atomic) ===");
-    const { bucketId, matchedProvider } = await createBucketWithStorage(
+    const { bucketId, matchedProvider, expiresAt } = await createBucketWithStorage(
       api,
       client,
       {
@@ -163,6 +82,9 @@ async function main() {
         max_price_per_byte: 10n,
       }
     );
+    console.log("  bucket_id        =", bucketId);
+    console.log("  matched provider =", matchedProvider);
+    console.log("  expires_at       =", expiresAt);
     if (!sameAddress(matchedProvider, provider.address)) {
       throw new Error(
         `create_bucket_with_storage matched ${matchedProvider}, expected ${provider.address}. ` +
@@ -171,17 +93,21 @@ async function main() {
     }
 
     console.log("\n=== Step 3: Upload one chunk ===");
-    await uploadChunk(
+    const { data, commit } = await uploadChunk(
       PROVIDER_URL,
       bucketId,
       `Quickstart payload @ ${new Date().toISOString()}`
     );
+    console.log("  uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
     console.log("\n=== Step 4: Submit checkpoint ===");
-    await submitCheckpoint(api, provider, client, bucketId);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    await submitClientCheckpoint(api, client, provider, bucketId, ck);
+    console.log("  Checkpoint submitted (leaf_count=%s)", ck.leaf_count);
 
     console.log("\n=== Step 5: Freeze bucket (now possible) ===");
-    await freezeBucket(api, client, bucketId);
+    const frozen = await freezeBucket(api, client, bucketId);
+    console.log("  BucketFrozen at start_seq=%s", frozen.frozen_start_seq);
 
     console.log("PASSED: atomic-setup + upload + freeze flow complete");
   } catch (err) {

@@ -20,63 +20,29 @@
  * Usage: node drive-lifecycle.js [chain_ws] [provider_url] [provider_seed] [owner_seed] [member_seed]
  */
 
-import { Binary, Enum } from "@polkadot-api/substrate-bindings";
 import assert from "node:assert";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import { createDrive, deleteDrive, shareDrive, unshareDrive } from "./api.js";
 import {
-  connect,
-  makeSigner,
-  utf8,
   bytesToUtf8,
-  fmtRole,
+  connect,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
-  waitForAgreementAcceptance,
+  fmtRole,
+  makeSigner,
   printBucketMembers,
-  requireOneEvent,
   sameAddress,
-  submitTx,
+  waitForAgreementAcceptance,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
 } from "./common.js";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const PROVIDER_SEED = process.argv[4] || "//Alice";
 const OWNER_SEED = process.argv[5] || "//Bob";
 const MEMBER_SEED = process.argv[6] || "//Charlie";
-
-async function createDrive(api, owner, name, params) {
-  const result = await submitTx(
-    api.tx.DriveRegistry.create_drive({
-      name: Binary.fromBytes(utf8(name)),
-      ...params,
-    }),
-    owner.signer,
-    "create_drive"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.DriveRegistry.DriveCreated,
-    "DriveCreated"
-  );
-  // create_drive issues a Layer 0 AgreementRequested under the hood — pull
-  // the matched provider out so the caller can verify it's the one whose
-  // node we'll be calling.
-  const requested = api.event.StorageProvider.AgreementRequested.filter(
-    result.events
-  );
-  const matchedProvider = requested[0]?.provider;
-  console.log("  drive_id         =", event.drive_id);
-  console.log("  bucket_id        =", event.bucket_id);
-  console.log("  matched provider =", matchedProvider);
-  return {
-    driveId: event.drive_id,
-    bucketId: event.bucket_id,
-    matchedProvider,
-  };
-}
 
 async function printDriveInfo(api, owner, driveId, bucketId) {
   const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
@@ -104,59 +70,6 @@ async function printDriveInfo(api, owner, driveId, bucketId) {
     driveId,
     "BucketToDrive should map back to drive_id"
   );
-}
-
-async function shareDrive(api, owner, driveId, member, role) {
-  const result = await submitTx(
-    api.tx.DriveRegistry.share_drive({
-      drive_id: driveId,
-      member: member.address,
-      role: Enum(role),
-    }),
-    owner.signer,
-    `share_drive(${role})`
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.DriveRegistry.DriveShared,
-    "DriveShared"
-  );
-  console.log(
-    "  DriveShared with %s as %s",
-    member.address,
-    fmtRole(event.role)
-  );
-}
-
-async function unshareDrive(api, owner, driveId, member) {
-  const result = await submitTx(
-    api.tx.DriveRegistry.unshare_drive({
-      drive_id: driveId,
-      member: member.address,
-    }),
-    owner.signer,
-    "unshare_drive"
-  );
-  requireOneEvent(
-    result.events,
-    api.event.DriveRegistry.DriveUnshared,
-    "DriveUnshared"
-  );
-}
-
-async function deleteDrive(api, owner, driveId) {
-  const result = await submitTx(
-    api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
-    owner.signer,
-    "delete_drive"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.DriveRegistry.DriveDeleted,
-    "DriveDeleted"
-  );
-  console.log("  refunded to owner =", event.refunded);
-  return event.refunded;
 }
 
 async function getFree(api, who) {
@@ -204,6 +117,9 @@ async function main() {
         min_providers: 1,
       }
     );
+    console.log("  drive_id         =", driveId);
+    console.log("  bucket_id        =", bucketId);
+    console.log("  matched provider =", matchedProvider);
     if (!sameAddress(matchedProvider, provider.address)) {
       throw new Error(
         `create_drive matched ${matchedProvider}, expected ${provider.address}. ` +
@@ -221,7 +137,8 @@ async function main() {
     await printDriveInfo(api, owner, driveId, bucketId);
 
     console.log("\n=== Step 5: share_drive(Writer) ===");
-    await shareDrive(api, owner, driveId, member, "Writer");
+    const shared = await shareDrive(api, owner, driveId, member, "Writer");
+    console.log("  DriveShared with %s as %s", member.address, fmtRole(shared.role));
     const members = await printBucketMembers(api, bucketId, "after share");
     assert.ok(
       members.some((m) => sameAddress(m.account, member.address)),
@@ -239,7 +156,8 @@ async function main() {
     console.log("\n=== Step 7: delete_drive ===");
     const ownerBefore = await getFree(api, owner);
     const providerBefore = await getFree(api, provider);
-    await deleteDrive(api, owner, driveId);
+    const deleted = await deleteDrive(api, owner, driveId);
+    console.log("  refunded to owner =", deleted.refunded);
     const ownerAfter = await getFree(api, owner);
     const providerAfter = await getFree(api, provider);
     console.log("  owner free delta    =", ownerAfter - ownerBefore);

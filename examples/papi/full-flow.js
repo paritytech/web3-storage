@@ -16,18 +16,27 @@
  * Usage: node full-flow.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { Binary, Enum } from "@polkadot-api/substrate-bindings";
-import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 import assert from "node:assert";
 import {
+  acceptAgreement,
+  challengeCheckpoint,
+  challengeOffchain,
+  createBucket,
+  downloadChunk,
+  endAgreement,
+  fetchChallengeProof,
+  fetchCheckpointSignature,
+  requestPrimaryAgreement,
+  respondToChallenge,
+  submitClientCheckpoint,
+  uploadChunk,
+} from "./api.js";
+import {
   connect,
+  ensureProviderRegistered,
   makeSigner,
   parseProviderClientArgs,
-  toHex,
-  hexToBytes,
-  providerFetch,
-  ensureProviderRegistered,
-  requireOneEvent,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -41,24 +50,7 @@ const {
   clientSeed: CLIENT_SEED,
 } = parseProviderClientArgs();
 
-// ---------------------------------------------------------------------------
-// Step helpers
-// ---------------------------------------------------------------------------
-
-async function createBucket(api, client) {
-  const result = await api.tx.StorageProvider.create_bucket({
-    min_providers: 1,
-  }).signAndSubmit(client.signer);
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  console.log("  Bucket created with ID:", event.bucket_id);
-  return event.bucket_id;
-}
-
-async function requestAgreement(api, client, provider, bucketId, params) {
+async function setupAgreement(api, client, provider, bucketId) {
   const existing = await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
     provider.address
@@ -67,51 +59,35 @@ async function requestAgreement(api, client, provider, bucketId, params) {
     console.log("  Agreement already exists");
     return;
   }
+  const maxBytes = 1_073_741_824n; // 1 GiB
+  const duration = 50;
   console.log(
-    "  Requesting agreement (%s), duration=%d blocks, maxPayment=%s...",
+    "  Requesting agreement (%s), duration=%d blocks...",
     client.seed,
-    params.duration,
-    params.max_payment
+    duration
   );
-  await api.tx.StorageProvider.request_primary_agreement({
-    bucket_id: bucketId,
-    provider: provider.address,
-    ...params,
-  }).signAndSubmit(client.signer);
-
+  await requestPrimaryAgreement(api, client, provider, bucketId, {
+    max_bytes: maxBytes,
+    duration,
+    max_payment: maxBytes * BigInt(duration) * 2n,
+  });
   console.log("  Accepting agreement (%s)...", provider.seed);
-  await api.tx.StorageProvider.accept_agreement({
-    bucket_id: bucketId,
-  }).signAndSubmit(provider.signer);
+  await acceptAgreement(api, provider, bucketId);
   console.log("  Agreement accepted");
 }
 
-async function uploadData(bucketId) {
-  const data = new TextEncoder().encode(
-    `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`
+async function uploadAndVerify(bucketId) {
+  const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload);
+  console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
+
+  const downloaded = await downloadChunk(PROVIDER_URL, hash);
+  assert.deepStrictEqual(
+    downloaded,
+    Buffer.from(data),
+    "Downloaded data does not match uploaded data"
   );
-  const chunkHashHex = toHex(blake2AsU8a(data));
-
-  console.log("  Uploading chunk (%d bytes) to bucket %s...", data.length, bucketId);
-  await providerFetch(PROVIDER_URL, "/node", {
-    method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash: chunkHashHex,
-      data: Buffer.from(data).toString("base64"),
-      children: null,
-    },
-  });
-
-  console.log("  Committing to MMR...");
-  const commit = await providerFetch(PROVIDER_URL, "/commit", {
-    method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [chunkHashHex] },
-  });
-  console.log("  MMR root:", commit.mmr_root);
-  console.log("  Leaf indices:", commit.leaf_indices);
-
-  await verifyUpload(chunkHashHex, data);
+  console.log("  Upload verified (%d bytes)", data.length);
 
   return {
     leafIndex: commit.leaf_indices[0],
@@ -119,159 +95,6 @@ async function uploadData(bucketId) {
     startSeq: commit.start_seq,
     providerSignature: commit.provider_signature,
   };
-}
-
-async function verifyUpload(chunkHashHex, originalData) {
-  const downloaded = await providerFetch(PROVIDER_URL, "/node", {
-    params: { hash: chunkHashHex },
-  });
-  const downloadedData = Buffer.from(downloaded.data, "base64");
-  assert.deepStrictEqual(
-    downloadedData,
-    Buffer.from(originalData),
-    "Downloaded data does not match uploaded data"
-  );
-  console.log("  Upload verified: data matches (%d bytes)", originalData.length);
-}
-
-async function challengeOffchain(api, provider, client, upload, bucketId) {
-  console.log("  Submitting challenge_offchain:");
-  console.log("    bucket_id:", bucketId);
-  console.log("    provider:", provider.address);
-  console.log("    mmr_root:", upload.mmrRoot);
-
-  const result = await api.tx.StorageProvider.challenge_offchain({
-    bucket_id: bucketId,
-    provider: provider.address,
-    mmr_root: Binary.fromBytes(hexToBytes(upload.mmrRoot)),
-    start_seq: BigInt(upload.startSeq),
-    leaf_index: BigInt(upload.leafIndex),
-    chunk_index: 0n,
-    provider_signature: Enum(
-      "Sr25519",
-      Binary.fromBytes(hexToBytes(upload.providerSignature))
-    ),
-  }).signAndSubmit(client.signer);
-
-  assertNoExtrinsicFailure(api, result);
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.ChallengeCreated,
-    "ChallengeCreated (offchain)"
-  );
-  console.log(
-    "  Challenge created: deadline=%s, index=%s",
-    event.challenge_id.deadline,
-    event.challenge_id.index
-  );
-  return event.challenge_id;
-}
-
-async function challengeCheckpoint(api, provider, client, leafIndex, bucketId) {
-  const result = await api.tx.StorageProvider.challenge_checkpoint({
-    bucket_id: bucketId,
-    provider: provider.address,
-    leaf_index: BigInt(leafIndex),
-    chunk_index: 0n,
-  }).signAndSubmit(client.signer);
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.ChallengeCreated,
-    "ChallengeCreated (checkpoint)"
-  );
-  console.log(
-    "  Challenge created: deadline=%s, index=%s",
-    event.challenge_id.deadline,
-    event.challenge_id.index
-  );
-  return event.challenge_id;
-}
-
-async function submitCheckpoint(api, provider, client, bucketId) {
-  const ck = await providerFetch(PROVIDER_URL, "/checkpoint-signature", {
-    params: { bucket_id: Number(bucketId) },
-  });
-  console.log("  Checkpoint mmr_root:", ck.mmr_root);
-  console.log("  Checkpoint leaf_count:", ck.leaf_count);
-
-  await api.tx.StorageProvider.checkpoint({
-    bucket_id: bucketId,
-    mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
-    start_seq: BigInt(ck.start_seq),
-    leaf_count: BigInt(ck.leaf_count),
-    signatures: [
-      [
-        provider.address,
-        Enum("Sr25519", Binary.fromBytes(hexToBytes(ck.provider_signature))),
-      ],
-    ],
-  }).signAndSubmit(client.signer);
-  console.log("  Checkpoint submitted");
-}
-
-async function respondToChallenge(api, provider, challengeId) {
-  const proof = await fetchChallengeProof(api, challengeId);
-  await api.tx.StorageProvider.respond_to_challenge({
-    challenge_id: challengeId,
-    response: Enum("Proof", proof),
-  }).signAndSubmit(provider.signer);
-}
-
-async function fetchChallengeProof(api, challengeId) {
-  const challenges = await api.query.StorageProvider.Challenges.getValue(
-    challengeId.deadline
-  );
-  if (!challenges) throw new Error("No challenges at deadline " + challengeId.deadline);
-  const challenge = challenges[challengeId.index];
-  if (!challenge) throw new Error("Challenge index not found: " + challengeId.index);
-
-  const mmr = await providerFetch(PROVIDER_URL, "/mmr_proof", {
-    params: {
-      bucket_id: Number(challenge.bucket_id),
-      leaf_index: Number(challenge.leaf_index),
-    },
-  });
-  const chunk = await providerFetch(PROVIDER_URL, "/chunk_proof", {
-    params: {
-      data_root: mmr.leaf.data_root,
-      chunk_index: Number(challenge.chunk_index),
-    },
-  });
-
-  return {
-    chunk_data: Binary.fromBytes(Buffer.from(chunk.chunk_data, "base64")),
-    mmr_proof: {
-      peaks: mmr.proof.peaks.map((h) => Binary.fromBytes(hexToBytes(h))),
-      leaf: {
-        data_root: Binary.fromBytes(hexToBytes(mmr.leaf.data_root)),
-        data_size: BigInt(mmr.leaf.data_size),
-        total_size: BigInt(mmr.leaf.total_size),
-      },
-      leaf_proof: {
-        siblings: mmr.proof.siblings.map((h) => Binary.fromBytes(hexToBytes(h))),
-        path: mmr.proof.path,
-      },
-    },
-    chunk_proof: {
-      siblings: chunk.proof.siblings.map((h) => Binary.fromBytes(hexToBytes(h))),
-      path: chunk.proof.path,
-    },
-  };
-}
-
-async function endAgreementWithPay(api, client, provider, bucketId) {
-  console.log("  Ending agreement with Pay action (%s)...", client.seed);
-  await api.tx.StorageProvider.end_agreement({
-    bucket_id: bucketId,
-    provider: provider.address,
-    action: Enum("Pay"),
-  }).signAndSubmit(client.signer);
-  console.log("  Agreement ended with payment");
-}
-
-async function getFreeBalance(api, who) {
-  const acc = await api.query.System.Account.getValue(who.address);
-  return acc.data.free;
 }
 
 async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
@@ -282,15 +105,16 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   const expiresAt = Number(agreement.expires_at);
   console.log("  Agreement expires at block:", expiresAt);
 
-  const freeBefore = await getFreeBalance(api, provider);
+  const freeBefore = (await api.query.System.Account.getValue(provider.address))
+    .data.free;
   console.log("  Provider balance before:", freeBefore.toString());
 
   console.log("  Waiting for agreement to expire...");
   await waitForBlock(papi, expiresAt);
+  await endAgreement(api, client, provider, bucketId, "Pay");
 
-  await endAgreementWithPay(api, client, provider, bucketId);
-
-  const freeAfter = await getFreeBalance(api, provider);
+  const freeAfter = (await api.query.System.Account.getValue(provider.address))
+    .data.free;
   const earned = freeAfter - freeBefore;
   console.log("  Provider balance after:", freeAfter.toString());
   console.log("  Earned from agreement:", earned.toString());
@@ -311,21 +135,6 @@ function watchDefendedEvents(api) {
   );
   return { events, unsubscribe: () => sub.unsubscribe() };
 }
-
-function assertNoExtrinsicFailure(api, result) {
-  const failed = api.event.System.ExtrinsicFailed.filter(result.events);
-  if (failed.length > 0) {
-    console.log("  ERROR: Extrinsic failed!");
-    for (const e of failed) {
-      console.log("    dispatch_error:", JSON.stringify(e.dispatch_error, null, 2));
-    }
-    throw new Error("Extrinsic failed");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 async function main() {
   await cryptoWaitReady();
@@ -348,32 +157,59 @@ async function main() {
     console.log("\n=== Step 1: Setup ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
     const bucketId = await createBucket(api, client);
-    const agreementMaxBytes = 1_073_741_824n; // 1 GiB
-    const agreementDuration = 50;
-    await requestAgreement(api, client, provider, bucketId, {
-      max_bytes: agreementMaxBytes,
-      duration: agreementDuration,
-      max_payment: agreementMaxBytes * BigInt(agreementDuration) * 2n,
-    });
+    console.log("  Bucket created with ID:", bucketId);
+    await setupAgreement(api, client, provider, bucketId);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadData(bucketId);
+    const upload = await uploadAndVerify(bucketId);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
-    const offchainId = await challengeOffchain(api, provider, client, upload, bucketId);
+    const offchainId = await challengeOffchain(
+      api,
+      client,
+      provider,
+      bucketId,
+      upload
+    );
+    console.log(
+      "  Challenge created: deadline=%s, index=%s",
+      offchainId.deadline,
+      offchainId.index
+    );
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
-    await respondToChallenge(api, provider, offchainId);
+    const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
+    await respondToChallenge(api, provider, offchainId, offchainProof);
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    await submitCheckpoint(api, provider, client, bucketId);
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    console.log("  Checkpoint mmr_root:", ck.mmr_root);
+    console.log("  Checkpoint leaf_count:", ck.leaf_count);
+    await submitClientCheckpoint(api, client, provider, bucketId, ck);
+    console.log("  Checkpoint submitted");
 
     console.log("\n=== Step 6: On-chain checkpoint challenge ===");
-    const checkpointId = await challengeCheckpoint(api, provider, client, upload.leafIndex, bucketId);
+    const checkpointId = await challengeCheckpoint(
+      api,
+      client,
+      provider,
+      bucketId,
+      upload.leafIndex
+    );
+    console.log(
+      "  Challenge created: deadline=%s, index=%s",
+      checkpointId.deadline,
+      checkpointId.index
+    );
 
     console.log("\n=== Step 7: Respond to checkpoint challenge ===");
-    await respondToChallenge(api, provider, checkpointId);
+    const checkpointProof = await fetchChallengeProof(
+      api,
+      PROVIDER_URL,
+      checkpointId
+    );
+    await respondToChallenge(api, provider, checkpointId, checkpointProof);
     console.log("  Challenge defended");
 
     console.log("\n=== Verifying challenge results ===");

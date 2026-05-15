@@ -395,23 +395,15 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   pricePerByte = 1n,
   maxDuration = 100_000,
 } = {}) {
+  // Import lazily to break the common.js <-> api.js circular import. Both
+  // modules finish initialization before this function ever runs.
+  const { registerProvider, updateProviderSettings } = await import("./api.js");
   const existing = await api.query.StorageProvider.Providers.getValue(
     provider.address
   );
   if (!existing) {
-    const { Binary } = await import("@polkadot-api/substrate-bindings");
-    const port = new URL(providerUrl).port;
-    const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${port}`);
     console.log("  Registering provider", provider.address);
-    await submitTx(
-      api.tx.StorageProvider.register_provider({
-        multiaddr: Binary.fromBytes(multiaddr),
-        public_key: Binary.fromBytes(provider.publicKey),
-        stake: 1_000_000_000_000_000n,
-      }),
-      provider.signer,
-      "register_provider"
-    );
+    await registerProvider(api, provider, providerUrl);
   } else {
     // Provider already registered (likely by an earlier demo on the same
     // chain). Sanity-check that the on-chain public_key matches the keyring's
@@ -429,21 +421,15 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     }
   }
   // Always (re)apply settings so price/acceptance are correct for this demo.
-  await submitTx(
-    api.tx.StorageProvider.update_provider_settings({
-      settings: {
-        min_duration: 10,
-        max_duration: maxDuration,
-        price_per_byte: pricePerByte,
-        accepting_primary: true,
-        replica_sync_price: undefined,
-        accepting_extensions: true,
-        max_capacity: 0n,
-      },
-    }),
-    provider.signer,
-    "update_provider_settings"
-  );
+  await updateProviderSettings(api, provider, {
+    min_duration: 10,
+    max_duration: maxDuration,
+    price_per_byte: pricePerByte,
+    accepting_primary: true,
+    replica_sync_price: undefined,
+    accepting_extensions: true,
+    max_capacity: 0n,
+  });
 }
 
 function bytesEq(a, b) {
@@ -468,14 +454,6 @@ export function utf8(s) {
   return new TextEncoder().encode(s);
 }
 
-export async function acceptAgreement(api, provider, bucketId) {
-  await submitTx(
-    api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    "accept_agreement"
-  );
-}
-
 /**
  * Wait until the pending AgreementRequest for `(providerAddress, bucketId)`
  * has been consumed — i.e. the provider has accepted it. The provider node's
@@ -494,8 +472,8 @@ export async function waitForAgreementAcceptance(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const req = await api.query.StorageProvider.AgreementRequests.getValue(
-      providerAddress,
-      bucketId
+      bucketId,
+      providerAddress
     );
     if (!req) return;
     await new Promise((r) => setTimeout(r, pollMs));

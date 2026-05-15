@@ -19,21 +19,26 @@
  * Usage: node checkpoint-rewards.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { Binary, Enum } from "@polkadot-api/substrate-bindings";
-import { blake2AsU8a, cryptoWaitReady } from "@polkadot/util-crypto";
 import assert from "node:assert";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import {
+  claimCheckpointRewards,
+  configureCheckpointWindow,
+  createBucket,
+  fetchCheckpointDuty,
+  fundCheckpointPool,
+  requestPrimaryAgreement,
+  signCheckpointProposal,
+  submitProviderCheckpoint,
+  uploadChunk,
+} from "./api.js";
 import {
   connect,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
-  hexToBytes,
   makeSigner,
   parseProviderClientArgs,
-  providerFetch,
-  requireOneEvent,
   sameAddress,
-  submitTx,
-  toHex,
   waitForAgreementAcceptance,
   waitForBlock,
   waitForBlockProduction,
@@ -58,117 +63,7 @@ const WINDOW_GRACE = 20;
 // one provider_checkpoint reward (CheckpointReward = 1 token by default).
 const POOL_AMOUNT = 5_000_000_000_000n;
 
-async function createBucket(api, client) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket({ min_providers: 1 }),
-    client.signer,
-    "create_bucket"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  console.log("  Bucket created: id=%s", event.bucket_id);
-  return event.bucket_id;
-}
-
-async function setupAgreement(api, client, provider, bucketId) {
-  const maxBytes = 1_048_576n;
-  const duration = 200;
-  await submitTx(
-    api.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: provider.address,
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxBytes * BigInt(duration) * 2n,
-    }),
-    client.signer,
-    "request_primary_agreement"
-  );
-  await waitForAgreementAcceptance(api, provider.address, bucketId);
-  console.log("  Agreement accepted (auto by provider node)");
-}
-
-async function uploadOneChunk(bucketId) {
-  const data = new TextEncoder().encode(
-    `checkpoint-rewards @ ${new Date().toISOString()}`
-  );
-  const hash = toHex(blake2AsU8a(data));
-  await providerFetch(PROVIDER_URL, "/node", {
-    method: "PUT",
-    body: {
-      bucket_id: Number(bucketId),
-      hash,
-      data: Buffer.from(data).toString("base64"),
-      children: null,
-    },
-  });
-  const commit = await providerFetch(PROVIDER_URL, "/commit", {
-    method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash] },
-  });
-  console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
-  return commit;
-}
-
-async function configureCheckpointWindow(api, client, bucketId) {
-  const result = await submitTx(
-    api.tx.StorageProvider.configure_checkpoint_window({
-      bucket_id: bucketId,
-      interval: WINDOW_INTERVAL,
-      grace_period: WINDOW_GRACE,
-      enabled: true,
-    }),
-    client.signer,
-    "configure_checkpoint_window"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointConfigUpdated,
-    "CheckpointConfigUpdated"
-  );
-  console.log(
-    "  Config saved: interval=%s grace=%s enabled=%s",
-    event.interval,
-    event.grace_period,
-    event.enabled
-  );
-}
-
-async function fundCheckpointPool(api, funder, bucketId, amount) {
-  const result = await submitTx(
-    api.tx.StorageProvider.fund_checkpoint_pool({
-      bucket_id: bucketId,
-      amount,
-    }),
-    funder.signer,
-    "fund_checkpoint_pool"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointPoolFunded,
-    "CheckpointPoolFunded"
-  );
-  console.log(
-    "  Pool funded by %s with %s units",
-    event.funder,
-    event.amount.toString()
-  );
-
-  // Verify pool balance increased.
-  const balance = await api.query.StorageProvider.CheckpointPool.getValue(
-    bucketId
-  );
-  console.log("  CheckpointPool[%s] = %s", bucketId, balance.toString());
-  assert.ok(
-    balance >= amount,
-    `Pool balance ${balance} < funded amount ${amount}`
-  );
-}
-
-async function submitProviderCheckpoint(api, papi, provider, bucketId) {
+async function runProviderCheckpoint(api, papi, provider, bucketId) {
   // The window must be the *current* one at execution time. Read the chain's
   // head, compute window = head / interval, then sign + submit. The runtime
   // recomputes the window from its own block number at inclusion time, so if
@@ -201,45 +96,19 @@ async function submitProviderCheckpoint(api, papi, provider, bucketId) {
   // Pull our local commitment from the provider node, then ask the provider
   // to sign a CheckpointProposal (different payload from /checkpoint-signature,
   // which signs CommitmentPayload — that one is for client-initiated checkpoint).
-  const duty = await providerFetch(PROVIDER_URL, "/checkpoint/duty", {
-    params: { bucket_id: Number(bucketId) },
-  });
+  const duty = await fetchCheckpointDuty(PROVIDER_URL, bucketId);
   assert.ok(duty.ready, `Provider not ready to checkpoint: ${JSON.stringify(duty)}`);
 
-  const signed = await providerFetch(PROVIDER_URL, "/checkpoint/sign", {
-    method: "POST",
-    body: {
-      bucket_id: Number(bucketId),
-      mmr_root: duty.mmr_root,
-      start_seq: duty.start_seq,
-      leaf_count: duty.leaf_count,
-      window: Number(window),
-    },
-  });
+  const signed = await signCheckpointProposal(PROVIDER_URL, bucketId, duty, window);
   assert.ok(signed.agreed, `Provider refused to sign: ${JSON.stringify(signed)}`);
 
-  const result = await submitTx(
-    api.tx.StorageProvider.provider_checkpoint({
-      bucket_id: bucketId,
-      mmr_root: Binary.fromBytes(hexToBytes(duty.mmr_root)),
-      start_seq: BigInt(duty.start_seq),
-      leaf_count: BigInt(duty.leaf_count),
-      window,
-      signatures: [
-        [
-          provider.address,
-          Enum("Sr25519", Binary.fromBytes(hexToBytes(signed.signature))),
-        ],
-      ],
-    }),
-    provider.signer,
-    "provider_checkpoint"
-  );
-
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.ProviderCheckpointSubmitted,
-    "ProviderCheckpointSubmitted"
+  const event = await submitProviderCheckpoint(
+    api,
+    provider,
+    bucketId,
+    duty,
+    signed.signature,
+    window
   );
   console.log(
     "  Checkpoint accepted: window=%s leader=%s reward=%s",
@@ -254,11 +123,13 @@ async function submitProviderCheckpoint(api, papi, provider, bucketId) {
   return event.reward;
 }
 
-async function claimRewards(api, provider, bucketId, expectedReward) {
-  // CheckpointRewards is a double map (bucket_id, account) → balance.
+async function claimAndVerify(api, provider, bucketId, expectedReward) {
+  // CheckpointRewards is a double map (account, bucket_id) → balance.
+  // Provider-first key order enables `iter_prefix(&provider)` so deregistration
+  // can drain a provider's pending rewards without scanning every bucket.
   const pending = await api.query.StorageProvider.CheckpointRewards.getValue(
-    bucketId,
-    provider.address
+    provider.address,
+    bucketId
   );
   console.log("  Pending rewards before claim: %s", pending.toString());
   assert.strictEqual(
@@ -267,16 +138,7 @@ async function claimRewards(api, provider, bucketId, expectedReward) {
     `Pending ${pending} != event reward ${expectedReward}`
   );
 
-  const result = await submitTx(
-    api.tx.StorageProvider.claim_checkpoint_rewards({ bucket_id: bucketId }),
-    provider.signer,
-    "claim_checkpoint_rewards"
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.CheckpointRewardClaimed,
-    "CheckpointRewardClaimed"
-  );
+  const event = await claimCheckpointRewards(api, provider, bucketId);
   console.log(
     "  Claimed %s units for provider %s",
     event.amount.toString(),
@@ -285,8 +147,8 @@ async function claimRewards(api, provider, bucketId, expectedReward) {
   assert.strictEqual(event.amount, expectedReward);
 
   const after = await api.query.StorageProvider.CheckpointRewards.getValue(
-    bucketId,
-    provider.address
+    provider.address,
+    bucketId
   );
   assert.strictEqual(
     after,
@@ -318,9 +180,19 @@ async function main() {
 
     console.log("\n=== Step 2: Create bucket (client = admin) ===");
     const bucketId = await createBucket(api, client);
+    console.log("  Bucket created: id=%s", bucketId);
 
     console.log("\n=== Step 3: Open agreement so the provider becomes primary ===");
-    await setupAgreement(api, client, provider, bucketId);
+    const maxBytes = 1_048_576n;
+    const duration = 200;
+    await requestPrimaryAgreement(api, client, provider, bucketId, {
+      max_bytes: maxBytes,
+      duration,
+      max_payment: maxBytes * BigInt(duration) * 2n,
+    });
+    await waitForAgreementAcceptance(api, provider.address, bucketId);
+    console.log("  Agreement accepted (auto by provider node)");
+
     const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
     assert.ok(
       bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
@@ -328,19 +200,46 @@ async function main() {
     );
 
     console.log("\n=== Step 4: Upload data so the MMR has something to commit ===");
-    await uploadOneChunk(bucketId);
+    const { data, commit } = await uploadChunk(
+      PROVIDER_URL,
+      bucketId,
+      `checkpoint-rewards @ ${new Date().toISOString()}`
+    );
+    console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
     console.log("\n=== Step 5: configure_checkpoint_window ===");
-    await configureCheckpointWindow(api, client, bucketId);
+    const cfgEvent = await configureCheckpointWindow(api, client, bucketId, {
+      interval: WINDOW_INTERVAL,
+      gracePeriod: WINDOW_GRACE,
+    });
+    console.log(
+      "  Config saved: interval=%s grace=%s enabled=%s",
+      cfgEvent.interval,
+      cfgEvent.grace_period,
+      cfgEvent.enabled
+    );
 
     console.log("\n=== Step 6: fund_checkpoint_pool ===");
-    await fundCheckpointPool(api, client, bucketId, POOL_AMOUNT);
+    const fundEvent = await fundCheckpointPool(api, client, bucketId, POOL_AMOUNT);
+    console.log(
+      "  Pool funded by %s with %s units",
+      fundEvent.funder,
+      fundEvent.amount.toString()
+    );
+    const balance = await api.query.StorageProvider.CheckpointPool.getValue(
+      bucketId
+    );
+    console.log("  CheckpointPool[%s] = %s", bucketId, balance.toString());
+    assert.ok(
+      balance >= POOL_AMOUNT,
+      `Pool balance ${balance} < funded amount ${POOL_AMOUNT}`
+    );
 
     console.log("\n=== Step 7: provider_checkpoint (autonomous) ===");
-    const reward = await submitProviderCheckpoint(api, papi, provider, bucketId);
+    const reward = await runProviderCheckpoint(api, papi, provider, bucketId);
 
     console.log("\n=== Step 8: claim_checkpoint_rewards ===");
-    await claimRewards(api, provider, bucketId, reward);
+    await claimAndVerify(api, provider, bucketId, reward);
 
     console.log("\nPASSED: provider-initiated checkpoint reward cycle complete");
   } catch (err) {

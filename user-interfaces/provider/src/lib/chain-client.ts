@@ -386,7 +386,7 @@ export async function getAgreementRequests(address: string): Promise<OnChainAgre
   const entries = await requireApi().query.StorageProvider.AgreementRequests.getEntries()
   const out: OnChainAgreementRequest[] = []
   for (const { keyArgs, value } of entries) {
-    const [providerAddr, bucketIdRaw] = keyArgs
+    const [bucketIdRaw, providerAddr] = keyArgs
     if (providerAddr !== address) continue
     out.push({
       bucketId: Number(bucketIdRaw),
@@ -479,8 +479,8 @@ export async function getBucketDetails(
     let checkpointReward = 0n
     try {
       const reward = await a.query.StorageProvider.CheckpointRewards.getValue(
-        BigInt(bucketId),
         providerAddress,
+        BigInt(bucketId),
       )
       checkpointReward = reward ?? 0n
     } catch { /* no reward */ }

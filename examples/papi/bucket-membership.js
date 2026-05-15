@@ -16,51 +16,22 @@
  * Usage: node bucket-membership.js [chain_ws] [admin_seed] [writer_seed] [reader_seed]
  */
 
-import { Enum } from "@polkadot-api/substrate-bindings";
 import assert from "node:assert";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
+import { createBucket, removeMember, setMember } from "./api.js";
 import {
   connect,
   makeSigner,
   printBucketMembers,
-  requireOneEvent,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
 } from "./common.js";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const ADMIN_SEED = process.argv[3] || "//Alice";
 const WRITER_SEED = process.argv[4] || "//Bob";
 const READER_SEED = process.argv[5] || "//Charlie";
-
-async function createBucket(api, admin) {
-  const result = await api.tx.StorageProvider.create_bucket({
-    min_providers: 1,
-  }).signAndSubmit(admin.signer);
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  console.log("  Bucket created: id=%s", event.bucket_id);
-  return event.bucket_id;
-}
-
-async function setMember(api, admin, bucketId, member, role) {
-  await api.tx.StorageProvider.set_member({
-    bucket_id: bucketId,
-    member: member.address,
-    role: Enum(role),
-  }).signAndSubmit(admin.signer);
-}
-
-async function removeMember(api, admin, bucketId, member) {
-  await api.tx.StorageProvider.remove_member({
-    bucket_id: bucketId,
-    member: member.address,
-  }).signAndSubmit(admin.signer);
-}
 
 async function verifyReverseIndex(api, member, bucketId, shouldContain) {
   const buckets = await api.query.StorageProvider.MemberBuckets.getValue(
@@ -95,6 +66,7 @@ async function main() {
   try {
     console.log("\n=== Step 1: Create bucket ===");
     const bucketId = await createBucket(api, admin);
+    console.log("  Bucket created: id=%s", bucketId);
     await printBucketMembers(api, bucketId, "after create");
 
     console.log("\n=== Step 2: Add Writer ===");
