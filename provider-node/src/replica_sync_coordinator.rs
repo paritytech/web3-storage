@@ -1,12 +1,13 @@
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
 //! This module provides a background service that:
-//! 1. Subscribes to checkpoint events on-chain
+//! 1. Subscribes to finalized blocks and re-evaluates replica duties each block
 //! 2. Detects when new data is available to sync
 //! 3. Performs top-down MMR traversal to fetch missing data from primaries
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
+use crate::chain_stream::ChainStream;
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
 use sp_core::{Pair, H256};
@@ -277,7 +278,7 @@ impl ReplicaSyncCoordinator {
         })
     }
 
-    /// Main coordinator loop.
+    /// Main coordinator loop — drained by a [`ChainStream`] of finalized blocks.
     async fn run_loop(
         mut self,
         mut command_rx: mpsc::Receiver<SyncCommand>,
@@ -285,9 +286,18 @@ impl ReplicaSyncCoordinator {
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
-
         tracing::info!("Replica sync coordinator started");
+
+        let api = match self.api.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                tracing::error!("Replica sync coordinator not connected to chain");
+                running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let mut stream = ChainStream::new(api, self.config.poll_interval);
 
         loop {
             tokio::select! {
@@ -326,24 +336,25 @@ impl ReplicaSyncCoordinator {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                next = stream.next() => {
+                    if next.is_none() {
+                        tracing::warn!("Replica sync coordinator: chain stream ended");
+                        running.store(false, Ordering::SeqCst);
+                        break;
+                    }
+
                     if paused || !self.config.auto_confirm {
                         continue;
                     }
 
-                    // Clean up completed syncs
                     self.cleanup_completed_syncs();
 
-                    // Get active replica duties
                     match self.get_active_replica_duties().await {
                         Ok(duties) => {
                             for duty in duties {
-                                // Skip if already syncing this bucket
                                 if self.active_syncs.contains_key(&duty.bucket_id) {
                                     continue;
                                 }
-
-                                // Skip if at max concurrent syncs
                                 if self.active_syncs.len() >= self.config.max_concurrent_syncs {
                                     break;
                                 }
