@@ -171,19 +171,19 @@ jobs:
         run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
 
       - name: Run L0 demo (disk provider)
-        run: just drain-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+        run: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
-        run: just drain-then fs-demo-ci
+        run: just drain-tx-pool-then fs-demo-ci
 
       - name: Run S3 integration test
-        run: just drain-then s3-demo-ci
+        run: just drain-tx-pool-then s3-demo-ci
 
       - name: Run PAPI s3-lifecycle demo
-        run: just drain-then papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
+        run: just drain-tx-pool-then papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
 
       - name: Run PAPI drive-lifecycle demo
-        run: just drain-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
+        run: just drain-tx-pool-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
 
       - name: Stop services
         if: always()

@@ -220,9 +220,9 @@ drain-pool RPC=CHAIN_WS:
 
 # Drain the parachain pool, then run another recipe. Use in CI between
 # back-to-back integration tests to avoid stale-nonce drops.
-# Usage: just drain-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+# Usage: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 [positional-arguments]
-drain-then RECIPE *ARGS: drain-pool
+drain-tx-pool-then RECIPE *ARGS: drain-pool
     #!/usr/bin/env bash
     set -euo pipefail
     just "$@"
