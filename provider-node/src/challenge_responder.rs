@@ -4,6 +4,7 @@
 //! for challenges against this provider and automatically responds with
 //! the required proof data.
 
+use crate::chain_stream::ChainStream;
 use crate::{Error, ProviderState};
 use sp_core::{crypto::Ss58Codec, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +20,8 @@ use tokio::sync::mpsc;
 pub struct ChallengeResponderConfig {
     /// WebSocket URL for the parachain.
     pub chain_ws_url: String,
-    /// How often to poll for challenges (if not using subscriptions).
+    /// Delay between reconnect attempts if the finalized-block subscription drops.
+    /// Named `poll_interval` for backwards compatibility with the CLI flag.
     pub poll_interval: Duration,
     /// Maximum time to spend gathering proof data.
     pub proof_timeout: Duration,
@@ -217,7 +219,7 @@ impl ChallengeResponder {
         })
     }
 
-    /// Main responder loop.
+    /// Main responder loop — drained by a [`ChainStream`] of finalized blocks.
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<ResponderCommand>,
@@ -225,9 +227,18 @@ impl ChallengeResponder {
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
-
         tracing::info!("Challenge responder started");
+
+        let api = match self.api.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                tracing::error!("Challenge responder not connected to chain");
+                running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let mut stream = ChainStream::new(api, self.config.poll_interval);
 
         loop {
             tokio::select! {
@@ -254,12 +265,17 @@ impl ChallengeResponder {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                next = stream.next() => {
+                    if next.is_none() {
+                        tracing::warn!("Challenge responder: chain stream ended");
+                        running.store(false, Ordering::SeqCst);
+                        break;
+                    }
+
                     if paused || !self.config.auto_respond {
                         continue;
                     }
 
-                    // Poll for challenges
                     match self.poll_challenges().await {
                         Ok(challenges) => {
                             for challenge in challenges {
