@@ -4,13 +4,13 @@
 //! this provider. On startup, performs a one-time storage snapshot at the first finalized
 //! block to pick up requests that existed before the subscription began.
 
+use crate::chain_stream::{field_account, field_u64, BlockTick, ChainStream};
 use crate::{Error, ProviderState};
-use sp_core::crypto::{AccountId32, Ss58Codec};
+use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef};
 use subxt::{dynamic::Value as DynamicValue, OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
 use tokio::sync::mpsc;
@@ -156,24 +156,41 @@ impl AgreementCoordinator {
             return;
         }
 
+        let api = match self.api.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                tracing::error!("Agreement coordinator not connected to chain");
+                running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let our_bytes = match self.our_account_bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!("Agreement coordinator account error: {e}");
+                running.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        let mut stream = ChainStream::new(api.clone(), self.config.poll_interval);
+
         loop {
-            match self.run_subscription(&mut command_rx).await {
-                Ok(()) => break,
-                Err(e) => {
-                    tracing::warn!(
-                        "Agreement subscription error: {}; reconnecting in {:?}",
-                        e,
-                        self.config.poll_interval
-                    );
-                    let sleep = tokio::time::sleep(self.config.poll_interval);
-                    tokio::pin!(sleep);
-                    tokio::select! {
-                        _ = &mut sleep => continue,
-                        cmd = command_rx.recv() => {
-                            match cmd {
-                                Some(AgreementCommand::Stop) | None => break,
-                            }
-                        }
+            tokio::select! {
+                cmd = command_rx.recv() => {
+                    match cmd {
+                        Some(AgreementCommand::Stop) | None => break,
+                    }
+                }
+                next = stream.next() => {
+                    let Some(tick) = next else {
+                        tracing::warn!("Agreement coordinator: chain stream ended");
+                        break;
+                    };
+
+                    if let Err(e) = self.on_tick(&api, &tick, &our_bytes).await {
+                        tracing::warn!("Agreement coordinator tick error: {e}");
                     }
                 }
             }
@@ -183,54 +200,21 @@ impl AgreementCoordinator {
         tracing::info!("Agreement coordinator stopping");
     }
 
-    /// Subscribe to finalized blocks and process them. Returns `Ok(())` on graceful
-    /// shutdown via `Stop`; `Err` on subscription failure (caller reconnects).
-    async fn run_subscription(
+    /// Process one `BlockTick` — initial snapshot on first tick after reconnect, event
+    /// scan otherwise.
+    async fn on_tick(
         &self,
-        command_rx: &mut mpsc::Receiver<AgreementCommand>,
+        api: &OnlineClient<PolkadotConfig>,
+        tick: &BlockTick,
+        our_bytes: &[u8; 32],
     ) -> Result<(), Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected".to_string()))?;
-
-        let mut blocks = api
-            .blocks()
-            .subscribe_finalized()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
-
-        let our_bytes = self.our_account_bytes()?;
-        let mut bootstrapped = false;
-
-        loop {
-            tokio::select! {
-                cmd = command_rx.recv() => {
-                    match cmd {
-                        Some(AgreementCommand::Stop) | None => return Ok(()),
-                    }
-                }
-                next = blocks.next() => {
-                    let block = match next {
-                        Some(Ok(b)) => b,
-                        Some(Err(e)) => {
-                            return Err(Error::Internal(format!("Block subscription error: {e}")));
-                        }
-                        None => {
-                            return Err(Error::Internal("Block subscription ended".to_string()));
-                        }
-                    };
-
-                    if !bootstrapped {
-                        bootstrapped = true;
-                        self.initial_snapshot(api, block.hash(), &our_bytes).await?;
-                        continue;
-                    }
-
-                    self.process_events_in_block(api, block, &our_bytes).await;
-                }
-            }
+        if tick.is_first_after_reconnect {
+            self.initial_snapshot(api, tick.hash(), our_bytes).await?;
+        } else {
+            self.process_events_in_block(api, &tick.block, our_bytes)
+                .await;
         }
+        Ok(())
     }
 
     fn our_account_bytes(&self) -> Result<[u8; 32], Error> {
@@ -319,7 +303,7 @@ impl AgreementCoordinator {
     async fn process_events_in_block(
         &self,
         api: &OnlineClient<PolkadotConfig>,
-        block: subxt::blocks::Block<PolkadotConfig, OnlineClient<PolkadotConfig>>,
+        block: &subxt::blocks::Block<PolkadotConfig, OnlineClient<PolkadotConfig>>,
         our_bytes: &[u8; 32],
     ) {
         let block_number = block.number();
@@ -417,49 +401,6 @@ impl AgreementCoordinator {
                 e
             ),
         }
-    }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Local SCALE-value decode helpers — a subset of `storage_client::scale_decode`,
-// inlined here to avoid pulling the (cyclic) `storage-client` dependency.
-// ────────────────────────────────────────────────────────────────────────────
-
-fn field_u64(fields: &Composite<u32>, name: &str) -> Option<u64> {
-    fields.at(name)?.as_u128().map(|v| v as u64)
-}
-
-fn field_account(fields: &Composite<u32>, name: &str) -> Option<AccountId32> {
-    decode_account(fields.at(name)?)
-}
-
-fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
-    let mut bytes = [0u8; 32];
-    if collect_le_bytes(v, &mut bytes, 0) == 32 {
-        Some(AccountId32::new(bytes))
-    } else {
-        None
-    }
-}
-
-fn collect_le_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
-    match &v.value {
-        ValueDef::Primitive(Primitive::U128(n)) => {
-            if offset < 32 {
-                buf[offset] = *n as u8;
-                offset + 1
-            } else {
-                offset
-            }
-        }
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            let mut pos = offset;
-            for item in items {
-                pos = collect_le_bytes(item, buf, pos);
-            }
-            pos
-        }
-        _ => offset,
     }
 }
 
