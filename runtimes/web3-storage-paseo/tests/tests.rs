@@ -421,23 +421,92 @@ fn should_add_stake_to_existing_provider() {
 }
 
 #[test]
-fn should_deregister_provider_and_return_stake() {
+fn should_deregister_provider() {
     new_test_ext().execute_with(|| {
         let account = Sr25519Keyring::Alice;
         let who: AccountId = account.to_account_id();
         let stake = default_stake();
         register_provider_for(account, stake);
 
-        let reserved_before = Balances::reserved_balance(&who);
-        assert_eq!(reserved_before, stake);
+        assert_eq!(Balances::reserved_balance(&who), stake);
 
+        // Step 1: announce. Record stays, stake stays reserved, deregister_at stamped.
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(account.pair()),
             RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::deregister_provider {}),
         ));
+        let provider =
+            StorageProvider::providers(&who).expect("provider must still exist after announce");
+        let deregister_at = provider
+            .deregister_at
+            .expect("deregister_at must be set after announce");
+        assert_eq!(Balances::reserved_balance(&who), stake);
 
+        // Step 2: premature completion is rejected.
+        let result = construct_and_apply_extrinsic(
+            Some(account.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::complete_deregister {}),
+        );
+        assert!(
+            result.expect("extrinsic applies").is_err(),
+            "complete_deregister before deregister_at must error"
+        );
+
+        // Step 3: fast-forward through the announcement period. Jump close to
+        // the boundary with `set_block_number` (the period is `48 * HOURS`
+        // ≈ 28,800 blocks, far too many to iterate one-by-one) then cross it
+        // via `advance_block` so the `on_finalize` / `on_initialize` hooks
+        // fire at the maturing block.
+        System::set_block_number(deregister_at.saturating_sub(1));
+        advance_block();
+        assert!(frame_system::Pallet::<Runtime>::block_number() >= deregister_at);
+
+        // Step 4: complete. Record removed, stake unreserved.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(account.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::complete_deregister {}),
+        ));
         assert!(StorageProvider::providers(&who).is_none());
         assert_eq!(Balances::reserved_balance(&who), 0);
+    });
+}
+
+#[test]
+fn should_cancel_deregister_announcement() {
+    new_test_ext().execute_with(|| {
+        let account = Sr25519Keyring::Alice;
+        let who: AccountId = account.to_account_id();
+        let stake = default_stake();
+        register_provider_for(account, stake);
+
+        // Announce.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(account.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::deregister_provider {}),
+        ));
+        let provider = StorageProvider::providers(&who).expect("provider must exist");
+        assert!(provider.deregister_at.is_some());
+        // Announce forces acceptance flags off.
+        assert!(!provider.settings.accepting_primary);
+        assert!(!provider.settings.accepting_extensions);
+
+        // Advance a few blocks to make sure cancel still works within the window.
+        advance_block();
+        advance_block();
+
+        // Cancel.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(account.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::cancel_deregister {}),
+        ));
+        let provider =
+            StorageProvider::providers(&who).expect("provider must still exist after cancel");
+        // Cancel mirrors announce: deregister_at cleared, flags restored.
+        assert!(provider.deregister_at.is_none());
+        assert!(provider.settings.accepting_primary);
+        assert!(provider.settings.accepting_extensions);
+        // Stake stays reserved throughout — never went anywhere.
+        assert_eq!(Balances::reserved_balance(&who), stake);
     });
 }
 
