@@ -234,6 +234,9 @@ importers:
       '@polkadot-api/descriptors':
         specifier: workspace:*
         version: link:../shared/papi/.papi/descriptors
+      '@polkadot-api/substrate-bindings':
+        specifier: ^0.20.1
+        version: 0.20.2
       '@polkadot-labs/hdkd':
         specifier: ^0.0.28
         version: 0.0.28
