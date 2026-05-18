@@ -88,7 +88,7 @@ jobs:
         run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
 
       - name: Build runtime and provider
-        run: just build-runtime && just build-provider
+        run: just build-paseo-runtime && just build-provider
 
       # The CI container ships an older Node (~14) that pnpm/action-setup@v6
       # rejects (`import.meta.resolve` requires ≥20.6). Install Node 22 first,
@@ -121,7 +121,7 @@ jobs:
 
       - name: Start chain and wait for blocks
         run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml > /tmp/zombienet.log 2>&1 &
+          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml > /tmp/zombienet.log 2>&1 &
           echo "Waiting for parachain to produce finalized blocks..."
           for i in $(seq 1 180); do
             RESPONSE=$(curl -s -H "Content-Type: application/json" \
