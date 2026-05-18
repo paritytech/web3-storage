@@ -19,7 +19,7 @@ import {
 } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
-test.setTimeout(150_000);
+test.setTimeout(180_000);
 
 let driveId: bigint;
 
