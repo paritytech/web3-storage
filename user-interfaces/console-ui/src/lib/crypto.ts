@@ -14,9 +14,9 @@ import {
 } from "@polkadot-labs/hdkd-helpers";
 import { fromBufferToBase58 } from "@polkadot-api/substrate-bindings";
 
-const SS58_GENERIC_FORMAT = 42;
-
-export const toSs58 = fromBufferToBase58(SS58_GENERIC_FORMAT);
+// System parachain `SS58_PREFIX` is 0
+const SS58_PREFIX = 0;
+export const toSs58 = fromBufferToBase58(SS58_PREFIX);
 
 export interface Keypair {
   publicKey: Uint8Array;

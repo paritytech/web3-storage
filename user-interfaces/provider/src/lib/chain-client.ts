@@ -115,18 +115,6 @@ export async function getGenesisHash(): Promise<string> {
   return spec.genesisHash
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dev accounts (well-known SS58 addresses)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const DEV_ACCOUNTS: Record<string, string> = {
-  Alice: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
-  Bob: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
-  Charlie: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
-  Dave: '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy',
-  Eve: '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
-  Ferdie: '5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL',
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tx submission
