@@ -68,6 +68,7 @@ pub type Cid = H256;
     Copy,
     Encode,
     Decode,
+    Default,
     DecodeWithMemTracking,
     Eq,
     PartialEq,
@@ -79,16 +80,11 @@ pub type Cid = H256;
 pub enum EntryType {
     /// A file entry
     #[codec(index = 0)]
+    #[default]
     File,
     /// A directory entry
     #[codec(index = 1)]
     Directory,
-}
-
-impl Default for EntryType {
-    fn default() -> Self {
-        Self::File
-    }
 }
 
 /// Maximum length for entry names (256 bytes)
