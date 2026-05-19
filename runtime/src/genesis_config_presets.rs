@@ -1,5 +1,6 @@
 //! Storage Parachain Runtime genesis config presets
 
+use crate::constants::currency::{EXISTENTIAL_DEPOSIT, UNIT};
 use crate::*;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
