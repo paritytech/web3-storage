@@ -223,7 +223,7 @@ jobs:
             /tmp/zombie-*/*-raw.json
 
   integration-tests-complete:
-    name: All integration tests passed
+    name: Integration Tests
     needs: [integration-tests]
     if: always()
     runs-on: ubuntu-latest
