@@ -369,9 +369,16 @@ importers:
       '@web3-storage/network-config':
         specifier: workspace:*
         version: link:../network-config
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.14
       react:
-        specifier: ^18.0.0 || ^19.0.0
+        specifier: ^19.2.5
         version: 19.2.5
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
 
   shared/papi:
     dependencies:

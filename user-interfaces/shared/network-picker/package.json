@@ -13,5 +13,10 @@
   },
   "dependencies": {
     "@web3-storage/network-config": "workspace:*"
+  },
+  "devDependencies": {
+    "react": "^19.2.5",
+    "@types/react": "^19.2.14",
+    "typescript": "~5.8.3"
   }
 }
