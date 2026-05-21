@@ -229,7 +229,7 @@
       el.dataset.state = state;
       el.title = title || state;
       var label = (el === statusWs) ? statusTextWs : (el === statusHttp) ? statusTextHttp : null;
-      if (label) label.textContent = (state === 'down') ? '(not connected)' : '';
+      if (label) label.textContent = (state === 'down') ? '(not running)' : '';
     }
 
     var PROBE_TIMEOUT_MS = 5000;
@@ -259,22 +259,30 @@
       }
     }
 
+    function healthUrl(base) {
+      return base.charAt(base.length - 1) === '/' ? base + 'health' : base + '/health';
+    }
+
     function probeHttp(url, token) {
       setStatus(statusHttp, 'checking', 'fetching ' + url);
       if (!url) { setStatus(statusHttp, 'idle', 'not set'); return; }
+      var target = healthUrl(url);
       var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var timer = setTimeout(function () { ctrl && ctrl.abort(); }, PROBE_TIMEOUT_MS);
-      // mode:'no-cors' lets us probe servers without CORS headers; we only care
-      // that the request resolves (server responded with something) vs rejects
-      // (DNS/TCP/TLS failure or aborted timeout).
-      fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: ctrl && ctrl.signal })
-        .then(function () {
+      // CORS-mode fetch against /health so response.ok is observable. The
+      // provider node ships with CorsLayer::permissive(); anything but a 2xx
+      // means /health isn't being served (nginx fall-through, no provider,
+      // etc.) and the probe shows down.
+      fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal: ctrl && ctrl.signal })
+        .then(function (res) {
           clearTimeout(timer);
-          if (token === probeToken) setStatus(statusHttp, 'up', url + ' — reachable');
+          if (token !== probeToken) return;
+          if (res.ok) setStatus(statusHttp, 'up', target + ' — ' + res.status);
+          else setStatus(statusHttp, 'down', target + ' — HTTP ' + res.status);
         })
         .catch(function (e) {
           clearTimeout(timer);
-          if (token === probeToken) setStatus(statusHttp, 'down', url + ' — ' + (e.name === 'AbortError' ? 'timeout' : e.message));
+          if (token === probeToken) setStatus(statusHttp, 'down', target + ' — ' + (e.name === 'AbortError' ? 'timeout' : e.message));
         });
     }
 
