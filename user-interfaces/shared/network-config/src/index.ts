@@ -10,4 +10,17 @@ export {
   createCustomNetwork,
 } from './networks'
 export type { PersistedNetwork } from './storage'
-export { saveSelectedNetwork, loadSelectedNetwork, clearSelectedNetwork } from './storage'
+export {
+  saveSelectedNetwork,
+  loadSelectedNetwork,
+  clearSelectedNetwork,
+  loadFromUrl,
+} from './storage'
+
+import { loadFromUrl as _loadFromUrl } from './storage'
+// Apply ?network=... handoff from the landing page before any consumer reads
+// localStorage. This module evaluates before importers (ESM depth-first), so
+// state files that call loadSelectedNetwork() at top level see the fresh value.
+if (typeof window !== 'undefined') {
+  _loadFromUrl()
+}

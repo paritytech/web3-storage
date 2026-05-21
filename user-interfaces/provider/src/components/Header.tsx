@@ -25,7 +25,13 @@ import {
   selectAccount,
   disconnectWallet,
 } from '@/state/wallet.state'
-import { NetworkSelector } from '@/components/NetworkSelector'
+import { NetworkPicker } from '@web3-storage/network-picker'
+import {
+  useSelectedNetwork,
+  useNetworkList,
+  selectNetwork,
+  selectCustomNetwork,
+} from '@/state/network.state'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
@@ -50,6 +56,8 @@ export function Header() {
   const walletMode = useWalletMode()
   const extensions = useAvailableExtensions()
   const accounts = useAccounts()
+  const selectedNetwork = useSelectedNetwork()
+  const networkList = useNetworkList()
 
   const [showConnectOptions, setShowConnectOptions] = useState(false)
   const [showExtensionPicker, setShowExtensionPicker] = useState(false)
@@ -156,7 +164,13 @@ export function Header() {
           {/* Status & Account */}
           <div className="flex items-center gap-4">
             {/* Network Selector */}
-            <NetworkSelector />
+            <NetworkPicker
+              compact
+              selectedNetwork={selectedNetwork}
+              networkList={networkList}
+              onSelect={(id) => { void selectNetwork(id); }}
+              onSelectCustom={(input) => { void selectCustomNetwork(input); }}
+            />
 
             {/* Connection Status */}
             <div className="flex items-center gap-2">

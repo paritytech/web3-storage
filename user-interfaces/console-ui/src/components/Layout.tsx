@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
+import { useNetworkSelection } from "@/state/network.state";
+import { NetworkPicker } from "@web3-storage/network-picker";
 import { Button } from "@/components/ui/button";
 import { cn, truncateHash, formatTokens } from "@/lib/utils";
 import ConnectDialog from "./ConnectDialog";
@@ -25,6 +27,12 @@ const navigation = [
 export default function Layout() {
   const { connected, connecting, blockNumber, disconnect } = useChain();
   const { signerAddress, signerName, balance } = useStorage();
+  const {
+    selectedNetwork,
+    networkList,
+    selectNetwork,
+    selectCustomNetwork,
+  } = useNetworkSelection();
 
   return (
     <div className="flex h-screen bg-background">
@@ -57,51 +65,64 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Active account info */}
-        {signerAddress && (
-          <div className="border-t px-4 py-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-medium">
-                {(signerName || signerAddress)[0].toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p data-testid="signer-name" className="text-sm font-medium truncate">{signerName || "Account"}</p>
-                <p data-testid="signer-address" className="text-xs text-muted-foreground font-mono truncate">
-                  {truncateHash(signerAddress, 6, 4)}
-                </p>
-              </div>
-            </div>
-            {balance && (
-              <p data-testid="balance-display" className="mt-1 text-xs text-muted-foreground pl-10">
-                {formatTokens(balance.free)} tokens
-              </p>
-            )}
-          </div>
-        )}
+        {/* Network / Block / Account — same order as drive-ui (picker stays dark here) */}
+        <div className="border-t px-3 py-3 space-y-2">
+          <NetworkPicker
+            selectedNetwork={selectedNetwork}
+            networkList={networkList}
+            onSelect={(id) => { void selectNetwork(id); }}
+            onSelectCustom={(input) => { void selectCustomNetwork(input); }}
+          />
 
-        {/* Connection status */}
-        <div className="border-t p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
               {connected ? (
-                <Wifi className="h-4 w-4 text-green-500" />
+                <Wifi className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />
               ) : (
-                <WifiOff className="h-4 w-4 text-muted-foreground" />
+                <WifiOff className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
               )}
-              <span className="text-sm text-muted-foreground">
+              <span className="text-muted-foreground truncate">
                 {connecting
                   ? "Connecting..."
                   : connected
-                    ? <span data-testid="block-number">{`Block #${blockNumber}`}</span>
-                    : "Disconnected"}
+                    ? <span data-testid="block-number">{`Block #${blockNumber.toLocaleString()}`}</span>
+                    : "Not connected"}
               </span>
             </div>
             {connected ? (
-              <Button data-testid="layout-disconnect" variant="ghost" size="sm" onClick={disconnect} title="Disconnect">
-                <LogOut className="h-4 w-4" />
+              <Button data-testid="layout-disconnect" variant="ghost" size="sm" onClick={disconnect} title="Disconnect" className="h-6 w-6 p-0">
+                <LogOut className="h-3.5 w-3.5" />
               </Button>
             ) : (
               <ConnectDialog />
+            )}
+          </div>
+
+          <div data-testid="account-button" className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs">
+            {signerAddress ? (
+              <>
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold flex-shrink-0">
+                  {(signerName || signerAddress)[0].toUpperCase()}
+                </div>
+                <div className="flex flex-col items-start min-w-0">
+                  <span data-testid="signer-name" className="font-medium truncate">{signerName || "Account"}</span>
+                  <span data-testid="signer-address" className="text-muted-foreground font-mono truncate">
+                    {truncateHash(signerAddress, 6, 4)}
+                  </span>
+                  {balance && (
+                    <span data-testid="balance-display" className="text-muted-foreground">
+                      {formatTokens(balance.free)} tokens
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                  <Users className="h-3 w-3 text-muted-foreground" />
+                </div>
+                <span className="text-muted-foreground">No account selected</span>
+              </>
             )}
           </div>
         </div>

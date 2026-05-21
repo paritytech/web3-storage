@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { Server, HardDrive, FileText, Shield, Coins, AlertTriangle } from 'lucide-react'
+import { Server, HardDrive, FileText, Shield, Coins, AlertTriangle, Network } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
 import { Spinner } from '@/components/ui/Spinner'
+import { NetworkStatusPanel } from '@web3-storage/network-picker'
 import {
   useProviderInfo,
   useProviderSettings,
@@ -15,6 +16,7 @@ import {
   loadProviderData,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
+import { useSelectedNetwork } from '@/state/network.state'
 import { RequireProvider } from '@/components/RequireProvider'
 import { formatBytes, formatTokens, formatDuration } from '@/utils/format'
 
@@ -78,6 +80,7 @@ function OverviewContent() {
   const earnings = useEarnings()
   const capacityUsage = useCapacityUsage()
   const isLoading = useIsProviderLoading()
+  const selectedNetwork = useSelectedNetwork()
 
   if (isLoading) {
     return (
@@ -123,6 +126,25 @@ function OverviewContent() {
           </CardContent>
         </Card>
       )}
+
+      {/* Connection */}
+      <Card data-testid="provider-connection-card">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Connection</CardTitle>
+              <CardDescription>
+                {selectedNetwork.name}
+                {selectedNetwork.isTestnet ? ' · testnet' : ''}
+              </CardDescription>
+            </div>
+            <Network className="h-5 w-5 text-gray-400" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <NetworkStatusPanel network={selectedNetwork} />
+        </CardContent>
+      </Card>
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
