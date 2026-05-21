@@ -3,10 +3,10 @@
   "descriptorPath": ".papi/descriptors",
   "entries": {
     "parachain": {
-      "wsUrl": "ws://localhost:2222",
+      "wsUrl": "ws://127.0.0.1:2222",
       "metadata": ".papi/metadata/parachain.scale",
-      "genesis": "0x37bdb939e11e6a16eacc1eb1ab15a730cf995dac876aec7fb3c42ad32d4bf10a",
-      "codeHash": "0xecbc508624b5224076ed310a392a4dd3d079ab376661792165d838170121cc0a"
+      "genesis": "0x6cc14d2425ff91ed9b91d6d5855c040a01afb50d0b5dd504487bc652c0717a07",
+      "codeHash": "0xa14366dbedfa5fe577f93378517807a4fc68b95b0a1e1185ec505cf4c8f35a28"
     }
   }
 }

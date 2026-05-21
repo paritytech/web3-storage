@@ -727,7 +727,7 @@ export class StorageClient {
     try {
       if (this.signerAddress) {
         const rewards = await this.api.query.StorageProvider.CheckpointRewards.getValue(
-          bucketId, this.signerAddress
+          this.signerAddress, bucketId
         );
         if (rewards !== undefined) pendingRewards = BigInt(rewards);
       }

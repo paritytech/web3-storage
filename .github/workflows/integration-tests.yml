@@ -11,25 +11,39 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  CI_IMAGE: "paritytech/ci-unified:bullseye-1.88.0-2025-06-27-v202507112050"
-
 jobs:
   set-image:
+    uses: ./.github/workflows/set-image.yml
+
+  runtime-matrix:
     runs-on: ubuntu-latest
     outputs:
-      CI_IMAGE: ${{ steps.set_image.outputs.CI_IMAGE }}
+      runtime: ${{ steps.runtime.outputs.runtime }}
+    name: Extract tasks from matrix
     steps:
-      - id: set_image
-        run: echo "CI_IMAGE=${{ env.CI_IMAGE }}" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - id: runtime
+        run: |
+          TASKS=$(jq '[.[] | select(.integration_tests == true)]' scripts/runtimes-matrix.json)
+          SKIPPED=$(jq '[.[] | select(.integration_tests != true)]' scripts/runtimes-matrix.json)
+          echo "--- Running integration tests for ---"
+          echo "$TASKS"
+          echo "--- Skipping integration tests for ---"
+          echo "$SKIPPED"
+          TASKS=$(echo "$TASKS" | jq -c .)
+          echo "runtime=$TASKS" >> $GITHUB_OUTPUT
 
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image]
+    needs: [set-image, runtime-matrix]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -40,7 +54,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "integration-tests"
+          shared-key: "integration-tests-${{ matrix.runtime.name }}"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
@@ -82,14 +96,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: "24"
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Build runtime and provider
-        run: just build-runtime && just build-provider
+        run: just ${{ matrix.runtime.build_command }} && just build-provider
 
       - name: Start chain and wait for blocks
         run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml > /tmp/zombienet.log 2>&1 &
+          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
           ZOMBIE_PID=$!
           echo "Waiting for zombienet to set up nodes..."
           sleep 15
@@ -131,6 +145,7 @@ jobs:
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
           echo "Waiting for provider HTTP server..."
           for i in $(seq 1 60); do
@@ -152,6 +167,7 @@ jobs:
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/charlie-key --storage-mode disk --storage-path /tmp/provider-data \
             --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider-disk.log 2>&1 &
           echo "Waiting for disk provider HTTP server..."
           for i in $(seq 1 60); do
@@ -171,13 +187,19 @@ jobs:
         run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
 
       - name: Run L0 demo (disk provider)
-        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+        run: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
-        run: just fs-demo-ci
+        run: just drain-tx-pool-then fs-demo-ci
 
       - name: Run S3 integration test
-        run: just s3-demo-ci
+        run: just drain-tx-pool-then s3-demo-ci
+
+      - name: Run PAPI s3-lifecycle demo
+        run: just drain-tx-pool-then papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run PAPI drive-lifecycle demo
+        run: just drain-tx-pool-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
 
       - name: Stop services
         if: always()
@@ -190,7 +212,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: integration-test-logs
+          name: integration-test-logs-${{ matrix.runtime.name }}
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
@@ -199,3 +221,15 @@ jobs:
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
+
+  integration-tests-complete:
+    name: Integration Tests
+    needs: [integration-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Integration tests failed or were cancelled"
+          exit 1

@@ -21,6 +21,7 @@ import { toast } from "@/components/ui/toaster";
 import { truncateHash } from "@/lib/utils";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
+import { seedToKeypair, toSs58 } from "@/lib/crypto";
 
 interface Account {
   name: string;
@@ -28,24 +29,18 @@ interface Account {
   address: string;
 }
 
-// Pre-configured dev accounts
+// Pre-configured dev accounts. Addresses are derived from seeds so they match
+// the chain's SS58 prefix (see lib/crypto.ts) rather than being hardcoded.
 const DEV_ACCOUNTS: Account[] = [
-  {
-    name: "Alice",
-    seed: "//Alice",
-    address: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-  },
-  {
-    name: "Bob",
-    seed: "//Bob",
-    address: "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
-  },
-  {
-    name: "Charlie",
-    seed: "//Charlie",
-    address: "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
-  },
-];
+  { name: "Alice", seed: "//Alice" },
+  { name: "Bob", seed: "//Bob" },
+  { name: "Charlie", seed: "//Charlie" },
+].map(({ name, seed }) => ({
+  name,
+  seed,
+  address: toSs58(seedToKeypair(seed).publicKey),
+}));
+
 
 export default function Accounts() {
   const { connected } = useChain();

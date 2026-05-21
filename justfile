@@ -181,6 +181,52 @@ generate-chain-spec: build-runtime
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
+# Wait until the parachain's transaction pool is empty (bounded ~60s, then
+# proceeds with a warning). Run between back-to-back integration tests so the
+# next step doesn't pick up an `accountNextIndex` that misses an in-flight tx
+# (which would land with the same nonce and get dropped as "Usurped").
+drain-pool RPC=CHAIN_WS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RPC_INPUT="{{ RPC }}"
+    # author_pendingExtrinsics works over plain HTTP; convert ws:// → http://.
+    RPC_HTTP="${RPC_INPUT/ws:/http:}"
+    RPC_HTTP="${RPC_HTTP/wss:/https:}"
+    MAX_ITERS=30
+    SLEEP_BETWEEN=2
+    FINAL_BUFFER=6 # ~1 block at 6s block time
+    echo "drain-pool: polling $RPC_HTTP for author_pendingExtrinsics"
+    for i in $(seq 1 "$MAX_ITERS"); do
+        RESPONSE=$(curl -s -H "Content-Type: application/json" \
+            -d '{"id":1,"jsonrpc":"2.0","method":"author_pendingExtrinsics","params":[]}' \
+            "$RPC_HTTP" 2>/dev/null || true)
+        if [ -z "$RESPONSE" ]; then
+            echo "  attempt $i: RPC unreachable, retrying"
+            sleep "$SLEEP_BETWEEN"
+            continue
+        fi
+        PENDING=$(echo "$RESPONSE" | jq -r '.result | length' 2>/dev/null || echo "?")
+        if [ "$PENDING" = "0" ]; then
+            echo "  pool drained after ${i} poll(s)"
+            sleep "$FINAL_BUFFER"
+            echo "drain-pool: done"
+            exit 0
+        fi
+        echo "  attempt $i: $PENDING tx still pending"
+        sleep "$SLEEP_BETWEEN"
+    done
+    echo "drain-pool: WARNING - pool not empty after $((MAX_ITERS * SLEEP_BETWEEN))s, proceeding anyway"
+    sleep "$FINAL_BUFFER"
+
+# Drain the parachain pool, then run another recipe. Use in CI between
+# back-to-back integration tests to avoid stale-nonce drops.
+# Usage: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+[positional-arguments]
+drain-tx-pool-then RECIPE *ARGS: drain-pool
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just "$@"
+
 # Install PAPI dependencies and generate chain descriptors (requires running chain)
 papi-setup:
     #!/usr/bin/env bash
@@ -188,6 +234,42 @@ papi-setup:
     cd examples/papi
     npm install
     npm run papi:generate
+
+# ============================================================
+# PAPI single-purpose demos
+# ============================================================
+# Each script exercises one pallet workflow via the typed PAPI client.
+# All assume the chain (and the provider, for non-read-only ones) is running.
+
+# Bucket ACL flow: create_bucket -> set_member -> promote -> remove_member (pure on-chain)
+papi-bucket-membership ADMIN="//Alice" WRITER="//Eve" READER="//Ferdie": papi-setup
+    node examples/papi/bucket-membership.js "{{ CHAIN_WS }}" "{{ ADMIN }}" "{{ WRITER }}" "{{ READER }}"
+
+# Marketplace-style read-only walk of the Providers storage map
+papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
+    node examples/papi/provider-discovery.js "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
+
+# Atomic create_bucket_with_storage -> upload -> checkpoint -> freeze_bucket
+papi-bucket-with-storage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/bucket-with-storage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# S3 registry workflow: create_s3_bucket -> put/copy/delete object metadata -> delete_s3_bucket
+papi-s3-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/s3-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Drive registry workflow: create_drive -> share -> unshare -> delete_drive
+papi-drive-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" OWNER_SEED="//Bob" MEMBER_SEED="//Ferdie": papi-setup
+    node examples/papi/drive-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ OWNER_SEED }}" "{{ MEMBER_SEED }}"
+
+# Provider-initiated checkpoint + reward flow: configure_checkpoint_window ->
+# fund_checkpoint_pool -> provider_checkpoint -> claim_checkpoint_rewards.
+papi-checkpoint-rewards PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/checkpoint-rewards.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
+# wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
+papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/checkpoint-missed.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # ============================================================
 # File System (Layer 1)

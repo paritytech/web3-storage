@@ -115,18 +115,6 @@ export async function getGenesisHash(): Promise<string> {
   return spec.genesisHash
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dev accounts (well-known SS58 addresses)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const DEV_ACCOUNTS: Record<string, string> = {
-  Alice: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
-  Bob: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
-  Charlie: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
-  Dave: '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy',
-  Eve: '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
-  Ferdie: '5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL',
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tx submission
@@ -386,7 +374,7 @@ export async function getAgreementRequests(address: string): Promise<OnChainAgre
   const entries = await requireApi().query.StorageProvider.AgreementRequests.getEntries()
   const out: OnChainAgreementRequest[] = []
   for (const { keyArgs, value } of entries) {
-    const [providerAddr, bucketIdRaw] = keyArgs
+    const [bucketIdRaw, providerAddr] = keyArgs
     if (providerAddr !== address) continue
     out.push({
       bucketId: Number(bucketIdRaw),
@@ -479,8 +467,8 @@ export async function getBucketDetails(
     let checkpointReward = 0n
     try {
       const reward = await a.query.StorageProvider.CheckpointRewards.getValue(
-        BigInt(bucketId),
         providerAddress,
+        BigInt(bucketId),
       )
       checkpointReward = reward ?? 0n
     } catch { /* no reward */ }

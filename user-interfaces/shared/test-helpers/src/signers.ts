@@ -7,8 +7,9 @@ import {
 import { getPolkadotSigner, type PolkadotSigner } from "polkadot-api/signer";
 import { fromBufferToBase58 } from "@polkadot-api/substrate-bindings";
 
-const SS58_GENERIC_FORMAT = 42;
-const toSs58 = fromBufferToBase58(SS58_GENERIC_FORMAT);
+// System parachain `SS58_PREFIX` is 0
+const SS58_PREFIX = 0;
+const toSs58 = fromBufferToBase58(SS58_PREFIX);
 
 const entropy = mnemonicToEntropy(DEV_PHRASE);
 const miniSecret = entropyToMiniSecret(entropy);

@@ -4,13 +4,20 @@
   "type": "module",
   "scripts": {
     "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
-    "demo": "node full-flow.js"
+    "demo": "node full-flow.js",
+    "demo:bucket-membership": "node bucket-membership.js",
+    "demo:provider-discovery": "node provider-discovery.js",
+    "demo:bucket-with-storage": "node bucket-with-storage.js",
+    "demo:s3-lifecycle": "node s3-lifecycle.js",
+    "demo:drive-lifecycle": "node drive-lifecycle.js",
+    "demo:checkpoint-rewards": "node checkpoint-rewards.js",
+    "demo:checkpoint-missed": "node checkpoint-missed.js"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-api/substrate-bindings": "^0.16.5",
-    "@polkadot/keyring": "^13.5.8",
-    "@polkadot/util-crypto": "^13.5.8",
+    "@polkadot-labs/hdkd": "^0.0.28",
+    "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "polkadot-api": "^1.23.3",
     "ws": "^8.18.0"
   },

@@ -24,7 +24,12 @@ import {
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
 import { getPolkadotSigner } from 'polkadot-api/signer'
-import { getAccountBalance, isProviderRegistered, DEV_ACCOUNTS as DEV_ACCOUNT_ADDRESSES } from '@/lib/chain-client'
+import { fromBufferToBase58 } from '@polkadot-api/substrate-bindings'
+import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
+
+// System parachain `SS58_PREFIX` is 0
+const SS58_PREFIX = 0
+const toSs58 = fromBufferToBase58(SS58_PREFIX)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -103,11 +108,11 @@ function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
       )
 
       return {
-        address: DEV_ACCOUNT_ADDRESSES[name] || '',
+        address: toSs58(publicKey),
         name: `${name} (Dev)`,
         polkadotSigner,
       }
-    }).filter((account) => account.address !== '')
+    })
   } catch (error) {
     console.error('Failed to create dev accounts:', error)
     return []

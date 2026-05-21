@@ -71,9 +71,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     const STAKE: u128 = 1_000_000_000_000_000; // 1000 tokens (MinProviderStake, 12 decimals)
 
     let provider_info = provider_client.get_provider_info(&account).await?;
-    if provider_info.is_some() {
+    if let Some(info) = provider_info {
         println!("Provider already existed");
-        println!("{:?}", provider_info.unwrap());
+        println!("{info:?}");
         return Ok(());
     }
 

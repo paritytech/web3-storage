@@ -11,17 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  CI_IMAGE: "paritytech/ci-unified:bullseye-1.88.0-2025-06-27-v202507112050"
-
 jobs:
   set-image:
-    runs-on: ubuntu-latest
-    outputs:
-      CI_IMAGE: ${{ steps.set_image.outputs.CI_IMAGE }}
-    steps:
-      - id: set_image
-        run: echo "CI_IMAGE=${{ env.CI_IMAGE }}" >> $GITHUB_OUTPUT
+    uses: ./.github/workflows/set-image.yml
 
   check-fmt:
     runs-on: parity-default
@@ -138,6 +130,14 @@ jobs:
           shared-key: "web3-storage-cache-benchmarks"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
-      - name: Run tests
+      - name: Run test pallet-storage-provider
         run: |
           cargo test -p pallet-storage-provider --features runtime-benchmarks
+
+      - name: Run test pallet-s3-registry
+        run: |
+          cargo test -p pallet-s3-registry --features runtime-benchmarks
+
+      - name: Run test pallet-drive-registry
+        run: |
+          cargo test -p pallet-drive-registry --features runtime-benchmarks
