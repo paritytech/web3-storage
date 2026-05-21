@@ -1,4 +1,4 @@
-export type NetworkId = 'local' | 'westend' | 'paseo' | 'polkadot' | 'custom'
+export type NetworkId = 'local' | 'westend' | 'previewnet' | 'paseo' | 'polkadot' | 'custom'
 
 export interface NetworkConfig {
   id: NetworkId
@@ -6,6 +6,5 @@ export interface NetworkConfig {
   parachainWs: string
   providerHttp: string
   relayChainWs?: string
-  explorerUrl?: string
   isTestnet: boolean
 }

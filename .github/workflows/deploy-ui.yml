@@ -49,8 +49,10 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          # Landing page at root
-          cp user-interfaces/landing/index.html _site/
+          # Landing page at root — substitute sentinels from networks.ts/types.ts
+          # (single source of truth for network ids, default, and endpoints).
+          node user-interfaces/landing/inject-config.mjs \
+            user-interfaces/landing/index.html _site/index.html
           cp user-interfaces/landing/404.html _site/
           # Each app in its subpath
           cp -r user-interfaces/console-ui/dist _site/console

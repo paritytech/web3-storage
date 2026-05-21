@@ -27,6 +27,7 @@
       text-decoration: none;
       color: inherit;
       transition: border-color 0.2s, transform 0.2s;
+      cursor: pointer;
     }
     .card:hover { border-color: #7c3aed; transform: translateY(-2px); }
     .card h2 { font-size: 1.25rem; margin-bottom: 0.5rem; }
@@ -37,13 +38,77 @@
       border: 1px solid #2a2a3e;
       border-radius: 10px;
       padding: 1.25rem 1.5rem;
-      margin-bottom: 2.5rem;
+      margin-bottom: 2rem;
       font-size: 0.9rem;
       line-height: 1.6;
       color: #aaa;
     }
     .banner a { color: #a78bfa; text-decoration: none; }
     .banner a:hover { text-decoration: underline; }
+    .picker {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: center;
+      text-align: left;
+    }
+    .picker label { color: #aaa; font-size: 0.9rem; }
+    .picker select, .picker input {
+      background: #0a0a0f;
+      color: #e5e5e5;
+      border: 1px solid #2a2a3e;
+      border-radius: 6px;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.9rem;
+      font-family: inherit;
+      min-width: 220px;
+    }
+    .picker select:focus, .picker input:focus { outline: none; border-color: #7c3aed; }
+    .picker .custom { display: none; gap: 0.5rem; flex-basis: 100%; justify-content: center; }
+    .picker.is-custom .custom { display: flex; }
+    .picker .custom input { min-width: 280px; }
+    .picker .error { color: #f87171; font-size: 0.85rem; flex-basis: 100%; }
+    .picker .endpoints {
+      flex-basis: 100%;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 0.75rem;
+      row-gap: 0.25rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      color: #8a8aa0;
+      padding-top: 0.5rem;
+      border-top: 1px dashed #2a2a3e;
+      text-align: left;
+    }
+    .picker .endpoints dt { color: #6b6b80; }
+    .picker .endpoints dd { color: #c4c4d6; word-break: break-all; display: flex; align-items: center; gap: 0.5rem; }
+    .picker .endpoints dd.placeholder { color: #555; font-style: italic; }
+    .status {
+      flex-shrink: 0;
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+      background: #555;
+      box-shadow: 0 0 0 0 rgba(0,0,0,0);
+    }
+    .status[data-state="checking"] { background: #facc15; animation: pulse 1s ease-in-out infinite; }
+    .status[data-state="up"]       { background: #4ade80; box-shadow: 0 0 6px #4ade80aa; }
+    .status[data-state="down"]     { background: #f87171; }
+    .status[data-state="idle"]     { background: #444; }
+    .status-text {
+      color: #f87171;
+      font-style: italic;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
     @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -58,23 +123,237 @@
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
     </div>
+    <div class="picker" id="picker" data-testid="landing-picker">
+      <label for="landing-network">Network</label>
+      <select id="landing-network" data-testid="landing-network-select">
+        <option value="local">Local Development</option>
+        <option value="westend">Westend Testnet</option>
+        <option value="previewnet">PreviewNet Testnet</option>
+        <option value="paseo">Paseo Testnet</option>
+        <option value="polkadot">Polkadot</option>
+        <option value="custom">Custom RPC&hellip;</option>
+      </select>
+      <div class="custom">
+        <input id="landing-custom-ws" type="text" placeholder="ws://… parachain RPC" data-testid="landing-custom-ws" />
+        <input id="landing-custom-http" type="text" placeholder="https://… provider HTTP" data-testid="landing-custom-http" />
+      </div>
+      <dl class="endpoints" id="landing-endpoints" data-testid="landing-endpoints">
+        <dt>Parachain RPC</dt>
+        <dd>
+          <span class="status" id="landing-status-ws" data-state="idle" data-testid="landing-status-ws" title="not checked"></span>
+          <span id="landing-endpoint-ws" data-testid="landing-endpoint-ws"></span>
+          <span class="status-text" id="landing-status-text-ws" data-testid="landing-status-text-ws"></span>
+        </dd>
+        <dt>Provider HTTP</dt>
+        <dd>
+          <span class="status" id="landing-status-http" data-state="idle" data-testid="landing-status-http" title="not checked"></span>
+          <span id="landing-endpoint-http" data-testid="landing-endpoint-http"></span>
+          <span class="status-text" id="landing-status-text-http" data-testid="landing-status-text-http"></span>
+        </dd>
+      </dl>
+      <div class="error" id="landing-picker-error" role="alert" hidden></div>
+    </div>
     <div class="cards">
-      <a href="./console/" class="card">
+      <a href="./console/" class="card" data-app="console" data-testid="landing-card-console">
         <div class="icon">&#x1F4E6;</div>
         <h2>Storage Console</h2>
         <p>Create S3 buckets, upload and download objects, manage permissions, and explore blockchain events.</p>
       </a>
-      <a href="./provider/" class="card">
+      <a href="./provider/" class="card" data-app="provider" data-testid="landing-card-provider">
         <div class="icon">&#x1F5A5;</div>
         <h2>Provider Dashboard</h2>
         <p>Register as a storage provider, manage agreements, respond to challenges, and track earnings.</p>
       </a>
-      <a href="./drive/" class="card">
+      <a href="./drive/" class="card" data-app="drive" data-testid="landing-card-drive">
         <div class="icon">&#x1F4C1;</div>
         <h2>Drive</h2>
         <p>File manager interface. Create drives, browse directories, upload and download files.</p>
       </a>
     </div>
   </div>
+  <script>
+    // Card target URLs. Kept as relative paths so GH Pages serves all four apps
+    // from the same origin (https://paritytech.github.io/web3-storage/<app>/).
+    // The local dev landing copy rewrites these to absolute Vite dev-server URLs.
+    var BASES = {
+      console: './console/',
+      provider: './provider/',
+      drive: './drive/',
+    };
+    // Network constants — auto-substituted from
+    // user-interfaces/shared/network-config/src/{networks,types}.ts by
+    // user-interfaces/landing/inject-config.mjs at deploy time and on local dev
+    // regen. The sentinels below are placeholders; do not hand-edit.
+    var DEFAULT_NETWORK_ID = '__DEFAULT_NETWORK_ID__';
+    var NETWORKS = __NETWORKS_JSON__;
+    var VALID_IDS = __VALID_IDS_JSON__;
+
+    var picker = document.getElementById('picker');
+    var select = document.getElementById('landing-network');
+    var customWs = document.getElementById('landing-custom-ws');
+    var customHttp = document.getElementById('landing-custom-http');
+    var error = document.getElementById('landing-picker-error');
+    var endpointWs = document.getElementById('landing-endpoint-ws');
+    var endpointHttp = document.getElementById('landing-endpoint-http');
+    var statusWs = document.getElementById('landing-status-ws');
+    var statusHttp = document.getElementById('landing-status-http');
+    var statusTextWs = document.getElementById('landing-status-text-ws');
+    var statusTextHttp = document.getElementById('landing-status-text-http');
+
+    // Visual default: previously persisted selection if any, else DEFAULT_NETWORK_ID.
+    select.value = DEFAULT_NETWORK_ID;
+    try {
+      var saved = localStorage.getItem('web3-storage-selected-network');
+      if (saved && VALID_IDS.indexOf(saved) !== -1) select.value = saved;
+      if (saved === 'custom') {
+        var raw = localStorage.getItem('web3-storage-custom-network');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed.parachainWs) customWs.value = parsed.parachainWs;
+          if (parsed.providerHttp) customHttp.value = parsed.providerHttp;
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    function setEndpoint(el, value, placeholder) {
+      if (value) {
+        el.textContent = value;
+        el.parentElement.classList.remove('placeholder');
+      } else {
+        el.textContent = placeholder || '(not set)';
+        el.parentElement.classList.add('placeholder');
+      }
+    }
+
+    function setStatus(el, state, title) {
+      el.dataset.state = state;
+      el.title = title || state;
+      var label = (el === statusWs) ? statusTextWs : (el === statusHttp) ? statusTextHttp : null;
+      if (label) label.textContent = (state === 'down') ? '(not connected)' : '';
+    }
+
+    var PROBE_TIMEOUT_MS = 5000;
+    var probeToken = 0;
+
+    function probeWs(url, token) {
+      setStatus(statusWs, 'checking', 'opening ' + url);
+      if (!url) { setStatus(statusWs, 'idle', 'not set'); return; }
+      var ws;
+      var done = false;
+      var finish = function (state, title) {
+        if (done || token !== probeToken) return;
+        done = true;
+        setStatus(statusWs, state, title);
+        try { ws && ws.close(); } catch (e) {}
+      };
+      try {
+        ws = new WebSocket(url);
+        ws.onopen = function () { finish('up', url + ' — connected'); };
+        ws.onerror = function () { finish('down', url + ' — unreachable'); };
+        ws.onclose = function (ev) {
+          if (!done) finish(ev.wasClean ? 'up' : 'down', url + ' — ' + (ev.wasClean ? 'closed cleanly' : 'closed: ' + ev.code));
+        };
+        setTimeout(function () { finish('down', url + ' — timeout'); }, PROBE_TIMEOUT_MS);
+      } catch (e) {
+        finish('down', url + ' — ' + e.message);
+      }
+    }
+
+    function probeHttp(url, token) {
+      setStatus(statusHttp, 'checking', 'fetching ' + url);
+      if (!url) { setStatus(statusHttp, 'idle', 'not set'); return; }
+      var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function () { ctrl && ctrl.abort(); }, PROBE_TIMEOUT_MS);
+      // mode:'no-cors' lets us probe servers without CORS headers; we only care
+      // that the request resolves (server responded with something) vs rejects
+      // (DNS/TCP/TLS failure or aborted timeout).
+      fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: ctrl && ctrl.signal })
+        .then(function () {
+          clearTimeout(timer);
+          if (token === probeToken) setStatus(statusHttp, 'up', url + ' — reachable');
+        })
+        .catch(function (e) {
+          clearTimeout(timer);
+          if (token === probeToken) setStatus(statusHttp, 'down', url + ' — ' + (e.name === 'AbortError' ? 'timeout' : e.message));
+        });
+    }
+
+    var debounceTimer = null;
+    function schedule(fn, ms) {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(fn, ms);
+    }
+
+    function syncSelection(opts) {
+      var id = select.value;
+      var ws, http, placeholder;
+      if (id === 'custom') {
+        picker.classList.add('is-custom');
+        ws = customWs.value.trim();
+        http = customHttp.value.trim();
+        placeholder = '(not set)';
+      } else {
+        picker.classList.remove('is-custom');
+        var n = NETWORKS[id];
+        ws = n ? n.parachainWs : '';
+        http = n ? n.providerHttp : '';
+        placeholder = 'Not deployed yet';
+      }
+      setEndpoint(endpointWs, ws, placeholder);
+      setEndpoint(endpointHttp, http, placeholder);
+      error.hidden = true;
+
+      var debounce = opts && opts.debounce;
+      var run = function () {
+        var tok = ++probeToken;
+        // Skip the probe (no point) when the endpoint isn't configured.
+        if (ws) probeWs(ws, tok); else setStatus(statusWs, 'idle', placeholder);
+        if (http) probeHttp(http, tok); else setStatus(statusHttp, 'idle', placeholder);
+      };
+      if (debounce) schedule(run, 400);
+      else run();
+    }
+
+    select.addEventListener('change', function () { syncSelection(); });
+    customWs.addEventListener('input', function () { syncSelection({ debounce: true }); });
+    customHttp.addEventListener('input', function () { syncSelection({ debounce: true }); });
+    syncSelection();
+
+    function buildQueryString() {
+      var id = select.value;
+      var p = new URLSearchParams();
+      p.set('network', id);
+      if (id === 'custom') {
+        p.set('parachainWs', customWs.value.trim());
+        p.set('providerHttp', customHttp.value.trim());
+      }
+      return '?' + p.toString();
+    }
+
+    document.querySelectorAll('a.card[data-app]').forEach(function (card) {
+      card.addEventListener('click', function (e) {
+        e.preventDefault();
+        var base = BASES[card.dataset.app];
+        if (!base) return;
+        var id = select.value;
+        if (id === 'custom') {
+          if (!customWs.value.trim() || !customHttp.value.trim()) {
+            error.textContent = 'Custom RPC needs both endpoints.';
+            error.hidden = false;
+            (customWs.value.trim() ? customHttp : customWs).focus();
+            return;
+          }
+        } else {
+          var n = NETWORKS[id];
+          if (!n || !n.parachainWs || !n.providerHttp) {
+            error.textContent = 'Selected network is not deployed yet.';
+            error.hidden = false;
+            return;
+          }
+        }
+        window.location.href = base + buildQueryString();
+      });
+    });
+  </script>
 </body>
 </html>

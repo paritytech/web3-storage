@@ -53,3 +53,40 @@ export function clearSelectedNetwork(): void {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CUSTOM_CONFIG_KEY)
 }
+
+/**
+ * Pick up a network selection passed via URL (e.g. landing-page handoff).
+ * Reads ?network=, optionally ?parachainWs=&providerHttp= for custom, persists
+ * via saveSelectedNetwork(), then strips the params from the URL so a refresh
+ * doesn't re-trigger the handoff. Returns true if a selection was applied.
+ */
+export function loadFromUrl(): boolean {
+  if (typeof window === 'undefined') return false
+
+  const params = new URLSearchParams(window.location.search)
+  const id = params.get('network') as NetworkId | null
+  if (!id || !(id in NETWORKS)) return false
+
+  if (id === 'custom') {
+    const parachainWs = params.get('parachainWs')
+    const providerHttp = params.get('providerHttp')
+    if (!parachainWs || !providerHttp) return false
+    saveSelectedNetwork('custom', {
+      id: 'custom',
+      name: 'Custom RPC',
+      parachainWs,
+      providerHttp,
+      isTestnet: false,
+    })
+  } else {
+    saveSelectedNetwork(id)
+  }
+
+  params.delete('network')
+  params.delete('parachainWs')
+  params.delete('providerHttp')
+  const qs = params.toString()
+  const newUrl = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash
+  window.history.replaceState({}, '', newUrl)
+  return true
+}
