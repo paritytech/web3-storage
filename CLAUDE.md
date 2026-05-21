@@ -129,6 +129,70 @@ cargo run -p file-system-client --example basic_usage
 
 **Complete Documentation**: [docs/filesystems/README.md](./docs/filesystems/README.md)
 
+## JS/TS: use `polkadot-api`, never `@polkadot/*`
+
+For any JavaScript or TypeScript code in this repo (demos, scripts, tooling, future SDKs), talk to the chain through `polkadot-api` (PAPI).
+Do NOT introduce `@polkadot/keyring`, `@polkadot/util-crypto`, `@polkadot/util`, `@polkadot/api`, or any other `@polkadot/*` package.
+They duplicate functionality PAPI already provides, drag in 20+ transitive deps, and force `cryptoWaitReady()` awaits everywhere. Use these instead:
+
+| Need                                 | Use                                                                                                |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Chain client + typed API             | `polkadot-api` (`createClient`, `getWsProvider` from `polkadot-api/ws-provider`)                   |
+| Signer wrapper                       | `getPolkadotSigner` from `polkadot-api/signer`                                                     |
+| SCALE / `Binary` / `Enum`            | `@polkadot-api/substrate-bindings`                                                                 |
+| Sr25519 key derivation (`//Alice`)   | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
+| SS58 encode / decode                 | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers`                                    |
+| blake2-256 hashing                   | `blake2b256` from `@polkadot-labs/hdkd-helpers`                                                    |
+| `cryptoWaitReady()`                  | Not needed — hdkd is synchronous; delete the import and the await                                  |
+
+Canonical signer/derive pattern — set up the derive function once at module load, then call `makeSigner("//Alice")` etc.:
+
+```js
+import { createClient } from "polkadot-api";
+import { getWsProvider } from "polkadot-api/ws-provider";
+import { getPolkadotSigner } from "polkadot-api/signer";
+import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
+import {
+  DEV_PHRASE,
+  entropyToMiniSecret,
+  mnemonicToEntropy,
+  ss58Address,
+  ss58Decode,
+} from "@polkadot-labs/hdkd-helpers";
+
+const devMiniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
+const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
+
+export function makeSigner(seed) {
+  const keyPair = deriveSr25519(seed); // seed is a SURI path like "//Alice"
+  return {
+    signer: getPolkadotSigner(keyPair.publicKey, "Sr25519", keyPair.sign),
+    address: ss58Address(keyPair.publicKey), // prefix 42 (`5…`), same as @polkadot/keyring default
+    publicKey: keyPair.publicKey,
+    seed,
+  };
+}
+```
+
+`ss58Address` defaults to substrate prefix 42 (`5…`) while PAPI surfaces accounts with the runtime SS58 prefix (Polkadot-style `1…` on this parachain) — same key, different string, so string equality fails. Compare raw bytes via `ss58Decode`:
+
+```js
+// ss58Decode(addr) → [bytes, prefix]
+export function sameAddress(a, b) {
+  try {
+    const [aBytes] = ss58Decode(a);
+    const [bBytes] = ss58Decode(b);
+    if (aBytes.length !== bBytes.length) return false;
+    for (let i = 0; i < aBytes.length; i++) {
+      if (aBytes[i] !== bBytes[i]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+```
+
 ## Architecture
 
 ### Directory Structure

@@ -12,7 +12,6 @@ use frame_support::{
         fungible::HoldConsideration, tokens::imbalance::ResolveTo, ConstU32, Contains, Equals,
         Everything, LinearStoragePrice, Nothing,
     },
-    weights::Weight,
 };
 use frame_system::EnsureRoot;
 use pallet_collator_selection::StakingPotAccountId;
@@ -31,12 +30,12 @@ use xcm_builder::{
     AccountId32Aliases, AliasChildLocation, AliasOriginRootUsingFilter,
     AllowExplicitUnpaidExecutionFrom, AllowHrmpNotificationsFromRelayChain,
     AllowKnownQueryResponses, AllowSubscriptionsFrom, AllowTopLevelPaidExecutionFrom,
-    DescribeAllTerminal, DescribeFamily, EnsureXcmOrigin, FixedWeightBounds,
-    FrameTransactionalProcessor, FungibleAdapter, HashedDescription, IsConcrete,
-    LocationAsSuperuser, ParentIsPreset, RelayChainAsNative, SendXcmFeeToAccount,
-    SiblingParachainAsNative, SiblingParachainConvertsVia, SignedAccountId32AsNative,
-    SignedToAccountId32, SovereignSignedViaLocation, TakeWeightCredit, TrailingSetTopicAsId,
-    UsingComponents, WithComputedOrigin, WithUniqueTopic, XcmFeeManagerFromComponents,
+    DescribeAllTerminal, DescribeFamily, EnsureXcmOrigin, FrameTransactionalProcessor,
+    FungibleAdapter, HashedDescription, IsConcrete, LocationAsSuperuser, ParentIsPreset,
+    RelayChainAsNative, SendXcmFeeToAccount, SiblingParachainAsNative, SiblingParachainConvertsVia,
+    SignedAccountId32AsNative, SignedToAccountId32, SovereignSignedViaLocation, TakeWeightCredit,
+    TrailingSetTopicAsId, UsingComponents, WeightInfoBounds, WithComputedOrigin, WithUniqueTopic,
+    XcmFeeManagerFromComponents,
 };
 use xcm_executor::XcmExecutor;
 
@@ -205,7 +204,11 @@ impl xcm_executor::Config for XcmConfig {
     type IsTeleporter = TrustedTeleporters;
     type UniversalLocation = UniversalLocation;
     type Barrier = Barrier;
-    type Weigher = FixedWeightBounds<UnitWeightCost, RuntimeCall, MaxInstructions>;
+    type Weigher = WeightInfoBounds<
+        crate::weights::xcm::Web3StorageXcmWeight<RuntimeCall>,
+        RuntimeCall,
+        MaxInstructions,
+    >;
     type Trader = UsingComponents<
         WeightToFee,
         RelayLocation,
@@ -237,10 +240,6 @@ impl xcm_executor::Config for XcmConfig {
     type XcmEventEmitter = PolkadotXcm;
 }
 
-parameter_types! {
-    pub const UnitWeightCost: Weight = Weight::from_parts(1_000_000_000, 64 * 1024);
-}
-
 /// Price for delivering XCM to the relay chain via UMP.
 pub type PriceForParentDelivery =
     ExponentialPrice<FeeAssetId, BaseDeliveryFee, TransactionByteFee, ParachainSystem>;
@@ -267,7 +266,11 @@ impl pallet_xcm::Config for Runtime {
     type XcmExecutor = XcmExecutor<XcmConfig>;
     type XcmTeleportFilter = Everything;
     type XcmReserveTransferFilter = Nothing;
-    type Weigher = FixedWeightBounds<UnitWeightCost, RuntimeCall, MaxInstructions>;
+    type Weigher = WeightInfoBounds<
+        crate::weights::xcm::Web3StorageXcmWeight<RuntimeCall>,
+        RuntimeCall,
+        MaxInstructions,
+    >;
     type UniversalLocation = UniversalLocation;
     type RuntimeOrigin = RuntimeOrigin;
     type RuntimeCall = RuntimeCall;
@@ -278,7 +281,7 @@ impl pallet_xcm::Config for Runtime {
     type TrustedLockers = ();
     type SovereignAccountOf = LocationToAccountId;
     type MaxLockers = ConstU32<8>;
-    type WeightInfo = pallet_xcm::TestWeightInfo;
+    type WeightInfo = crate::weights::pallet_xcm::WeightInfo<Runtime>;
     type AdminOrigin = EnsureRoot<AccountId>;
     type MaxRemoteLockConsumers = ConstU32<0>;
     type RemoteLockConsumerIdentifier = ();

@@ -7,9 +7,18 @@
 import { createClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws-provider";
 import { getPolkadotSigner } from "polkadot-api/signer";
-import { Keyring } from "@polkadot/keyring";
-import { cryptoWaitReady, decodeAddress } from "@polkadot/util-crypto";
+import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
+import {
+  DEV_PHRASE,
+  entropyToMiniSecret,
+  mnemonicToEntropy,
+  ss58Address,
+  ss58Decode,
+} from "@polkadot-labs/hdkd-helpers";
 import { parachain } from "@polkadot-api/descriptors";
+
+const devMiniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
+const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
 
 /**
  * Default CLI arguments shared by examples that talk to both the chain and
@@ -29,14 +38,11 @@ export function parseProviderClientArgs(argv = process.argv) {
 }
 
 export function makeSigner(seed) {
-  const keyring = new Keyring({ type: "sr25519" });
-  const account = keyring.addFromUri(seed);
+  const keyPair = deriveSr25519(seed);
   return {
-    signer: getPolkadotSigner(account.publicKey, "Sr25519", (input) =>
-      account.sign(input)
-    ),
-    address: account.address,
-    publicKey: account.publicKey,
+    signer: getPolkadotSigner(keyPair.publicKey, "Sr25519", keyPair.sign),
+    address: ss58Address(keyPair.publicKey),
+    publicKey: keyPair.publicKey,
     seed,
   };
 }
@@ -56,7 +62,6 @@ export function hexToBytes(hex) {
 }
 
 export async function connect(chainWs) {
-  await cryptoWaitReady();
   const papi = createClient(getWsProvider(chainWs));
   const api = papi.getTypedApi(parachain);
   return { papi, api };
@@ -444,16 +449,6 @@ export function fmtRole(role) {
   return role.type ?? JSON.stringify(role);
 }
 
-export function bytesToUtf8(maybeBin) {
-  if (!maybeBin) return "";
-  const bytes = maybeBin.asBytes ? maybeBin.asBytes() : maybeBin;
-  return new TextDecoder().decode(bytes);
-}
-
-export function utf8(s) {
-  return new TextEncoder().encode(s);
-}
-
 /**
  * Wait until the pending AgreementRequest for `(providerAddress, bucketId)`
  * has been consumed — i.e. the provider has accepted it. The provider node's
@@ -498,14 +493,14 @@ export async function printBucketMembers(api, bucketId, label = "members") {
  * Compare two SS58 addresses by their underlying public key.
  *
  * PAPI encodes AccountIds with the runtime's SS58 prefix (Polkadot-style
- * `1…` strings on this parachain), while @polkadot/keyring uses the
- * substrate-default prefix 42 (`5…` strings). Same key, different string,
- * so string equality fails.
+ * `1…` strings on this parachain), while hdkd's `ss58Address` defaults to
+ * the substrate-default prefix 42 (`5…` strings). Same key, different
+ * string, so string equality fails.
  */
 export function sameAddress(a, b) {
   try {
-    const aBytes = decodeAddress(a);
-    const bBytes = decodeAddress(b);
+    const [aBytes] = ss58Decode(a);
+    const [bBytes] = ss58Decode(b);
     if (aBytes.length !== bBytes.length) return false;
     for (let i = 0; i < aBytes.length; i++) {
       if (aBytes[i] !== bBytes[i]) return false;

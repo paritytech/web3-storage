@@ -16,7 +16,6 @@
  * Usage: node full-flow.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import assert from "node:assert";
 import {
   acceptAgreement,
@@ -137,8 +136,6 @@ function watchDefendedEvents(api) {
 }
 
 async function main() {
-  await cryptoWaitReady();
-
   const provider = makeSigner(PROVIDER_SEED);
   const client = makeSigner(CLIENT_SEED);
 

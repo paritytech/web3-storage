@@ -1,12 +1,11 @@
 import { Binary, Enum } from "@polkadot-api/substrate-bindings";
-import { blake2AsU8a } from "@polkadot/util-crypto";
+import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   hexToBytes,
   providerFetch,
   requireOneEvent,
   submitTx,
   toHex,
-  utf8,
 } from "./common.js";
 
 // ============================================================================
@@ -15,7 +14,7 @@ import {
 
 export async function registerProvider(api, provider, providerUrl, stake = 1_000_000_000_000_000n) {
   const port = new URL(providerUrl).port;
-  const multiaddr = utf8(`/ip4/127.0.0.1/tcp/${port}`);
+  const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${port}`);
   return submitTx(
     api.tx.StorageProvider.register_provider({
       multiaddr: Binary.fromBytes(multiaddr),
@@ -307,7 +306,7 @@ export async function reportMissedCheckpoint(api, reporter, bucketId, window) {
 export async function createDrive(api, owner, name, params) {
   const result = await submitTx(
     api.tx.DriveRegistry.create_drive({
-      name: Binary.fromBytes(utf8(name)),
+      name: Binary.fromBytes(new TextEncoder().encode(name)),
       ...params,
     }),
     owner.signer,
@@ -381,7 +380,7 @@ export async function deleteDrive(api, owner, driveId) {
 export async function createS3BucketWithStorage(api, client, name, params) {
   const result = await submitTx(
     api.tx.S3Registry.create_s3_bucket_with_storage({
-      name: Binary.fromBytes(utf8(name)),
+      name: Binary.fromBytes(new TextEncoder().encode(name)),
       ...params,
     }),
     client.signer,
@@ -406,13 +405,13 @@ export async function putObjectMetadata(api, client, s3BucketId, key, obj, conte
   return submitTx(
     api.tx.S3Registry.put_object_metadata({
       s3_bucket_id: s3BucketId,
-      key: Binary.fromBytes(utf8(key)),
+      key: Binary.fromBytes(new TextEncoder().encode(key)),
       cid: Binary.fromBytes(obj.cid),
       size: obj.size,
-      content_type: Binary.fromBytes(utf8(contentType)),
+      content_type: Binary.fromBytes(new TextEncoder().encode(contentType)),
       user_metadata: userMetadata.map(([k, v]) => [
-        Binary.fromBytes(utf8(k)),
-        Binary.fromBytes(utf8(v)),
+        Binary.fromBytes(new TextEncoder().encode(k)),
+        Binary.fromBytes(new TextEncoder().encode(v)),
       ]),
     }),
     client.signer,
@@ -424,9 +423,9 @@ export async function copyObjectMetadata(api, client, srcBucketId, srcKey, dstBu
   return submitTx(
     api.tx.S3Registry.copy_object_metadata({
       src_bucket_id: srcBucketId,
-      src_key: Binary.fromBytes(utf8(srcKey)),
+      src_key: Binary.fromBytes(new TextEncoder().encode(srcKey)),
       dst_bucket_id: dstBucketId,
-      dst_key: Binary.fromBytes(utf8(dstKey)),
+      dst_key: Binary.fromBytes(new TextEncoder().encode(dstKey)),
     }),
     client.signer,
     `copy_object_metadata(${srcKey} -> ${dstKey})`
@@ -437,7 +436,7 @@ export async function deleteObjectMetadata(api, client, s3BucketId, key) {
   return submitTx(
     api.tx.S3Registry.delete_object_metadata({
       s3_bucket_id: s3BucketId,
-      key: Binary.fromBytes(utf8(key)),
+      key: Binary.fromBytes(new TextEncoder().encode(key)),
     }),
     client.signer,
     `delete_object_metadata(${key})`
@@ -472,8 +471,8 @@ export async function deleteS3Bucket(api, client, s3BucketId) {
  * `{ hash, cid, size, data }` (hash is hex; cid is the raw Uint8Array).
  */
 export async function putChunk(providerUrl, bucketId, data) {
-  const bytes = data instanceof Uint8Array ? data : utf8(data);
-  const cid = blake2AsU8a(bytes);
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  const cid = blake2b256(bytes);
   const hash = toHex(cid);
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
@@ -493,8 +492,8 @@ export async function putChunk(providerUrl, bucketId, data) {
  * start_seq, provider_signature).
  */
 export async function uploadChunk(providerUrl, bucketId, data) {
-  const bytes = data instanceof Uint8Array ? data : utf8(data);
-  const hash = toHex(blake2AsU8a(bytes));
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  const hash = toHex(blake2b256(bytes));
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
     body: {

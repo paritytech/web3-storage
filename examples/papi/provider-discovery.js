@@ -21,9 +21,7 @@
  *   max_price_per_byte - max acceptable price per byte per block (default: 10)
  */
 
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import {
-  bytesToUtf8,
   connect,
   waitForBlockProduction,
   waitForChainReady,
@@ -87,7 +85,7 @@ function printProvider({ address, info, score, reasons }) {
   const free = cap === 0n ? "unlimited" : (cap - info.committed_bytes).toString();
   console.log(`  ${address}`);
   console.log(`    score              = ${score}`);
-  console.log(`    multiaddr          = ${bytesToUtf8(info.multiaddr)}`);
+  console.log(`    multiaddr          = ${info.multiaddr.asText()}`);
   console.log(`    stake              = ${info.stake}`);
   console.log(`    price_per_byte     = ${info.settings.price_per_byte}`);
   console.log(
@@ -104,8 +102,6 @@ function printProvider({ address, info, score, reasons }) {
 }
 
 async function main() {
-  await cryptoWaitReady();
-
   const req = {
     bytesNeeded: BYTES_NEEDED,
     duration: DURATION,

@@ -20,7 +20,6 @@
  */
 
 import assert from "node:assert";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import {
   claimCheckpointRewards,
   configureCheckpointWindow,
@@ -158,8 +157,6 @@ async function claimAndVerify(api, provider, bucketId, expectedReward) {
 }
 
 async function main() {
-  await cryptoWaitReady();
-
   const provider = makeSigner(PROVIDER_SEED);
   const client = makeSigner(CLIENT_SEED);
 

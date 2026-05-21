@@ -18,7 +18,6 @@
  * Usage: node bucket-with-storage.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
 
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import {
   createBucketWithStorage,
   fetchCheckpointSignature,
@@ -46,8 +45,6 @@ const {
 } = parseProviderClientArgs();
 
 async function main() {
-  await cryptoWaitReady();
-
   const provider = makeSigner(PROVIDER_SEED);
   const client = makeSigner(CLIENT_SEED);
 

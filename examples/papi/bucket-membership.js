@@ -17,7 +17,6 @@
  */
 
 import assert from "node:assert";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { createBucket, removeMember, setMember } from "./api.js";
 import {
   connect,
@@ -47,8 +46,6 @@ async function verifyReverseIndex(api, member, bucketId, shouldContain) {
 }
 
 async function main() {
-  await cryptoWaitReady();
-
   const admin = makeSigner(ADMIN_SEED);
   const writer = makeSigner(WRITER_SEED);
   const reader = makeSigner(READER_SEED);

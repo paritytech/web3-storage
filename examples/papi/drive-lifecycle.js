@@ -21,10 +21,8 @@
  */
 
 import assert from "node:assert";
-import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { createDrive, deleteDrive, shareDrive, unshareDrive } from "./api.js";
 import {
-  bytesToUtf8,
   connect,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
@@ -47,7 +45,7 @@ const MEMBER_SEED = process.argv[6] || "//Charlie";
 async function printDriveInfo(api, owner, driveId, bucketId) {
   const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
   console.log("  owner          =", drive.owner);
-  console.log("  name           =", drive.name ? bytesToUtf8(drive.name) : "(none)");
+  console.log("  name           =", drive.name ? drive.name.asText() : "(none)");
   console.log("  max_capacity   =", drive.max_capacity);
   console.log("  storage_period =", drive.storage_period);
   console.log("  expires_at     =", drive.expires_at);
@@ -78,8 +76,6 @@ async function getFree(api, who) {
 }
 
 async function main() {
-  await cryptoWaitReady();
-
   const provider = makeSigner(PROVIDER_SEED);
   const owner = makeSigner(OWNER_SEED);
   const member = makeSigner(MEMBER_SEED);

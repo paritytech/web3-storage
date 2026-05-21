@@ -248,8 +248,8 @@ impl frame_system::Config for Runtime {
     type OnNewAccount = ();
     type OnKilledAccount = ();
     type AccountData = pallet_balances::AccountData<Balance>;
-    type SystemWeightInfo = ();
-    type ExtensionsWeightInfo = ();
+    type SystemWeightInfo = weights::frame_system::WeightInfo<Runtime>;
+    type ExtensionsWeightInfo = weights::frame_system_extensions::WeightInfo<Runtime>;
     type SS58Prefix = SS58Prefix;
     type OnSetCode = cumulus_pallet_parachain_system::ParachainSetCode<Self>;
     type MaxConsumers = ConstU32<16>;
@@ -264,7 +264,7 @@ impl pallet_timestamp::Config for Runtime {
     type Moment = u64;
     type OnTimestampSet = Aura;
     type MinimumPeriod = ConstU64<0>;
-    type WeightInfo = ();
+    type WeightInfo = weights::pallet_timestamp::WeightInfo<Runtime>;
 }
 
 impl pallet_authorship::Config for Runtime {
@@ -283,7 +283,7 @@ impl pallet_balances::Config for Runtime {
     type DustRemoval = ();
     type ExistentialDeposit = ExistentialDeposit;
     type AccountStore = System;
-    type WeightInfo = pallet_balances::weights::SubstrateWeight<Runtime>;
+    type WeightInfo = weights::pallet_balances::WeightInfo<Runtime>;
     type MaxReserves = ConstU32<50>;
     type ReserveIdentifier = [u8; 8];
     type RuntimeHoldReason = RuntimeHoldReason;
@@ -304,13 +304,13 @@ impl pallet_transaction_payment::Config for Runtime {
     type LengthToFee = ConstantMultiplier<Balance, TransactionByteFee>;
     type FeeMultiplierUpdate = ();
     type OperationalFeeMultiplier = ConstU8<5>;
-    type WeightInfo = pallet_transaction_payment::weights::SubstrateWeight<Runtime>;
+    type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
 }
 
 impl pallet_sudo::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type RuntimeCall = RuntimeCall;
-    type WeightInfo = ();
+    type WeightInfo = weights::pallet_sudo::WeightInfo<Runtime>;
 }
 
 parameter_types! {
@@ -330,7 +330,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type ReservedXcmpWeight = ReservedXcmpWeight;
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
-    type WeightInfo = ();
+    type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
     type RelayParentOffset = ConstU32<0>;
 }
 
@@ -343,7 +343,7 @@ parameter_types! {
 
 impl pallet_message_queue::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type WeightInfo = ();
+    type WeightInfo = weights::pallet_message_queue::WeightInfo<Runtime>;
     #[cfg(feature = "runtime-benchmarks")]
     type MessageProcessor =
         pallet_message_queue::mock_helpers::NoopMessageProcessor<AggregateMessageOrigin>;
@@ -377,7 +377,7 @@ impl cumulus_pallet_xcmp_queue::Config for Runtime {
     type ControllerOrigin = RootOrFellows;
     type ControllerOriginConverter = xcm_config::XcmOriginToTransactDispatchOrigin;
     type PriceForSiblingDelivery = PriceForSiblingParachainDelivery;
-    type WeightInfo = ();
+    type WeightInfo = weights::cumulus_pallet_xcmp_queue::WeightInfo<Runtime>;
 }
 
 impl cumulus_pallet_xcmp_queue::migration::v5::V5Config for Runtime {
@@ -398,7 +398,7 @@ impl pallet_session::Config for Runtime {
     type SessionManager = CollatorSelection;
     type SessionHandler = <SessionKeys as sp_runtime::traits::OpaqueKeys>::KeyTypeIdProviders;
     type Keys = SessionKeys;
-    type WeightInfo = ();
+    type WeightInfo = weights::pallet_session::WeightInfo<Runtime>;
     type DisablingStrategy = pallet_session::disabling::UpToLimitDisablingStrategy;
     type Currency = Balances;
     type KeyDeposit = ConstU128<0>;
@@ -453,11 +453,11 @@ impl pallet_collator_selection::Config for Runtime {
     type ValidatorId = <Self as frame_system::Config>::AccountId;
     type ValidatorIdOf = pallet_collator_selection::IdentityCollator;
     type ValidatorRegistration = Session;
-    type WeightInfo = ();
+    type WeightInfo = weights::pallet_collator_selection::WeightInfo<Runtime>;
 }
 
 impl cumulus_pallet_weight_reclaim::Config for Runtime {
-    type WeightInfo = ();
+    type WeightInfo = weights::cumulus_pallet_weight_reclaim::WeightInfo<Runtime>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
