@@ -14,6 +14,31 @@ jobs:
       contents: read
     uses: ./.github/workflows/set-image.yml
 
+  validate-version:
+    name: Validate provider-node version matches tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Check provider-node version matches tag
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "Not a tag push (ref=${GITHUB_REF}); skipping version validation."
+            exit 0
+          fi
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${TAG_VERSION%-paseo}"
+          PKG_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' provider-node/Cargo.toml)
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match provider-node/Cargo.toml version ($PKG_VERSION). Bump provider-node/Cargo.toml first, then re-tag."
+            exit 1
+          fi
+          echo "OK: tag ${GITHUB_REF_NAME} matches provider-node version ${PKG_VERSION}"
+
   build-runtime:
     runs-on: ubuntu-latest
     permissions:
@@ -60,7 +85,7 @@ jobs:
   build-provider-linux:
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image]
+    needs: [set-image, validate-version]
     permissions:
       contents: read
     container:
@@ -104,6 +129,7 @@ jobs:
   build-provider-macos:
     runs-on: macos-14
     timeout-minutes: 60
+    needs: [validate-version]
     permissions:
       contents: read
     steps:
