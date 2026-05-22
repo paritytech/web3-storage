@@ -87,7 +87,9 @@ export function Registration() {
 
   // Wizard state
   const [step, setStep] = useState<WizardStep>('connect')
-  const [stake, setStake] = useState('1000')
+  // Default stake covers the default 1 TB capacity at MIN_STAKE_PER_BYTE
+  // (2^40 × 1000 ≈ 1099.51 tokens). Rounded up with a small buffer.
+  const [stake, setStake] = useState('1200')
   const [multiaddr, setMultiaddr] = useState('/ip4/127.0.0.1/tcp/3000')
   const [settings, setSettings] = useState<ProviderSettings>({
     minDuration: 100,
