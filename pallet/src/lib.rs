@@ -1930,7 +1930,10 @@ pub mod pallet {
 
         /// End agreement with pay/burn decision.
         #[pallet::call_index(25)]
-        #[pallet::weight(T::WeightInfo::end_agreement())]
+        #[pallet::weight(match action {
+            EndAction::Pay => T::WeightInfo::end_agreement(0),
+            EndAction::Burn { .. } => T::WeightInfo::end_agreement(1),
+        })]
         pub fn end_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
@@ -2907,7 +2910,11 @@ pub mod pallet {
 
         /// Respond to a challenge.
         #[pallet::call_index(41)]
-        #[pallet::weight(T::WeightInfo::respond_to_challenge())]
+        #[pallet::weight(match response {
+            ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
+            ChallengeResponse::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
+            ChallengeResponse::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
+        })]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,

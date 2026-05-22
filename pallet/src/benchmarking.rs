@@ -81,6 +81,31 @@ fn setup_primary_agreement<T: Config>(
     let _ = Pallet::<T>::accept_agreement(RawOrigin::Signed(provider.clone()).into(), bucket_id);
 }
 
+/// Insert a single challenge at `deadline = 200` and return its `ChallengeId`.
+///
+/// Used by the three `respond_to_challenge_*` benchmarks to share challenge
+/// setup so each can focus on the response-variant payload it exercises.
+fn insert_challenge<T: Config>(
+    bucket_id: BucketId,
+    provider: &T::AccountId,
+    challenger: &T::AccountId,
+    mmr_root: H256,
+) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
+    let deadline: BlockNumberFor<T> = 200u32.into();
+    let challenge = pallet::Challenge::<T> {
+        bucket_id,
+        provider: provider.clone(),
+        challenger: challenger.clone(),
+        mmr_root,
+        start_seq: 0,
+        leaf_index: 0,
+        chunk_index: 0,
+        deposit: 100u32.into(),
+    };
+    Challenges::<T>::insert(deadline, alloc::vec![challenge]);
+    storage_primitives::ChallengeId { deadline, index: 0 }
+}
+
 /// Register an sr25519 keypair for a provider and return the public key.
 ///
 /// Overwrites the provider's stored public_key so `verify_signature` uses the
@@ -523,19 +548,30 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn end_agreement() {
+    fn end_agreement(a: Linear<0, 1>) {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
         setup_primary_agreement::<T>(&admin, &provider, bucket_id);
 
-        #[extrinsic_call]
-        end_agreement(
-            RawOrigin::Signed(admin),
-            bucket_id,
-            provider,
-            storage_primitives::EndAction::Pay,
+        // a == 0 → Pay (single transfer to provider)
+        // a == 1 → Burn with burn_percent in (0, 100) → both owner→provider
+        //          and owner→treasury transfers run (worst case).
+        let action = match a {
+            0 => storage_primitives::EndAction::Pay,
+            _ => storage_primitives::EndAction::Burn { burn_percent: 50 },
+        };
+
+        // Ensure the treasury account exists so the burn-path transfer
+        // (KeepAlive) doesn't fail with "Account cannot exist with the
+        // funds that would be given".
+        let _ = T::Currency::make_free_balance_be(
+            &T::Treasury::get(),
+            BalanceOf::<T>::max_value() / 2u32.into(),
         );
+
+        #[extrinsic_call]
+        end_agreement(RawOrigin::Signed(admin), bucket_id, provider, action);
     }
 
     #[benchmark]
@@ -937,10 +973,9 @@ mod benchmarks {
         challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
     }
 
-    /// Worst case: `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
-    /// This is more expensive than `Superseded` which only does a sequence number comparison.
+    /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
     #[benchmark]
-    fn respond_to_challenge() {
+    fn respond_to_challenge_proof() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_bucket::<T>(&admin);
@@ -983,27 +1018,89 @@ mod benchmarks {
             path: alloc::vec![],
         };
 
-        // Store the challenge directly so mmr_root matches the constructed proof.
-        let deadline: BlockNumberFor<T> = 200u32.into();
-        let challenge = pallet::Challenge::<T> {
-            bucket_id,
-            provider: provider.clone(),
-            challenger: admin.clone(),
-            mmr_root, // must match proof's root
-            start_seq: 0,
-            leaf_index: 0,
-            chunk_index: 0,
-            deposit: 100u32.into(),
-        };
-        Challenges::<T>::insert(deadline, alloc::vec![challenge]);
-
-        let challenge_id = storage_primitives::ChallengeId { deadline, index: 0 };
+        let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
             chunk_data,
             mmr_proof,
             chunk_proof,
         };
+
+        #[extrinsic_call]
+        respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
+    }
+
+    /// `Deleted` response — admin check + sr25519 signature verification on the deletion payload.
+    #[benchmark]
+    fn respond_to_challenge_deleted() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+
+        // `verify_signature` looks up the signer (admin) in `Providers`, so admin
+        // must have a provider record with a valid sr25519 public key.
+        let _ = Pallet::<T>::register_provider(
+            RawOrigin::Signed(admin.clone()).into(),
+            b"/ip4/127.0.0.1/tcp/3001".to_vec().try_into().unwrap(),
+            [0u8; 32].to_vec().try_into().unwrap(),
+            T::MinProviderStake::get(),
+        );
+        let admin_key = register_sr25519_key::<T>(&admin, KEY_TYPE, u32::MAX);
+
+        let challenge_id =
+            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+
+        let new_mmr_root = H256::repeat_byte(0xEF);
+        let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
+        let payload =
+            storage_primitives::CommitmentPayload::new(bucket_id, new_mmr_root, new_start_seq, 0);
+        let encoded = codec::Encode::encode(&payload);
+        let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &admin_key, &encoded)
+            .expect("signing should work");
+        let admin_signature = sp_runtime::MultiSignature::Sr25519(sig);
+
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
+            new_mmr_root,
+            new_start_seq,
+            admin: admin.clone(),
+            admin_signature,
+        };
+
+        #[extrinsic_call]
+        respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
+    }
+
+    /// `Superseded` response — bucket-snapshot lookup + sequence-number comparison (cheapest path).
+    #[benchmark]
+    fn respond_to_challenge_superseded() {
+        let admin = funded_account::<T>("admin", 0);
+        let provider = create_provider::<T>(0);
+        let bucket_id = setup_bucket::<T>(&admin);
+        setup_primary_agreement::<T>(&admin, &provider, bucket_id);
+
+        // `Superseded` requires the bucket to have a snapshot whose
+        // (start_seq + leaf_count) exceeds the challenged sequence. A
+        // checkpoint with leaf_count > 0 satisfies this for our challenge
+        // at seq 0.
+        let mmr_root = H256::repeat_byte(0xAB);
+        let signatures: BoundedVec<
+            (T::AccountId, sp_runtime::MultiSignature),
+            T::MaxPrimaryProviders,
+        > = BoundedVec::new();
+        let _ = Pallet::<T>::checkpoint(
+            RawOrigin::Signed(admin.clone()).into(),
+            bucket_id,
+            mmr_root,
+            0,
+            10,
+            signatures,
+        );
+
+        let challenge_id =
+            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
