@@ -97,7 +97,7 @@ export function Registration() {
     acceptingReplica: false,
     replicaSyncPrice: null,
     acceptingExtensions: true,
-    maxCapacity: 1_000_000_000_000n, // 1 TB (10^12 bytes; matches runtime's SI convention)
+    maxCapacity: 1_099_511_627_776n, // 1 TB (2^40 bytes)
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)

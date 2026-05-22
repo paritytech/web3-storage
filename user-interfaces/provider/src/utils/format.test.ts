@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBalance, formatTokens } from './format'
+import { formatBalance, formatBytes, formatTokens } from './format'
 
 describe('formatBalance', () => {
   const UNIT = 1_000_000_000_000n // 12 decimals
@@ -72,5 +72,42 @@ describe('formatTokens', () => {
     expect(formatTokens(50n)).toBe('50 pico UNIT')
     expect(formatTokens(100n)).toBe('100 pico UNIT')
     expect(formatTokens(999n)).toBe('999 pico UNIT')
+  })
+})
+
+// Byte units use binary (base 1024) — colloquial "GB" == 2^30 bytes,
+// matching what most users mean when they type "1 GB".
+describe('formatBytes', () => {
+  it('formats zero and sub-KB values without a decimal', () => {
+    expect(formatBytes(0)).toBe('0 B')
+    expect(formatBytes(1)).toBe('1 B')
+    expect(formatBytes(1023)).toBe('1023 B')
+  })
+
+  it('uses base 1024 for unit transitions', () => {
+    expect(formatBytes(1024)).toBe('1.00 KB')
+    expect(formatBytes(1024 ** 2)).toBe('1.00 MB')
+    expect(formatBytes(1024 ** 3)).toBe('1.00 GB')
+    expect(formatBytes(1024 ** 4)).toBe('1.00 TB')
+  })
+
+  it('rejects SI gigabyte (10^9) as still being MB', () => {
+    // 10^9 bytes is only ~954 MiB — must NOT be labelled "1.00 GB".
+    expect(formatBytes(1_000_000_000)).toBe('953.67 MB')
+  })
+
+  it('rounds fractional values to two decimals', () => {
+    expect(formatBytes(1500)).toBe('1.46 KB')
+    expect(formatBytes(1024 * 1024 * 1.5)).toBe('1.50 MB')
+  })
+
+  it('accepts bigint input', () => {
+    expect(formatBytes(1024n ** 3n)).toBe('1.00 GB')
+    expect(formatBytes(1_073_741_824n)).toBe('1.00 GB')
+  })
+
+  it('caps at PB for very large values', () => {
+    expect(formatBytes(1024 ** 5)).toBe('1.00 PB')
+    expect(formatBytes(1024 ** 6)).toBe('1024.00 PB')
   })
 })

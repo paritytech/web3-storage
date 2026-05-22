@@ -42,7 +42,7 @@ async function main() {
     const bucketName = `test-bucket-${Date.now()}`;
     console.log(`Step 2: Creating bucket '${bucketName}'...`);
     const bucket = await client.createBucket(bucketName, {
-      capacity: 1_000_000_000n, // 1 GB
+      capacity: 1_073_741_824n, // 1 GB (2^30 bytes)
       duration: 500, // 500 blocks
       maxPayment: 1_000_000_000_000_000n, // 1000 tokens
     });
