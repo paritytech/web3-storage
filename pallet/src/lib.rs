@@ -971,10 +971,7 @@ pub mod pallet {
                     provider.committed_bytes == 0,
                     Error::<T>::ProviderHasActiveAgreements
                 );
-                ensure!(
-                    provider.deregister_at.is_none(),
-                    Error::<T>::DeregisterAnnounced
-                );
+                Self::ensure_provider_active(provider)?;
 
                 // Freeze acceptance so the provider can't soak up new
                 // agreements (and therefore new challenge surface) during
@@ -1102,10 +1099,7 @@ pub mod pallet {
                 // `accepting_primary` and start absorbing new agreements
                 // during the wait window. The caller must `cancel_deregister`
                 // first.
-                ensure!(
-                    provider.deregister_at.is_none(),
-                    Error::<T>::DeregisterAnnounced
-                );
+                Self::ensure_provider_active(provider)?;
 
                 // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
                 if settings.max_capacity > 0 {
@@ -1449,6 +1443,9 @@ pub mod pallet {
                 // Find if member already exists
                 if let Some(existing) = bucket.members.iter_mut().find(|m| m.account == member) {
                     // Cannot demote other admins (only yourself)
+                    // TODO(no-admin-left)
+                    // this allow the sole admin self-demote, potentially leaving
+                    // the bucket with no admins.
                     if existing.role == Role::Admin && member != who {
                         return Err(Error::<T>::CannotDemoteAdmin.into());
                     }
@@ -1508,6 +1505,7 @@ pub mod pallet {
                     .ok_or(Error::<T>::MemberNotFound)?;
 
                 // Cannot remove other admins
+                // TODO(no-admin-left)
                 if bucket.members[member_idx].role == Role::Admin && member != who {
                     return Err(Error::<T>::CannotDemoteAdmin.into());
                 }
@@ -1562,6 +1560,7 @@ pub mod pallet {
             });
 
             // Remove from bucket's primary providers if primary
+            // TODO(no-admin-left)
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
@@ -3295,6 +3294,7 @@ pub mod pallet {
                 Self::ensure_admin(caller, bucket)?;
 
                 if let Some(existing) = bucket.members.iter_mut().find(|m| m.account == member) {
+                    // TODO(no-admin-left)
                     if existing.role == Role::Admin && member != *caller {
                         return Err(Error::<T>::CannotDemoteAdmin.into());
                     }
