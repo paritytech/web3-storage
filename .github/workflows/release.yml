@@ -109,6 +109,17 @@ jobs:
       - name: Strip binary
         run: strip target/production/storage-provider-node
 
+      - name: Assert no OpenSSL/libssl in NEEDED
+        run: |
+          set -euo pipefail
+          NEEDED=$(objdump -p target/production/storage-provider-node | awk '/NEEDED/ {print $2}')
+          echo "NEEDED libraries:"
+          echo "${NEEDED}"
+          if echo "${NEEDED}" | grep -qE '^(libssl|libcrypto)\.'; then
+            echo "::error::storage-provider-node links against OpenSSL (${NEEDED}). The binary must not depend on libssl/libcrypto so it runs on hosts without OpenSSL 1.1 (Ubuntu 22.04+, Debian 12+). Check reqwest/native-tls features."
+            exit 1
+          fi
+
       - name: Stage and archive
         run: |
           set -euo pipefail
