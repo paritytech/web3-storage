@@ -3,12 +3,42 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]*-westend'
       - 'v[0-9]*-paseo'
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
+  set-image:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/set-image.yml
+
+  validate-version:
+    name: Validate provider-node version matches tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Check provider-node version matches tag
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "Not a tag push (ref=${GITHUB_REF}); skipping version validation."
+            exit 0
+          fi
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${TAG_VERSION%-paseo}"
+          PKG_VERSION=$(awk -F'"' '/^version = / {print $2; exit}' provider-node/Cargo.toml)
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match provider-node/Cargo.toml version ($PKG_VERSION). Bump provider-node/Cargo.toml first, then re-tag."
+            exit 1
+          fi
+          echo "OK: tag ${GITHUB_REF_NAME} matches provider-node version ${PKG_VERSION}"
+
   build-runtime:
     runs-on: ubuntu-latest
     permissions:
@@ -19,26 +49,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Determine runtime from tag
+      - name: Runtime config
         id: config
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          if [[ "$TAG" == *-westend ]]; then
-            {
-              echo "name=web3-storage-westend"
-              echo "package=storage-westend-runtime"
-              echo "path=runtimes/web3-storage-westend"
-            } >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" == *-paseo ]]; then
-            {
-              echo "name=web3-storage-paseo"
-              echo "package=storage-paseo-runtime"
-              echo "path=runtimes/web3-storage-paseo"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "Tag $TAG does not end in -westend or -paseo" >&2
-            exit 1
-          fi
+          {
+            echo "name=web3-storage-paseo"
+            echo "package=storage-paseo-runtime"
+            echo "path=runtimes/web3-storage-paseo"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build ${{ steps.config.outputs.name }} runtime
         id: srtool_build
@@ -64,11 +82,107 @@ jobs:
             ${{ steps.srtool_build.outputs.wasm_compressed }}
             ${{ steps.config.outputs.name }}_srtool_output.json
 
+  build-provider-linux:
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, validate-version]
+    permissions:
+      contents: read
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: release-provider-linux
+          save-if: ${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Build storage-provider-node (production)
+        run: cargo build --profile production -p storage-provider-node --locked
+
+      - name: Strip binary
+        run: strip target/production/storage-provider-node
+
+      - name: Stage and archive
+        run: |
+          set -euo pipefail
+          TARGET=x86_64-unknown-linux-gnu
+          TAG="${GITHUB_REF_NAME:-dispatch-${GITHUB_SHA:0:8}}"
+          TAG="${TAG//\//-}"
+          PKG="storage-provider-node-${TAG}-${TARGET}"
+          mkdir -p "dist/${PKG}"
+          cp target/production/storage-provider-node "dist/${PKG}/"
+          cp README.md "dist/${PKG}/" 2>/dev/null || true
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          ( cd dist && sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )
+          ls -la dist/
+
+      - name: Upload provider binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: provider-node-linux-amd64
+          path: dist/storage-provider-node-*.tar.gz*
+
+  build-provider-macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    needs: [validate-version]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> "$GITHUB_ENV"
+
+      - name: Install Rust ${{ env.RUST_STABLE_VERSION }}
+        run: |
+          rustup toolchain install "${RUST_STABLE_VERSION}" --profile minimal --target aarch64-apple-darwin
+          rustup default "${RUST_STABLE_VERSION}"
+          rustc --version
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: release-provider-macos
+          save-if: ${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Build storage-provider-node (production, aarch64-apple-darwin)
+        run: cargo build --profile production -p storage-provider-node --locked --target aarch64-apple-darwin
+
+      - name: Strip binary
+        run: strip -x target/aarch64-apple-darwin/production/storage-provider-node
+
+      - name: Stage and archive
+        run: |
+          set -euo pipefail
+          TARGET=aarch64-apple-darwin
+          TAG="${GITHUB_REF_NAME:-dispatch-${GITHUB_SHA:0:8}}"
+          TAG="${TAG//\//-}"
+          PKG="storage-provider-node-${TAG}-${TARGET}"
+          mkdir -p "dist/${PKG}"
+          cp "target/${TARGET}/production/storage-provider-node" "dist/${PKG}/"
+          cp README.md "dist/${PKG}/" 2>/dev/null || true
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          ( cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )
+          ls -la dist/
+
+      - name: Upload provider binary artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: provider-node-macos-arm64
+          path: dist/storage-provider-node-*.tar.gz*
+
   publish-release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     permissions:
       contents: write
-    needs: [build-runtime]
+    needs: [build-runtime, build-provider-linux, build-provider-macos]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -82,6 +196,7 @@ jobs:
         run: |
           mkdir -p release-assets
           find artifacts -name "*.wasm" -exec cp {} release-assets/ \;
+          find artifacts -name "storage-provider-node-*.tar.gz*" -exec cp {} release-assets/ \;
           ls -la release-assets/
 
       - name: Add runtime info to changelog
@@ -112,6 +227,20 @@ jobs:
           EOF
           done
 
+          {
+            echo
+            echo "## Provider node binaries"
+            echo
+            echo "| Target | sha256 |"
+            echo "|---|---|"
+            for SUM in release-assets/storage-provider-node-*.tar.gz.sha256; do
+              [ -f "$SUM" ] || continue
+              ARCHIVE=$(basename "$SUM" .sha256)
+              HASH=$(awk '{print $1}' "$SUM")
+              echo "| \`${ARCHIVE}\` | \`${HASH}\` |"
+            done
+          } >> RELEASE_NOTES.md
+
           cat RELEASE_NOTES.md
 
       - name: Create release
@@ -120,4 +249,6 @@ jobs:
           name: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
           files: |
             release-assets/*.wasm
+            release-assets/storage-provider-node-*.tar.gz
+            release-assets/storage-provider-node-*.tar.gz.sha256
           body_path: RELEASE_NOTES.md
