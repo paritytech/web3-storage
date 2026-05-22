@@ -5,13 +5,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatBytes(bytes: number, decimals = 2): string {
-  if (bytes === 0) return "0 Bytes";
+export function formatBytes(bytes: number | bigint): string {
+  const b = typeof bytes === "bigint" ? Number(bytes) : bytes;
+  if (b === 0) return "0 B";
+
   const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+  const i = Math.min(Math.floor(Math.log(b) / Math.log(k)), sizes.length - 1);
+
+  return `${parseFloat((b / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
 export function truncateHash(hash: string, startChars = 6, endChars = 4): string {
