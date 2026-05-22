@@ -41,7 +41,7 @@ import type {
  * await client.connect();
  * await client.setSigner("//Alice");
  *
- * const driveId = await client.createDrive({ capacity: 1_000_000_000n, duration: 500, maxPayment: 1_000_000_000_000n });
+ * const driveId = await client.createDrive({ capacity: 1_073_741_824n, duration: 500, maxPayment: 1_000_000_000_000n });
  * await client.createDirectory(driveId, "/documents");
  * await client.uploadFile(driveId, "/documents/hello.txt", new TextEncoder().encode("Hello!"));
  * ```

@@ -46,7 +46,7 @@ async function main() {
     console.log("Step 2: Creating drive...");
     const driveId = await client.createDrive({
       name: "My TypeScript Drive",
-      capacity: 1_000_000_000n, // 1 GB
+      capacity: 1_073_741_824n, // 1 GB (2^30 bytes)
       duration: 500, // 500 blocks
       maxPayment: 1_000_000_000_000_000n, // 1000 tokens
       minProviders: 1,

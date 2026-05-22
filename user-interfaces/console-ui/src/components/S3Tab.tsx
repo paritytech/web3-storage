@@ -64,9 +64,9 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   // Create bucket dialog
   const [showCreateBucket, setShowCreateBucket] = useState(false);
   const [newBucketName, setNewBucketName] = useState("");
-  // Defaults: 10 MB capacity, 10k blocks duration
+  // Defaults: 10 MB capacity (10 × 2^20 bytes), 10k blocks duration
   // maxPayment must cover: price_per_byte(1e6) × capacity × duration × 1.2 buffer
-  const [bucketCapacity, setBucketCapacity] = useState("10000000");
+  const [bucketCapacity, setBucketCapacity] = useState("10485760");
   const [bucketDuration, setBucketDuration] = useState("10000");
   const [bucketMaxPayment, setBucketMaxPayment] = useState("120000000000000000");
   const [creating, setCreating] = useState(false);
