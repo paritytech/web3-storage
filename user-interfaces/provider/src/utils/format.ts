@@ -92,16 +92,13 @@ export function parseTokens(value: string): bigint {
 
 export function formatBytes(bytes: number | bigint): string {
   const b = typeof bytes === 'bigint' ? Number(bytes) : bytes
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let unitIndex = 0
-  let value = b
+  if (b === 0) return '0 B'
 
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex++
-  }
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
+  const i = Math.min(Math.floor(Math.log(b) / Math.log(k)), sizes.length - 1)
 
-  return `${value.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`
+  return `${parseFloat((b / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
 }
 
 export function formatDuration(blocks: number): string {
