@@ -1,10 +1,14 @@
 /**
  * Provider registration spec (slow ~30s each).
  *
- * Wizard test uses Ferdie; globalSetup deregisters Ferdie before every
- * suite run so this test always exercises the fresh-registration flow.
- * Settings test uses Eve, who's pre-registered by globalSetup. Both tests
- * run on every invocation — no skip-on-already-registered guards.
+ * Wizard test uses Ferdie; globalSetup attempts to deregister Ferdie via
+ * `cleanProviderRegistry` so this test exercises the fresh-registration
+ * flow. The pallet's deregister is two-step (announce now, complete after
+ * `DeregisterAnnouncementPeriod` = 48h), so on a chain that has already
+ * seen a successful wizard run, Ferdie's `Providers` entry persists and
+ * `register_provider` would reject with `ProviderAlreadyRegistered`. We
+ * skip in that case rather than fail — re-runnability needs a fresh
+ * chain. Settings test uses Eve, who's pre-registered by globalSetup.
  */
 import { test, expect } from "../fixtures";
 import { Eve, Ferdie, getApi } from "@web3-storage/test-helpers";
@@ -21,6 +25,12 @@ async function switchToFerdie(page: import("@playwright/test").Page) {
 }
 
 test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
+  const existing = await getApi().query.StorageProvider.Providers.getValue(Ferdie.address);
+  test.skip(
+    existing !== undefined,
+    "Ferdie is already registered on chain (likely from a prior wizard run); the runtime's two-step deregister can't fully remove the entry within a 48h test window. Restart the chain to re-run.",
+  );
+
   await switchToFerdie(localPage);
   await localPage.getByTestId("nav-registration").click();
 
