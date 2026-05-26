@@ -101,7 +101,9 @@ export async function deregisterProviderViaApi(account: DevSigner): Promise<void
 /**
  * Deregister every dev-known provider whose account is NOT in `keepAccounts`.
  * Skips registrations with committed_bytes > 0 (runtime would reject the
- * deregister anyway) and skips registrations whose signer we don't have
+ * deregister anyway), registrations already in the deregister-announcement
+ * window (`deregister_at` set; the runtime rejects a second announce with
+ * `DeregisterAnnounced`), and registrations whose signer we don't have
  * (non-dev accounts the test infra didn't create).
  *
  * Why this exists: the runtime's drive-creation flow picks
@@ -130,7 +132,16 @@ export async function cleanProviderRegistry(
     if (keep.has(address)) continue;
     const signer = knownDev[address];
     if (!signer) continue;
-    if ((value as { committed_bytes: bigint }).committed_bytes !== 0n) continue;
+    const provider = value as {
+      committed_bytes: bigint;
+      deregister_at: number | undefined;
+    };
+    if (provider.committed_bytes !== 0n) continue;
+    // Already announced; re-announce would throw `DeregisterAnnounced`.
+    // The entry persists until `complete_deregister` (gated by
+    // `DeregisterAnnouncementPeriod`, 48h on this runtime) — there's
+    // nothing useful we can do here, so leave it alone.
+    if (provider.deregister_at !== undefined) continue;
     await submitExtrinsicBestBlock(
       api.tx.StorageProvider.deregister_provider(),
       signer.signer,
