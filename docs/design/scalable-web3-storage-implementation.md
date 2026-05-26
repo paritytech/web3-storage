@@ -109,27 +109,106 @@ Primary providers don't sync with each other. Clients are responsible for upload
 
 ```rust
 #[pallet::config]
-pub trait Config: frame_system::Config {
-    /// Maximum length of provider multiaddr
+pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
+    /// Currency type for payments and staking.
+    type Currency: ReservableCurrency<Self::AccountId>;
+
+    /// Treasury account to receive burned payments.
+    type Treasury: Get<Self::AccountId>;
+
+    /// Minimum stake per byte committed (e.g., 1 token per GB = 1e12 per 1e9 bytes).
+    /// Prevents providers from over-committing relative to their collateral.
+    #[pallet::constant]
+    type MinStakePerByte: Get<BalanceOf<Self>>;
+
+    /// Maximum length of provider multiaddr.
+    #[pallet::constant]
     type MaxMultiaddrLength: Get<u32>;
-    /// Maximum members per bucket
+
+    /// Maximum members per bucket.
+    #[pallet::constant]
     type MaxMembers: Get<u32>;
-    /// Maximum primary providers per bucket (e.g., 5)
+
+    /// Maximum primary providers per bucket (e.g., 5).
+    #[pallet::constant]
     type MaxPrimaryProviders: Get<u32>;
+
     /// Minimum stake required to register as a provider.
     /// Governance-controlled to bound total provider count and provide sybil resistance.
     #[pallet::constant]
     type MinProviderStake: Get<BalanceOf<Self>>;
-    /// Maximum chunk size for challenge responses (e.g., 256 KiB)
+
+    /// Maximum chunk size for challenge responses (e.g., 256 KiB).
+    #[pallet::constant]
     type MaxChunkSize: Get<u32>;
-    /// Timeout for challenge response (e.g., ~48 hours in blocks)
+
+    /// Timeout for challenge response (e.g., ~48 hours in blocks).
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
-    /// Settlement window after agreement expiry for owner to call end_agreement
+
+    /// Settlement window after agreement expiry for owner to call end_agreement.
     #[pallet::constant]
     type SettlementTimeout: Get<BlockNumberFor<Self>>;
+
+    /// Maximum duration an agreement request can sit unanswered before it expires.
+    #[pallet::constant]
+    type RequestTimeout: Get<BlockNumberFor<Self>>;
+
+    /// Default interval between provider-initiated checkpoint windows.
+    #[pallet::constant]
+    type DefaultCheckpointInterval: Get<BlockNumberFor<Self>>;
+
+    /// Default grace period (in blocks) for the elected leader before any
+    /// primary provider may submit the checkpoint as a fallback.
+    #[pallet::constant]
+    type DefaultCheckpointGrace: Get<BlockNumberFor<Self>>;
+
+    /// Reward paid (from the per-bucket checkpoint pool) to the submitter
+    /// of a provider-initiated checkpoint.
+    #[pallet::constant]
+    type CheckpointReward: Get<BalanceOf<Self>>;
+
+    /// Penalty slashed from a leader's stake if they miss their window.
+    #[pallet::constant]
+    type CheckpointMissPenalty: Get<BalanceOf<Self>>;
+
+    /// Maximum number of buckets a single account can be a member of
+    /// (bounds the per-account reverse index).
+    #[pallet::constant]
+    type MaxBucketsPerMember: Get<u32>;
+
+    /// Minimum number of blocks between announcing a deregistration and
+    /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
+    /// challenge created up to the announcement block matures while the
+    /// provider is still slashable.
+    #[pallet::constant]
+    type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+    /// Weight information for extrinsics.
+    type WeightInfo: WeightInfo;
 }
 ```
+
+Reference runtime values (see `runtime/src/storage.rs`):
+
+| Constant | Value |
+|---|---|
+| `MinProviderStake` | `1_000 * UNIT` (1000 tokens) |
+| `MinStakePerByte` | `1_000` |
+| `MaxMultiaddrLength` | `128` |
+| `MaxMembers` | `100` |
+| `MaxPrimaryProviders` | `5` |
+| `MaxChunkSize` | `262_144` (256 KiB) |
+| `ChallengeTimeout` | `48 * HOURS` |
+| `SettlementTimeout` | `24 * HOURS` |
+| `RequestTimeout` | `6 * HOURS` |
+| `DefaultCheckpointInterval` | `100` blocks |
+| `DefaultCheckpointGrace` | `20` blocks |
+| `CheckpointReward` | `1_000_000_000_000` (1 token) |
+| `CheckpointMissPenalty` | `500_000_000_000` (0.5 token) |
+| `MaxBucketsPerMember` | `1_000` |
+| `DeregisterAnnouncementPeriod` | `48 * HOURS` |
+| `Treasury` | derived from `PalletId(*b"py/trsry")` |
 
 ### Storage Items
 
@@ -146,6 +225,10 @@ pub type Providers<T: Config> = StorageMap<
 pub struct ProviderInfo<T: Config> {
     /// Multiaddr for connecting to this provider
     pub multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
+    /// Public key for signature verification. Raw bytes so multiple key types
+    /// are supported: 32 bytes for Sr25519/Ed25519, 33 for compressed Ecdsa,
+    /// 64 reserved for future schemes.
+    pub public_key: BoundedVec<u8, ConstU32<64>>,
     /// Total stake locked by this provider
     pub stake: BalanceOf<T>,
     /// Total contracted bytes (sum of max_bytes across all agreements)
@@ -155,6 +238,11 @@ pub struct ProviderInfo<T: Config> {
     pub settings: ProviderSettings<T>,
     /// Provider statistics - clients use these to evaluate quality
     pub stats: ProviderStats<T>,
+    /// Block at which a previously-announced deregistration becomes
+    /// finalisable via `complete_deregister`. `None` means no announcement
+    /// is in progress. During the announcement window the provider is still
+    /// on-chain and still slashable for any pending challenge.
+    pub deregister_at: Option<BlockNumberFor<T>>,
 }
 
 /// On-chain statistics for evaluating provider quality.
@@ -193,6 +281,11 @@ pub struct ProviderSettings<T: Config> {
     pub replica_sync_price: Option<BalanceOf<T>>,
     /// Whether accepting extensions on existing agreements
     pub accepting_extensions: bool,
+    /// Maximum storage capacity in bytes. `0` means unlimited.
+    /// When non-zero, the provider cannot accept agreements that would push
+    /// `committed_bytes` past this value, and the provider's stake must back
+    /// it: `stake >= max_capacity * MinStakePerByte`.
+    pub max_capacity: u64,
 }
 
 /// Monotonically increasing bucket ID counter. Ensures stable, unique IDs.
@@ -274,7 +367,7 @@ pub struct Bucket<T: Config> {
     pub total_snapshots: u32,
 }
 
-pub struct BucketSnapshot<T: Config> {
+pub struct BucketSnapshot<BlockNumber> {
     /// Canonical MMR root
     pub mmr_root: H256,
     /// Start sequence number
@@ -282,13 +375,15 @@ pub struct BucketSnapshot<T: Config> {
     /// Number of leaves in the MMR
     pub leaf_count: u64,
     /// Block at which checkpointed
-    pub checkpoint_block: BlockNumberFor<T>,
+    pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
-    /// Bit i is set if primary_providers[i] signed.
-    /// Using bitfield because primary_providers is stored in Bucket and limited
-    /// to T::MaxPrimaryProviders (e.g., 5), so indices are stable within a checkpoint.
-    /// When primary_providers changes, the bitfield is adjusted accordingly.
-    pub primary_signers: BitVec<u8, bitvec::order::Lsb0>,
+    /// Bit i (LSB0) is set if `primary_providers[i]` signed.
+    /// Stored as `Vec<u8>` with explicit `count_signers()` / `has_provider_signed()`
+    /// helpers rather than `BitVec` to keep encoding stable and `no_std`-friendly.
+    /// `primary_providers` is bounded by `T::MaxPrimaryProviders` (e.g., 5), so
+    /// indices are stable within a checkpoint; if it changes between checkpoints
+    /// the bitfield is regenerated at the next checkpoint.
+    pub primary_signers: Vec<u8>,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // Destructive writes (new MMR that allows pruning old) must set start_seq >= old_start_seq + old_leaf_count
@@ -400,9 +495,10 @@ pub type Challenges<T: Config> = StorageMap<
 
 /// Challenge identifier combining deadline and index.
 /// Challenges are stored by deadline block for efficient expiry processing.
-pub struct ChallengeId<T: Config> {
+/// Defined in `storage_primitives`, generic over `BlockNumber`.
+pub struct ChallengeId<BlockNumber> {
     /// Block by which provider must respond
-    pub deadline: BlockNumberFor<T>,
+    pub deadline: BlockNumber,
     /// Index within the deadline's challenge list
     pub index: u16,
 }
@@ -422,8 +518,91 @@ pub struct Challenge<T: Config> {
     pub leaf_index: u64,
     /// Chunk index within the leaf's data
     pub chunk_index: u64,
+    /// Deposit locked by the challenger when the challenge was created.
+    /// Returned (in part) on successful defense, forfeited on invalid challenge,
+    /// returned with compensation if the provider is slashed.
+    pub deposit: BalanceOf<T>,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider-initiated checkpoint storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-bucket checkpoint window configuration.
+/// `None` means the bucket uses `T::DefaultCheckpointInterval` /
+/// `T::DefaultCheckpointGrace` and provider-initiated checkpoints are off.
+#[pallet::storage]
+pub type CheckpointConfigs<T: Config> = StorageMap<
+    _,
+    Blake2_128Concat,
+    BucketId,
+    CheckpointWindowConfig<BlockNumberFor<T>>,
+>;
+
+pub struct CheckpointWindowConfig<BlockNumber> {
+    /// Blocks between checkpoint windows (e.g., 100 ≈ 10 minutes)
+    pub interval: BlockNumber,
+    /// Grace period reserved for the elected leader (e.g., 20 blocks)
+    pub grace_period: BlockNumber,
+    /// Whether provider-initiated checkpoints are enabled for this bucket
+    pub enabled: bool,
+}
+
+/// Last successful checkpoint window per bucket. `None` = none yet.
+/// Prevents both re-submission and re-reporting of the same window.
+#[pallet::storage]
+pub type LastCheckpointWindow<T: Config> =
+    StorageMap<_, Blake2_128Concat, BucketId, u64, OptionQuery>;
+
+/// Pending checkpoint rewards per (provider, bucket).
+/// Provider-first key order so a provider's pending rewards can be drained
+/// on `complete_deregister` without scanning every bucket.
+#[pallet::storage]
+pub type CheckpointRewards<T: Config> = StorageDoubleMap<
+    _,
+    Blake2_128Concat, T::AccountId,
+    Blake2_128Concat, BucketId,
+    BalanceOf<T>,
+    ValueQuery,
+>;
+
+/// Per-bucket reward pool used to pay providers for submitting checkpoints.
+/// Funded permissionlessly via `fund_checkpoint_pool`.
+#[pallet::storage]
+pub type CheckpointPool<T: Config> =
+    StorageMap<_, Blake2_128Concat, BucketId, BalanceOf<T>, ValueQuery>;
+
+/// Reverse index: account → bucket IDs they are a member of.
+/// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
+#[pallet::storage]
+pub type MemberBuckets<T: Config> = StorageMap<
+    _,
+    Blake2_128Concat,
+    T::AccountId,
+    BoundedVec<BucketId, T::MaxBucketsPerMember>,
+    ValueQuery,
+>;
 ```
+
+### Provider Public Key & Signature Type
+
+Providers register a raw public key alongside their multiaddr (32 bytes for
+Sr25519/Ed25519, 33 bytes for compressed Ecdsa). All on-chain signature
+verification uses `sp_runtime::MultiSignature` against this key, so a single
+provider can use any of the supported schemes.
+
+Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
+`version: u8` so the protocol can evolve without breaking existing signatures):
+
+- `CommitmentPayload { version, bucket_id, mmr_root, start_seq, leaf_count }` —
+  what providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
+  `challenge_offchain`. For `challenge_offchain` the provider signs with
+  `leaf_count = 0` so the signature is reusable as the off-chain commitment.
+- `CheckpointProposal { version, bucket_id, mmr_root, start_seq, leaf_count, window }` —
+  what providers sign for `provider_checkpoint`. The `window` field prevents
+  cross-window replay.
+- The replica sync `roots` array (`[Option<H256>; 7]`) — signed for
+  `confirm_replica_sync` to attest which roots the replica actually has.
 
 ### Events
 
@@ -438,9 +617,20 @@ pub enum Event<T: Config> {
         provider: T::AccountId,
         stake: BalanceOf<T>,
     },
+    /// Final deregistration: stake returned, provider entry removed.
     ProviderDeregistered {
         provider: T::AccountId,
         stake_returned: BalanceOf<T>,
+    },
+    /// First step of the two-step exit — provider declared intent to leave.
+    /// Stake stays reserved and they remain slashable until `complete_after`.
+    DeregisterAnnounced {
+        provider: T::AccountId,
+        complete_after: BlockNumberFor<T>,
+    },
+    /// Provider cancelled their announced deregistration before the window elapsed.
+    DeregisterCancelled {
+        provider: T::AccountId,
     },
     ProviderStakeAdded {
         provider: T::AccountId,
@@ -448,6 +638,10 @@ pub enum Event<T: Config> {
         total_stake: BalanceOf<T>,
     },
     ProviderSettingsUpdated {
+        provider: T::AccountId,
+        settings: ProviderSettings<T>,
+    },
+    ProviderMultiaddrUpdated {
         provider: T::AccountId,
     },
     ExtensionsBlocked {
@@ -467,6 +661,9 @@ pub enum Event<T: Config> {
     BucketFrozen {
         bucket_id: BucketId,
         frozen_start_seq: u64,
+    },
+    BucketDeleted {
+        bucket_id: BucketId,
     },
     MemberSet {
         bucket_id: BucketId,
@@ -591,7 +788,7 @@ pub enum Event<T: Config> {
     
     /// A challenge was issued against a provider
     ChallengeCreated {
-        challenge_id: ChallengeId<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
         bucket_id: BucketId,
         provider: T::AccountId,
         challenger: T::AccountId,
@@ -599,7 +796,7 @@ pub enum Event<T: Config> {
     },
     /// Provider responded successfully to a challenge
     ChallengeDefended {
-        challenge_id: ChallengeId<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         response_time_blocks: BlockNumberFor<T>,
         challenger_cost: BalanceOf<T>,
@@ -607,30 +804,117 @@ pub enum Event<T: Config> {
     },
     /// Provider failed to respond or provided invalid proof - slashed
     ChallengeSlashed {
-        challenge_id: ChallengeId<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
         challenger_reward: BalanceOf<T>,
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Provider-initiated checkpoint events
+    // ─────────────────────────────────────────────────────────────
+
+    /// A primary provider successfully submitted a checkpoint for a window.
+    /// `signers` lists every primary that contributed a valid signature;
+    /// `reward` is what was actually drawn from the pool (zero if empty).
+    ProviderCheckpointSubmitted {
+        bucket_id: BucketId,
+        mmr_root: H256,
+        window: u64,
+        leader: T::AccountId,
+        signers: Vec<T::AccountId>,
+        reward: BalanceOf<T>,
+    },
+    /// Admin updated this bucket's checkpoint window config.
+    CheckpointConfigUpdated {
+        bucket_id: BucketId,
+        interval: BlockNumberFor<T>,
+        grace_period: BlockNumberFor<T>,
+        enabled: bool,
+    },
+    /// A leader was penalised for missing their window. Reporter received 10%.
+    CheckpointMissPenalized {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        window: u64,
+        penalty: BalanceOf<T>,
+    },
+    /// Provider drained accumulated rewards for a bucket.
+    CheckpointRewardClaimed {
+        bucket_id: BucketId,
+        provider: T::AccountId,
+        amount: BalanceOf<T>,
+    },
+    /// Funder added balance to a bucket's checkpoint reward pool.
+    CheckpointPoolFunded {
+        bucket_id: BucketId,
+        funder: T::AccountId,
+        amount: BalanceOf<T>,
     },
 }
 ```
 
 ### Runtime API
 
+Read-only queries used by clients (the Rust SDK, demos, and the provider
+node's membership cache) to discover providers, inspect bucket state, list
+agreements, and watch challenges without submitting transactions. Defined in
+`pallet/src/runtime_api.rs` as `StorageProviderApi`.
+
 ```rust
 sp_api::decl_runtime_apis! {
-    pub trait StorageApi {
-        fn provider_info(provider: AccountId) -> Option<ProviderInfo>;
-        fn bucket_info(bucket_id: BucketId) -> Option<Bucket>;
+    pub trait StorageProviderApi<AccountId, BlockNumber, Balance>
+    where
+        AccountId: Encode + Decode,
+        BlockNumber: Encode + Decode,
+        Balance: Encode + Decode,
+    {
+        // ── Provider directory ────────────────────────────────────────────
+        /// Provider info for a single account.
+        fn provider_info(provider: AccountId) -> Option<ProviderInfoResponse>;
+        /// Paginated list of all registered providers.
+        fn providers(offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+        /// Providers with at least `bytes_needed` of available capacity.
+        fn providers_with_capacity(
+            bytes_needed: u64,
+            offset: u32,
+            limit: u32,
+        ) -> Vec<(AccountId, ProviderInfoResponse)>;
+        /// Find providers matching given requirements, sorted by match score
+        /// (best first). Used by the SDK's discovery client.
+        fn find_matching_providers(
+            requirements: StorageRequirements,
+            limit: u32,
+        ) -> Vec<MatchedProvider>;
+        /// Quick check: does the provider's stake/capacity support an extra `additional_bytes`?
+        fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool;
+
+        // ── Buckets ───────────────────────────────────────────────────────
+        fn bucket_info(bucket_id: BucketId) -> Option<BucketResponse>;
+        fn bucket_ids(offset: u32, limit: u32) -> Vec<BucketId>;
         fn bucket_providers(bucket_id: BucketId) -> Vec<AccountId>;
-        fn agreement(bucket_id: BucketId, provider: AccountId) -> Option<StorageAgreement>;
-        fn pending_requests(bucket_id: BucketId) -> Vec<(AccountId, AgreementRequest)>;
-        fn pending_requests_for_provider(provider: AccountId) -> Vec<(BucketId, AgreementRequest)>;
-        fn challenges(from_block: BlockNumber, to_block: BlockNumber) -> Vec<(ChallengeId, Challenge)>;
-        fn challenge_period() -> BlockNumber;
+
+        // ── Agreements ────────────────────────────────────────────────────
+        fn agreement_info(bucket_id: BucketId, provider: AccountId) -> Option<AgreementResponse>;
+        fn bucket_agreements(bucket_id: BucketId) -> Vec<AgreementResponse>;
+        fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
+
+        // ── Challenges ────────────────────────────────────────────────────
+        /// Challenges expiring at a specific block. Used by provider nodes
+        /// and challengers to track outstanding challenges.
+        fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
     }
 }
 ```
+
+Response types live in `pallet/src/runtime_api.rs` (`ProviderInfoResponse`,
+`StorageRequirements`, `MatchedProvider`, `BucketResponse`,
+`AgreementResponse`, `ChallengeResponse`, etc.). They flatten the on-chain
+structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
+`Balance` as `u128`) so client-side SDKs don't need to depend on the runtime's
+generics. `MatchedProvider` also carries a `match_score` (0–100) and an
+optional `PartialMatchReason` (price, capacity, duration, not-accepting) for
+the marketplace UI to surface why a provider didn't qualify.
 
 ### Extrinsics
 
@@ -643,16 +927,20 @@ impl<T: Config> Pallet<T> {
 
     /// Register as a storage provider.
     /// 
-    /// Creates a new provider entry with the given multiaddr and initial stake.
-    /// Stake must be at least `T::MinProviderStake`.
+    /// Creates a new provider entry with the given multiaddr, public key, and
+    /// initial stake. Stake must be at least `T::MinProviderStake`.
     /// 
     /// Parameters:
     /// - `multiaddr`: Network address where clients can connect to this provider
+    /// - `public_key`: Raw public key bytes — 32 for Sr25519/Ed25519, 33 for
+    ///   compressed Ecdsa, 64 reserved. Used to verify provider signatures
+    ///   (commitments, checkpoints, replica sync) on-chain.
     /// - `stake`: Initial stake to lock (must meet minimum, provides sybil resistance)
     #[pallet::weight(...)]
     pub fn register_provider(
         origin: OriginFor<T>,
         multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
+        public_key: BoundedVec<u8, ConstU32<64>>,
         stake: BalanceOf<T>,
     ) -> DispatchResult;
 
@@ -669,23 +957,69 @@ impl<T: Config> Pallet<T> {
         amount: BalanceOf<T>,
     ) -> DispatchResult;
 
-    /// Deregister provider and withdraw stake.
-    /// Fails if committed_bytes > 0 (active agreements exist).
-    /// Provider must wait for all agreements to expire before deregistering.
+    /// Announce intent to deregister (step 1 of 2).
+    ///
+    /// Stamps `deregister_at = now + T::DeregisterAnnouncementPeriod`, freezes
+    /// `accepting_primary` / `accepting_extensions` to `false`, and keeps the
+    /// stake reserved. The provider remains on-chain and fully slashable for
+    /// any challenge created up to the announcement block.
+    ///
+    /// Fails if `committed_bytes > 0`: providers must let active agreements
+    /// expire first. The two-step flow closes the race where a provider could
+    /// withdraw stake between the end of their last agreement and a
+    /// freshly-created challenge.
     #[pallet::weight(...)]
     pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult;
 
+    /// Finalise a previously-announced deregistration (step 2 of 2).
+    ///
+    /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
+    /// `deregister_provider`. Drains pending `CheckpointRewards` for this
+    /// provider into their free balance, unreserves the remaining stake,
+    /// and removes the provider record. Still requires `committed_bytes == 0`.
+    #[pallet::weight(...)]
+    pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
+
+    /// Cancel a previously-announced deregistration before the window elapses.
+    ///
+    /// Restores `accepting_primary` / `accepting_extensions` to `true`
+    /// (mirroring what `deregister_provider` forced to `false` on announce)
+    /// and clears `deregister_at`. The provider can update settings afterwards.
+    #[pallet::weight(...)]
+    pub fn cancel_deregister(origin: OriginFor<T>) -> DispatchResult;
+
     /// Update provider settings.
     /// 
-    /// Allows provider to change pricing, duration limits, and availability.
-    /// Changes apply to new agreements only; existing agreements retain their terms.
+    /// Allows provider to change pricing, duration limits, capacity, and
+    /// availability. Changes apply to new agreements only; existing agreements
+    /// retain their locked terms.
+    ///
+    /// Validation:
+    /// - `min_duration <= max_duration` (`MinDurationExceedsMaxDuration`).
+    /// - If `max_capacity > 0`: must be `>= committed_bytes`
+    ///   (`CapacityBelowCommitted`) and stake must cover it,
+    ///   i.e. `stake >= max_capacity * MinStakePerByte`
+    ///   (`InsufficientStakeForCapacity`).
+    /// - Settings are frozen while a deregister announcement is in flight —
+    ///   call `cancel_deregister` first.
     /// 
     /// Parameters:
-    /// - `settings`: New provider settings (pricing, duration limits, accepting flags)
+    /// - `settings`: New provider settings (pricing, duration, capacity, accepting flags)
     #[pallet::weight(...)]
     pub fn update_provider_settings(
         origin: OriginFor<T>,
         settings: ProviderSettings<T>,
+    ) -> DispatchResult;
+
+    /// Update only the provider's multiaddr (network endpoint).
+    ///
+    /// Cheaper and narrower than `update_provider_settings` for a common case:
+    /// the provider physically moved hosts but everything else (pricing,
+    /// capacity, accepting flags) stays the same.
+    #[pallet::weight(...)]
+    pub fn update_provider_multiaddr(
+        origin: OriginFor<T>,
+        multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
     ) -> DispatchResult;
 
     /// Block or unblock extensions for a specific bucket (provider only).
@@ -714,6 +1048,27 @@ impl<T: Config> Pallet<T> {
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
     #[pallet::weight(...)]
     pub fn create_bucket(origin: OriginFor<T>, min_providers: u32) -> DispatchResult;
+
+    /// Create a bucket and an agreement with an auto-selected provider in one call.
+    ///
+    /// Convenience extrinsic that:
+    /// 1. Runs `find_matching_provider(max_bytes, duration, max_price_per_byte)`
+    ///    against on-chain provider settings.
+    /// 2. Creates a bucket with `min_providers = 1` and the matched provider
+    ///    pushed straight into `primary_providers` (no pending request flow).
+    /// 3. Reserves `provider.price_per_byte * max_bytes * duration` from the
+    ///    caller as locked payment.
+    ///
+    /// Providers who set `accepting_primary: true` have pre-consented to
+    /// agreements within their advertised parameters, so no acceptance step
+    /// is needed. Fails with `NoMatchingProvider` if nothing fits.
+    #[pallet::weight(...)]
+    pub fn create_bucket_with_storage(
+        origin: OriginFor<T>,
+        max_bytes: u64,
+        duration: BlockNumberFor<T>,
+        max_price_per_byte: BalanceOf<T>,
+    ) -> DispatchResult;
 
     /// Set minimum providers required for checkpoint (admin only).
     /// 
@@ -1031,6 +1386,98 @@ impl<T: Config> Pallet<T> {
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
+    // Provider-initiated checkpoints (window-based)
+    // ─────────────────────────────────────────────────────────────
+    //
+    // Lets primary providers autonomously checkpoint on a schedule without
+    // requiring the client to be online. Blocks are divided into windows of
+    // length `config.interval`; for each window a deterministic leader is
+    // elected from `primary_providers` by hashing `(bucket_id, window)`.
+    //
+    //   window n            window n+1
+    //   ├── grace ──┤───── fallback ─────┤
+    //
+    // - During the grace period (`config.grace_period` blocks at the start),
+    //   ONLY the elected leader may submit via `provider_checkpoint`.
+    // - After the grace period, any primary provider may submit (fallback).
+    // - If the window closes with no submission, anyone can call
+    //   `report_missed_checkpoint` to slash the leader's stake.
+
+    /// Submit a checkpoint for the current window (provider-initiated).
+    ///
+    /// Caller must be the elected leader during the grace period, or any
+    /// primary provider afterwards. Signatures cover a `CheckpointProposal`
+    /// (including the `window` field, which prevents cross-window replay).
+    /// Must collect at least `bucket.min_providers` valid signatures.
+    ///
+    /// On success: snapshot is updated, `LastCheckpointWindow` is set to
+    /// `window`, historical roots are rotated, and the submitter accrues
+    /// `T::CheckpointReward` from the bucket's `CheckpointPool` (or zero if
+    /// the pool is empty — the checkpoint is still valid).
+    #[pallet::weight(...)]
+    pub fn provider_checkpoint(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        window: u64,
+        signatures: BoundedVec<
+            (T::AccountId, MultiSignature),
+            T::MaxPrimaryProviders,
+        >,
+    ) -> DispatchResult;
+
+    /// Configure provider-initiated checkpoint windows for a bucket (admin only).
+    ///
+    /// Setting `enabled: false` disables provider-initiated checkpoints
+    /// (client-initiated `checkpoint` still works). When unset, the bucket
+    /// uses `T::DefaultCheckpointInterval` / `T::DefaultCheckpointGrace`.
+    #[pallet::weight(...)]
+    pub fn configure_checkpoint_window(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        interval: BlockNumberFor<T>,
+        grace_period: BlockNumberFor<T>,
+        enabled: bool,
+    ) -> DispatchResult;
+
+    /// Report a missed checkpoint window and penalise the leader.
+    ///
+    /// Permissionless. Callable only after the window has fully passed (past
+    /// its grace period) and no checkpoint was submitted. The leader for
+    /// `window` is slashed by `T::CheckpointMissPenalty` (from reserved
+    /// stake), the reporter receives 10% of the actual slash, and
+    /// `LastCheckpointWindow` is bumped to `window` to prevent re-reporting.
+    #[pallet::weight(...)]
+    pub fn report_missed_checkpoint(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        window: u64,
+    ) -> DispatchResult;
+
+    /// Claim accumulated checkpoint rewards for a bucket.
+    ///
+    /// Drains `CheckpointRewards[(caller, bucket_id)]` into the caller's free
+    /// balance. Provider-keyed map layout means a provider can claim across
+    /// many buckets cheaply, and `complete_deregister` drains everything in
+    /// one pass.
+    #[pallet::weight(...)]
+    pub fn claim_checkpoint_rewards(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+    ) -> DispatchResult;
+
+    /// Fund a bucket's checkpoint reward pool. Permissionless — anyone can
+    /// top up. Reserves `amount` from the caller into `CheckpointPool`.
+    #[pallet::weight(...)]
+    pub fn fund_checkpoint_pool(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        amount: BalanceOf<T>,
+    ) -> DispatchResult;
+
+    // ─────────────────────────────────────────────────────────────
     // Challenges
     // ─────────────────────────────────────────────────────────────
     //
@@ -1189,7 +1636,7 @@ impl<T: Config> Pallet<T> {
     #[pallet::weight(...)]
     pub fn respond_to_challenge(
         origin: OriginFor<T>,
-        challenge_id: ChallengeId<T>,
+        challenge_id: ChallengeId<BlockNumberFor<T>>,
         response: ChallengeResponse<T>,
     ) -> DispatchResult;
 }
@@ -1240,6 +1687,43 @@ pub enum ChallengeResponse<T: Config> {
 
 ## Off-Chain: Provider Node API
 
+The provider node exposes a JSON-over-HTTP API (axum) on, by default,
+`http://localhost:3333`. Endpoints fall into five groups:
+
+1. **Health & info** — public, unauthenticated.
+2. **Layer-0 blob storage** — content-addressed node upload, existence check,
+   commit, read, proofs, deletion. Mutating endpoints require auth.
+3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
+   replica providers; read-only.
+4. **Provider-initiated checkpoint coordination** — proposal signing, leader
+   duty, force trigger. Used by the autonomous checkpoint coordinator.
+5. **Layer-1 interfaces** — S3-compatible (`/s3/...`) and POSIX-like
+   (`/fs/...`). See `docs/filesystems/` for the full spec.
+
+### Authentication & RBAC
+
+Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`, the
+Layer-1 mutating endpoints) and authenticated read endpoints require an
+`Authorization` header. The provider node verifies an sr25519 signature
+locally and resolves the caller's role via a TTL-cached query against the
+chain's `Buckets` storage (`bucket.members`).
+
+```
+Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<unix_timestamp>
+
+Signed message: "web3storage:<METHOD>:<bucket_id>:<unix_timestamp>"
+```
+
+Rules:
+- `<unix_timestamp>` must be within `--auth-max-skew` (default 5 minutes) of
+  the provider's clock — otherwise `401 TimestampExpired`.
+- Required role per endpoint: `Reader` for reads of access-controlled data,
+  `Writer` for uploads/commits, `Admin` for delete and other destructive ops.
+- The membership cache uses stale-while-revalidate: if the chain is briefly
+  unreachable, cached membership keeps working.
+- When the provider node is launched without auth (`--auth-disabled`), all
+  endpoints are permissive — useful for local demos, never in production.
+
 ### Content-Addressed Storage
 
 Everything is content-addressed by hash. Upload is bottom-up: children must exist before parent.
@@ -1248,10 +1732,11 @@ Everything is content-addressed by hash. Upload is bottom-up: children must exis
 Upload Node (chunk or internal node)
 ────────────────────────────────────
 PUT /node
+Authorization: Web3Storage <...>       # Writer or Admin
 
 Request:
 {
-  "bucket_id": "0x1234...",
+  "bucket_id": 1234,                   // u64
   "hash": "0xabc...",
   "data": "<base64 encoded>",
   "children": ["0xchild1...", "0xchild2..."] | null  // null for leaf chunks
@@ -1371,18 +1856,40 @@ Response (200 OK):
 Response (404 Not Found):
 { "error": "not_found" }
 
-Get Commitment
-──────────────
-GET /commitment?bucket_id=0x...
+Get Commitment (for challenge_offchain)
+───────────────────────────────────────
+GET /commitment?bucket_id=1234
 
 Response:
 {
-  "bucket_id": "0x1234...",
+  "bucket_id": 1234,
   "mmr_root": "0xfed...",
   "start_seq": 0,
   "leaf_count": 42,
   "provider_signature": "0x..."
 }
+
+Note: The returned signature covers a `CommitmentPayload` where `leaf_count`
+is set to 0, matching the pallet's `challenge_offchain` verification. Use
+`/checkpoint-signature` if you need a signature over the real `leaf_count`
+for the on-chain `checkpoint` extrinsic.
+
+Get Checkpoint Signature (for checkpoint extrinsic)
+───────────────────────────────────────────────────
+GET /checkpoint-signature?bucket_id=1234
+
+Response:
+{
+  "bucket_id": 1234,
+  "mmr_root": "0xfed...",
+  "start_seq": 0,
+  "leaf_count": 42,
+  "provider_signature": "0x..."
+}
+
+Note: Unlike `/commitment`, this signs the payload with the real
+`leaf_count` so the signature can be used as part of the
+`checkpoint`/`extend_checkpoint` signatures BoundedVec.
 
 Get MMR Proof
 ─────────────
@@ -1454,7 +1961,154 @@ GET /health
 
 Response (200 OK):
 { "status": "healthy", "version": "0.1.0" }
+
+Stats
+─────
+GET /stats
+
+Response:
+{
+  "provider_id": "5G...",            // SS58 address
+  "total_buckets": 3,
+  "total_nodes": 1234,
+  "total_bytes": 42949672960,
+  "buckets": [
+    { "bucket_id": 1234, "nodes": 500, "bytes": 21474836480, ... },
+    ...
+  ]
+}
+
+Note: Public observability endpoint. Useful for operators and the
+Prometheus/Grafana setup in `docs/`.
 ```
+
+### Provider-Initiated Checkpoint Coordination
+
+These endpoints back the autonomous checkpoint coordinator
+(`checkpoint_coordinator.rs`). Primary providers exchange signed
+`CheckpointProposal`s over HTTP, and one of them submits the
+`provider_checkpoint` extrinsic on-chain.
+
+```
+Sign a Checkpoint Proposal
+──────────────────────────
+POST /checkpoint/sign
+
+Request:
+{
+  "bucket_id": 1234,
+  "mmr_root": "0xfed...",
+  "start_seq": 0,
+  "leaf_count": 42,
+  "window": 7
+}
+
+Response (200 OK):
+{
+  "signer": "5G...",                 // this provider's SS58 address
+  "signature": "0x...",              // sr25519 over CheckpointProposal
+  "agreed": true,                    // false if local state diverges
+  "local_mmr_root": "0xfed..."       // included for divergence diagnostics
+}
+
+Note: If `agreed: false`, the signature is empty — the local view of the
+bucket doesn't match the proposal. Callers compare `local_mmr_root` to
+investigate divergence (e.g. one provider is behind).
+
+Get Checkpoint Duty
+───────────────────
+GET /checkpoint/duty?bucket_id=1234
+
+Response:
+{
+  "bucket_id": 1234,
+  "mmr_root": "0xfed...",
+  "start_seq": 0,
+  "leaf_count": 42,
+  "ready": true                      // false if leaf_count == 0
+}
+
+Trigger Checkpoint (operator-only)
+──────────────────────────────────
+POST /checkpoint/trigger?bucket_id=1234
+Authorization: Web3Storage <...>     # Admin
+
+Response:
+{
+  "bucket_id": 1234,
+  "triggered": true,
+  "message": "Checkpoint triggered for bucket 1234 with 42 leaves..."
+}
+
+Note: Sends a `ForceCheckpoint` command to the coordinator task. Requires the
+provider to have been launched with `--enable-checkpoint-coordinator`,
+otherwise returns 500. Mostly used in tests and manual recovery.
+```
+
+### Replica Sync Status
+
+```
+Get Historical Roots (informational)
+────────────────────────────────────
+GET /replica/historical_roots?bucket_id=1234
+
+Response:
+{
+  "bucket_id": 1234,
+  "current_root": "0xfed...",
+  "historical_roots": ["", "", "", "", "", ""],
+  "snapshot_block": 0
+}
+
+Note: Provider nodes do NOT track historical roots — only the chain does, in
+`Bucket.historical_roots`. This endpoint returns the local current MMR root
+and placeholder entries for the historical positions; clients building
+`confirm_replica_sync` calls should query the chain via runtime API.
+
+Get Replica Sync Status
+───────────────────────
+GET /replica/sync_status?bucket_id=1234
+
+Response:
+{
+  "bucket_id": 1234,
+  "local_mmr_root": "0xfed...",
+  "local_leaf_count": 42,
+  "last_sync_block": null,
+  "syncing": false
+}
+```
+
+### Layer 1 — File System & S3 Interfaces
+
+The provider node also serves the Layer 1 interfaces described in
+`docs/filesystems/` and `docs/design/marketplace.md`. These mount on top of
+the Layer 0 blob primitives and require Writer/Admin authorization for
+mutating routes.
+
+```
+S3-compatible object storage
+────────────────────────────
+PUT    /s3/:bucket_id/object?key=path/to/object
+GET    /s3/:bucket_id/object?key=path/to/object
+HEAD   /s3/:bucket_id/object?key=path/to/object
+DELETE /s3/:bucket_id/object?key=path/to/object
+GET    /s3/:bucket_id/objects                     # list
+GET    /s3/:bucket_id/index_root                  # current S3 index CID
+
+File system interface
+─────────────────────
+PUT    /fs/:bucket_id/file?path=/dir/file.txt
+GET    /fs/:bucket_id/file?path=/dir/file.txt
+DELETE /fs/:bucket_id/file?path=/dir/file.txt
+POST   /fs/:bucket_id/mkdir                       # body: { path: ... }
+GET    /fs/:bucket_id/ls?path=/dir
+GET    /fs/:bucket_id/index_root                  # current drive root CID
+```
+
+See [`docs/filesystems/API_REFERENCE.md`](../filesystems/API_REFERENCE.md) for
+the full Layer 1 contract (request/response shapes, error codes, manifest
+formats).
 
 ### Replica Sync API
 
@@ -1581,27 +2235,38 @@ confirm using an older historical root they successfully synced to.
 
 ### Signed Commitment
 
-```rust
-pub struct SignedCommitment {
-    pub payload: CommitmentPayload,
-    pub client_signature: Signature,
-    pub provider_signature: Signature,
-}
+Both payloads live in `storage_primitives` so the pallet, provider node, and
+client SDK encode/decode identically. They each carry a `version: u8`
+(currently `1`) for forward compatibility.
 
+```rust
 pub struct CommitmentPayload {
-    /// Protocol version for future compatibility
+    /// Protocol version for future compatibility (CURRENT_VERSION = 1)
     pub version: u8,
-    /// Reference to on-chain contract, or None for best-effort
-    pub bucket_id: Option<BucketId>,
+    /// Reference to on-chain bucket. Mandatory — there is no anonymous /
+    /// "best-effort" commitment mode in the current implementation.
+    pub bucket_id: BucketId,
     /// Root of MMR containing all data_roots
     pub mmr_root: H256,
     /// Sequence number of first leaf in this MMR
     pub start_seq: u64,
-    /// Number of leaves in this MMR
+    /// Number of leaves in this MMR. Conventionally 0 when the signature is
+    /// produced for `challenge_offchain`, so the same signature is reusable
+    /// across multiple challenged leaf indices.
     pub leaf_count: u64,
 }
-// Canonical range is [start_seq, start_seq + leaf_count)
-// Version field enables protocol evolution without breaking existing signatures
+
+pub struct CheckpointProposal {
+    pub version: u8,            // CURRENT_VERSION = 1
+    pub bucket_id: BucketId,
+    pub mmr_root: H256,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    /// Window number this proposal is for — prevents cross-window replay.
+    pub window: u64,
+}
+
+// Canonical range for both: [start_seq, start_seq + leaf_count)
 ```
 
 ### MMR Leaf
@@ -1759,9 +2424,3 @@ fn verify_challenge_response(
 ---
 
 ## Open Questions
-
-1. **Chunk size**: Fixed (256KB) or configurable?
-
-2. **MMR implementation**: Use `pallet-mmr` or custom?
-
-3. **Signature scheme**: Ed25519, Sr25519, or both?
