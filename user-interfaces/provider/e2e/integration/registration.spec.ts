@@ -53,8 +53,16 @@ test("fresh registration with Ferdie via wizard", async ({ localPage }) => {
   // After registration, the wizard redirects to SettingsManager (there's no
   // dedicated "complete" step — the Registered badge in the settings header
   // is the only "you're registered" notification the UI exposes).
+  //
+  // Budget: `submitRegisterProvider` submits two sequential extrinsics
+  // (`register_provider` + `update_provider_settings`) and awaits
+  // finalization on each (~24–36s per tx on a busy parachain), then
+  // `loadProviderData` runs another batch of queries before SettingsManager
+  // unblocks. Locally that's ~72s; on the CI parity-large runner it has
+  // run past 120s. 150s sits comfortably inside the 180s spec budget while
+  // absorbing the worst case.
   await expect(localPage.getByTestId("provider-registered-badge")).toBeVisible({
-    timeout: 120_000,
+    timeout: 150_000,
   });
 
   const onchain = await getApi().query.StorageProvider.Providers.getValue(Ferdie.address);
