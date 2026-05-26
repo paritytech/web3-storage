@@ -1068,6 +1068,31 @@ mod bucket_tests {
     }
 
     #[test]
+    fn last_admin_cannot_self_demote() {
+        new_test_ext().execute_with(|| {
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            // Admin 1 is the sole admin and cannot demote themselves.
+            assert_noop!(
+                StorageProvider::set_member(RuntimeOrigin::signed(1), 0, 1, Role::Writer),
+                Error::<Test>::LastAdminCannotBeRemoved
+            );
+        });
+    }
+
+    #[test]
+    fn last_admin_cannot_be_removed() {
+        new_test_ext().execute_with(|| {
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            assert_noop!(
+                StorageProvider::remove_member(RuntimeOrigin::signed(1), 0, 1),
+                Error::<Test>::LastAdminCannotBeRemoved
+            );
+        });
+    }
+
+    #[test]
     fn admin_can_demote_self() {
         new_test_ext().execute_with(|| {
             assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));

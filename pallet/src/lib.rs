@@ -762,6 +762,7 @@ pub mod pallet {
         NotBucketWriter,
         MemberNotFound,
         CannotDemoteAdmin,
+        LastAdminCannotBeRemoved,
         MaxMembersReached,
         MaxPrimaryProvidersReached,
         MinProvidersNotMet,
@@ -1440,16 +1441,16 @@ pub mod pallet {
 
                 Self::ensure_admin(&who, bucket)?;
 
-                // Find if member already exists
-                if let Some(existing) = bucket.members.iter_mut().find(|m| m.account == member) {
-                    // Cannot demote other admins (only yourself)
-                    // TODO(no-admin-left)
-                    // this allow the sole admin self-demote, potentially leaving
-                    // the bucket with no admins.
-                    if existing.role == Role::Admin && member != who {
-                        return Err(Error::<T>::CannotDemoteAdmin.into());
+                let (target_idx, target_is_admin, admin_count) =
+                    Self::locate_member(bucket, &member);
+                if let Some(idx) = target_idx {
+                    if target_is_admin && role != Role::Admin {
+                        // Admins can only demote themselves, never another admin.
+                        ensure!(member == who, Error::<T>::CannotDemoteAdmin);
+                        // And even self-demotion must leave at least one admin.
+                        ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
                     }
-                    existing.role = role;
+                    bucket.members[idx].role = role;
                 } else {
                     // Add new member
                     let new_member = Member {
@@ -1498,16 +1499,15 @@ pub mod pallet {
 
                 Self::ensure_admin(&who, bucket)?;
 
-                let member_idx = bucket
-                    .members
-                    .iter()
-                    .position(|m| m.account == member)
-                    .ok_or(Error::<T>::MemberNotFound)?;
+                let (target_idx, target_is_admin, admin_count) =
+                    Self::locate_member(bucket, &member);
+                let member_idx = target_idx.ok_or(Error::<T>::MemberNotFound)?;
 
-                // Cannot remove other admins
-                // TODO(no-admin-left)
-                if bucket.members[member_idx].role == Role::Admin && member != who {
-                    return Err(Error::<T>::CannotDemoteAdmin.into());
+                if target_is_admin {
+                    // Admins can only remove themselves, never another admin.
+                    ensure!(member == who, Error::<T>::CannotDemoteAdmin);
+                    // And even self-removal must leave at least one admin.
+                    ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
                 }
 
                 bucket.members.remove(member_idx);
@@ -3266,6 +3266,26 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Single `bucket.member` iteration to find `member` matching. Returns:
+        /// - the target member's index (if present),
+        /// - whether that member currently holds `Role::Admin`,
+        /// - the total number of admins in the bucket.
+        fn locate_member(bucket: &Bucket<T>, member: &T::AccountId) -> (Option<usize>, bool, u32) {
+            let mut target_idx = None;
+            let mut target_is_admin = false;
+            let mut admin_count: u32 = 0;
+            for (i, m) in bucket.members.iter().enumerate() {
+                if m.role == Role::Admin {
+                    admin_count = admin_count.saturating_add(1);
+                }
+                if &m.account == member {
+                    target_idx = Some(i);
+                    target_is_admin = m.role == Role::Admin;
+                }
+            }
+            (target_idx, target_is_admin, admin_count)
+        }
+
         fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
             ensure!(
                 bucket.members.iter().any(|m| &m.account == who
@@ -3300,12 +3320,16 @@ pub mod pallet {
 
                 Self::ensure_admin(caller, bucket)?;
 
-                if let Some(existing) = bucket.members.iter_mut().find(|m| m.account == member) {
-                    // TODO(no-admin-left)
-                    if existing.role == Role::Admin && member != *caller {
-                        return Err(Error::<T>::CannotDemoteAdmin.into());
+                let (target_idx, target_is_admin, admin_count) =
+                    Self::locate_member(bucket, &member);
+                if let Some(idx) = target_idx {
+                    if target_is_admin && role != Role::Admin {
+                        // Admins can only demote themselves, never another admin.
+                        ensure!(member == *caller, Error::<T>::CannotDemoteAdmin);
+                        // And even self-demotion must leave at least one admin.
+                        ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
                     }
-                    existing.role = role;
+                    bucket.members[idx].role = role;
                 } else {
                     let new_member = Member {
                         account: member.clone(),
@@ -3350,14 +3374,15 @@ pub mod pallet {
 
                 Self::ensure_admin(caller, bucket)?;
 
-                let member_idx = bucket
-                    .members
-                    .iter()
-                    .position(|m| m.account == member)
-                    .ok_or(Error::<T>::MemberNotFound)?;
+                let (target_idx, target_is_admin, admin_count) =
+                    Self::locate_member(bucket, &member);
+                let member_idx = target_idx.ok_or(Error::<T>::MemberNotFound)?;
 
-                if bucket.members[member_idx].role == Role::Admin && member != *caller {
-                    return Err(Error::<T>::CannotDemoteAdmin.into());
+                if target_is_admin {
+                    // Admins can only remove themselves, never another admin.
+                    ensure!(member == *caller, Error::<T>::CannotDemoteAdmin);
+                    // And even self-removal must leave at least one admin.
+                    ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
                 }
 
                 bucket.members.remove(member_idx);
