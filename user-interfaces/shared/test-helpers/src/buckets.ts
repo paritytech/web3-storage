@@ -44,6 +44,26 @@ export async function deleteBucketViaApi(signer: DevSigner, s3BucketId: bigint):
   );
 }
 
+/**
+ * Delete all object metadata in a bucket. The runtime rejects
+ * `delete_s3_bucket` while `object_count > 0`, so cleanup paths must
+ * drain the bucket first.
+ */
+async function purgeBucketObjects(signer: DevSigner, s3BucketId: bigint): Promise<void> {
+  const api = getApi();
+  const entries = await api.query.S3Registry.Objects.getEntries(s3BucketId);
+  for (const { keyArgs } of entries) {
+    const objectKey = keyArgs[1] as { asBytes: () => Uint8Array };
+    await submitExtrinsicBestBlock(
+      api.tx.S3Registry.delete_object_metadata({
+        s3_bucket_id: s3BucketId,
+        key: objectKey.asBytes(),
+      }),
+      signer.signer,
+    );
+  }
+}
+
 export async function cleanupBuckets(signer: DevSigner): Promise<number> {
   const api = getApi();
   const bucketIds = await api.query.S3Registry.UserBuckets.getValue(signer.address);
@@ -51,6 +71,7 @@ export async function cleanupBuckets(signer: DevSigner): Promise<number> {
   let deleted = 0;
   for (const id of bucketIds) {
     try {
+      await purgeBucketObjects(signer, id);
       await deleteBucketViaApi(signer, id);
       deleted++;
     } catch {
