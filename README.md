@@ -193,7 +193,12 @@ scalable-web3-storage/
 
 ### Prerequisites
 
-- Rust 1.74+ with wasm32-unknown-unknown target
+- Rust toolchain: 
+   ```toml
+   channel = "1.93.0"
+   targets = ["wasm32v1-none"]
+   components = ["clippy", "rust-src", "rustfmt"]
+   ```
 - Cargo
 
 ### Build
