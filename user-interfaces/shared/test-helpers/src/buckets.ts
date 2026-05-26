@@ -53,11 +53,10 @@ async function purgeBucketObjects(signer: DevSigner, s3BucketId: bigint): Promis
   const api = getApi();
   const entries = await api.query.S3Registry.Objects.getEntries(s3BucketId);
   for (const { keyArgs } of entries) {
-    const objectKey = keyArgs[1] as { asBytes: () => Uint8Array };
     await submitExtrinsicBestBlock(
       api.tx.S3Registry.delete_object_metadata({
         s3_bucket_id: s3BucketId,
-        key: objectKey.asBytes(),
+        key: keyArgs[1],
       }),
       signer.signer,
     );
