@@ -26,6 +26,7 @@ The contract's caller is computed by `AccountId32Mapper` (substrate-native, iden
 | --------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `0x0000000000000000000000000000000009010000`  | `Fixed(0x0901)`   | [`pallet-storage-provider-precompile`](../../precompiles/storage-provider-precompile)                 | `pallet_storage_provider`    |
 | `0x0000000000000000000000000000000009020000`  | `Fixed(0x0902)`   | [`pallet-drive-registry-precompile`](../../precompiles/drive-registry-precompile)                     | `pallet_drive_registry`      |
+| `0x0000000000000000000000000000000009030000`  | `Fixed(0x0903)`   | [`pallet-s3-registry-precompile`](../../precompiles/s3-registry-precompile)                           | `pallet_s3_registry`         |
 
 Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; pure stateless dispatch).
 
@@ -55,6 +56,17 @@ Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; 
 | `deleteDrive(uint64 driveId)`                                                                                         | `delete_drive`       |
 | `shareDrive(uint64 driveId, bytes32 member, uint8 role)`                                                              | `share_drive`        |
 | `unshareDrive(uint64 driveId, bytes32 member)`                                                                        | `unshare_drive`      |
+
+### `IS3Registry` (s3-registry, `0x…09030000`)
+
+| Selector                                                                                                                                 | Underlying extrinsic                |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `createS3Bucket(string name, uint32 minProviders) → uint64`                                                                              | `create_s3_bucket`                  |
+| `createS3BucketWithStorage(string name, uint64 maxCapacity, uint32 duration, uint128 maxPayment) → uint64`                               | `create_s3_bucket_with_storage`     |
+| `deleteS3Bucket(uint64 s3BucketId)`                                                                                                      | `delete_s3_bucket`                  |
+| `putObjectMetadata(uint64 s3BucketId, string key, bytes32 cid, uint64 size, string contentType)`                                         | `put_object_metadata` (no user metadata in v1) |
+| `deleteObjectMetadata(uint64 s3BucketId, string key)`                                                                                    | `delete_object_metadata`            |
+| `copyObjectMetadata(uint64 srcBucketId, string srcKey, uint64 dstBucketId, string dstKey)`                                               | `copy_object_metadata`              |
 
 ### Type encoding rules
 
@@ -106,12 +118,14 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
 
 ## Testing
 
-Two scripts cover the surface end-to-end:
+Four scripts cover the surface end-to-end:
 
-- **`just sc-demo`** (`examples/papi/sc-flow.js`) — exercises the full marketplace dApp story: deploy `StorageMarketplace.sol`, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
-- **`just sc-coverage`** (`examples/papi/sc-coverage.js`) — direct precompile invocations (no intermediate contract) for every selector in both precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
+- **`just sc-demo`** (`examples/papi/sc-flow.js`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
+- **`just sc-coverage`** (`examples/papi/sc-coverage.js`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
+- **`just sc-team-drive`** (`examples/papi/sc-team-drive.js`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
+- **`just sc-token-gated`** (`examples/papi/sc-token-gated.js`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.
 
-Both run in CI under `.github/workflows/integration-tests.yml` against both runtime matrix entries.
+All four run in CI under `.github/workflows/integration-tests.yml` against both runtime matrix entries.
 
 ## Limits and follow-ups
 
@@ -120,5 +134,6 @@ In v1:
 - **Provider-side selectors are not exposed.** `register_provider`, `add_stake`, `accept_agreement`, `respond_to_challenge`, `confirm_replica_sync`, `claim_checkpoint_rewards`, `fund_checkpoint_pool`, `deregister_*` all stay native — a dApp is a *user* of storage, not a provider.
 - **Checkpoint extrinsics are not exposed.** `checkpoint` / `provider_checkpoint` take `BucketSnapshot` + `MmrProof` + `Vec<Signature>` — the ABI design needs a follow-up.
 - **`challenge_offchain` is not exposed** (its `MerkleProof` argument needs the same treatment).
+- **S3 `put_object_metadata` drops user metadata in v1.** The Rust extrinsic takes `Vec<(Vec<u8>, Vec<u8>)>`; the Solidity ABI for nested dynamic-bytes tuples is awkward, so the precompile selector accepts no user metadata and always passes an empty vector. Use the substrate extrinsic directly if you need it.
 - **No `pallet_revive_eth_rpc` server.** PAPI drives revive directly via the substrate-native dispatchables (`call`, `instantiate_with_code`). A separate "real dApp UX" follow-up can ship the JSON-RPC node for MetaMask / viem / hardhat compatibility.
 - **No benchmarks for the precompile crates.** Weights borrow the underlying extrinsic's weight info.

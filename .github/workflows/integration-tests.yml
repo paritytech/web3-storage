@@ -223,6 +223,9 @@ jobs:
       - name: Run SharedTeamDrive dApp e2e
         run: just drain-tx-pool-then sc-team-drive "http://127.0.0.1:3333" "//Alice" "//Bob"
 
+      - name: Run TokenGatedDrive dApp e2e
+        run: just drain-tx-pool-then sc-token-gated "http://127.0.0.1:3333" "//Alice" "//Bob"
+
       - name: Stop services
         if: always()
         run: |

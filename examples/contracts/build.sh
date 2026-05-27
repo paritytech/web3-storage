@@ -30,8 +30,8 @@ cd "$SCRIPT_DIR"
 # `combined.json` too — `sc-coverage.js` calls the precompiles directly using
 # those ABIs, without an intermediate contract.
 resolc --combined-json abi,bin -O3 --overwrite -o "$BUILD_DIR" \
-    StorageMarketplace.sol SharedTeamDrive.sol \
-    IWeb3Storage.sol IDriveRegistry.sol
+    StorageMarketplace.sol SharedTeamDrive.sol TokenGatedDrive.sol \
+    IWeb3Storage.sol IDriveRegistry.sol IS3Registry.sol
 
 echo "Built artifacts:"
 ls -1 "$BUILD_DIR" | sed 's/^/  /'

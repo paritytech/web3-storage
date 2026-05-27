@@ -11,9 +11,21 @@
  */
 
 import { Binary } from "@polkadot-api/substrate-bindings";
-import { decodeEventLog, encodeFunctionData } from "viem";
+import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 
-import { requireOneEvent, submitTx, toHex } from "./common.js";
+import { hexToBytes, requireOneEvent, submitTx, toHex } from "./common.js";
+
+/**
+ * Compute the EVM-side H160 of a substrate account via `AccountId32Mapper`'s
+ * forward direction: `keccak256(account_bytes)[12..]`. Use this when you need
+ * the `address` view of a substrate-only account (e.g. minting an
+ * `address`-keyed token to `//Bob`).
+ */
+export function substrateToH160(publicKey) {
+  const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
+  const hash = hexToBytes(keccak256(bytes));
+  return "0x" + Buffer.from(hash.slice(12)).toString("hex");
+}
 
 /**
  * Generous defaults — pallet_revive bounds these at the runtime config level

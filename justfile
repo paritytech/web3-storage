@@ -204,6 +204,12 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/sc-team-drive.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
+# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
+# NFT-shaped access token per S3 object through the s3-registry precompile,
+# transfers + burns + shuts down.
+sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-token-gated.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
 # Wait until the parachain's transaction pool is empty (bounded ~60s, then
 # proceeds with a warning). Run between back-to-back integration tests so the
 # next step doesn't pick up an `accountNextIndex` that misses an in-flight tx
