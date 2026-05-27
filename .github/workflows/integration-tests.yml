@@ -220,6 +220,9 @@ jobs:
       - name: Run smart-contract precompile-coverage e2e
         run: just drain-tx-pool-then sc-coverage "http://127.0.0.1:3333" "//Alice" "//Bob"
 
+      - name: Run SharedTeamDrive dApp e2e
+        run: just drain-tx-pool-then sc-team-drive "http://127.0.0.1:3333" "//Alice" "//Bob"
+
       - name: Stop services
         if: always()
         run: |

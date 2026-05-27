@@ -193,11 +193,16 @@ sc-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": p
     node examples/papi/sc-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract precompile-coverage e2e: directly invokes every selector on
-# both precompiles (storage-provider + drive-registry) and asserts pallet
-# events/storage updated. No intermediate contract.
+# all three precompiles (storage-provider + drive-registry + s3-registry) and
+# asserts pallet events/storage updated. No intermediate contract.
 # Requires: chain + provider running, contracts built (`just build-contracts`).
 sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/sc-coverage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Smart-contract team-drive demo: deploys SharedTeamDrive, exercises
+# createTeam → invite → kick → disband through the drive-registry precompile.
+sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-team-drive.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Wait until the parachain's transaction pool is empty (bounded ~60s, then
 # proceeds with a warning). Run between back-to-back integration tests so the
