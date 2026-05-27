@@ -37,9 +37,10 @@ impl pallet_revive::Config for Runtime {
     type DepositPerChildTrieItem = DepositPerChildTrieItem;
     type DepositPerByte = DepositPerByte;
     type WeightInfo = pallet_revive::weights::SubstrateWeight<Self>;
-    // Empty in this commit; the storage-provider + drive-registry precompiles
-    // land in the next commit and wire themselves into this tuple.
-    type Precompiles = ();
+    type Precompiles = (
+        pallet_storage_provider_precompile::StorageProviderPrecompile<Self>,
+        pallet_drive_registry_precompile::DriveRegistryPrecompile<Self>,
+    );
     type AddressMapper = pallet_revive::AccountId32Mapper<Self>;
     type RuntimeMemory = ConstU32<{ 128 * 1024 * 1024 }>;
     type PVFMemory = ConstU32<{ 512 * 1024 * 1024 }>;

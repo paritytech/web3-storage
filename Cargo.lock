@@ -5481,6 +5481,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-drive-registry-precompile"
+version = "0.1.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-drive-registry",
+ "pallet-revive",
+ "pallet-storage-provider",
+ "parity-scale-codec",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "tracing",
+]
+
+[[package]]
 name = "pallet-election-provider-multi-phase"
 version = "45.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5796,6 +5812,21 @@ dependencies = [
  "sp-keystore",
  "sp-runtime",
  "storage-primitives",
+]
+
+[[package]]
+name = "pallet-storage-provider-precompile"
+version = "0.1.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-revive",
+ "pallet-storage-provider",
+ "parity-scale-codec",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+ "tracing",
 ]
 
 [[package]]
@@ -9525,11 +9556,13 @@ dependencies = [
  "pallet-balances",
  "pallet-collator-selection",
  "pallet-drive-registry",
+ "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
  "pallet-s3-registry",
  "pallet-session",
  "pallet-storage-provider",
+ "pallet-storage-provider-precompile",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",
@@ -9590,11 +9623,13 @@ dependencies = [
  "pallet-balances",
  "pallet-collator-selection",
  "pallet-drive-registry",
+ "pallet-drive-registry-precompile",
  "pallet-message-queue",
  "pallet-revive",
  "pallet-s3-registry",
  "pallet-session",
  "pallet-storage-provider",
+ "pallet-storage-provider-precompile",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",
