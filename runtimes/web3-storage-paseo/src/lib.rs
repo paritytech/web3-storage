@@ -20,6 +20,7 @@ pub mod fast_runtime_binary {
 
 mod genesis_config_presets;
 pub mod paseo_constants;
+mod revive;
 mod storage;
 mod weights;
 pub mod xcm_config;
@@ -27,7 +28,7 @@ pub mod xcm_config;
 extern crate alloc;
 
 use alloc::borrow::Cow;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
 use frame_support::{
@@ -55,7 +56,7 @@ use sp_runtime::{
     generic, impl_opaque_keys,
     traits::{BlakeTwo256, Block as BlockT, IdentifyAccount, Verify},
     transaction_validity::{TransactionSource, TransactionValidity},
-    ApplyExtrinsicResult, MultiSignature, SaturatedConversion,
+    ApplyExtrinsicResult, MultiSignature,
 };
 use sp_version::RuntimeVersion;
 #[cfg(feature = "runtime-benchmarks")]
@@ -85,7 +86,6 @@ use paseo_constants::{
         MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
-    fee::WEIGHT_FEE,
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
     time::HOURS,
 };
@@ -124,6 +124,11 @@ pub type SignedBlock = generic::SignedBlock<Block>;
 pub type BlockId = generic::BlockId<Block>;
 
 /// The SignedExtension to the basic transaction logic.
+///
+/// The trailing `pallet_revive::evm::tx_extension::SetOrigin` lets the runtime
+/// accept Ethereum-signed transactions via `pallet_revive::eth_transact` —
+/// `SetOrigin` recovers the signer's `H160` from the signature and maps it to
+/// a substrate `AccountId32` (see [`crate::revive::EthExtraImpl`]).
 pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
     Runtime,
     (
@@ -135,12 +140,19 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_system::CheckNonce<Runtime>,
         frame_system::CheckWeight<Runtime>,
         pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+        pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
     ),
 >;
 
 /// Unchecked extrinsic type as expected by this runtime.
-pub type UncheckedExtrinsic =
-    generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, TxExtension>;
+///
+/// Uses `pallet_revive`'s wrapper so the runtime accepts both substrate-signed
+/// and Ethereum-signed (RLP/EIP-1559) transactions.
+pub type UncheckedExtrinsic = pallet_revive::evm::runtime::UncheckedExtrinsic<
+    Address,
+    Signature,
+    crate::revive::EthExtraImpl,
+>;
 
 /// Executive: handles dispatch to the various modules.
 pub type Executive = frame_executive::Executive<
@@ -151,16 +163,16 @@ pub type Executive = frame_executive::Executive<
     AllPalletsWithSystem,
 >;
 
-/// Handles converting a weight scalar to a fee value, based on the scale and granularity of the
-/// node's balance type.
-pub struct WeightToFee;
-impl frame_support::weights::WeightToFee for WeightToFee {
-    type Balance = Balance;
-
-    fn weight_to_fee(weight: &Weight) -> Self::Balance {
-        Self::Balance::saturated_from(weight.ref_time()).saturating_mul(WEIGHT_FEE.saturated_into())
-    }
-}
+/// `pallet_revive` requires this specific `WeightToFee` shape: a
+/// `BlockRatioFee` parameterized by a per-cents target and an extrinsic-base
+/// scale. The assumption is enforced at compile time when `pallet_revive::Config`
+/// is implemented.
+pub type WeightToFee = pallet_revive::evm::fees::BlockRatioFee<
+    { crate::revive::CENTS },
+    { 100 * ExtrinsicBaseWeight::get().ref_time() as u128 },
+    Runtime,
+    Balance,
+>;
 
 impl_opaque_keys! {
     pub struct SessionKeys {
@@ -305,7 +317,10 @@ impl pallet_transaction_payment::Config for Runtime {
     type OnChargeTransaction = pallet_transaction_payment::FungibleAdapter<Balances, ()>;
     type WeightToFee = WeightToFee;
     type LengthToFee = ConstantMultiplier<Balance, TransactionByteFee>;
-    type FeeMultiplierUpdate = ();
+    // `pallet_revive`'s integrity check requires `FeeMultiplierUpdate::min()` to
+    // be non-zero (the gas-price derivation multiplies through it). `()` returns
+    // zero, so use the standard slow-adjusting curve from `polkadot-runtime-common`.
+    type FeeMultiplierUpdate = polkadot_runtime_common::SlowAdjustingFeeUpdate<Self>;
     type OperationalFeeMultiplier = ConstU8<5>;
     type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
 }
@@ -547,6 +562,10 @@ mod runtime {
     // S3 Registry (Layer 1: S3-Compatible Interface)
     #[runtime::pallet_index(52)]
     pub type S3Registry = pallet_s3_registry;
+
+    // Smart contracts (PolkaVM + EVM-compatible)
+    #[runtime::pallet_index(60)]
+    pub type Revive = pallet_revive;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {
@@ -569,6 +588,7 @@ mod benches {
         [pallet_storage_provider, StorageProvider]
         [pallet_drive_registry, DriveRegistry]
         [pallet_s3_registry, S3Registry]
+        [pallet_revive, Revive]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]
@@ -579,8 +599,18 @@ mod benches {
     );
 }
 
-// Runtime API implementations
-impl_runtime_apis! {
+// Runtime API implementations.
+//
+// `pallet_revive::impl_runtime_apis_plus_revive_traits!` is a superset of the
+// stock `impl_runtime_apis!` macro: it forwards the user-supplied impl blocks
+// and additionally generates the revive-specific runtime APIs (`ReviveApi`,
+// `eth_call`, `eth_transact`, etc.).
+pallet_revive::impl_runtime_apis_plus_revive_traits!(
+    Runtime,
+    Revive,
+    Executive,
+    crate::revive::EthExtraImpl,
+
     impl sp_api::Core<Block> for Runtime {
         fn version() -> RuntimeVersion {
             VERSION
@@ -1136,4 +1166,4 @@ impl_runtime_apis! {
             Executive::try_execute_block(block, state_root_check, signature_check, select).unwrap()
         }
     }
-}
+);

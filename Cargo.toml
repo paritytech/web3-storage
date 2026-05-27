@@ -61,6 +61,7 @@ pallet-authorship = { version = "46.0.0", default-features = false }
 pallet-balances = { version = "47.0.0", default-features = false }
 pallet-collator-selection = { version = "27.0.0", default-features = false }
 pallet-message-queue = { version = "49.0.0", default-features = false }
+pallet-revive = { version = "0.13.0", default-features = false }
 pallet-session = { version = "46.0.0", default-features = false }
 pallet-sudo = { version = "46.0.0", default-features = false }
 pallet-timestamp = { version = "45.0.0", default-features = false }

@@ -10,9 +10,9 @@ description = "Parachain runtime for scalable Web3 storage"
 [dependencies]
 # Internal
 storage-primitives = { workspace = true }
-pallet-storage-provider = { workspace = true }
 pallet-drive-registry = { workspace = true }
 pallet-s3-registry = { workspace = true }
+pallet-storage-provider = { workspace = true }
 
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
@@ -34,6 +34,7 @@ pallet-authorship = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-collator-selection = { workspace = true }
 pallet-message-queue = { workspace = true }
+pallet-revive = { workspace = true }
 pallet-session = { workspace = true }
 pallet-sudo = { workspace = true }
 pallet-timestamp = { workspace = true }
@@ -102,6 +103,7 @@ std = [
 	"pallet-balances/std",
 	"pallet-collator-selection/std",
 	"pallet-message-queue/std",
+	"pallet-revive/std",
 	"pallet-session/std",
 	"pallet-sudo/std",
 	"pallet-timestamp/std",
@@ -161,6 +163,7 @@ runtime-benchmarks = [
 	"pallet-collator-selection/runtime-benchmarks",
 	"pallet-drive-registry/runtime-benchmarks",
 	"pallet-message-queue/runtime-benchmarks",
+	"pallet-revive/runtime-benchmarks",
 	"pallet-s3-registry/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",
 	"pallet-storage-provider/runtime-benchmarks",
@@ -193,6 +196,7 @@ try-runtime = [
 	"pallet-balances/try-runtime",
 	"pallet-collator-selection/try-runtime",
 	"pallet-message-queue/try-runtime",
+	"pallet-revive/try-runtime",
 	"pallet-s3-registry/try-runtime",
 	"pallet-session/try-runtime",
 	"pallet-storage-provider/try-runtime",
