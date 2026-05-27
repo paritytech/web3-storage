@@ -25,7 +25,10 @@ const DEFAULT_GAS_LIMIT = {
   // Cap at ~half a block — block max is 2s × MaxEthExtrinsicWeight (9/10) = 1.8s;
   // staying well under prevents `Invalid::ExhaustsResources` rejection.
   ref_time: 1_000_000_000_000n, // 1s of ref_time
-  proof_size: 1_000_000n,
+  // Block PoV max is ~5 MiB. `deleteDrive` alone needs ~1 MiB of proof size
+  // (touches StorageProvider::MemberBuckets, StorageAgreements, etc.), so we
+  // budget generously — under the cap but well above the per-call needs.
+  proof_size: 4_000_000n,
 };
 const DEFAULT_STORAGE_DEPOSIT_LIMIT = 10n ** 18n; // 10^6 UNIT
 
