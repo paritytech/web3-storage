@@ -281,7 +281,7 @@ mod benchmarks {
     #[benchmark]
     fn create_bucket_with_storage() {
         // Create a provider first
-        let _provider = create_provider::<T>(0);
+        let provider = create_provider::<T>(0);
         let admin = funded_account::<T>("admin", 1);
 
         let max_bytes = 1_000u64;
@@ -291,6 +291,7 @@ mod benchmarks {
         #[extrinsic_call]
         create_bucket_with_storage(
             RawOrigin::Signed(admin),
+            provider,
             max_bytes,
             duration,
             max_price_per_byte,

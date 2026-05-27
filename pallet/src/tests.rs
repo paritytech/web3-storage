@@ -402,12 +402,6 @@ mod provider_tests {
                 StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0),
                 Error::<Test>::DeregisterAnnounced
             );
-
-            // Auto-match (find_matching_provider) skips deregistering
-            // providers — request_storage finds no candidate.
-            // (We don't have a public entry point that calls find_matching_provider
-            // directly without other setup; the unit-level guarantee is the
-            // skip branch we added at top of the loop.)
         });
     }
 
@@ -644,8 +638,8 @@ mod provider_tests {
                 200
             ));
 
-            // min_duration > max_duration would silently brick the provider
-            // out of `find_matching_provider`; reject it at the entry point.
+            // min_duration > max_duration would make the provider impossible to
+            // match against any duration; reject it at the entry point.
             let bad_settings = ProviderSettings {
                 min_duration: 1000u64,
                 max_duration: 10u64,
@@ -1609,9 +1603,10 @@ mod auto_matching_tests {
                 settings
             ));
 
-            // Create bucket with storage requirements
+            // Create bucket with storage requirements against the chosen provider
             assert_ok!(StorageProvider::create_bucket_with_storage(
                 RuntimeOrigin::signed(1),
+                2,   // explicitly selected provider
                 100, // max_bytes
                 100, // duration
                 10   // max_price_per_byte (higher than provider's price of 0)
@@ -1635,12 +1630,18 @@ mod auto_matching_tests {
     }
 
     #[test]
-    fn create_bucket_with_storage_fails_no_matching_provider() {
+    fn create_bucket_with_storage_fails_provider_not_found() {
         new_test_ext().execute_with(|| {
-            // No providers registered
+            // Provider 2 is not registered
             assert_noop!(
-                StorageProvider::create_bucket_with_storage(RuntimeOrigin::signed(1), 100, 100, 10),
-                Error::<Test>::NoMatchingProvider
+                StorageProvider::create_bucket_with_storage(
+                    RuntimeOrigin::signed(1),
+                    2,
+                    100,
+                    100,
+                    10
+                ),
+                Error::<Test>::ProviderNotFound
             );
         });
     }
@@ -1674,8 +1675,14 @@ mod auto_matching_tests {
             ));
 
             assert_noop!(
-                StorageProvider::create_bucket_with_storage(RuntimeOrigin::signed(1), 100, 100, 10),
-                Error::<Test>::NoMatchingProvider
+                StorageProvider::create_bucket_with_storage(
+                    RuntimeOrigin::signed(1),
+                    2,
+                    100,
+                    100,
+                    10
+                ),
+                Error::<Test>::ProviderNotAcceptingPrimary
             );
         });
     }
@@ -1710,11 +1717,12 @@ mod auto_matching_tests {
             assert_noop!(
                 StorageProvider::create_bucket_with_storage(
                     RuntimeOrigin::signed(1),
+                    2,
                     100,
                     100,
                     10 // max_price_per_byte is 10, but provider charges 100
                 ),
-                Error::<Test>::NoMatchingProvider
+                Error::<Test>::PriceExceedsMax
             );
         });
     }
@@ -1748,11 +1756,12 @@ mod auto_matching_tests {
             assert_noop!(
                 StorageProvider::create_bucket_with_storage(
                     RuntimeOrigin::signed(1),
+                    2,
                     100, // Needs 100 bytes
                     100,
                     10
                 ),
-                Error::<Test>::NoMatchingProvider
+                Error::<Test>::CapacityExceeded
             );
         });
     }
@@ -1786,22 +1795,23 @@ mod auto_matching_tests {
             assert_noop!(
                 StorageProvider::create_bucket_with_storage(
                     RuntimeOrigin::signed(1),
+                    2,
                     100,
                     100, // Duration of 100, below provider's min of 500
                     10
                 ),
-                Error::<Test>::NoMatchingProvider
+                Error::<Test>::DurationTooShort
             );
         });
     }
 
     #[test]
-    fn create_bucket_with_storage_selects_cheapest_provider() {
+    fn create_bucket_with_storage_honors_explicit_provider() {
         new_test_ext().execute_with(|| {
-            // Register two providers with different prices
+            // Register two eligible providers; the caller picks which one to use.
             let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
 
-            // Provider 2: expensive (price = 5) - but still affordable
+            // Provider 2: price = 5
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(2),
                 multiaddr.clone().try_into().unwrap(),
@@ -1822,7 +1832,7 @@ mod auto_matching_tests {
                 settings_expensive
             ));
 
-            // Provider 3: cheap (price = 0)
+            // Provider 3: price = 0
             assert_ok!(StorageProvider::register_provider(
                 RuntimeOrigin::signed(3),
                 multiaddr.try_into().unwrap(),
@@ -1843,18 +1853,20 @@ mod auto_matching_tests {
                 settings_cheap
             ));
 
-            // Create bucket - should match with cheaper provider (3)
+            // Caller explicitly selects provider 2, even though 3 is cheaper.
             // Use small values to keep payment low: 10 * 10 * 5 = 500 max
             assert_ok!(StorageProvider::create_bucket_with_storage(
                 RuntimeOrigin::signed(1),
+                2,  // explicitly selected provider
                 10, // max_bytes
                 10, // duration
                 10  // max_price_per_byte
             ));
 
-            // Verify matched with provider 3 (the cheaper one)
+            // Verify the bucket opened the agreement with the chosen provider (2).
             let bucket = Buckets::<Test>::get(0).unwrap();
-            assert_eq!(bucket.primary_providers[0], 3);
+            assert_eq!(bucket.primary_providers[0], 2);
+            assert!(StorageAgreements::<Test>::contains_key(0, 2));
         });
     }
 }

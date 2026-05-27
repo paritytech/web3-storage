@@ -44,7 +44,7 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
         ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
@@ -741,8 +741,7 @@ pub mod pallet {
         CapacityExceeded,
         /// Stake insufficient to back declared capacity.
         InsufficientStakeForCapacity,
-        /// Provider settings specify `min_duration > max_duration`, which
-        /// would silently brick the provider in `find_matching_provider`.
+        /// Provider settings specify `min_duration > max_duration
         MinDurationExceedsMaxDuration,
         /// Provider has already announced a deregistration; the action is
         /// rejected until they complete or cancel it.
@@ -835,9 +834,9 @@ pub mod pallet {
         /// Account is a member of too many buckets.
         TooManyBucketsForMember,
 
-        // Auto-matching errors
-        /// No provider found matching the storage requirements.
-        NoMatchingProvider,
+        /// The selected provider's price per byte exceeds the caller's
+        /// `max_price_per_byte`.
+        PriceExceedsMax,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1110,7 +1109,6 @@ pub mod pallet {
                     );
 
                     // Validate stake backs declared capacity
-                    use sp_runtime::traits::SaturatedConversion;
                     let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
                     let required_stake = T::MinStakePerByte::get()
                         .checked_mul(&capacity_as_balance)
@@ -1248,11 +1246,14 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Create a new bucket with storage requirements and auto-match to a provider.
+        /// Create a new bucket with storage and open an agreement with an
+        /// explicitly chosen provider in one atomic operation.
         ///
-        /// This is the preferred way to create a bucket with storage. The system
-        /// automatically finds a matching provider based on your requirements and
-        /// creates both the bucket and agreement in one atomic operation.
+        /// Callers discover providers off-chain via the `find_matching_providers`
+        /// runtime API, select one, and pass its account here. The pallet performs
+        /// an O(1) lookup of that single provider and re-validates every constraint
+        /// (active, accepting primary, duration, price, capacity, stake) before
+        /// opening the agreement — discovery is advisory, this is the source of truth.
         ///
         /// Providers who set `accepting_primary: true` have pre-consented to accepting
         /// agreements within their stated parameters (capacity, price, duration).
@@ -1260,15 +1261,59 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::create_bucket_with_storage())]
         pub fn create_bucket_with_storage(
             origin: OriginFor<T>,
+            provider: T::AccountId,
             max_bytes: u64,
             duration: BlockNumberFor<T>,
             max_price_per_byte: BalanceOf<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            // Find a matching provider
-            let (provider, provider_info) =
-                Self::find_matching_provider(max_bytes, duration, max_price_per_byte)?;
+            // O(1) lookup of the caller-selected provider, then re-validate every
+            // constraint against current chain state.
+            let provider_info =
+                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
+
+            // Must not be mid-deregistration.
+            Self::ensure_provider_active(&provider_info)?;
+
+            // Must be accepting primary agreements.
+            ensure!(
+                provider_info.settings.accepting_primary,
+                Error::<T>::ProviderNotAcceptingPrimary
+            );
+
+            // Requested duration must be within the provider's accepted range.
+            Self::validate_duration(&provider_info.settings, duration)?;
+
+            // Provider's price must not exceed the caller's ceiling.
+            ensure!(
+                provider_info.settings.price_per_byte <= max_price_per_byte,
+                Error::<T>::PriceExceedsMax
+            );
+
+            // Provider must have enough free capacity for the requested bytes.
+            let new_committed = provider_info
+                .committed_bytes
+                .checked_add(max_bytes)
+                .ok_or(Error::<T>::ArithmeticOverflow)?;
+            if provider_info.settings.max_capacity > 0 {
+                ensure!(
+                    new_committed <= provider_info.settings.max_capacity,
+                    Error::<T>::CapacityExceeded
+                );
+            }
+
+            // Provider must hold enough stake to back the new total commitment.
+            {
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let required_stake = T::MinStakePerByte::get()
+                    .checked_mul(&bytes_as_balance)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
+                ensure!(
+                    provider_info.stake >= required_stake,
+                    Error::<T>::InsufficientStakeForBytes
+                );
+            }
 
             // Calculate payment using provider's actual price
             let payment = Self::calculate_payment(
@@ -1807,7 +1852,6 @@ pub mod pallet {
 
             // Required stake = committed_bytes * min_stake_per_byte
             // Using saturated multiplication to avoid overflow
-            use sp_runtime::traits::SaturatedConversion;
             let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
             let required_stake = T::MinStakePerByte::get()
                 .checked_mul(&bytes_as_balance)
@@ -3419,7 +3463,6 @@ pub mod pallet {
         ) -> Result<BalanceOf<T>, DispatchError> {
             // payment = price_per_byte * max_bytes * duration
             // Use saturated_from for type conversions
-            use sp_runtime::traits::SaturatedConversion;
             let bytes_balance: BalanceOf<T> = max_bytes.saturated_into();
             let duration_u128: u128 = duration.saturated_into();
             let duration_balance: BalanceOf<T> = duration_u128.saturated_into();
@@ -3428,87 +3471,6 @@ pub mod pallet {
                 .checked_mul(&bytes_balance)
                 .and_then(|p| p.checked_mul(&duration_balance))
                 .ok_or(Error::<T>::ArithmeticOverflow.into())
-        }
-
-        /// Find a provider matching the storage requirements.
-        ///
-        /// Returns the best matching provider that:
-        /// - Is accepting primary agreements
-        /// - Has sufficient available capacity
-        /// - Has price at or below max_price_per_byte
-        /// - Accepts the requested duration
-        /// - Has sufficient stake to back the additional bytes
-        fn find_matching_provider(
-            bytes_needed: u64,
-            duration: BlockNumberFor<T>,
-            max_price_per_byte: BalanceOf<T>,
-        ) -> Result<(T::AccountId, ProviderInfo<T>), DispatchError> {
-            use sp_runtime::traits::SaturatedConversion;
-
-            let mut best_match: Option<(T::AccountId, ProviderInfo<T>, BalanceOf<T>)> = None;
-
-            for (account, info) in Providers::<T>::iter() {
-                // Skip providers in the middle of deregistering. The flag
-                // check below also catches this (announce forces it false),
-                // but check explicitly so we don't depend on flag-mutation
-                // ordering for the security guarantee.
-                if info.deregister_at.is_some() {
-                    continue;
-                }
-
-                // Must be accepting primary agreements
-                if !info.settings.accepting_primary {
-                    continue;
-                }
-
-                // Check duration constraints
-                if duration < info.settings.min_duration || duration > info.settings.max_duration {
-                    continue;
-                }
-
-                // Check price constraint
-                if info.settings.price_per_byte > max_price_per_byte {
-                    continue;
-                }
-
-                // Check capacity constraint
-                let max_capacity = info.settings.max_capacity;
-                if max_capacity > 0 {
-                    let available = max_capacity.saturating_sub(info.committed_bytes);
-                    if available < bytes_needed {
-                        continue;
-                    }
-                }
-
-                // Check stake constraint (can they back the additional bytes?)
-                let new_committed = info.committed_bytes.saturating_add(bytes_needed);
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                if let Some(required_stake) =
-                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
-                {
-                    if info.stake < required_stake {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-
-                // This provider matches! Track best by lowest price
-                let price = info.settings.price_per_byte;
-                match &best_match {
-                    None => {
-                        best_match = Some((account, info, price));
-                    }
-                    Some((_, _, best_price)) if price < *best_price => {
-                        best_match = Some((account, info, price));
-                    }
-                    _ => {}
-                }
-            }
-
-            best_match
-                .map(|(account, info, _)| (account, info))
-                .ok_or(Error::<T>::NoMatchingProvider.into())
         }
 
         fn finalize_agreement(
@@ -3633,7 +3595,6 @@ pub mod pallet {
                 let refund_to_owner = if remaining_blocks > Zero::zero() {
                     let total_duration = agreement.expires_at.saturating_sub(agreement.started_at);
                     if total_duration > Zero::zero() {
-                        use sp_runtime::traits::SaturatedConversion;
                         let remaining_u128: u128 = remaining_blocks.saturated_into();
                         let total_u128: u128 = total_duration.saturated_into();
                         let payment_u128: u128 = agreement.payment_locked.saturated_into();
@@ -3885,7 +3846,6 @@ pub mod pallet {
         ///
         /// Window 0 starts at block 0, window 1 at block `interval`, etc.
         fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
-            use sp_runtime::traits::SaturatedConversion;
             if interval.is_zero() {
                 return 0;
             }
@@ -3896,7 +3856,6 @@ pub mod pallet {
 
         /// Calculate the start block for a given checkpoint window.
         fn window_start_block(window: u64, interval: BlockNumberFor<T>) -> BlockNumberFor<T> {
-            use sp_runtime::traits::SaturatedConversion;
             let interval_num: u64 = interval.saturated_into();
             let start: u64 = window.saturating_mul(interval_num);
             start.saturated_into()
@@ -3952,8 +3911,6 @@ pub mod pallet {
         pub fn query_provider_info(
             provider: &T::AccountId,
         ) -> Option<crate::runtime_api::ProviderInfoResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::get(provider).map(|info| {
                 let max_capacity = info.settings.max_capacity;
                 let available_capacity = if max_capacity > 0 {
@@ -3994,8 +3951,6 @@ pub mod pallet {
             offset: u32,
             limit: u32,
         ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::iter()
                 .skip(offset as usize)
                 .take(limit as usize)
@@ -4042,8 +3997,6 @@ pub mod pallet {
         pub fn query_bucket_info(
             bucket_id: BucketId,
         ) -> Option<crate::runtime_api::BucketResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Buckets::<T>::get(bucket_id).map(|bucket| crate::runtime_api::BucketResponse {
                 bucket_id,
                 members: bucket
@@ -4084,8 +4037,6 @@ pub mod pallet {
             bucket_id: BucketId,
             provider: &T::AccountId,
         ) -> Option<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
                 crate::runtime_api::AgreementResponse {
                     owner: agreement.owner.encode(),
@@ -4119,8 +4070,6 @@ pub mod pallet {
         pub fn query_bucket_agreements(
             bucket_id: BucketId,
         ) -> Vec<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::iter_prefix(bucket_id)
                 .map(
                     |(provider, agreement)| crate::runtime_api::AgreementResponse {
@@ -4164,8 +4113,6 @@ pub mod pallet {
         pub fn query_provider_agreements(
             provider: &T::AccountId,
         ) -> Vec<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
                 .map(
@@ -4202,8 +4149,6 @@ pub mod pallet {
         pub fn query_challenges_at(
             block: BlockNumberFor<T>,
         ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Challenges::<T>::get(block)
                 .unwrap_or_default()
                 .iter()
@@ -4223,8 +4168,6 @@ pub mod pallet {
 
         /// Check if provider can accept additional bytes.
         pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
-            use sp_runtime::traits::SaturatedConversion;
-
             if let Some(provider_info) = Providers::<T>::get(provider) {
                 let new_committed_bytes = provider_info
                     .committed_bytes
@@ -4519,7 +4462,6 @@ pub mod pallet {
             limit: u32,
         ) -> Vec<crate::runtime_api::MatchedProvider> {
             use crate::runtime_api::{MatchedProvider, PartialMatchReason};
-            use sp_runtime::traits::SaturatedConversion;
 
             let mut results: Vec<MatchedProvider> = Vec::new();
 
@@ -4636,8 +4578,6 @@ pub mod pallet {
             offset: u32,
             limit: u32,
         ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::iter()
                 .filter(|(_, info)| {
                     // Check accepting status
