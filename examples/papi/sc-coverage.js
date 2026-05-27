@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   acceptAgreement,
-  challengeOffchain, // unused: kept for parity with full-flow.js patterns
   fetchCheckpointSignature,
   respondToChallenge,
   submitClientCheckpoint,
@@ -237,6 +236,7 @@ async function main() {
     );
     const createdC = assertEvent(r.events, "StorageProvider", "BucketCreated", "createBucketWithStorage");
     const bucketC = createdC.bucket_id;
+    assert.strictEqual(bucketC, nextBucketBefore);
     console.log("  bucketC =", bucketC.toString());
 
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");

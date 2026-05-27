@@ -32,7 +32,6 @@ import {
   makeSigner,
   parseProviderClientArgs,
   requireOneEvent,
-  toHex,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
