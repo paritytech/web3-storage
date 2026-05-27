@@ -201,6 +201,25 @@ jobs:
       - name: Run PAPI drive-lifecycle demo
         run: just drain-tx-pool-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
 
+      - name: Install solc and resolc for smart-contract demo
+        run: |
+          curl -L -o /usr/local/bin/solc \
+            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"
+          curl -L -o /usr/local/bin/resolc \
+            "https://github.com/paritytech/revive/releases/download/v${RESOLC_VERSION}/resolc-x86_64-unknown-linux-musl"
+          chmod +x /usr/local/bin/solc /usr/local/bin/resolc
+          solc --version
+          resolc --version
+
+      - name: Build example marketplace contract
+        run: just build-contracts
+
+      - name: Run smart-contract end-to-end demo
+        run: just drain-tx-pool-then sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run smart-contract precompile-coverage e2e
+        run: just drain-tx-pool-then sc-coverage "http://127.0.0.1:3333" "//Alice" "//Bob"
+
       - name: Stop services
         if: always()
         run: |
