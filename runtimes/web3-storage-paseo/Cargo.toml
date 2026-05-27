@@ -13,6 +13,7 @@ storage-primitives = { workspace = true }
 pallet-drive-registry = { workspace = true }
 pallet-drive-registry-precompile = { workspace = true }
 pallet-s3-registry = { workspace = true }
+pallet-s3-registry-precompile = { workspace = true }
 pallet-storage-provider = { workspace = true }
 pallet-storage-provider-precompile = { workspace = true }
 
@@ -94,6 +95,7 @@ std = [
 	"codec/std",
 	"pallet-drive-registry-precompile/std",
 	"pallet-drive-registry/std",
+	"pallet-s3-registry-precompile/std",
 	"pallet-s3-registry/std",
 	"pallet-storage-provider-precompile/std",
 	"pallet-storage-provider/std",
@@ -177,6 +179,7 @@ runtime-benchmarks = [
 	"pallet-drive-registry/runtime-benchmarks",
 	"pallet-message-queue/runtime-benchmarks",
 	"pallet-revive/runtime-benchmarks",
+	"pallet-s3-registry-precompile/runtime-benchmarks",
 	"pallet-s3-registry/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",
 	"pallet-storage-provider-precompile/runtime-benchmarks",
@@ -212,6 +215,7 @@ try-runtime = [
 	"pallet-drive-registry-precompile/try-runtime",
 	"pallet-message-queue/try-runtime",
 	"pallet-revive/try-runtime",
+	"pallet-s3-registry-precompile/try-runtime",
 	"pallet-s3-registry/try-runtime",
 	"pallet-session/try-runtime",
 	"pallet-storage-provider-precompile/try-runtime",

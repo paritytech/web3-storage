@@ -11,6 +11,7 @@ members = [
 
 	# Smart-contract precompiles (pallet_revive integration)
 	"precompiles/drive-registry-precompile",
+	"precompiles/s3-registry-precompile",
 	"precompiles/storage-provider-precompile",
 
 	# Storage Interfaces: File System Interface
@@ -33,6 +34,7 @@ repository = "https://github.com/parity/scalable-web3-storage"
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompile", default-features = false }
+pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
 storage-client = { path = "client" }

@@ -40,6 +40,7 @@ impl pallet_revive::Config for Runtime {
     type Precompiles = (
         pallet_storage_provider_precompile::StorageProviderPrecompile<Self>,
         pallet_drive_registry_precompile::DriveRegistryPrecompile<Self>,
+        pallet_s3_registry_precompile::S3RegistryPrecompile<Self>,
     );
     type AddressMapper = pallet_revive::AccountId32Mapper<Self>;
     type RuntimeMemory = ConstU32<{ 128 * 1024 * 1024 }>;

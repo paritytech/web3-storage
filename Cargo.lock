@@ -5722,6 +5722,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-s3-registry-precompile"
+version = "0.1.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-revive",
+ "pallet-s3-registry",
+ "pallet-storage-provider",
+ "parity-scale-codec",
+ "sp-core",
+ "sp-runtime",
+ "tracing",
+]
+
+[[package]]
 name = "pallet-session"
 version = "46.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9560,6 +9575,7 @@ dependencies = [
  "pallet-message-queue",
  "pallet-revive",
  "pallet-s3-registry",
+ "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",
@@ -9627,6 +9643,7 @@ dependencies = [
  "pallet-message-queue",
  "pallet-revive",
  "pallet-s3-registry",
+ "pallet-s3-registry-precompile",
  "pallet-session",
  "pallet-storage-provider",
  "pallet-storage-provider-precompile",
