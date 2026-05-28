@@ -47,7 +47,7 @@ pub mod pallet {
     use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplayWindow, ReplicaRequestParams, Role,
+        ProviderRole, RemovalReason, ReplayError, ReplayWindow, ReplicaRequestParams, Role,
         HISTORICAL_ROOT_PRIMES,
     };
 
@@ -170,7 +170,7 @@ pub mod pallet {
 
     /// Per-provider sliding replay window over signed agreement-term nonces.
     /// See [`storage_primitives::ReplayWindow`] for the bit layout and
-    /// `establish_agreement` for how the window is enforced.
+    /// `establish_storage_agreement` for how the window is enforced.
     #[pallet::storage]
     pub type ProviderReplayState<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
@@ -679,6 +679,15 @@ pub mod pallet {
             provider: T::AccountId,
             payment_to_provider: BalanceOf<T>,
         },
+        /// Owner redeemed provider-signed terms; bucket created and agreement
+        /// opened atomically.
+        StorageAgreementEstablished {
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            owner: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            expires_at: BlockNumberFor<T>,
+        },
 
         // Challenge events
         ChallengeCreated {
@@ -853,6 +862,20 @@ pub mod pallet {
         /// The selected provider's price per byte exceeds the caller's
         /// `max_price_per_byte`.
         PriceExceedsMax,
+
+        // establish_storage_agreement errors
+        /// Provider signature over the SCALE-encoded terms is invalid.
+        InvalidProviderSignature,
+        /// Signed terms have passed their `valid_until` block.
+        TermsExpired,
+        /// The terms' nonce has already been consumed inside the provider's
+        /// replay window.
+        NonceAlreadyUsed,
+        /// The terms' nonce is older than the provider's replay window
+        /// (distance from `hwm` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
+        NonceTooOld,
+        /// The terms' declared owner does not match the extrinsic origin.
+        TermsOwnerMismatch,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1423,6 +1446,27 @@ pub mod pallet {
                 provider,
             });
 
+            Ok(())
+        }
+
+        /// Redeem provider-signed terms: create a bucket + primary agreement
+        /// in a single call.
+        ///
+        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;
+        /// the owner submits it here. The pallet verifies the signature,
+        /// rejects replays via the provider's sliding nonce window, then runs
+        /// the standard provider/capacity/stake checks and opens the
+        /// agreement.
+        #[pallet::call_index(17)]
+        #[pallet::weight(10_000)]
+        pub fn establish_storage_agreement(
+            origin: OriginFor<T>,
+            provider: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig)?;
             Ok(())
         }
 
@@ -3315,6 +3359,45 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Verify a provider signature over a SCALE-encoded
+        /// [`AgreementTermsOf<T>`]. The signed payload is
+        /// `blake2_256(terms.encode())`.
+        fn verify_terms_signature(
+            provider_info: &ProviderInfo<T>,
+            terms: &AgreementTermsOf<T>,
+            sig: &sp_runtime::MultiSignature,
+        ) -> DispatchResult {
+            use sp_runtime::traits::Verify;
+
+            let public_key_bytes = provider_info.public_key.as_slice();
+            let account_id = match sig {
+                sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
+                    ensure!(
+                        public_key_bytes.len() == 32,
+                        Error::<T>::InvalidPublicKey
+                    );
+                    let mut key_bytes = [0u8; 32];
+                    key_bytes.copy_from_slice(public_key_bytes);
+                    sp_runtime::AccountId32::new(key_bytes)
+                }
+                sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
+                    ensure!(
+                        public_key_bytes.len() == 33,
+                        Error::<T>::InvalidPublicKey
+                    );
+                    let hash = sp_io::hashing::blake2_256(public_key_bytes);
+                    sp_runtime::AccountId32::new(hash)
+                }
+            };
+
+            let hash = sp_io::hashing::blake2_256(&terms.encode());
+            ensure!(
+                sig.verify(&hash[..], &account_id),
+                Error::<T>::InvalidProviderSignature
+            );
+            Ok(())
+        }
+
         fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
             ensure!(
                 bucket
@@ -4260,6 +4343,153 @@ pub mod pallet {
             Self::deposit_event(Event::BucketCreated {
                 bucket_id,
                 admin: admin.clone(),
+            });
+
+            Ok(bucket_id)
+        }
+
+        /// Redeem provider-signed terms (used directly by the
+        /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
+        /// fold bucket creation into their own flows).
+        ///
+        /// Verifies the signature, advances the provider's replay window,
+        /// then runs the same provider/capacity/stake checks as
+        /// `create_bucket_with_storage` before creating the bucket + primary
+        /// agreement.
+        pub fn establish_storage_agreement_internal(
+            owner: &T::AccountId,
+            provider: &T::AccountId,
+            terms: AgreementTermsOf<T>,
+            sig: &sp_runtime::MultiSignature,
+        ) -> Result<BucketId, DispatchError> {
+            // Origin must match the owner the provider signed for.
+            ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
+
+            // Quote must not be stale.
+            let current_block = frame_system::Pallet::<T>::block_number();
+            ensure!(
+                terms.valid_until >= current_block,
+                Error::<T>::TermsExpired
+            );
+
+            // Provider lookup + signature check over blake2_256(SCALE(terms)).
+            let provider_info =
+                Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
+            Self::verify_terms_signature(&provider_info, &terms, sig)?;
+
+            // Replay window: at most once per nonce, within the trailing 256 slots.
+            ProviderReplayState::<T>::try_mutate(provider, |window| -> DispatchResult {
+                window.try_accept(terms.nonce).map_err(|e| match e {
+                    ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
+                    ReplayError::TooOld => Error::<T>::NonceTooOld,
+                })?;
+                Ok(())
+            })?;
+
+            // Validate on-chain provider's state then create bucket
+            Self::ensure_provider_active(&provider_info)?;
+            ensure!(
+                provider_info.settings.accepting_primary,
+                Error::<T>::ProviderNotAcceptingPrimary
+            );
+            Self::validate_duration(&provider_info.settings, terms.duration)?;
+            ensure!(
+                provider_info.settings.price_per_byte <= terms.price_per_byte,
+                Error::<T>::PriceExceedsMax
+            );
+
+            let new_committed = provider_info
+                .committed_bytes
+                .checked_add(terms.max_bytes)
+                .ok_or(Error::<T>::ArithmeticOverflow)?;
+            if provider_info.settings.max_capacity > 0 {
+                ensure!(
+                    new_committed <= provider_info.settings.max_capacity,
+                    Error::<T>::CapacityExceeded
+                );
+            }
+
+            {
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let required_stake = T::MinStakePerByte::get()
+                    .checked_mul(&bytes_as_balance)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
+                ensure!(
+                    provider_info.stake >= required_stake,
+                    Error::<T>::InsufficientStakeForBytes
+                );
+            }
+
+            // Pay at the price the provider signed for.
+            let payment =
+                Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+            T::Currency::reserve(owner, payment)?;
+
+            // Bucket creation folded in: owner is sole admin, provider is the
+            // bucket's single primary.
+            let bucket_id = NextBucketId::<T>::get();
+            NextBucketId::<T>::put(bucket_id.saturating_add(1));
+
+            let admin_member = Member {
+                account: owner.clone(),
+                role: Role::Admin,
+            };
+            let mut members = BoundedVec::new();
+            members
+                .try_push(admin_member)
+                .map_err(|_| Error::<T>::MaxMembersReached)?;
+            let mut primary_providers = BoundedVec::new();
+            primary_providers
+                .try_push(provider.clone())
+                .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
+
+            let bucket = Bucket {
+                members,
+                frozen_start_seq: None,
+                min_providers: 1,
+                primary_providers,
+                snapshot: None,
+                historical_roots: [(0, H256::zero()); 6],
+                total_snapshots: 0,
+            };
+            Buckets::<T>::insert(bucket_id, bucket);
+
+            MemberBuckets::<T>::try_mutate(owner, |buckets| {
+                buckets
+                    .try_push(bucket_id)
+                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
+            })?;
+
+            let expires_at = current_block.saturating_add(terms.duration);
+            let agreement = StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
+                payment_locked: payment,
+                price_per_byte: terms.price_per_byte,
+                expires_at,
+                extensions_blocked: false,
+                role: ProviderRole::Primary,
+                started_at: current_block,
+            };
+
+            Providers::<T>::mutate(provider, |maybe_provider| {
+                if let Some(p) = maybe_provider {
+                    p.committed_bytes = p.committed_bytes.saturating_add(terms.max_bytes);
+                    p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                }
+            });
+            StorageAgreements::<T>::insert(bucket_id, provider, agreement);
+
+            Self::deposit_event(Event::BucketCreated {
+                bucket_id,
+                admin: owner.clone(),
+            });
+            Self::deposit_event(Event::StorageAgreementEstablished {
+                bucket_id,
+                provider: provider.clone(),
+                owner: owner.clone(),
+                terms,
+                expires_at,
             });
 
             Ok(bucket_id)

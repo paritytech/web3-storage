@@ -17,7 +17,7 @@ pub mod agreement_term;
 pub mod provider_replay_state;
 
 pub use agreement_term::AgreementTerms;
-pub use provider_replay_state::{ReplayWindow, REPLAY_WINDOW_BITS};
+pub use provider_replay_state::{ReplayError, ReplayWindow, REPLAY_WINDOW_BITS};
 
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.

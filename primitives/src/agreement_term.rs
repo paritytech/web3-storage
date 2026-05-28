@@ -2,7 +2,7 @@
 //!
 //! A provider quotes terms off-chain (e.g. over HTTP) and signs the SCALE
 //! encoding of an `AgreementTerms` value. The owner then submits the signed
-//! terms on-chain via `establish_agreement`, which verifies the signature,
+//! terms on-chain via `establish_storage_agreement`, which verifies the signature,
 //! checks the replay window (see [`crate::provider_replay_state`]), and
 //! creates the bucket + agreement atomically.
 
