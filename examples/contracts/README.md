@@ -16,7 +16,7 @@ Two binaries must be on `PATH`:
 
 | Tool     | Version target          | Where to get it                                                 |
 |----------|-------------------------|------------------------------------------------------------------|
-| `solc`   | 0.8.x                   | https://github.com/ethereum/solidity/releases                    |
+| `solc`   | 0.8.x ≤ 0.8.34          | https://github.com/ethereum/solidity/releases                    |
 | `resolc` | matches `pallet-revive` | https://github.com/paritytech/revive/releases                    |
 
 The exact pinned versions live in `.github/env` and are installed identically in CI (`SOLC_VERSION`, `RESOLC_VERSION`).
