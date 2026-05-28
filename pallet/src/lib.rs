@@ -47,11 +47,20 @@ pub mod pallet {
     use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
+        ProviderRole, RemovalReason, ReplayWindow, ReplicaRequestParams, Role,
+        HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
+    /// Provider-signed agreement quote bound to this pallet's account, balance,
+    /// and block-number types.
+    pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
+        <T as frame_system::Config>::AccountId,
+        BalanceOf<T>,
+        BlockNumberFor<T>,
+    >;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -158,6 +167,13 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn providers)]
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
+
+    /// Per-provider sliding replay window over signed agreement-term nonces.
+    /// See [`storage_primitives::ReplayWindow`] for the bit layout and
+    /// `establish_agreement` for how the window is enforced.
+    #[pallet::storage]
+    pub type ProviderReplayState<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
 
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]

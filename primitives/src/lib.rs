@@ -13,6 +13,12 @@ use core::fmt::Debug;
 use scale_info::TypeInfo;
 use sp_core::H256;
 
+pub mod agreement_term;
+pub mod provider_replay_state;
+
+pub use agreement_term::AgreementTerms;
+pub use provider_replay_state::{ReplayWindow, REPLAY_WINDOW_BITS};
+
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
