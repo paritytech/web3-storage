@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import {
   connect,
   ensureProviderRegistered,
+  ensureSoleAcceptingProvider,
   hexToBytes,
   makeSigner,
   parseProviderClientArgs,
@@ -80,6 +81,7 @@ async function main() {
       pricePerByte: 1n,
       maxDuration: 100_000,
     });
+    await ensureSoleAcceptingProvider(api, provider);
     await ensureAccountMapped(api, provider);
     await ensureAccountMapped(api, publisher);
     await ensureAccountMapped(api, recipient);

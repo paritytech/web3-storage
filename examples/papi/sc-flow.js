@@ -36,6 +36,7 @@ import {
 import {
   connect,
   ensureProviderRegistered,
+  ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
   requireOneEvent,
@@ -91,11 +92,16 @@ async function main() {
     //    also have to register both the deployer and caller with pallet_revive
     //    (`map_account`) — substrate-native accounts can't dispatch contract
     //    calls or be the target of value transfers until they're mapped.
+    // 1) Provider setup. Sets accepting_primary so create_bucket_with_storage
+    //    can auto-match, and silences every other dev-key provider so the
+    //    auto-match is deterministic (in CI other demos register //Charlie
+    //    and //Ferdie before this script runs).
     console.log("\n[1/6] Provider setup + Revive account mapping…");
     await ensureProviderRegistered(api, provider, PROVIDER_URL, {
       pricePerByte: 1n,
       maxDuration: 100_000,
     });
+    await ensureSoleAcceptingProvider(api, provider);
     await ensureAccountMapped(api, provider);
     await ensureAccountMapped(api, client);
 

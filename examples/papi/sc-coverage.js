@@ -33,6 +33,7 @@ import {
 import {
   connect,
   ensureProviderRegistered,
+  ensureSoleAcceptingProvider,
   hexToBytes,
   makeSigner,
   parseProviderClientArgs,
@@ -95,11 +96,16 @@ async function main() {
     const iDrive = combined.contracts["IDriveRegistry.sol:IDriveRegistry"].abi;
 
     // -------- Setup --------------------------------------------------------
+    // Silence any other dev-key providers (Charlie/Ferdie may have been
+    // registered by earlier demos in the CI matrix) so create_bucket_with_storage
+    // auto-matching is deterministic and the substrate-side challenge lookups
+    // at (bucket_id, provider) hit the agreement we just created.
     console.log("\n[setup] provider + account mapping…");
     await ensureProviderRegistered(api, provider, providerUrl, {
       pricePerByte: 1n,
       maxDuration: 100_000,
     });
+    await ensureSoleAcceptingProvider(api, provider);
     await ensureAccountMapped(api, provider);
     await ensureAccountMapped(api, client);
     await ensureAccountMapped(api, member);
