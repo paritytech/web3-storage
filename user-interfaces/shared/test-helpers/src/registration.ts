@@ -1,5 +1,20 @@
+import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
 import { devSigners, type DevAccountName, type DevSigner } from "./signers";
+
+/**
+ * Hex-encode an account's raw 32-byte public key. PAPI returns
+ * `getEntries()` keys in the chain's SS58 prefix (42 on the local
+ * runtime, 0 on paseo) while `signers.ts` builds dev-signer addresses
+ * with prefix 0 — string equality then fails on local. Compare via raw
+ * bytes so the helper works against either runtime.
+ */
+function publicKeyHex(address: string): string {
+  const [bytes] = ss58Decode(address);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export interface ProviderSettings {
   min_duration: number;
@@ -120,17 +135,17 @@ export async function cleanProviderRegistry(
   keepAccounts: DevSigner[],
 ): Promise<void> {
   const api = getApi();
-  const keep = new Set(keepAccounts.map((a) => a.address));
+  const keep = new Set(keepAccounts.map((a) => publicKeyHex(a.address)));
   const knownDev: Record<string, DevSigner> = {};
   for (const name of Object.keys(devSigners) as DevAccountName[]) {
-    knownDev[devSigners[name].address] = devSigners[name];
+    knownDev[publicKeyHex(devSigners[name].address)] = devSigners[name];
   }
 
   const entries = await api.query.StorageProvider.Providers.getEntries();
   for (const { keyArgs, value } of entries) {
-    const address = keyArgs[0] as string;
-    if (keep.has(address)) continue;
-    const signer = knownDev[address];
+    const pk = publicKeyHex(keyArgs[0] as string);
+    if (keep.has(pk)) continue;
+    const signer = knownDev[pk];
     if (!signer) continue;
     const provider = value as {
       committed_bytes: bigint;
