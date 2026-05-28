@@ -609,8 +609,7 @@ pub enum FileSystemError {
 pub struct DriveInfo<
     AccountId: Encode + Decode + MaxEncodedLen,
     BlockNumber: Encode + Decode + MaxEncodedLen,
-    MaxNameLength: Get<u32>,
-    Balance: Encode + Decode + MaxEncodedLen,
+    MaxNameLength: Get<u32>
 > {
     /// Owner of the drive
     pub owner: AccountId,
@@ -626,8 +625,6 @@ pub struct DriveInfo<
     pub storage_period: BlockNumber,
     /// Expiry block number (created_at + storage_period)
     pub expires_at: BlockNumber,
-    /// Payment tokens for storage
-    pub payment: Balance,
 }
 
 // ============================================================================

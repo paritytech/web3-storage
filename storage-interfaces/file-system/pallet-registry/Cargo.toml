@@ -23,6 +23,9 @@ file-system-primitives = { workspace = true }
 pallet-storage-provider = { workspace = true }
 storage-primitives = { workspace = true }
 
+[dev-dependencies]
+sp-keystore = { workspace = true, features = ["std"] }
+
 [features]
 default = ["std"]
 std = [
