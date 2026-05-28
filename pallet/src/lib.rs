@@ -1186,7 +1186,7 @@ pub mod pallet {
         /// the standard provider/capacity/stake checks and opens the
         /// agreement.
         #[pallet::call_index(17)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(T::WeightInfo::establish_storage_agreement())]
         pub fn establish_storage_agreement(
             origin: OriginFor<T>,
             provider: T::AccountId,
@@ -1430,7 +1430,7 @@ pub mod pallet {
         /// provider/capacity/stake checks and opens the replica agreement on
         /// an existing bucket.
         #[pallet::call_index(20)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(T::WeightInfo::establish_replica_agreement())]
         pub fn establish_replica_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
