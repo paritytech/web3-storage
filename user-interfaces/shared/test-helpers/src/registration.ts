@@ -1,6 +1,7 @@
+import { Blake2128Concat, Twox128 } from "@polkadot-api/substrate-bindings";
 import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
-import { devSigners, type DevAccountName, type DevSigner } from "./signers";
+import { Alice, devSigners, type DevAccountName, type DevSigner } from "./signers";
 
 /**
  * Hex-encode an account's raw 32-byte public key. PAPI returns
@@ -14,6 +15,58 @@ function publicKeyHex(address: string): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Storage key for `pallet_storage_provider::Providers[address]`. Layout
+ * is `twox128(pallet_name) ++ twox128(storage_name) ++
+ * blake2_128_concat(scale(account))`, matching the FRAME `StorageMap`
+ * with `Blake2_128Concat` hasher in `pallet/src/lib.rs`. AccountId32 is
+ * 32 raw bytes, so the scale encoding of the key is just those bytes.
+ */
+function providersStorageKey(address: string): Uint8Array {
+  const utf8 = new TextEncoder();
+  const [accountBytes] = ss58Decode(address);
+  const palletPrefix = Twox128(utf8.encode("StorageProvider"));
+  const storagePrefix = Twox128(utf8.encode("Providers"));
+  const keyTail = Blake2128Concat(accountBytes);
+  const key = new Uint8Array(palletPrefix.length + storagePrefix.length + keyTail.length);
+  key.set(palletPrefix, 0);
+  key.set(storagePrefix, palletPrefix.length);
+  key.set(keyTail, palletPrefix.length + storagePrefix.length);
+  return key;
+}
+
+/**
+ * Remove `account`'s `Providers` entry directly via
+ * `Sudo.sudo(System.kill_storage(...))`. The runtime's deregister is a
+ * 2-step lifecycle gated by `DeregisterAnnouncementPeriod` (48h on this
+ * runtime) — there's no live-chain extrinsic that can fully unregister
+ * a provider within a test run. Wiping the storage entry by key from
+ * sudo bypasses that lifecycle entirely, matching the spirit of the
+ * runtime integration test's `set_block_number` + `complete_deregister`
+ * sequence in `should_deregister_provider`.
+ *
+ * Stake stays reserved on `account`'s balance (kill_storage skips the
+ * unreserve `complete_deregister` would do). Dev accounts are funded
+ * with 10^25 units in genesis, so this is fine for test cycles.
+ */
+async function forceRemoveProvider(account: DevSigner): Promise<void> {
+  const api = getApi();
+  const existing = await api.query.StorageProvider.Providers.getValue(account.address);
+  if (!existing) return;
+  if (existing.committed_bytes !== 0n) {
+    throw new Error(
+      `forceRemoveProvider: ${account.name} has committed_bytes=${existing.committed_bytes}; refusing to wipe a provider with active agreements`,
+    );
+  }
+
+  const key = providersStorageKey(account.address);
+  const killStorage = api.tx.System.kill_storage({ keys: [key] });
+  await submitExtrinsic(
+    api.tx.Sudo.sudo({ call: killStorage.decodedCall }),
+    Alice.signer,
+  );
 }
 
 export interface ProviderSettings {
@@ -147,19 +200,7 @@ export async function cleanProviderRegistry(
     if (keep.has(pk)) continue;
     const signer = knownDev[pk];
     if (!signer) continue;
-    const provider = value as {
-      committed_bytes: bigint;
-      deregister_at: number | undefined;
-    };
-    if (provider.committed_bytes !== 0n) continue;
-    // Already announced; re-announce would throw `DeregisterAnnounced`.
-    // The entry persists until `complete_deregister` (gated by
-    // `DeregisterAnnouncementPeriod`, 48h on this runtime) — there's
-    // nothing useful we can do here, so leave it alone.
-    if (provider.deregister_at !== undefined) continue;
-    await submitExtrinsicBestBlock(
-      api.tx.StorageProvider.deregister_provider(),
-      signer.signer,
-    );
+    if ((value as { committed_bytes: bigint }).committed_bytes !== 0n) continue;
+    await forceRemoveProvider(signer);
   }
 }
