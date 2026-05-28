@@ -8,7 +8,10 @@ import {
   Wifi,
   WifiOff,
   HardDrive,
+  ArrowLeft,
 } from "lucide-react";
+
+const LANDING_URL = import.meta.env.DEV ? "http://127.0.0.1:5176/" : "../";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { useNetworkSelection } from "@/state/network.state";
@@ -38,8 +41,16 @@ export default function Layout() {
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
       <div className="hidden w-64 flex-col border-r bg-card md:flex">
-        <div className="flex h-14 items-center border-b px-4">
-          <HardDrive className="mr-2 h-6 w-6 text-primary" />
+        <div className="flex h-14 items-center border-b px-4 gap-2">
+          <a
+            href={LANDING_URL}
+            data-testid="back-to-landing"
+            title="Back to home"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </a>
+          <HardDrive className="h-6 w-6 text-primary" />
           <span className="font-semibold">Web3 Storage</span>
         </div>
 
