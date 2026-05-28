@@ -50,19 +50,34 @@ function useEndpointProbes(ws: string, http: string) {
       }
     }
 
-    // HTTP probe — CORS-mode fetch against /health so res.ok is observable.
+    // HTTP probe — try CORS-mode first so res.ok catches nginx fall-through /
+    // wrong route. On a CORS *rejection*, fall back to a no-cors fetch: opaque,
+    // but resolves whenever the host answered. Guards against duplicate-ACAO
+    // from a misconfigured proxy, which would otherwise show a healthy provider
+    // as down.
     setHttpStatus(http ? 'checking' : 'idle')
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
     let httpTimer: ReturnType<typeof setTimeout> | null = null
     if (http) {
       httpTimer = setTimeout(() => ctrl?.abort(), PROBE_TIMEOUT_MS)
-      fetch(healthUrl(http), { method: 'GET', mode: 'cors', cache: 'no-store', signal: ctrl?.signal })
-        .then((res) => {
-          if (token === tokenRef.current) setHttpStatus(res.ok ? 'up' : 'down')
-        })
-        .catch(() => {
-          if (token === tokenRef.current) setHttpStatus('down')
-        })
+      const target = healthUrl(http)
+      const probe = async (): Promise<Status> => {
+        try {
+          const res = await fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal: ctrl?.signal })
+          return res.ok ? 'up' : 'down'
+        } catch {
+          // CORS-mode failed without a readable answer — fall back to an opaque
+          // liveness check. A still-aborted signal (timeout) rejects immediately.
+          try {
+            await fetch(target, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: ctrl?.signal })
+            return 'up'
+          } catch {
+            return 'down'
+          }
+        }
+      }
+      probe()
+        .then((state) => { if (token === tokenRef.current) setHttpStatus(state) })
         .finally(() => { if (httpTimer) clearTimeout(httpTimer) })
     }
 
