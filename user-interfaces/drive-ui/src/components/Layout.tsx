@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
-import { HardDrive, Plug, PlugZap, User, Wallet } from "lucide-react";
+import { HardDrive, Plug, PlugZap, User, Wallet, ArrowLeft } from "lucide-react";
+
+const LANDING_URL = import.meta.env.DEV ? "http://127.0.0.1:5176/" : "../";
 import {
   useIsConnected,
   useBlockNumber,
@@ -35,6 +37,14 @@ export default function Layout() {
     <div className="flex h-screen">
       <aside className="w-64 flex-shrink-0 border-r bg-card flex flex-col">
         <div className="flex items-center gap-2.5 px-4 py-4 border-b">
+          <a
+            href={LANDING_URL}
+            data-testid="back-to-landing"
+            title="Back to home"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </a>
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <HardDrive className="h-4 w-4" />
           </div>
