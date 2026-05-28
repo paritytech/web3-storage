@@ -1,10 +1,11 @@
 //! Provider-signed terms of a storage agreement.
 //!
 //! A provider quotes terms off-chain (e.g. over HTTP) and signs the SCALE
-//! encoding of an `AgreementTerms` value. The owner then submits the signed
-//! terms on-chain via `establish_storage_agreement`, which verifies the signature,
-//! checks the replay window (see [`crate::provider_replay_state`]), and
-//! creates the bucket + agreement atomically.
+//! encoding of an `AgreementTerms` value.
+//!
+//! [`AgreementTerms`] shape covers both flavours: `replica` is
+//! `None` for primary agreements and `Some(_)` for replica agreements,
+//! carrying the per-sync funding parameters.
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
@@ -12,9 +13,6 @@ use scale_info::TypeInfo;
 
 /// Off-chain quote signed by the provider and redeemed on-chain by the owner.
 ///
-/// Generic over the account/balance/block-number types so the same shape can
-/// be reused by the pallet (with `BalanceOf<T>`/`BlockNumberFor<T>`), the
-/// client SDK, and external tooling.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
@@ -34,4 +32,22 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Provider-chosen replay-protection nonce; uniqueness is enforced
     /// through the provider's sliding replay window.
     pub nonce: u64,
+    /// Replica-specific parameters.
+    /// - `None` means these are primary terms;
+    /// -`Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.
+    pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
+}
+
+/// Replica terms
+///
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReplicaTerms<Balance, BlockNumber> {
+    /// Balance reserved by the owner to fund per-sync confirmations. The
+    /// pallet draws down `sync_price` from this on each accepted sync.
+    pub sync_balance: Balance,
+    /// Minimum blocks between sync confirmations the provider commits to.
+    pub min_sync_interval: BlockNumber,
 }
