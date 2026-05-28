@@ -4664,7 +4664,9 @@ dependencies = [
  "scale-info",
  "sp-core",
  "sp-io",
+ "sp-keystore",
  "sp-runtime",
+ "storage-primitives",
 ]
 
 [[package]]
