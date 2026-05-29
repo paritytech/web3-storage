@@ -34,11 +34,67 @@ export async function updateProviderSettings(api, provider, settings) {
   );
 }
 
-export async function createBucket(api, signer, { minProviders = 1 } = {}) {
+/**
+ * POST /negotiate on the provider node; returns the SignedTerms bundle the
+ * owner redeems via `establish_storage_agreement`.
+ */
+export async function negotiateTerms(providerUrl, request) {
+  const res = await fetch(`${providerUrl}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `/negotiate failed: ${res.status} ${await res.text().catch(() => "")}`
+    );
+  }
+  return res.json();
+}
+
+/**
+ * Submit `establish_storage_agreement` with provider-signed terms.
+ *
+ * `signed.signature` is the SCALE-encoded `MultiSignature` as hex, e.g.
+ * `0x00<64-byte-sig>` for Sr25519. Strip the variant prefix and wrap the
+ * raw 64 bytes back into the PAPI Enum.
+ */
+const MULTI_SIGNATURE_VARIANT = Object.freeze({ 
+  0: "Ed25519",
+  1: "Sr25519",
+  2: "ecdsa",
+  3: "eth",
+});
+export async function establishStorageAgreement(api, client, provider, signed) {
+  const sigBytes = hexToBytes(signed.signature);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variantIdx = sigBytes[0];
+  const inner = sigBytes.slice(1);
+  const variantName = MULTI_SIGNATURE_VARIANT[variantIdx];
+  if (!variantName) {
+    throw new Error(`unknown MultiSignature variant byte: ${variantIdx}`);
+  }
+  const sigVariant = Enum(variantName, Binary.fromBytes(inner));
+
+  const t = signed.terms;
   const result = await submitTx(
-    api.tx.StorageProvider.create_bucket({ min_providers: minProviders }),
-    signer.signer,
-    "create_bucket"
+    api.tx.StorageProvider.establish_storage_agreement({
+      provider: provider.address,
+      terms: {
+        owner: t.owner,
+        max_bytes: BigInt(t.max_bytes),
+        duration: t.duration,
+        price_per_byte: BigInt(t.price_per_byte),
+        valid_until: t.valid_until,
+        nonce: BigInt(t.nonce),
+        replica_params: t.replica_params ?? undefined,
+      },
+      sig: sigVariant,
+    }),
+    client.signer,
+    "establish_storage_agreement"
   );
   const event = requireOneEvent(
     result.events,
@@ -46,49 +102,6 @@ export async function createBucket(api, signer, { minProviders = 1 } = {}) {
     "BucketCreated"
   );
   return event.bucket_id;
-}
-
-export async function createBucketWithStorage(api, client, params) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket_with_storage(params),
-    client.signer,
-    "create_bucket_with_storage"
-  );
-  const created = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  const accepted = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.AgreementAccepted,
-    "AgreementAccepted"
-  );
-  return {
-    bucketId: created.bucket_id,
-    matchedProvider: accepted.provider,
-    expiresAt: accepted.expires_at,
-  };
-}
-
-export async function requestPrimaryAgreement(api, client, provider, bucketId, params) {
-  return submitTx(
-    api.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: provider.address,
-      ...params,
-    }),
-    client.signer,
-    "request_primary_agreement"
-  );
-}
-
-export async function acceptAgreement(api, provider, bucketId) {
-  return submitTx(
-    api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    "accept_agreement"
-  );
 }
 
 export async function setMember(api, admin, bucketId, member, role) {
