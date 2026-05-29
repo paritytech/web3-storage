@@ -269,20 +269,27 @@
       var target = healthUrl(url);
       var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       var timer = setTimeout(function () { ctrl && ctrl.abort(); }, PROBE_TIMEOUT_MS);
-      // CORS-mode fetch against /health so response.ok is observable. The
-      // provider node ships with CorsLayer::permissive(); anything but a 2xx
-      // means /health isn't being served (nginx fall-through, no provider,
-      // etc.) and the probe shows down.
+      var settle = function (state, title) {
+        clearTimeout(timer);
+        if (token === probeToken) setStatus(statusHttp, state, title);
+      };
+      // Try CORS first so res.ok catches nginx fall-through / wrong route. On a
+      // CORS *rejection*, fall back to a no-cors fetch: opaque, but resolves
+      // whenever the host answered. Guards against duplicate-ACAO from a
+      // misconfigured proxy.
       fetch(target, { method: 'GET', mode: 'cors', cache: 'no-store', signal: ctrl && ctrl.signal })
         .then(function (res) {
-          clearTimeout(timer);
-          if (token !== probeToken) return;
-          if (res.ok) setStatus(statusHttp, 'up', target + ' — ' + res.status);
-          else setStatus(statusHttp, 'down', target + ' — HTTP ' + res.status);
+          if (token !== probeToken) { clearTimeout(timer); return; }
+          if (res.ok) settle('up', target + ' — ' + res.status);
+          else settle('down', target + ' — HTTP ' + res.status);
         })
         .catch(function (e) {
-          clearTimeout(timer);
-          if (token === probeToken) setStatus(statusHttp, 'down', target + ' — ' + (e.name === 'AbortError' ? 'timeout' : e.message));
+          if (token !== probeToken) { clearTimeout(timer); return; }
+          if (e && e.name === 'AbortError') { settle('down', target + ' — timeout'); return; }
+          // CORS-mode failed without a readable answer — fall back to opaque liveness.
+          fetch(target, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: ctrl && ctrl.signal })
+            .then(function () { settle('up', target + ' — reachable (opaque)'); })
+            .catch(function (e2) { settle('down', target + ' — ' + (e2 && e2.name === 'AbortError' ? 'timeout' : ((e2 && e2.message) || 'unreachable'))); });
         });
     }
 

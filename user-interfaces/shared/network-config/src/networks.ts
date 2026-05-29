@@ -21,7 +21,7 @@ export const PREVIEWNET_NETWORK: NetworkConfig = {
   id: 'previewnet',
   name: 'PreviewNet Testnet',
   parachainWs: 'wss://previewnet.substrate.dev/web3-storage',
-  providerHttp: 'https://previewnet.substrate.dev/provider',
+  providerHttp: 'https://previewnet.substrate.dev/web3-storage-provider',
   relayChainWs: 'wss://previewnet-rpc.polkadot.io',
   isTestnet: true,
 }

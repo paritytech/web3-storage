@@ -11,7 +11,10 @@ import {
   ChevronDown,
   TestTube,
   Wallet,
+  ArrowLeft,
 } from 'lucide-react'
+
+const LANDING_URL = import.meta.env.DEV ? 'http://127.0.0.1:5176/' : '../'
 import { useConnectionStatus, useBlockNumber, connect as connectChain } from '@/state/chain.state'
 import {
   useSelectedAccount,
@@ -137,10 +140,20 @@ export function Header() {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2">
-            <Server className="h-6 w-6 text-purple-500" />
-            <span className="font-bold text-lg">Provider Dashboard</span>
-          </Link>
+          <div className="flex items-center gap-3">
+            <a
+              href={LANDING_URL}
+              data-testid="back-to-landing"
+              title="Back to home"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </a>
+            <Link to="/" className="flex items-center gap-2">
+              <Server className="h-6 w-6 text-purple-500" />
+              <span className="font-bold text-lg">Provider Dashboard</span>
+            </Link>
+          </div>
 
           {/* Navigation */}
           <nav className="hidden md:flex items-center gap-1">
