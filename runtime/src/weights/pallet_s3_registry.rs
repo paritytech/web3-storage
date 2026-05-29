@@ -46,6 +46,7 @@
 
 use frame_support::{traits::Get, weights::Weight};
 use core::marker::PhantomData;
+use frame_support::weights::constants::RocksDbWeight;
 
 /// Weight functions for `pallet_s3_registry`.
 pub struct WeightInfo<T>(PhantomData<T>);
@@ -54,6 +55,12 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 	/// Proof: `S3Registry::BucketNameToId` (`max_values`: None, `max_size`: Some(90), added: 2565, mode: `MaxEncodedLen`)
 	/// Storage: `S3Registry::UserBuckets` (r:1 w:1)
 	/// Proof: `S3Registry::UserBuckets` (`max_values`: None, `max_size`: Some(850), added: 3325, mode: `MaxEncodedLen`)
+	/// Storage: `StorageProvider::Providers` (r:1 w:1)
+	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
+	/// Storage: `StorageProvider::ProviderReplayState` (r:1 w:1)
+	/// Proof: `StorageProvider::ProviderReplayState` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
+	/// Storage: `System::Account` (r:1 w:1)
+	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::NextBucketId` (r:1 w:1)
 	/// Proof: `StorageProvider::NextBucketId` (`max_values`: Some(1), `max_size`: Some(8), added: 503, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1)
@@ -64,15 +71,16 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::Buckets` (r:0 w:1)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
+	/// Storage: `StorageProvider::StorageAgreements` (r:0 w:1)
+	/// Proof: `StorageProvider::StorageAgreements` (`max_values`: None, `max_size`: Some(227), added: 2702, mode: `MaxEncodedLen`)
 	fn create_s3_bucket() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1107`
+		//  Measured:  `1301`
 		//  Estimated: `11515`
-		// Minimum execution time: 17_000_000 picoseconds.
-		Weight::from_parts(19_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 11515))
-			.saturating_add(T::DbWeight::get().reads(5))
-			.saturating_add(T::DbWeight::get().writes(7))
+		// Minimum execution time: 59_000_000 picoseconds.
+		Weight::from_parts(67_000_000, 11515)
+			.saturating_add(T::DbWeight::get().reads(8_u64))
+			.saturating_add(T::DbWeight::get().writes(11_u64))
 	}
 	/// Storage: `S3Registry::S3Buckets` (r:1 w:1)
 	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
@@ -84,11 +92,10 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 		// Proof Size summary in bytes:
 		//  Measured:  `1169`
 		//  Estimated: `4315`
-		// Minimum execution time: 10_000_000 picoseconds.
-		Weight::from_parts(11_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 4315))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(3))
+		// Minimum execution time: 11_000_000 picoseconds.
+		Weight::from_parts(20_000_000, 4315)
+			.saturating_add(T::DbWeight::get().reads(2_u64))
+			.saturating_add(T::DbWeight::get().writes(3_u64))
 	}
 	/// Storage: `S3Registry::S3Buckets` (r:1 w:1)
 	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
@@ -98,11 +105,10 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 		// Proof Size summary in bytes:
 		//  Measured:  `8038`
 		//  Estimated: `11176`
-		// Minimum execution time: 26_000_000 picoseconds.
-		Weight::from_parts(29_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 11176))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(2))
+		// Minimum execution time: 34_000_000 picoseconds.
+		Weight::from_parts(54_000_000, 11176)
+			.saturating_add(T::DbWeight::get().reads(2_u64))
+			.saturating_add(T::DbWeight::get().writes(2_u64))
 	}
 	/// Storage: `S3Registry::S3Buckets` (r:1 w:1)
 	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
@@ -112,11 +118,10 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 		// Proof Size summary in bytes:
 		//  Measured:  `8038`
 		//  Estimated: `11176`
-		// Minimum execution time: 18_000_000 picoseconds.
-		Weight::from_parts(20_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 11176))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(2))
+		// Minimum execution time: 25_000_000 picoseconds.
+		Weight::from_parts(40_000_000, 11176)
+			.saturating_add(T::DbWeight::get().reads(2_u64))
+			.saturating_add(T::DbWeight::get().writes(2_u64))
 	}
 	/// Storage: `S3Registry::S3Buckets` (r:2 w:1)
 	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
@@ -126,40 +131,9 @@ impl<T: frame_system::Config> pallet_s3_registry::WeightInfo for WeightInfo<T> {
 		// Proof Size summary in bytes:
 		//  Measured:  `8205`
 		//  Estimated: `21362`
-		// Minimum execution time: 28_000_000 picoseconds.
-		Weight::from_parts(31_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 21362))
-			.saturating_add(T::DbWeight::get().reads(4))
-			.saturating_add(T::DbWeight::get().writes(2))
-	}
-	/// Storage: `S3Registry::BucketNameToId` (r:1 w:1)
-	/// Proof: `S3Registry::BucketNameToId` (`max_values`: None, `max_size`: Some(90), added: 2565, mode: `MaxEncodedLen`)
-	/// Storage: `S3Registry::UserBuckets` (r:1 w:1)
-	/// Proof: `S3Registry::UserBuckets` (`max_values`: None, `max_size`: Some(850), added: 3325, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::NextBucketId` (r:1 w:1)
-	/// Proof: `StorageProvider::NextBucketId` (`max_values`: Some(1), `max_size`: Some(8), added: 503, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::MemberBuckets` (r:1 w:1)
-	/// Proof: `StorageProvider::MemberBuckets` (`max_values`: None, `max_size`: Some(8050), added: 10525, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Providers` (r:6 w:0)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	/// Storage: `System::Account` (r:1 w:1)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::AgreementRequests` (r:1 w:1)
-	/// Proof: `StorageProvider::AgreementRequests` (`max_values`: None, `max_size`: Some(157), added: 2632, mode: `MaxEncodedLen`)
-	/// Storage: `S3Registry::NextS3BucketId` (r:1 w:1)
-	/// Proof: `S3Registry::NextS3BucketId` (`max_values`: Some(1), `max_size`: Some(8), added: 503, mode: `MaxEncodedLen`)
-	/// Storage: `S3Registry::S3Buckets` (r:0 w:1)
-	/// Proof: `S3Registry::S3Buckets` (`max_values`: None, `max_size`: Some(158), added: 2633, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Buckets` (r:0 w:1)
-	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	fn create_s3_bucket_with_storage() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `2356`
-		//  Estimated: `18000`
-		// Minimum execution time: 51_000_000 picoseconds.
-		Weight::from_parts(56_000_000, 0)
-			.saturating_add(Weight::from_parts(0, 18000))
-			.saturating_add(T::DbWeight::get().reads(13))
-			.saturating_add(T::DbWeight::get().writes(9))
+		// Minimum execution time: 40_000_000 picoseconds.
+		Weight::from_parts(58_000_000, 21362)
+			.saturating_add(T::DbWeight::get().reads(4_u64))
+			.saturating_add(T::DbWeight::get().writes(2_u64))
 	}
 }
