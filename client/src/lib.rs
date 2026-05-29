@@ -42,9 +42,6 @@
 //!     vec![0u8; 32], // public key
 //!     1_000_000_000_000, // stake
 //! ).await?;
-//!
-//! // Accept agreements
-//! client.accept_agreement(1).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -52,22 +49,28 @@
 //! ### For Bucket Administrators
 //! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
 //! ```no_run
-//! use storage_client::{AdminClient, ClientConfig};
+//! use storage_client::{AdminClient, ProviderClient, NegotiateRequest};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
 //!
-//! // Create bucket
-//! let bucket_id = client.create_bucket(2).await?;
+//! // 1. Negotiate signed terms with the provider over HTTP.
+//! let signed = ProviderClient::negotiate_terms(
+//!     "http://provider.example:3333",
+//!     &NegotiateRequest {
+//!         owner: "5GrwvaEF...".parse()?,
+//!         max_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+//!         duration: 100_000,
+//!         valid_until_offset: 1_000,
+//!     },
+//! ).await?;
 //!
-//! // Request storage
-//! client.request_agreement(
-//!     bucket_id,
-//!     "5FHneW46...".to_string(),
-//!     10 * 1024 * 1024 * 1024, // 10 GB
-//!     100_000, // blocks
-//!     1_000_000_000_000, // payment
-//!     None,
+//! // 2. Redeem them on-chain — bucket creation + primary agreement
+//! //    happen atomically inside `establish_storage_agreement`.
+//! let bucket_id = client.establish_storage_agreement(
+//!     "5FHneW46...".to_string(), // provider account
+//!     signed.terms,
+//!     signed.signature,
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -94,6 +97,7 @@
 
 // Re-export main types
 pub mod admin;
+pub mod agreement;
 pub mod base;
 pub mod challenger;
 pub mod checkpoint;
@@ -109,6 +113,7 @@ pub mod verification;
 
 // Re-export commonly used types
 pub use admin::AdminClient;
+pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
 pub use checkpoint::{

@@ -9,6 +9,7 @@ description = "Client library for scalable Web3 storage"
 
 [dependencies]
 storage-primitives = { workspace = true, features = ["serde", "std"] }
+codec = { workspace = true, features = ["std"] }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }

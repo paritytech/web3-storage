@@ -307,126 +307,63 @@ impl ProviderClient {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // Agreement Management
+    // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Accept a storage agreement request for a bucket.
+    /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// This commits you to storing data for the specified bucket.
+    /// The bucket owner POSTs the request shape they want; the provider
+    /// node returns SCALE-encoded [`AgreementTerms`](storage_primitives::AgreementTerms)
+    /// signed with its registered key. The result is fed directly into
+    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement)
+    /// to open the bucket + primary agreement on-chain.
+    ///
+    /// This is the on-ramp that replaced the old `request_agreement` +
+    /// `accept_agreement` two-step.
+    ///
+    /// # Parameters
+    /// - `provider_url`: Base HTTP URL of the provider node (no trailing slash).
+    /// - `req`: The negotiation request (owner, capacity, duration, validity).
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::ProviderClient;
+    /// # use storage_client::{ProviderClient, NegotiateRequest};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
-    /// client.accept_agreement(1).await?;
-    /// println!("Agreement accepted!");
+    /// let signed = ProviderClient::negotiate_terms(
+    ///     "http://provider.example:3333",
+    ///     &NegotiateRequest {
+    ///         owner: "5GrwvaEF...".parse()?,
+    ///         max_bytes: 10 * 1024 * 1024 * 1024,
+    ///         duration: 100_000,
+    ///         valid_until_offset: 1_000,
+    ///     },
+    /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn accept_agreement(&self, bucket_id: BucketId) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
-        tracing::info!(
-            "Accepting agreement for bucket {} as provider {}",
-            bucket_id,
-            self.provider_account
-        );
-
-        // Create and submit the extrinsic
-        let tx = extrinsics::accept_agreement(bucket_id);
-
-        let tx_progress = chain
-            .api()
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
+    pub async fn negotiate_terms(
+        provider_url: &str,
+        req: &crate::agreement::NegotiateRequest,
+    ) -> ClientResult<crate::agreement::SignedTerms> {
+        let url = format!("{}/negotiate", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .post(&url)
+            .json(req)
+            .send()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
+            .map_err(ClientError::Http)?;
 
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-
-        tracing::info!("Agreement accepted successfully");
-        Ok(())
-    }
-
-    /// List all pending agreement requests for this provider.
-    pub async fn list_pending_requests(&self) -> ClientResult<Vec<AgreementRequest>> {
-        let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
-
-        let storage = chain
-            .api()
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::agreement_requests_for_provider(&provider_account))
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate requests: {e}")))?;
-
-        let mut requests = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // bucket_id is encoded at offset 96 in the full storage key
-            // layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(provider)=16]
-            //         [provider=32][blake2_128(bucket_id)=16][bucket_id=8]
-            let key = &kv.key_bytes;
-            if key.len() < 104 {
-                continue;
-            }
-            let bucket_id =
-                u64::from_le_bytes(key[96..104].try_into().unwrap_or([0u8; 8])) as BucketId;
-
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement request: {e}");
-                    continue;
-                }
-            };
-
-            let requester = named_field(&value, "requester")
-                .and_then(decode_account_bytes)
-                .map(|b| format!("0x{}", hex::encode(b)))
-                .unwrap_or_default();
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let payment_locked = named_field(&value, "payment_locked")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0);
-
-            let duration = named_field(&value, "duration")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            requests.push(AgreementRequest {
-                bucket_id,
-                requester,
-                max_bytes,
-                payment_locked,
-                duration,
-                expires_at,
-            });
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /negotiate with status {}",
+                response.status()
+            )));
         }
 
-        Ok(requests)
+        response
+            .json::<crate::agreement::SignedTerms>()
+            .await
+            .map_err(ClientError::Http)
     }
 
     /// List all active agreements for this provider.

@@ -184,73 +184,78 @@ pub mod extrinsics {
         )
     }
 
-    /// Create an accept_agreement extrinsic payload.
-    pub fn accept_agreement(bucket_id: u64) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "accept_agreement",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        )
-    }
-
-    /// Create a create_bucket extrinsic payload.
-    pub fn create_bucket(min_providers: u32) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "create_bucket",
-            vec![subxt::dynamic::Value::u128(min_providers as u128)],
-        )
-    }
-
-    /// Create a request_primary_agreement extrinsic payload (admin only).
-    pub fn request_primary_agreement(
-        bucket_id: u64,
+    /// Build an `establish_storage_agreement` extrinsic payload.
+    ///
+    /// Bundles the SCALE-encoded provider-signed terms and signature into
+    /// the dynamic call shape Layer 0 expects. The chain hashes
+    /// `blake2_256(SCALE(terms))` and verifies the signature against the
+    /// provider's registered public key.
+    pub fn establish_storage_agreement(
         provider: AccountId32,
-        max_bytes: u64,
-        duration: u32,
-        payment: u128,
+        terms: &crate::agreement::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "request_primary_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(max_bytes as u128),
-                subxt::dynamic::Value::u128(duration as u128),
-                subxt::dynamic::Value::u128(payment),
-            ],
-        )
-    }
-
-    /// Create a request_agreement extrinsic payload (replica agreements).
-    #[allow(clippy::too_many_arguments)]
-    pub fn request_agreement(
-        bucket_id: u64,
-        provider: AccountId32,
-        max_bytes: u64,
-        duration: u32,
-        payment: u128,
-        sync_balance: u128,
-        min_sync_interval: u32,
-    ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "request_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(max_bytes as u128),
-                subxt::dynamic::Value::u128(duration as u128),
-                subxt::dynamic::Value::u128(payment),
-                // ReplicaRequestParams struct
-                subxt::dynamic::Value::named_composite([
-                    ("sync_balance", subxt::dynamic::Value::u128(sync_balance)),
+        use codec::Encode;
+        let replica_params_value = match &terms.replica_params {
+            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
+            Some(rp) => subxt::dynamic::Value::unnamed_variant(
+                "Some",
+                vec![subxt::dynamic::Value::named_composite([
+                    ("sync_balance", subxt::dynamic::Value::u128(rp.sync_balance)),
                     (
                         "min_sync_interval",
-                        subxt::dynamic::Value::u128(min_sync_interval as u128),
+                        subxt::dynamic::Value::u128(rp.min_sync_interval as u128),
                     ),
-                ]),
+                ])],
+            ),
+        };
+        let terms_value = subxt::dynamic::Value::named_composite([
+            (
+                "owner",
+                subxt::dynamic::Value::from_bytes(terms.owner.as_ref() as &[u8]),
+            ),
+            ("max_bytes", subxt::dynamic::Value::u128(terms.max_bytes as u128)),
+            ("duration", subxt::dynamic::Value::u128(terms.duration as u128)),
+            (
+                "price_per_byte",
+                subxt::dynamic::Value::u128(terms.price_per_byte),
+            ),
+            (
+                "valid_until",
+                subxt::dynamic::Value::u128(terms.valid_until as u128),
+            ),
+            ("nonce", subxt::dynamic::Value::u128(terms.nonce as u128)),
+            ("replica_params", replica_params_value),
+        ]);
+
+        // MultiSignature is a SCALE enum; surface it as `Sr25519` for the
+        // current signer (the only variant the provider node emits today).
+        let sig_value = match sig {
+            sp_runtime::MultiSignature::Sr25519(s) => subxt::dynamic::Value::unnamed_variant(
+                "Sr25519",
+                vec![subxt::dynamic::Value::from_bytes(s.encode())],
+            ),
+            sp_runtime::MultiSignature::Ed25519(s) => subxt::dynamic::Value::unnamed_variant(
+                "Ed25519",
+                vec![subxt::dynamic::Value::from_bytes(s.encode())],
+            ),
+            sp_runtime::MultiSignature::Ecdsa(s) => subxt::dynamic::Value::unnamed_variant(
+                "Ecdsa",
+                vec![subxt::dynamic::Value::from_bytes(s.encode())],
+            ),
+            sp_runtime::MultiSignature::Eth(s) => subxt::dynamic::Value::unnamed_variant(
+                "Eth",
+                vec![subxt::dynamic::Value::from_bytes(s.encode())],
+            ),
+        };
+
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "establish_storage_agreement",
+            vec![
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                terms_value,
+                sig_value,
             ],
         )
     }

@@ -2,16 +2,16 @@
 //!
 //! This example shows:
 //! 1. Provider registration
-//! 2. Bucket creation by admin
-//! 3. Agreement request and acceptance
+//! 2. Negotiating provider-signed terms over HTTP
+//! 3. Redeeming the signed terms on-chain to open a bucket + agreement
 //! 4. Data upload by storage user
 //! 5. Checkpoint creation
 //! 6. Challenge by third party
 //! 7. Challenge response by provider
 
 use storage_client::{
-    AdminClient, ChallengerClient, ChunkingStrategy, ClientConfig, ProviderClient,
-    StorageUserClient,
+    AdminClient, ChallengerClient, ChunkingStrategy, ClientConfig, NegotiateRequest,
+    ProviderClient, StorageUserClient,
 };
 
 #[tokio::main]
@@ -48,38 +48,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ Provider registered with 10 tokens stake\n");
 
     // ═════════════════════════════════════════════════════════════════════════
-    // Step 2: Bucket Creation by Admin
+    // Step 2: Negotiate signed terms with the provider
     // ═════════════════════════════════════════════════════════════════════════
-    println!("🗂️  Step 2: Bucket Creation");
+    println!("🤝 Step 2: Negotiating storage terms");
 
     let admin_account = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
     let admin_client = AdminClient::new(config.clone(), admin_account.to_string())?;
 
-    println!("  Creating bucket with min_providers=1...");
-    let bucket_id = admin_client.create_bucket(1).await?;
-    println!("  ✓ Bucket created with ID: {bucket_id}\n");
+    let provider_http_url = config.provider_urls[0].clone();
+    println!("  Asking provider for signed terms over HTTP...");
+    let signed = ProviderClient::negotiate_terms(
+        &provider_http_url,
+        &NegotiateRequest {
+            owner: admin_account.parse()?,
+            max_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+            duration: 100_000,                   // ~2 weeks at 6 sec blocks
+            valid_until_offset: 1_000,
+        },
+    )
+    .await?;
+    println!(
+        "  ✓ Provider signed terms: max_bytes={}, duration={}, nonce={}",
+        signed.terms.max_bytes, signed.terms.duration, signed.terms.nonce
+    );
 
     // ═════════════════════════════════════════════════════════════════════════
-    // Step 3: Agreement Request and Acceptance
+    // Step 3: Redeem signed terms on-chain (bucket + agreement atomically)
     // ═════════════════════════════════════════════════════════════════════════
-    println!("🤝 Step 3: Storage Agreement");
+    println!("📦 Step 3: Establishing storage agreement on-chain");
 
-    println!("  Admin requesting storage agreement...");
-    admin_client
-        .request_agreement(
-            bucket_id,
+    let bucket_id = admin_client
+        .establish_storage_agreement(
             provider_account.to_string(),
-            10 * 1024 * 1024 * 1024, // 10 GB
-            100_000,                 // ~2 weeks at 6 sec blocks
-            5_000_000_000_000,       // 5 tokens payment
-            None,                    // Primary (not replica)
+            signed.terms,
+            signed.signature,
         )
         .await?;
-    println!("  ✓ Agreement requested: 10 GB for 100,000 blocks");
-
-    println!("  Provider accepting agreement...");
-    provider_client.accept_agreement(bucket_id).await?;
-    println!("  ✓ Agreement accepted!\n");
+    println!("  ✓ Bucket {bucket_id} created + primary agreement opened\n");
 
     // ═════════════════════════════════════════════════════════════════════════
     // Step 4: Data Upload by Storage User

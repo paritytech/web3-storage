@@ -18,7 +18,7 @@ use storage_primitives::Role;
 
 /// Full bucket management lifecycle in dependency order:
 ///
-///   create_bucket
+///   chain_setup (registers Alice as provider + signs terms + opens bucket)
 ///   → get_bucket_info       (verify initial state)
 ///   → add_member            (add Bob as Writer)
 ///   → get_bucket_info       (verify Bob present)
@@ -33,6 +33,16 @@ use storage_primitives::Role;
 async fn test_bucket_lifecycle() {
     let _guard = chain_guard().await;
 
+    // `chain_setup` registers Alice as a provider, signs primary terms with
+    // her keypair, and redeems them via `establish_storage_agreement` to
+    // open a fresh bucket. Returns `None` when the chain isn't reachable.
+    let setup = match common::chain_setup().await {
+        Some(s) => s,
+        None => {
+            eprintln!("Chain not reachable — skipping test_bucket_lifecycle");
+            return;
+        }
+    };
     let admin = match alice_admin().await {
         Some(c) => c,
         None => {
@@ -42,12 +52,7 @@ async fn test_bucket_lifecycle() {
     };
 
     let bob_ss58 = dev_ss58("bob");
-
-    // ── create ────────────────────────────────────────────────────────────────
-    let bucket_id = admin
-        .create_bucket(1)
-        .await
-        .expect("create_bucket should succeed");
+    let bucket_id = setup.bucket_id;
 
     assert!(bucket_id > 0, "bucket_id should be nonzero");
 
