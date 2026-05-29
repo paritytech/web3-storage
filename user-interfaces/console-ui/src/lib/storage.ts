@@ -865,11 +865,31 @@ export class StorageClient {
 
   // --- Provider Health ---
 
+  /**
+   * Liveness probe for `${baseUrl}/health`. Tries CORS-mode first so a readable
+   * non-2xx counts as unhealthy; on a CORS rejection, falls back to a no-cors
+   * fetch — opaque, but resolves whenever the host answered. Guards against
+   * duplicate-ACAO from a misconfigured proxy.
+   */
+  private async probeHealthy(baseUrl: string): Promise<boolean> {
+    const target = `${baseUrl}/health`;
+    try {
+      const response = await fetch(target, { cache: "no-store" });
+      return response.ok;
+    } catch {
+      try {
+        await fetch(target, { mode: "no-cors", cache: "no-store" });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   async checkProviderHealth(bucketId: bigint): Promise<boolean> {
     try {
       const providerUrl = await this.getProviderUrl(bucketId);
-      const response = await fetch(`${providerUrl}/health`);
-      return response.ok;
+      return await this.probeHealthy(providerUrl);
     } catch {
       return false;
     }
@@ -973,15 +993,7 @@ export class StorageClient {
       const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
       const url = this.parseMultiaddrToHttp(multiaddrStr) ?? "unknown";
-      let healthy = false;
-      if (url !== "unknown") {
-        try {
-          const resp = await fetch(`${url}/health`);
-          healthy = resp.ok;
-        } catch {
-          // provider unreachable
-        }
-      }
+      const healthy = url !== "unknown" ? await this.probeHealthy(url) : false;
 
       results.push({ account: providerAccount, endpoint: url, healthy });
     }
