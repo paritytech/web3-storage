@@ -1,10 +1,6 @@
 //! Provider-signed agreement terms — wire format + client-side signing helper.
 //!
-//! Bucket creation went from a request/accept handshake to a single
-//! `establish_storage_agreement` redemption of provider-signed
-//! [`AgreementTerms`]. This module holds:
-//!
-//! * The runtime-specific [`AgreementTermsOf`] alias the client uses to
+//! * Runtime-specific [`AgreementTermsOf`] alias the client uses to
 //!   talk to the parachain (AccountId32 / u128 / u32).
 //! * [`SignedTerms`] — the negotiated bundle returned over HTTP by a
 //!   provider node's `/negotiate` endpoint.
@@ -26,8 +22,8 @@ use storage_primitives::AgreementTerms;
 
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///
-/// Balance is `u128`, BlockNumber is `u32`; matches `parachains_common`'s
-/// runtime types used by runtime.
+/// Balance is `u128`, BlockNumber is `u32`; matches
+/// types used by runtime.
 pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 
 /// Concrete `ReplicaTerms` matching the parachain's

@@ -851,12 +851,6 @@ pub mod storage {
     }
 
     /// Query the provider's replay-window state.
-    ///
-    /// Returns the storage address; the caller fetches it through subxt
-    /// and decodes the `ReplayWindow { hwm, bitmap }` payload. The
-    /// `hwm` field is what the provider node's nonce counter bootstraps
-    /// from on cold start so reissued nonces would land outside the
-    /// replay window and be rejected by Layer 0.
     pub fn provider_replay_state(
         account: &AccountId32,
     ) -> subxt::storage::DefaultAddress<

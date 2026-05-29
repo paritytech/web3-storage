@@ -58,9 +58,6 @@ impl AdminClient {
     /// [`ProviderClient::negotiate_terms`](crate::provider::ProviderClient::negotiate_terms),
     /// but any source that produces a valid signature works.
     ///
-    /// On success, returns the new bucket id (parsed from the
-    /// `BucketCreated` event emitted by the runtime).
-    ///
     /// # Example
     /// ```no_run
     /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
