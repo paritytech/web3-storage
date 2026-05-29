@@ -8,7 +8,6 @@
 //! - Syncing data between providers (for replicas)
 //! - Coordinating provider-initiated checkpoints
 
-pub mod agreement_coordinator;
 pub mod api;
 pub mod auth;
 pub mod challenge_responder;
@@ -19,6 +18,7 @@ pub mod error;
 pub mod fs_api;
 pub mod fs_index;
 pub mod mmr;
+pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
 pub mod s3_api;
@@ -26,9 +26,6 @@ pub mod s3_index;
 pub mod storage;
 pub mod types;
 
-pub use agreement_coordinator::{
-    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
-};
 pub use api::create_router;
 pub use challenge_responder::{
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
@@ -40,6 +37,7 @@ pub use checkpoint_coordinator::{
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
+pub use negotiate::{sign_terms, AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
@@ -77,6 +75,9 @@ pub struct ProviderState {
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
+    /// Monotonic nonce counter used by `/negotiate` to allocate fresh
+    /// nonces for provider-signed `AgreementTerms`.
+    pub nonce_counter: Option<Arc<NonceCounter>>,
 }
 
 impl ProviderState {
@@ -91,6 +92,7 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
+            nonce_counter: None,
         }
     }
 
@@ -111,6 +113,7 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
+            nonce_counter: None,
         })
     }
 

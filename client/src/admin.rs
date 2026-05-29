@@ -63,7 +63,7 @@ impl AdminClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::{AdminClient, ProviderClient, NegotiateRequest};
+    /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
     /// let signed = ProviderClient::negotiate_terms(
@@ -72,7 +72,8 @@ impl AdminClient {
     ///         owner: "5GrwvaEF...".parse()?,
     ///         max_bytes: 1_000_000,
     ///         duration: 100,
-    ///         valid_until_offset: 1_000,
+    ///         price_per_byte: 1_000_000,
+    ///         replica_params: None,
     ///     },
     /// ).await?;
     /// let bucket_id = client.establish_storage_agreement(

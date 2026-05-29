@@ -831,8 +831,8 @@ fn drive_lifecycle_e2e() {
             }),
         ));
 
-        let drive = pallet_drive_registry::Drives::<Runtime>::get(drive_id)
-            .expect("drive must be stored");
+        let drive =
+            pallet_drive_registry::Drives::<Runtime>::get(drive_id).expect("drive must be stored");
         assert_eq!(drive.owner, owner_id);
         assert_eq!(drive.max_capacity, 1_000_000);
         assert!(pallet_drive_registry::UserDrives::<Runtime>::get(&owner_id).contains(&drive_id));
@@ -932,8 +932,8 @@ fn drive_lifecycle_via_xcm_e2e() {
             .ensure_complete()
         );
 
-        let drive = pallet_drive_registry::Drives::<Runtime>::get(drive_id)
-            .expect("drive must be stored");
+        let drive =
+            pallet_drive_registry::Drives::<Runtime>::get(drive_id).expect("drive must be stored");
         assert_eq!(drive.owner, derived);
         assert_eq!(drive.max_capacity, 1_000_000);
         assert!(pallet_drive_registry::UserDrives::<Runtime>::get(&derived).contains(&drive_id));
@@ -1041,8 +1041,8 @@ fn s3_bucket_lifecycle_e2e() {
         let bucket = pallet_s3_registry::S3Buckets::<Runtime>::get(s3_bucket_id).unwrap();
         assert_eq!(bucket.object_count, 1);
         assert_eq!(bucket.total_size, 1024);
-        let obj = S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg")
-            .expect("object must be stored");
+        let obj =
+            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").expect("object must be stored");
         assert_eq!(obj.cid, cid);
         assert_eq!(obj.size, 1024);
 
@@ -1141,7 +1141,9 @@ fn s3_bucket_lifecycle_via_xcm_e2e() {
             .ensure_complete()
         );
         assert_eq!(
-            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg").unwrap().cid,
+            S3Registry::get_object(s3_bucket_id, b"photos/cat.jpg")
+                .unwrap()
+                .cid,
             cid
         );
 

@@ -310,37 +310,41 @@ impl ProviderClient {
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
+    /// Read a provider's on-chain `ProviderReplayState.hwm`. Returns
+    /// `Ok(None)` if the provider has no replay state yet (never signed
+    /// any terms).
+    pub async fn fetch_replay_hwm(
+        chain_ws_url: &str,
+        provider: &AccountId32,
+    ) -> ClientResult<Option<u64>> {
+        let chain = SubstrateClient::connect(chain_ws_url).await?;
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::provider_replay_state(provider))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
+
+        let Some(thunk) = thunk else {
+            return Ok(None);
+        };
+        let decoded = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
+        Ok(named_field(&decoded, "hwm")
+            .and_then(|v| v.as_u128())
+            .map(|h| h as u64))
+    }
+
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// The bucket owner POSTs the request shape they want; the provider
-    /// node returns SCALE-encoded [`AgreementTerms`](storage_primitives::AgreementTerms)
-    /// signed with its registered key. The result is fed directly into
-    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement)
-    /// to open the bucket + primary agreement on-chain.
-    ///
-    /// This is the on-ramp that replaced the old `request_agreement` +
-    /// `accept_agreement` two-step.
-    ///
-    /// # Parameters
-    /// - `provider_url`: Base HTTP URL of the provider node (no trailing slash).
-    /// - `req`: The negotiation request (owner, capacity, duration, validity).
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use storage_client::{ProviderClient, NegotiateRequest};
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let signed = ProviderClient::negotiate_terms(
-    ///     "http://provider.example:3333",
-    ///     &NegotiateRequest {
-    ///         owner: "5GrwvaEF...".parse()?,
-    ///         max_bytes: 10 * 1024 * 1024 * 1024,
-    ///         duration: 100_000,
-    ///         valid_until_offset: 1_000,
-    ///     },
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Owner posts the proposed shape; the provider node allocates nonce
+    /// + validity window from its own state, signs, returns
+    /// [`SignedTerms`] ready for
+    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
     pub async fn negotiate_terms(
         provider_url: &str,
         req: &crate::agreement::NegotiateRequest,

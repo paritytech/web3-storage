@@ -3,12 +3,12 @@
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
+    DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
 };
 use clap::Parser;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use subxt::dynamic::At;
@@ -64,6 +64,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
+            state.nonce_counter = Some(setup_nonce_counter(&cli, &state.provider_id).await?);
+
             Arc::new(state)
         }
         None => {
@@ -103,7 +105,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         state.set_checkpoint_handle(handle);
     }
     let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
-    let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address (requires signing key)
     if let Some(seed) = &seed {
@@ -204,48 +205,60 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-async fn start_agreement_coordinator(
+/// Open the persistent nonce counter and bootstrap it from the chain's
+/// `ProviderReplayState.hwm`. Default fallback to local storage, starting from 0
+async fn setup_nonce_counter(
     cli: &Cli,
-    seed: &Option<String>,
-    state: Arc<ProviderState>,
-) -> Option<AgreementCoordinatorHandle> {
-    if !cli.agreement.enable_agreement_coordinator {
-        return None;
-    }
-
-    let seed = match seed {
-        Some(s) => s.clone(),
-        None => {
-            tracing::error!("Agreement coordinator requires --keyfile for signing. Skipping.");
-            return None;
+    provider_id: &str,
+) -> Result<Arc<NonceCounter>, Box<dyn std::error::Error>> {
+    let counter = match cli.storage.storage_mode {
+        StorageMode::Inmemory => NonceCounter::in_memory(0),
+        StorageMode::Disk => {
+            let nonce_path = cli.storage.storage_path.join("nonce");
+            if let Some(parent) = nonce_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    format!(
+                        "failed to create nonce-counter parent dir {:?}: {}",
+                        parent, e,
+                    )
+                })?;
+            }
+            NonceCounter::open(nonce_path.clone())
+                .map_err(|e| format!("failed to open nonce counter at {:?}: {}", nonce_path, e))?
         }
     };
 
-    let config = AgreementCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
-        auto_accept: true,
-        seed: Some(seed),
-    };
-
-    let mut coordinator = AgreementCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect agreement coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Agreement coordinator connected to chain");
-
-    match coordinator.start().await {
-        Ok(handle) => {
-            tracing::info!("Agreement coordinator started — auto-accepting agreements");
-            Some(handle)
+    // Bootstrap from on-chain hwm. Best-effort: if the chain isn't
+    // reachable yet, fall back to the local counter — the on-chain
+    // replay window will reject any out-of-range reissues anyway.
+    let provider_account = sp_runtime::AccountId32::from_str(provider_id)
+        .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
+    match storage_client::ProviderClient::fetch_replay_hwm(&cli.rpc.chain_rpc, &provider_account)
+        .await
+    {
+        Ok(Some(hwm)) => {
+            tracing::info!(
+                "Bootstrapping nonce counter from on-chain hwm {} for provider {}",
+                hwm,
+                provider_id,
+            );
+            counter.bootstrap_from_hwm(hwm);
+        }
+        Ok(None) => {
+            tracing::info!(
+                "No on-chain replay state for provider {} yet; starting nonce counter from local storage",
+                provider_id,
+            );
         }
         Err(e) => {
-            tracing::error!("Failed to start agreement coordinator: {}", e);
-            None
+            tracing::warn!(
+                "Failed to bootstrap nonce counter from chain: {}; falling back to local storage",
+                e,
+            );
         }
     }
+
+    Ok(Arc::new(counter))
 }
 
 /// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string (e.g. "/ip4/127.0.0.1/tcp/3333").

@@ -168,10 +168,10 @@ pub mod pallet {
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
     /// Per-provider sliding replay window over signed agreement-term nonces.
-    /// See [`storage_primitives::ReplayWindow`] for the bit layout and
-    /// `establish_storage_agreement` for how the window is enforced.
+    /// See [`storage_primitives::ReplayWindow`] for the bit layout
     #[pallet::storage]
-    pub type ProviderReplayState<T: Config> =
+    #[pallet::getter(fn provider_replay_states)]
+    pub type ProviderReplayStates<T: Config> =
         StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
 
     /// Monotonically increasing bucket ID counter.
@@ -793,10 +793,6 @@ pub mod pallet {
         // Reverse index errors
         /// Account is a member of too many buckets.
         TooManyBucketsForMember,
-
-        /// The selected provider's price per byte exceeds the caller's
-        /// `max_price_per_byte`.
-        PriceExceedsMax,
 
         // establish_storage_agreement errors
         /// Provider signature over the SCALE-encoded terms is invalid.
@@ -3772,7 +3768,7 @@ pub mod pallet {
             Self::verify_terms_signature(&provider_info, &terms, sig)?;
 
             // Replay window: at most once per nonce, within the trailing 256 slots.
-            ProviderReplayState::<T>::try_mutate(provider, |window| -> DispatchResult {
+            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
                 window.try_accept(terms.nonce).map_err(|e| match e {
                     ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
                     ReplayError::TooOld => Error::<T>::NonceTooOld,
@@ -3787,10 +3783,6 @@ pub mod pallet {
                 Error::<T>::ProviderNotAcceptingPrimary
             );
             Self::validate_duration(&provider_info.settings, terms.duration)?;
-            ensure!(
-                provider_info.settings.price_per_byte <= terms.price_per_byte,
-                Error::<T>::PriceExceedsMax
-            );
 
             let new_committed = provider_info
                 .committed_bytes
@@ -3902,7 +3894,7 @@ pub mod pallet {
             Self::verify_terms_signature(&provider_info, &terms, sig)?;
 
             // Replay window: at most once per nonce, within the trailing 256 slots.
-            ProviderReplayState::<T>::try_mutate(provider, |window| -> DispatchResult {
+            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
                 window.try_accept(terms.nonce).map_err(|e| match e {
                     ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
                     ReplayError::TooOld => Error::<T>::NonceTooOld,
@@ -3917,10 +3909,6 @@ pub mod pallet {
                 .replica_sync_price
                 .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
             Self::validate_duration(&provider_info.settings, terms.duration)?;
-            ensure!(
-                provider_info.settings.price_per_byte <= terms.price_per_byte,
-                Error::<T>::PriceExceedsMax
-            );
 
             let new_committed = provider_info
                 .committed_bytes

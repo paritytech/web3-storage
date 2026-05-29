@@ -8014,6 +8014,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
+ "sp-runtime",
+ "storage-client",
  "storage-primitives",
  "subxt",
  "subxt-signer",

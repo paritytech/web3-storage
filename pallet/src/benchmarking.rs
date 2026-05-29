@@ -143,12 +143,8 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms = build_replica_terms::<T>(
-        admin,
-        1_000_000u64,
-        100u32.into(),
-        replica_index as u64 + 1,
-    );
+    let terms =
+        build_replica_terms::<T>(admin, 1_000_000u64, 100u32.into(), replica_index as u64 + 1);
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
         .expect("establish_replica_agreement_internal succeeds");

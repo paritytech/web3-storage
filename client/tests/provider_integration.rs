@@ -414,4 +414,3 @@ async fn test_add_stake_increases_stake() {
         "stake should increase by exactly {increment} (before={stake_before}, after={stake_after})"
     );
 }
-

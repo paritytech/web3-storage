@@ -214,8 +214,14 @@ pub mod extrinsics {
                 "owner",
                 subxt::dynamic::Value::from_bytes(terms.owner.as_ref() as &[u8]),
             ),
-            ("max_bytes", subxt::dynamic::Value::u128(terms.max_bytes as u128)),
-            ("duration", subxt::dynamic::Value::u128(terms.duration as u128)),
+            (
+                "max_bytes",
+                subxt::dynamic::Value::u128(terms.max_bytes as u128),
+            ),
+            (
+                "duration",
+                subxt::dynamic::Value::u128(terms.duration as u128),
+            ),
             (
                 "price_per_byte",
                 subxt::dynamic::Value::u128(terms.price_per_byte),
@@ -841,6 +847,29 @@ pub mod storage {
             PALLET_NAME,
             "Challenges",
             vec![subxt::dynamic::Value::u128(deadline_block as u128)],
+        )
+    }
+
+    /// Query the provider's replay-window state.
+    ///
+    /// Returns the storage address; the caller fetches it through subxt
+    /// and decodes the `ReplayWindow { hwm, bitmap }` payload. The
+    /// `hwm` field is what the provider node's nonce counter bootstraps
+    /// from on cold start so reissued nonces would land outside the
+    /// replay window and be rejected by Layer 0.
+    pub fn provider_replay_state(
+        account: &AccountId32,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage(
+            PALLET_NAME,
+            "ProviderReplayStates",
+            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
     }
 }

@@ -609,7 +609,7 @@ pub enum FileSystemError {
 pub struct DriveInfo<
     AccountId: Encode + Decode + MaxEncodedLen,
     BlockNumber: Encode + Decode + MaxEncodedLen,
-    MaxNameLength: Get<u32>
+    MaxNameLength: Get<u32>,
 > {
     /// Owner of the drive
     pub owner: AccountId,

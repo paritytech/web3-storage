@@ -28,9 +28,7 @@ use frame_support::{
     BoundedVec,
 };
 use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
-use pallet_storage_provider::{
-    AgreementTermsOf, Pallet as StorageProvider, ProviderSettings,
-};
+use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettings};
 use s3_primitives::{
     BucketName, MaxContentTypeLen, MaxEtagLen, MaxMetadataEntries, MaxMetadataKeyLen,
     MaxMetadataValueLen, MaxObjectKeyLen, MetadataEntry, ObjectKey, ObjectMetadata, S3BucketId,

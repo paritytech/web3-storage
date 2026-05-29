@@ -1,5 +1,5 @@
 use crate::{
-    mock::{*, MaxMultiaddrLength},
+    mock::{MaxMultiaddrLength, *},
     Drives, Error,
 };
 use codec::Encode;
@@ -90,15 +90,17 @@ fn create_drive_works() {
         assert_eq!(drive.owner, 1);
         assert_eq!(drive.max_capacity, 100);
         assert_eq!(drive.storage_period, 500);
-        assert_eq!(drive.name.as_ref().map(|n| n.to_vec()), Some(b"My Documents".to_vec()));
+        assert_eq!(
+            drive.name.as_ref().map(|n| n.to_vec()),
+            Some(b"My Documents".to_vec())
+        );
 
         // Layer 0 bucket exists with the provider as the lone primary.
         let l0_bucket = pallet_storage_provider::Buckets::<Test>::get(drive.bucket_id).unwrap();
         assert_eq!(l0_bucket.primary_providers.to_vec(), vec![3]);
-        assert!(pallet_storage_provider::StorageAgreements::<Test>::contains_key(
-            drive.bucket_id,
-            3,
-        ));
+        assert!(
+            pallet_storage_provider::StorageAgreements::<Test>::contains_key(drive.bucket_id, 3,)
+        );
     });
 }
 
@@ -133,13 +135,7 @@ fn create_drive_name_too_long_fails() {
         let long_name = vec![b'a'; 257]; // MaxDriveNameLength = 256 in mock
 
         assert_noop!(
-            DriveRegistry::create_drive(
-                RuntimeOrigin::signed(1),
-                Some(long_name),
-                3,
-                terms,
-                sig,
-            ),
+            DriveRegistry::create_drive(RuntimeOrigin::signed(1), Some(long_name), 3, terms, sig,),
             Error::<Test>::DriveNameTooLong
         );
     });

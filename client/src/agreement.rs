@@ -27,34 +27,33 @@ use storage_primitives::AgreementTerms;
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///
 /// Balance is `u128`, BlockNumber is `u32`; matches `parachains_common`'s
-/// runtime types used by `storage_paseo_runtime`.
+/// runtime types used by runtime.
 pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 
-/// Request body that a bucket owner POSTs to a provider node's
-/// `/negotiate` endpoint.
-///
-/// The provider node turns this into [`AgreementTerms`] (filling in
-/// `price_per_byte` from its own settings, choosing a `nonce`, and
-/// resolving `valid_until = current_block + valid_until_offset`), signs
-/// the SCALE encoding, and returns [`SignedTerms`].
+/// Concrete `ReplicaTerms` matching the parachain's
+/// `(Balance, BlockNumber) = (u128, u32)`.
+pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
+
+/// The owner proposes the agreement shape they want; the provider node
+/// allocates a fresh nonce and a validity window from its own state,
+/// builds the full [`AgreementTermsOf`], signs it, and returns
+/// [`SignedTerms`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NegotiateRequest {
-    /// The account that will own the resulting bucket / drive. Must
-    /// match the `Signed` origin that later submits
-    /// `establish_storage_agreement`.
+    /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
-    /// How many blocks the resulting quote should be valid for. The
-    /// provider chooses `valid_until = current_block + valid_until_offset`
-    /// so the owner has a bounded window to redeem it on-chain.
-    pub valid_until_offset: u32,
+    /// Price per byte per block the owner is willing to lock in.
+    pub price_per_byte: u128,
+    /// `Some(_)` to negotiate a replica agreement (per-sync funding +
+    /// minimum sync interval); `None` for a primary agreement.
+    pub replica_params: Option<ReplicaTermsOf>,
 }
 
-/// Provider-signed agreement terms ready to be redeemed via
-/// `establish_storage_agreement`.
+/// Provider-signed agreement terms
 ///
 /// `signature` is a `MultiSignature` over `blake2_256(SCALE(terms))`,
 /// produced by the provider's registered key. We carry the signature as
@@ -72,7 +71,10 @@ pub struct SignedTerms {
 /// Mirror of the on-chain `verify_terms_signature`: SCALE-encode, hash
 /// with blake2-256, then sign. The runtime accepts `MultiSignature`, so
 /// callers wrap the raw sr25519 signature with `MultiSignature::Sr25519`.
-pub fn sign_terms(keypair: &subxt_signer::sr25519::Keypair, terms: &AgreementTermsOf) -> MultiSignature {
+pub fn sign_terms(
+    keypair: &subxt_signer::sr25519::Keypair,
+    terms: &AgreementTermsOf,
+) -> MultiSignature {
     let hash = blake2_256(&terms.encode());
     let raw = keypair.sign(&hash);
     MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(raw.0))

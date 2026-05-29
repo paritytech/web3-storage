@@ -49,19 +49,21 @@
 //! ### For Bucket Administrators
 //! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
 //! ```no_run
-//! use storage_client::{AdminClient, ProviderClient, NegotiateRequest};
+//! use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
 //!
-//! // 1. Negotiate signed terms with the provider over HTTP.
+//! // 1. Ask the provider node to sign agreement terms over HTTP. The
+//! //    provider allocates the nonce + validity window and signs.
 //! let signed = ProviderClient::negotiate_terms(
 //!     "http://provider.example:3333",
 //!     &NegotiateRequest {
 //!         owner: "5GrwvaEF...".parse()?,
 //!         max_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
 //!         duration: 100_000,
-//!         valid_until_offset: 1_000,
+//!         price_per_byte: 1_000_000,
+//!         replica_params: None,
 //!     },
 //! ).await?;
 //!
@@ -113,7 +115,7 @@ pub mod verification;
 
 // Re-export commonly used types
 pub use admin::AdminClient;
-pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use challenger::ChallengerClient;
 pub use checkpoint::{

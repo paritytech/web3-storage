@@ -389,8 +389,7 @@ pub mod pallet {
         #[allow(clippy::type_complexity)]
         pub fn get_drive(
             drive_id: DriveId,
-        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength>>
-        {
+        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength>> {
             Drives::<T>::get(drive_id)
         }
 

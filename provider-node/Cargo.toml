@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Off-chain provider node for scalable Web3 storage"
 
 [dependencies]
+storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 tokio = { workspace = true }
 axum = { workspace = true }
@@ -15,6 +16,7 @@ tower-http = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
 subxt-signer = { workspace = true }
 base64 = "0.22"

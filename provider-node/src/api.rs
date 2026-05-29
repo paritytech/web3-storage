@@ -6,6 +6,7 @@ use crate::checkpoint_coordinator::{
 };
 use crate::error::Error;
 use crate::fs_api;
+use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
 use crate::s3_api;
 use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
@@ -19,6 +20,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use sp_core::{Pair, H256};
 use std::sync::Arc;
+use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -48,6 +50,8 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
+        // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
+        .route("/negotiate", post(negotiate_terms))
         // Checkpoint coordination
         .route("/checkpoint/sign", post(sign_checkpoint_proposal))
         .route("/checkpoint/duty", get(get_checkpoint_duty))
@@ -736,6 +740,37 @@ async fn get_historical_roots(
         ],
         snapshot_block: 0, // Would need chain query for actual block
     }))
+}
+
+/// Negotiate provider-signed [`AgreementTerms`] for a bucket owner.
+///
+/// TODO: Request are automatically accepted, implement advance features to let providers determine
+///
+/// Returns `503` if the node has no signing key (no `--keyfile`) or no
+async fn negotiate_terms(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<NegotiateRequest>,
+) -> Result<Json<SignedTerms>, Error> {
+    let keypair = state.keypair.as_ref().ok_or_else(|| {
+        Error::Internal("provider node has no signing key; /negotiate disabled".to_string())
+    })?;
+    let nonce_counter = state.nonce_counter.as_ref().ok_or_else(|| {
+        Error::Internal("provider node has no nonce counter; /negotiate disabled".to_string())
+    })?;
+
+    let terms: AgreementTermsOf = AgreementTerms {
+        owner: req.owner,
+        max_bytes: req.max_bytes,
+        duration: req.duration,
+        price_per_byte: req.price_per_byte,
+        // TODO: lookup current block and use a bounded offset.
+        valid_until: u32::MAX,
+        nonce: nonce_counter.next(),
+        replica_params: req.replica_params,
+    };
+    let signature = negotiate::sign_terms(keypair, &terms);
+
+    Ok(Json(SignedTerms { terms, signature }))
 }
 
 /// Get replica sync status for a bucket.
