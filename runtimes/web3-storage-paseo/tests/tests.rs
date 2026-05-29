@@ -145,7 +145,7 @@ fn primary_terms(
     AgreementTerms {
         owner,
         max_bytes,
-        duration: duration.into(),
+        duration,
         price_per_byte: 0,
         valid_until: 1_000_000_000,
         nonce,

@@ -34,7 +34,7 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     pub nonce: u64,
     /// Replica-specific parameters.
     /// - `None` means these are primary terms;
-    /// -`Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.
+    /// - `Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.
     pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
 }
 

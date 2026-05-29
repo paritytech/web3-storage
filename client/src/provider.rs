@@ -341,9 +341,8 @@ impl ProviderClient {
 
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
-    /// Owner posts the proposed shape; the provider node allocates nonce
-    /// + validity window from its own state, signs, returns
-    /// [`SignedTerms`] ready for
+    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
+    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
     /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
     pub async fn negotiate_terms(
         provider_url: &str,

@@ -126,8 +126,6 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 
     if !already_registered {
         // Idempotent: ignore "already registered" errors so tests survive races.
-        // We register with Alice's real sr25519 pubkey so she can sign her own
-        // terms below for the establish_storage_agreement flow.
         let _ = provider
             .register(
                 "/ip4/127.0.0.1/tcp/3333".to_string(),
@@ -138,7 +136,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 
         let _ = provider
             .update_settings(ProviderSettings {
-                price_per_byte: 0,
+                price_per_byte: 1_000_000,
                 min_duration: 1,
                 max_duration: 1_000_000,
                 accepting_primary: true,

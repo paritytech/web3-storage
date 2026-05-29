@@ -1,7 +1,7 @@
 //! Admin Client - For bucket administrators managing buckets and agreements.
 //!
 //! This client provides operations for:
-//! - Redeeming provider-signed terms to open a bucket + primary agreement
+//! - Establish storage agreement
 //! - Managing bucket members and permissions
 //! - Extending / topping up / terminating agreements
 //! - Freezing buckets

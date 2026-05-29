@@ -133,6 +133,8 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     .unwrap();
 
     let mut ext = sp_io::TestExternalities::new(t);
+    // Required so signed-terms tests can call `sr25519_sign` through the
+    // keystore extension.
     ext.register_extension(sp_keystore::KeystoreExt::new(
         sp_keystore::testing::MemoryKeystore::new(),
     ));

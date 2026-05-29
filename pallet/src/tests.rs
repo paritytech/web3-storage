@@ -65,6 +65,7 @@ fn primary_terms(
 }
 
 /// Build [`AgreementTermsOf<Test>`] for a replica agreement.
+#[allow(clippy::too_many_arguments)]
 fn replica_terms(
     owner: u64,
     max_bytes: u64,
@@ -940,7 +941,7 @@ mod establish_storage_agreement_tests {
             assert_eq!(Balances::free_balance(1), owner_balance_before);
 
             // Replay window now anchored at nonce 7.
-            let window = ProviderReplayState::<Test>::get(2);
+            let window = ProviderReplayStates::<Test>::get(2);
             assert_eq!(window.hwm, 7);
             assert_eq!(window.bitmap[0] & 1, 1);
         });
@@ -1147,7 +1148,7 @@ mod establish_storage_agreement_tests {
     fn rejects_when_signed_price_below_on_chain_price() {
         // If a provider raises their on-chain price after signing, the
         // pallet enforces `provider_info.price_per_byte <= terms.price_per_byte`
-        // and rejects with `PriceExceedsMax`.
+        // and rejects with `PaymentExceedsMax`.
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let settings = ProviderSettings {
@@ -1171,7 +1172,7 @@ mod establish_storage_agreement_tests {
                     terms,
                     sig,
                 ),
-                Error::<Test>::PriceExceedsMax
+                Error::<Test>::PaymentExceedsMax
             );
         });
     }
@@ -1246,7 +1247,7 @@ mod establish_storage_agreement_tests {
                 advance,
                 sig,
             ));
-            assert_eq!(ProviderReplayState::<Test>::get(2).hwm, 300);
+            assert_eq!(ProviderReplayStates::<Test>::get(2).hwm, 300);
 
             // Distance == REPLAY_WINDOW_BITS - 1 ⇒ accepted.
             let edge_nonce = 300 - (REPLAY_WINDOW_BITS as u64 - 1);
@@ -1326,7 +1327,7 @@ mod establish_storage_agreement_tests {
             }
 
             // hwm follows the max nonce seen.
-            let window = ProviderReplayState::<Test>::get(2);
+            let window = ProviderReplayStates::<Test>::get(2);
             assert_eq!(window.hwm, 10);
 
             // Replays of any of those nonces are rejected.
@@ -1376,7 +1377,7 @@ mod establish_storage_agreement_tests {
                 sig,
             ));
 
-            let window = ProviderReplayState::<Test>::get(2);
+            let window = ProviderReplayStates::<Test>::get(2);
             assert_eq!(window.hwm, 10_000);
             // Only the new hwm bit is set; everything else is zero.
             assert_eq!(window.bitmap[0], 0b0000_0001);

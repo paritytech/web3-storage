@@ -18,7 +18,7 @@ use storage_primitives::Role;
 
 /// Full bucket management lifecycle in dependency order:
 ///
-///   chain_setup (registers Alice as provider + signs terms + opens bucket)
+///   chain_setup (registers Alice as provider + signs terms + creates bucket)
 ///   → get_bucket_info       (verify initial state)
 ///   → add_member            (add Bob as Writer)
 ///   → get_bucket_info       (verify Bob present)
@@ -35,7 +35,7 @@ async fn test_bucket_lifecycle() {
 
     // `chain_setup` registers Alice as a provider, signs primary terms with
     // her keypair, and redeems them via `establish_storage_agreement` to
-    // open a fresh bucket. Returns `None` when the chain isn't reachable.
+    // create a fresh bucket. Returns `None` when the chain isn't reachable.
     let setup = match common::chain_setup().await {
         Some(s) => s,
         None => {

@@ -106,11 +106,9 @@ fn shift_left_le(bytes: &mut [u8; 32], shift: u64) {
 
     let mut out = [0u8; 32];
     if bit_shift == 0 {
-        for i in byte_shift..32 {
-            out[i] = bytes[i - byte_shift];
-        }
+        out[byte_shift..32].copy_from_slice(&bytes[..(32 - byte_shift)]);
     } else {
-        for i in byte_shift..32 {
+        for (i, slot) in out.iter_mut().enumerate().skip(byte_shift) {
             let src = i - byte_shift;
             let lo = bytes[src] << bit_shift;
             let hi = if src > 0 {
@@ -118,7 +116,7 @@ fn shift_left_le(bytes: &mut [u8; 32], shift: u64) {
             } else {
                 0
             };
-            out[i] = lo | hi;
+            *slot = lo | hi;
         }
     }
     *bytes = out;
