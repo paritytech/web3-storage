@@ -35,7 +35,8 @@ on:
         required: false
         default: "false"
 
-permissions: # allow the action to comment on the PR
+permissions:
+  # allow the action to comment on the PR
   contents: read
   issues: write
   pull-requests: write
@@ -75,7 +76,8 @@ jobs:
 
       - name: Comment PR (Start)
         # No need to comment if --quiet
-        if: ${{ github.event.inputs.is_quiet == 'false' && !startsWith(github.event.inputs.cmd, 'fmt') }}
+        if: ${{ github.event.inputs.is_quiet == 'false' &&
+          !startsWith(github.event.inputs.cmd, 'fmt') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -138,16 +140,31 @@ jobs:
           repository: ${{ env.REPO }}
           ref: ${{ env.PR_BRANCH }}
 
-      - name: Install frame-omni-bencher for bench
+      - name: Load .github/env
         if: startsWith(github.event.inputs.cmd, 'bench')
-        shell: bash
-        run: |
-          set -euxo pipefail
-          source .github/env
-          curl -sSfL -o /usr/local/bin/frame-omni-bencher \
-            "https://github.com/paritytech/polkadot-sdk/releases/download/${POLKADOT_SDK_VERSION}/frame-omni-bencher"
-          chmod +x /usr/local/bin/frame-omni-bencher
-          frame-omni-bencher --version
+        run: cat .github/env >> "$GITHUB_ENV"
+
+      - name: Install just
+        if: startsWith(github.event.inputs.cmd, 'bench')
+        run: cargo install just --locked || true
+
+      - name: Cache frame-omni-bencher
+        if: startsWith(github.event.inputs.cmd, 'bench')
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        id: bencher-cache
+        with:
+          path: .bin/frame-omni-bencher
+          key: polkadot-sdk-bencher-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download frame-omni-bencher
+        if: startsWith(github.event.inputs.cmd, 'bench') &&
+          steps.bencher-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }}
+          download-frame-omni-bencher
+
+      - name: Add .bin to PATH
+        if: startsWith(github.event.inputs.cmd, 'bench')
+        run: echo "$GITHUB_WORKSPACE/.bin" >> "$GITHUB_PATH"
 
       - name: Run cmd
         id: cmd
@@ -336,10 +353,10 @@ jobs:
             echo "Nothing to commit";
           fi
 
-
       - name: Comment PR (End)
         # No need to comment if --quiet
-        if: ${{ github.event.inputs.is_quiet == 'false' && needs.cmd.result == 'success' && !startsWith(github.event.inputs.cmd, 'fmt') }}
+        if: ${{ github.event.inputs.is_quiet == 'false' && needs.cmd.result == 'success'
+          && !startsWith(github.event.inputs.cmd, 'fmt') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           SUBWEIGHT: "${{ needs.cmd.outputs.subweight }}"
@@ -369,7 +386,6 @@ jobs:
               body: `Command "${cmd}" has finished ✅ [See logs here](${runUrl})${subweightCollapsed}${cmdOutputCollapsed}`
             })
 
-
   finish:
     needs: [before-cmd, cmd, after-cmd]
     if: ${{ always() }}
@@ -381,7 +397,8 @@ jobs:
       COMMENT_ID: ${{ github.event.inputs.comment_id }}
     steps:
       - name: Comment PR (Failure)
-        if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' || needs.before-cmd.result == 'failure' }}
+        if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' ||
+          needs.before-cmd.result == 'failure' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -402,7 +419,8 @@ jobs:
             })
 
       - name: Add 😕 reaction on failure
-        if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' || needs.before-cmd.result == 'failure' }}
+        if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' ||
+          needs.before-cmd.result == 'failure' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -415,7 +433,8 @@ jobs:
             })
 
       - name: Add 👍 reaction on success
-        if: ${{ needs.cmd.result == 'success' && needs.after-cmd.result == 'success' && needs.before-cmd.result == 'success' }}
+        if: ${{ needs.cmd.result == 'success' && needs.after-cmd.result == 'success' &&
+          needs.before-cmd.result == 'success' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -426,3 +445,4 @@ jobs:
               repo: context.repo.repo,
               content: '+1'
             })
+
