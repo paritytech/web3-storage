@@ -49,7 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
-
     println!("Negotiating signed agreement terms with provider...");
     let signed = ProviderClient::negotiate_terms(
         provider_url,

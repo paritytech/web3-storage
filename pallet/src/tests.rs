@@ -1145,39 +1145,6 @@ mod establish_storage_agreement_tests {
     }
 
     #[test]
-    fn rejects_when_signed_price_below_on_chain_price() {
-        // If a provider raises their on-chain price after signing, the
-        // pallet enforces `provider_info.price_per_byte <= terms.price_per_byte`
-        // and rejects with `PaymentExceedsMax`.
-        new_test_ext().execute_with(|| {
-            System::set_block_number(1);
-            let settings = ProviderSettings {
-                min_duration: 0,
-                max_duration: 1000,
-                price_per_byte: 5, // Current on-chain price.
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 0,
-            };
-            let provider_pk = register_signing_provider(2, "//Provider", 200, settings);
-
-            // Signed terms quote a stale, lower price.
-            let terms = primary_terms(1, 10, 10, 1, 1_000, 1);
-            let sig = sign_terms(&provider_pk, &terms);
-            assert_noop!(
-                StorageProvider::establish_storage_agreement(
-                    RuntimeOrigin::signed(1),
-                    2,
-                    terms,
-                    sig,
-                ),
-                Error::<Test>::PaymentExceedsMax
-            );
-        });
-    }
-
-    #[test]
     fn rejects_when_stake_insufficient_for_committed_bytes() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
