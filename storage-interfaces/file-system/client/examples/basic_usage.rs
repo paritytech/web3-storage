@@ -16,34 +16,44 @@
 //!
 //! Run this example:
 //! ```bash
-//! cargo run --example basic_usage
+//! cargo run --example basic_usage [chain_ws] [provider_url]
 //! ```
 
 use file_system_client::FileSystemClient;
 use sp_runtime::AccountId32;
+use std::env;
 use storage_client::{NegotiateRequest, ProviderClient};
 use subxt_signer::sr25519::dev as dev_signer;
 
-const CHAIN_WS: &str = "ws://127.0.0.1:2222";
-const PROVIDER_URL: &str = "http://127.0.0.1:3333";
+const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
+const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
+    let args: Vec<String> = env::args().collect();
+    let chain_ws = args.get(1).map(|s| s.as_str()).unwrap_or(DEFAULT_CHAIN_WS);
+    let provider_url = args
+        .get(2)
+        .map(|s| s.as_str())
+        .unwrap_or(DEFAULT_PROVIDER_URL);
+
     println!("🚀 File System Client - Basic Usage Example\n");
     println!("{}", "=".repeat(60));
+    println!("Chain WebSocket: {chain_ws}");
+    println!("Provider URL: {provider_url}");
 
     // === STEP 1: Create the client ===
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
-    let mut fs_client = FileSystemClient::new(CHAIN_WS, PROVIDER_URL)
+    let mut fs_client = FileSystemClient::new(chain_ws, provider_url)
         .await?
         .with_dev_signer("alice") // Use Alice for testing
         .await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
-    let provider = ProviderClient::fetch_provider_id(PROVIDER_URL).await?;
+    let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
     println!("✅ Connected successfully!");
@@ -52,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🤝 Step 2: Negotiating signed agreement terms...");
 
     let signed = ProviderClient::negotiate_terms(
-        PROVIDER_URL,
+        provider_url,
         &NegotiateRequest {
             owner: owner.clone(),
             max_bytes: 10_000_000_000, // 10 GB

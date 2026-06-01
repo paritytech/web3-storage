@@ -72,7 +72,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
 
     // Discover the provider's on-chain account from its /info endpoint
-    // instead of hardcoding it.
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;
     println!("  Provider account (from /info): {provider}");
 
