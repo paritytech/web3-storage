@@ -23,10 +23,10 @@ import assert from "node:assert";
 import {
   claimCheckpointRewards,
   configureCheckpointWindow,
-  createBucket,
+  establishStorageAgreement,
   fetchCheckpointDuty,
   fundCheckpointPool,
-  requestPrimaryAgreement,
+  negotiateTerms,
   signCheckpointProposal,
   submitProviderCheckpoint,
   uploadChunk,
@@ -38,7 +38,6 @@ import {
   makeSigner,
   parseProviderClientArgs,
   sameAddress,
-  waitForAgreementAcceptance,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -175,20 +174,16 @@ async function main() {
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
     restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
-    console.log("\n=== Step 2: Create bucket (client = admin) ===");
-    const bucketId = await createBucket(api, client);
-    console.log("  Bucket created: id=%s", bucketId);
-
-    console.log("\n=== Step 3: Open agreement so the provider becomes primary ===");
-    const maxBytes = 1_048_576n;
-    const duration = 200;
-    await requestPrimaryAgreement(api, client, provider, bucketId, {
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxBytes * BigInt(duration) * 2n,
+    console.log("\n=== Step 2: Negotiate + establish_storage_agreement (atomic) ===");
+    const signed = await negotiateTerms(PROVIDER_URL, {
+      owner: client.address,
+      max_bytes: 1_048_576, // 1 MiB
+      duration: 200,
+      price_per_byte: 1,
+      replica_params: null,
     });
-    await waitForAgreementAcceptance(api, provider.address, bucketId);
-    console.log("  Agreement accepted (auto by provider node)");
+    const bucketId = await establishStorageAgreement(api, client, provider, signed);
+    console.log("  Bucket + agreement opened: id=%s", bucketId);
 
     const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
     assert.ok(
@@ -196,7 +191,7 @@ async function main() {
       "Provider should be in primary_providers after agreement"
     );
 
-    console.log("\n=== Step 4: Upload data so the MMR has something to commit ===");
+    console.log("\n=== Step 3: Upload data so the MMR has something to commit ===");
     const { data, commit } = await uploadChunk(
       PROVIDER_URL,
       bucketId,
@@ -204,7 +199,7 @@ async function main() {
     );
     console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
-    console.log("\n=== Step 5: configure_checkpoint_window ===");
+    console.log("\n=== Step 4: configure_checkpoint_window ===");
     const cfgEvent = await configureCheckpointWindow(api, client, bucketId, {
       interval: WINDOW_INTERVAL,
       gracePeriod: WINDOW_GRACE,
@@ -216,7 +211,7 @@ async function main() {
       cfgEvent.enabled
     );
 
-    console.log("\n=== Step 6: fund_checkpoint_pool ===");
+    console.log("\n=== Step 5: fund_checkpoint_pool ===");
     const fundEvent = await fundCheckpointPool(api, client, bucketId, POOL_AMOUNT);
     console.log(
       "  Pool funded by %s with %s units",
@@ -232,10 +227,10 @@ async function main() {
       `Pool balance ${balance} < funded amount ${POOL_AMOUNT}`
     );
 
-    console.log("\n=== Step 7: provider_checkpoint (autonomous) ===");
+    console.log("\n=== Step 6: provider_checkpoint (autonomous) ===");
     const reward = await runProviderCheckpoint(api, papi, provider, bucketId);
 
-    console.log("\n=== Step 8: claim_checkpoint_rewards ===");
+    console.log("\n=== Step 7: claim_checkpoint_rewards ===");
     await claimAndVerify(api, provider, bucketId, reward);
 
     console.log("\nPASSED: provider-initiated checkpoint reward cycle complete");
