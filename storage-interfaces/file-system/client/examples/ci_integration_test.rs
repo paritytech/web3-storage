@@ -2,11 +2,12 @@
 //!
 //! This test is designed to run in CI after the infrastructure is set up.
 //! It tests the full file system workflow:
-//! 1. Create a drive (which creates bucket + agreement internally)
-//! 2. Create directories
-//! 3. Upload files
-//! 4. List directories
-//! 5. Download and verify files
+//! 1. Negotiate signed agreement terms with the provider
+//! 2. Create a drive (atomically opens bucket + primary agreement)
+//! 3. Create directories
+//! 4. Upload files
+//! 5. List directories
+//! 6. Download and verify files
 //!
 //! Usage: cargo run --example ci_integration_test <chain_ws> <provider_url>
 //!
@@ -14,7 +15,10 @@
 
 use file_system_client::FileSystemClient;
 use file_system_primitives::DirectoryEntry;
+use sp_runtime::AccountId32;
 use std::env;
+use storage_client::{NegotiateRequest, ProviderClient};
+use subxt_signer::sr25519::dev as dev_signer;
 
 async fn list_and_verify(
     fs_client: &mut FileSystemClient,
@@ -65,27 +69,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("  Client connected successfully");
 
-    // Step 2: Create a drive
+    let owner: AccountId32 = dev_signer::alice().public_key().0.into();
+
+    // Discover the provider's on-chain account from its /info endpoint
+    // instead of hardcoding it.
+    let provider = ProviderClient::fetch_provider_id(provider_url).await?;
+    println!("  Provider account (from /info): {provider}");
+
+    // Step 2: Negotiate signed agreement terms
     println!();
-    println!("Step 2: Creating drive...");
+    println!("Step 2: Negotiating signed terms with provider...");
+    let signed = ProviderClient::negotiate_terms(
+        provider_url,
+        &NegotiateRequest {
+            owner,
+            max_bytes: 1_000_000_000, // 1 GB
+            duration: 500,            // 500 blocks
+            price_per_byte: 0,
+            replica_params: None,
+        },
+    )
+    .await?;
+    println!(
+        "  Provider signed terms: nonce={}, valid_until={}",
+        signed.terms.nonce, signed.terms.valid_until
+    );
+
+    // Step 3: Create a drive
+    println!();
+    println!("Step 3: Creating drive...");
     let drive_id = fs_client
         .create_drive(
             Some("CI Test Drive"),
-            1_000_000_000,         // 1 GB capacity
-            500,                   // 500 blocks duration
-            1_000_000_000_000_000, // 1000 tokens payment (12 decimals)
-            Some(1),               // 1 provider minimum
+            provider,
+            signed.terms,
+            signed.signature,
         )
         .await?;
     println!("  Drive created: ID = {drive_id}");
 
-    // Get the bucket_id for this drive
     let bucket_id = fs_client.get_bucket_id(drive_id).await?;
     println!("  Associated bucket: ID = {bucket_id}");
 
-    // Step 3: Create directories
+    // Step 4: Create directories
     println!();
-    println!("Step 3: Creating directories...");
+    println!("Step 4: Creating directories...");
     fs_client
         .create_directory(drive_id, "/test-dir", bucket_id)
         .await?;
@@ -96,9 +124,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("  Created /test-dir/subdir");
 
-    // Step 4: Upload files
+    // Step 5: Upload files
     println!();
-    println!("Step 4: Uploading files...");
+    println!("Step 5: Uploading files...");
 
     let test_content_1 = b"Hello from CI integration test!";
     fs_client
@@ -123,9 +151,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         test_content_2.len()
     );
 
-    // Step 5: List directories
+    // Step 6: List directories
     println!();
-    println!("Step 5: Listing directories...");
+    println!("Step 6: Listing directories...");
 
     let root_entries = list_and_verify(&mut fs_client, drive_id, "/", 1).await?;
     assert!(
@@ -141,9 +169,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     list_and_verify(&mut fs_client, drive_id, "/test-dir", 2).await?;
     list_and_verify(&mut fs_client, drive_id, "/test-dir/subdir", 1).await?;
 
-    // Step 6: Download and verify files
+    // Step 7: Download and verify files
     println!();
-    println!("Step 6: Downloading and verifying files...");
+    println!("Step 7: Downloading and verifying files...");
 
     let downloaded_1 = fs_client
         .download_file(drive_id, "/test-dir/hello.txt")

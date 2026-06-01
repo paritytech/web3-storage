@@ -11,7 +11,6 @@ use clap::Parser;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use subxt::dynamic::At;
 use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -227,8 +226,10 @@ async fn setup_nonce_counter(
                 .map_err(|e| format!("failed to open nonce counter at {:?}: {}", nonce_path, e))?
         }
     };
+    // Start the `nonce` from 1.
+    counter.bootstrap_from_hwm(0);
 
-    // Bootstrap from on-chain hwm. Best-effort: if the chain isn't
+    // Otherwise, bootstrap from on-chain hwm. Best-effort: if the chain isn't
     // reachable yet, fall back to the local counter — the on-chain
     // replay window will reject any out-of-range reissues anyway.
     let provider_account = sp_runtime::AccountId32::from_str(provider_id)
@@ -279,41 +280,34 @@ fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
 async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str, bind_addr: &str) {
     let expected_multiaddr = bind_addr_to_multiaddr(bind_addr);
 
-    let api = match OnlineClient::<PolkadotConfig>::from_url(chain_rpc).await {
-        Ok(api) => api,
-        Err(e) => {
-            tracing::warn!("Could not connect to chain for multiaddr sync: {}", e);
+    let account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(a) => a,
+        Err(_) => {
+            tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
             return;
         }
     };
 
-    // Read current on-chain provider info
-    let our_account: sp_core::crypto::AccountId32 =
-        match sp_core::crypto::Ss58Codec::from_ss58check(provider_id) {
-            Ok(a) => a,
-            Err(_) => {
-                tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
-                return;
-            }
-        };
-    let our_bytes: [u8; 32] = our_account.into();
-
-    let storage_query = subxt::dynamic::storage(
-        "StorageProvider",
-        "Providers",
-        vec![Value::from_bytes(our_bytes)],
-    );
-
-    let result = match api.storage().at_latest().await {
-        Ok(s) => s.fetch(&storage_query).await,
+    let mut client = match storage_client::ProviderClient::new(
+        storage_client::ClientConfig {
+            chain_ws_url: chain_rpc.to_string(),
+            ..Default::default()
+        },
+        provider_id.to_string(),
+    ) {
+        Ok(c) => c,
         Err(e) => {
-            tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+            tracing::warn!("Could not build provider client for multiaddr sync: {}", e);
             return;
         }
     };
+    if let Err(e) = client.connect().await {
+        tracing::warn!("Could not connect to chain for multiaddr sync: {}", e);
+        return;
+    }
 
-    let provider_value = match result {
-        Ok(Some(v)) => v,
+    let current = match client.get_provider_info(&account).await {
+        Ok(Some(info)) => info.multiaddr,
         Ok(None) => {
             tracing::info!("Provider not registered on chain yet, skipping multiaddr sync");
             return;
@@ -322,58 +316,6 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
             tracing::warn!("Failed to fetch provider info: {}", e);
             return;
         }
-    };
-
-    // Extract multiaddr from the encoded provider storage entry.
-    // Decode to scale_value and extract the "multiaddr" field bytes.
-    let current = {
-        let decoded = match provider_value.to_value() {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
-                return;
-            }
-        };
-
-        // Use At trait to navigate the decoded value
-        let multiaddr_val = match decoded.at("multiaddr") {
-            Some(v) => v,
-            None => {
-                tracing::warn!("No multiaddr field in provider info, skipping sync");
-                return;
-            }
-        };
-
-        // Extract bytes from the value — could be a sequence of u8 values
-        fn extract_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
-            use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-            match &val.value {
-                // Sequence/composite of individual byte values
-                ValueDef::Composite(Composite::Unnamed(items)) => items
-                    .iter()
-                    .filter_map(|item| match &item.value {
-                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                        _ => None,
-                    })
-                    .collect(),
-                // Some subxt versions encode Vec<u8> as a Primitive::U256 or similar
-                ValueDef::Primitive(Primitive::U128(n)) => {
-                    // Single byte
-                    vec![*n as u8]
-                }
-                _ => vec![],
-            }
-        }
-
-        let bytes = extract_bytes(multiaddr_val);
-        if bytes.is_empty() {
-            // Debug: log the actual value structure to understand the encoding
-            tracing::warn!(
-                "multiaddr decoded as empty, value structure: {:?}",
-                multiaddr_val
-            );
-        }
-        String::from_utf8_lossy(&bytes).to_string()
     };
 
     if current == expected_multiaddr {
@@ -389,6 +331,14 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
         current,
         expected_multiaddr
     );
+
+    let api = match OnlineClient::<PolkadotConfig>::from_url(chain_rpc).await {
+        Ok(api) => api,
+        Err(e) => {
+            tracing::warn!("Could not connect to chain for multiaddr update: {}", e);
+            return;
+        }
+    };
 
     // Create signer from seed
     let uri: subxt_signer::SecretUri = match seed.parse() {

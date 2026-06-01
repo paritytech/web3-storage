@@ -245,8 +245,8 @@ pub struct ListBucketsResponse {
 /// Provider info response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoResponse {
-    pub status: String,
-    pub version: String,
+    pub provider_id: String,
+    // TODO: Add more provider information
 }
 
 /// Health check response.

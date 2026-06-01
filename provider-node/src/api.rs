@@ -122,10 +122,9 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn info() -> Json<InfoResponse> {
+async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
-        status: "healthy".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        provider_id: state.provider_id.clone(),
     })
 }
 

@@ -104,39 +104,33 @@ impl SubstrateClient {
 /// Drive Registry extrinsics.
 pub mod extrinsics {
     use super::*;
+    use storage_client::substrate::extrinsics::{dynamic_agreement_terms, dynamic_multi_signature};
+    use storage_client::AgreementTermsOf;
     use subxt::tx::Payload;
 
-    /// Create a drive extrinsic.
+    /// Build a `DriveRegistry::create_drive` extrinsic.
+    ///
+    /// `terms` + `sig` are the provider-signed agreement bundle returned by
+    /// `ProviderClient::negotiate_terms`. Layer 0 verifies the signature
+    /// inside `establish_storage_agreement_internal`; bucket creation +
+    /// primary-agreement opening happen atomically alongside drive
+    /// registration.
     pub fn create_drive(
         name: Option<Vec<u8>>,
-        max_capacity: u64,
-        storage_period: u64,
-        payment: u128,
-        min_providers: Option<u8>,
+        provider: AccountId32,
+        terms: &AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
         subxt::dynamic::tx(
             "DriveRegistry",
             "create_drive",
             vec![
-                // name: Option<Vec<u8>>
                 name.map(|n| subxt::dynamic::Value::from_bytes(&n))
                     .map(|v| subxt::dynamic::Value::unnamed_variant("Some", vec![v]))
                     .unwrap_or_else(|| subxt::dynamic::Value::unnamed_variant("None", vec![])),
-                // max_capacity: u64
-                subxt::dynamic::Value::u128(max_capacity as u128),
-                // storage_period: BlockNumber (u64)
-                subxt::dynamic::Value::u128(storage_period as u128),
-                // payment: Balance (u128)
-                subxt::dynamic::Value::u128(payment),
-                // min_providers: Option<u8>
-                min_providers
-                    .map(|p| {
-                        subxt::dynamic::Value::unnamed_variant(
-                            "Some",
-                            vec![subxt::dynamic::Value::u128(p as u128)],
-                        )
-                    })
-                    .unwrap_or_else(|| subxt::dynamic::Value::unnamed_variant("None", vec![])),
+                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
+                dynamic_agreement_terms(terms),
+                dynamic_multi_signature(sig),
             ],
         )
     }

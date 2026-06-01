@@ -144,16 +144,7 @@ impl ProviderClient {
 
         // Decode top-level fields.
         let multiaddr = named_field(&value, "multiaddr")
-            .map(|v| match &v.value {
-                ValueDef::Composite(Composite::Unnamed(items)) => {
-                    let bytes: Vec<u8> = items
-                        .iter()
-                        .filter_map(|b| b.as_u128().map(|n| n as u8))
-                        .collect();
-                    String::from_utf8_lossy(&bytes).into_owned()
-                }
-                _ => String::new(),
-            })
+            .map(|v| String::from_utf8_lossy(&decode_byte_vec(v)).into_owned())
             .unwrap_or_default();
 
         let stake = named_field(&value, "stake")
@@ -367,6 +358,40 @@ impl ProviderClient {
             .json::<crate::agreement::SignedTerms>()
             .await
             .map_err(ClientError::Http)
+    }
+
+    /// Fetch a provider node's identity from its `/info` HTTP endpoint.
+    ///
+    /// Returns the provider's account as an [`AccountId32`], parsed from the
+    /// SS58 string the node reports. Useful for discovering the provider's
+    /// on-chain account without hardcoding it.
+    pub async fn fetch_provider_id(provider_url: &str) -> ClientResult<AccountId32> {
+        let url = format!("{}/info", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /info with status {}",
+                response.status()
+            )));
+        }
+
+        #[derive(serde::Deserialize)]
+        struct InfoResponse {
+            provider_id: String,
+        }
+
+        let info = response
+            .json::<InfoResponse>()
+            .await
+            .map_err(ClientError::Http)?;
+
+        SubstrateClient::parse_account(&info.provider_id)
+            .map_err(|e| ClientError::Chain(format!("invalid provider_id from /info: {e}")))
     }
 
     /// List all active agreements for this provider.
@@ -780,6 +805,31 @@ fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<V
         }
         _ => None,
     }
+}
+
+/// Decode a `Vec<u8>` / `BoundedVec<u8, _>` from a scale_value composite.
+///
+/// `BoundedVec<T, N>` serializes its `TypeInfo` as a 1-field unnamed composite
+/// wrapping the inner `Vec<T>`, so scale_value surfaces it as
+/// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
+/// if present, then collects the bytes.
+fn decode_byte_vec(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
+    let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
+        return Vec::new();
+    };
+    // Direct sequence of byte primitives.
+    let bytes: Vec<u8> = items
+        .iter()
+        .filter_map(|b| b.as_u128().map(|n| n as u8))
+        .collect();
+    if !items.is_empty() && bytes.len() == items.len() {
+        return bytes;
+    }
+    // BoundedVec wrapper: single inner field holds the actual sequence.
+    if items.len() == 1 {
+        return decode_byte_vec(&items[0]);
+    }
+    Vec::new()
 }
 
 // Types

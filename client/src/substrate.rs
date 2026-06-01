@@ -4,6 +4,7 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
+use codec::Encode;
 use futures::StreamExt;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -184,18 +185,11 @@ pub mod extrinsics {
         )
     }
 
-    /// Build an `establish_storage_agreement` extrinsic payload.
-    ///
-    /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the dynamic call shape Layer 0 expects. The chain hashes
-    /// `blake2_256(SCALE(terms))` and verifies the signature against the
-    /// provider's registered public key.
-    pub fn establish_storage_agreement(
-        provider: AccountId32,
+    /// Encode an [`AgreementTermsOf`](crate::agreement::AgreementTermsOf) as
+    /// a subxt dynamic value matching the on-chain composite.
+    pub fn dynamic_agreement_terms(
         terms: &crate::agreement::AgreementTermsOf,
-        sig: &sp_runtime::MultiSignature,
-    ) -> impl Payload {
-        use codec::Encode;
+    ) -> subxt::dynamic::Value {
         let replica_params_value = match &terms.replica_params {
             None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
             Some(rp) => subxt::dynamic::Value::unnamed_variant(
@@ -209,7 +203,7 @@ pub mod extrinsics {
                 ])],
             ),
         };
-        let terms_value = subxt::dynamic::Value::named_composite([
+        subxt::dynamic::Value::named_composite([
             (
                 "owner",
                 subxt::dynamic::Value::from_bytes(terms.owner.as_ref() as &[u8]),
@@ -232,36 +226,41 @@ pub mod extrinsics {
             ),
             ("nonce", subxt::dynamic::Value::u128(terms.nonce as u128)),
             ("replica_params", replica_params_value),
-        ]);
+        ])
+    }
 
-        // MultiSignature is a SCALE enum; surface it as `Sr25519` for the
-        // current signer (the only variant the provider node emits today).
-        let sig_value = match sig {
-            sp_runtime::MultiSignature::Sr25519(s) => subxt::dynamic::Value::unnamed_variant(
-                "Sr25519",
-                vec![subxt::dynamic::Value::from_bytes(s.encode())],
-            ),
-            sp_runtime::MultiSignature::Ed25519(s) => subxt::dynamic::Value::unnamed_variant(
-                "Ed25519",
-                vec![subxt::dynamic::Value::from_bytes(s.encode())],
-            ),
-            sp_runtime::MultiSignature::Ecdsa(s) => subxt::dynamic::Value::unnamed_variant(
-                "Ecdsa",
-                vec![subxt::dynamic::Value::from_bytes(s.encode())],
-            ),
-            sp_runtime::MultiSignature::Eth(s) => subxt::dynamic::Value::unnamed_variant(
-                "Eth",
-                vec![subxt::dynamic::Value::from_bytes(s.encode())],
-            ),
+    /// Encode a [`sp_runtime::MultiSignature`] as a subxt dynamic variant.
+    pub fn dynamic_multi_signature(sig: &sp_runtime::MultiSignature) -> subxt::dynamic::Value {
+        let (variant, bytes) = match sig {
+            sp_runtime::MultiSignature::Sr25519(s) => ("Sr25519", s.encode()),
+            sp_runtime::MultiSignature::Ed25519(s) => ("Ed25519", s.encode()),
+            sp_runtime::MultiSignature::Ecdsa(s) => ("Ecdsa", s.encode()),
+            sp_runtime::MultiSignature::Eth(s) => ("Eth", s.encode()),
         };
+        subxt::dynamic::Value::unnamed_variant(
+            variant,
+            vec![subxt::dynamic::Value::from_bytes(bytes)],
+        )
+    }
 
+    /// Build an `establish_storage_agreement` extrinsic payload.
+    ///
+    /// Bundles the SCALE-encoded provider-signed terms and signature into
+    /// the dynamic call shape Layer 0 expects. The chain hashes
+    /// `blake2_256(SCALE(terms))` and verifies the signature against the
+    /// provider's registered public key.
+    pub fn establish_storage_agreement(
+        provider: AccountId32,
+        terms: &crate::agreement::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
+    ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
             "establish_storage_agreement",
             vec![
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                terms_value,
-                sig_value,
+                dynamic_agreement_terms(terms),
+                dynamic_multi_signature(sig),
             ],
         )
     }
