@@ -2,8 +2,8 @@
  * S3 Registry lifecycle example (pallet-s3-registry).
  *
  * Walks the full S3-style object workflow on Layer 1:
- *   create_s3_bucket_with_storage  (atomic: Layer 0 bucket + agreement request)
- *   -> provider accepts agreement
+ *   negotiate provider-signed agreement terms over HTTP
+ *   -> create_s3_bucket  (atomic: Layer 0 bucket + primary agreement + S3 bucket)
  *   -> upload chunks to the provider (HTTP)
  *   -> put_object_metadata for each object (CID + size + content-type)
  *   -> copy_object_metadata
@@ -21,21 +21,19 @@
 import assert from "node:assert";
 import {
   copyObjectMetadata,
-  createS3BucketWithStorage,
+  createS3Bucket,
   deleteObjectMetadata,
   deleteS3Bucket,
+  negotiateTerms,
   putChunk,
   putObjectMetadata,
 } from "./api.js";
 import {
   connect,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
-  sameAddress,
   toHex,
-  waitForAgreementAcceptance,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -91,43 +89,36 @@ async function main() {
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
 
-  let restoreOthers = null;
   try {
     console.log("\n=== Step 1: Ensure provider is ready ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
-    // create_s3_bucket_with_storage picks query_available_providers[0],
-    // which iterates in storage-hash order. With multiple registered
-    // providers (CI registers //Alice and //Charlie) the match is
-    // non-deterministic — silence the others so the demo always matches
-    // the one whose HTTP endpoint we'll talk to.
-    restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
-    console.log("\n=== Step 2: create_s3_bucket_with_storage ===");
-    const maxCapacity = 1_048_576n; // 1 MiB
+    console.log("\n=== Step 2: Negotiate signed agreement terms ===");
+    const maxBytes = 1_048_576; // 1 MiB
     const duration = 100;
-    const { s3BucketId, layer0BucketId, matchedProvider } =
-      await createS3BucketWithStorage(api, client, BUCKET_NAME, {
-        max_capacity: maxCapacity,
-        duration,
-        max_payment: maxCapacity * BigInt(duration) * 2n,
-      });
+    const signed = await negotiateTerms(PROVIDER_URL, {
+      owner: client.address,
+      max_bytes: maxBytes,
+      duration,
+      price_per_byte: 0,
+      replica_params: null,
+    });
+    console.log(
+      "  Provider signed terms: nonce=%s, valid_until=%s",
+      signed.terms.nonce,
+      signed.terms.valid_until
+    );
+
+    console.log("\n=== Step 3: create_s3_bucket ===");
+    const { s3BucketId, layer0BucketId } = await createS3Bucket(
+      api,
+      client,
+      BUCKET_NAME,
+      provider,
+      signed
+    );
     console.log("  s3_bucket_id     =", s3BucketId);
     console.log("  layer0_bucket_id =", layer0BucketId);
-    console.log("  matched provider =", matchedProvider);
-    if (!sameAddress(matchedProvider, provider.address)) {
-      throw new Error(
-        `create_s3_bucket_with_storage matched ${matchedProvider}, expected ${provider.address}. ` +
-          `The provider node at ${PROVIDER_URL} can only accept for ${PROVIDER_SEED}.`
-      );
-    }
-
-    console.log("\n=== Step 3: Wait for provider to auto-accept agreement ===");
-    // The provider node's agreement_coordinator polls every ~6s and accepts
-    // pending requests automatically. Don't try to submit accept_agreement
-    // ourselves — that races the coordinator and intermittently fails with
-    // AgreementRequestNotFound when the coordinator wins.
-    await waitForAgreementAcceptance(api, provider.address, layer0BucketId);
-    console.log("  Agreement accepted by", provider.address);
 
     console.log("\n=== Step 4: Upload two objects to the provider ===");
     const obj1 = await putChunk(
@@ -195,13 +186,6 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
-    if (restoreOthers) {
-      try {
-        await restoreOthers();
-      } catch (err) {
-        console.error("WARN: failed to restore other providers:", err.message || err);
-      }
-    }
     papi.destroy();
   }
 }

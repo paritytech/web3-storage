@@ -2,16 +2,16 @@
  * Drive Registry lifecycle example (pallet-drive-registry).
  *
  * Demonstrates the Layer 1 file-system drive workflow:
- *   create_drive  (atomic: Layer 0 bucket + primary agreement request)
- *   -> provider accepts agreement
+ *   negotiate provider-signed agreement terms over HTTP
+ *   -> create_drive  (atomic: Layer 0 bucket + primary agreement + drive)
  *   -> query Drives and UserDrives
  *   -> share_drive (Writer)
  *   -> unshare_drive
  *   -> delete_drive  (computes prorated refund)
  *
  * Only on-chain extrinsics are exercised; no files are uploaded to the
- * provider. The provider node still needs to be running so it can be
- * registered on chain (its public key/multiaddr live there).
+ * provider. The provider node still needs to be running so it can sign
+ * the agreement terms (its checkpoint key lives there).
  *
  * Prerequisites:
  *   - Parachain at ws://127.0.0.1:2222
@@ -21,16 +21,20 @@
  */
 
 import assert from "node:assert";
-import { createDrive, deleteDrive, shareDrive, unshareDrive } from "./api.js";
+import {
+  createDrive,
+  deleteDrive,
+  negotiateTerms,
+  shareDrive,
+  unshareDrive,
+} from "./api.js";
 import {
   connect,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
   fmtRole,
   makeSigner,
   printBucketMembers,
   sameAddress,
-  waitForAgreementAcceptance,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -90,44 +94,36 @@ async function main() {
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
 
-  let restoreOthers = null;
   try {
     console.log("\n=== Step 1: Ensure provider is ready ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
-    // create_drive selects via query_available_providers[0] (hash-iter
-    // order), so silence every other accepting dev provider — without this
-    // the demo flakes when a co-registered //Charlie wins the iteration.
-    restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
-    console.log("\n=== Step 2: create_drive ===");
-    const maxCapacity = 1_048_576n; // 1 MiB
-    const storagePeriod = 200; // < 1000 -> auto-selects 1 provider
-    const { driveId, bucketId, matchedProvider } = await createDrive(
+    console.log("\n=== Step 2: Negotiate signed agreement terms ===");
+    const maxBytes = 1_048_576; // 1 MiB
+    const duration = 200;
+    const signed = await negotiateTerms(PROVIDER_URL, {
+      owner: owner.address,
+      max_bytes: maxBytes,
+      duration,
+      price_per_byte: 1,
+      replica_params: null,
+    });
+    console.log(
+      "  Provider signed terms: nonce=%s, valid_until=%s",
+      signed.terms.nonce,
+      signed.terms.valid_until
+    );
+
+    console.log("\n=== Step 3: create_drive ===");
+    const { driveId, bucketId } = await createDrive(
       api,
       owner,
       `papi-demo-${Date.now()}`,
-      {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
-        payment: maxCapacity * BigInt(storagePeriod) * 2n,
-        min_providers: 1,
-      }
+      provider,
+      signed
     );
-    console.log("  drive_id         =", driveId);
-    console.log("  bucket_id        =", bucketId);
-    console.log("  matched provider =", matchedProvider);
-    if (!sameAddress(matchedProvider, provider.address)) {
-      throw new Error(
-        `create_drive matched ${matchedProvider}, expected ${provider.address}. ` +
-          `Only ${PROVIDER_SEED} can accept this agreement.`
-      );
-    }
-
-    console.log("\n=== Step 3: Wait for provider to auto-accept agreement ===");
-    // The provider node's agreement_coordinator polls every ~6s and accepts
-    // pending requests automatically. Avoid racing it from the script.
-    await waitForAgreementAcceptance(api, provider.address, bucketId);
-    console.log("  Agreement accepted by", provider.address);
+    console.log("  drive_id  =", driveId);
+    console.log("  bucket_id =", bucketId);
 
     console.log("\n=== Step 4: Query drive state ===");
     await printDriveInfo(api, owner, driveId, bucketId);
@@ -167,13 +163,6 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
-    if (restoreOthers) {
-      try {
-        await restoreOthers();
-      } catch (err) {
-        console.error("WARN: failed to restore other providers:", err.message || err);
-      }
-    }
     papi.destroy();
   }
 }

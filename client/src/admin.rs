@@ -269,8 +269,6 @@ impl AdminClient {
     // Agreement Management
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// # Example
-    /// ```no_run
     /// Extend an existing agreement with a provider.
     ///
     /// Anyone can extend if price hasn't increased (permissionless persistence).
