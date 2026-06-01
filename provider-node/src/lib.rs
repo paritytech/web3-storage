@@ -121,17 +121,112 @@ impl ProviderState {
         }
     }
 
-    /// Sign a message and return the signature as hex.
-    pub fn sign(&self, message: &[u8]) -> String {
-        match &self.keypair {
-            Some(keypair) => {
-                let signature = keypair.sign(message);
-                format!("0x{}", hex::encode(signature.0))
-            }
-            None => {
-                // Return placeholder if no keypair configured
-                format!("0x{}", hex::encode([0u8; 64]))
-            }
+    /// Sign a message and return the signature as `0x`-prefixed hex.
+    ///
+    /// Returns `Err(Error::SigningUnavailable)` if no keypair is configured.
+    /// Callers must propagate this so the HTTP layer returns 503 rather than
+    /// silently emitting a 64-zero-byte placeholder signature, which would
+    /// be a cryptographically invalid commitment masquerading as a real one.
+    pub fn sign(&self, message: &[u8]) -> Result<String, Error> {
+        let keypair = self.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+        let signature = keypair.sign(message);
+        Ok(format!("0x{}", hex::encode(signature.0)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sp_core::ByteArray;
+
+    fn test_storage() -> Arc<dyn StorageBackend> {
+        Arc::new(storage::Storage::new())
+    }
+
+    #[test]
+    fn sign_without_keypair_refuses_with_signing_unavailable() {
+        // The pre-fix behaviour silently returned 64 zero bytes. The new
+        // contract is that `sign()` MUST return `Err(SigningUnavailable)`
+        // when no keypair is configured, so the HTTP layer can map it to a
+        // 503 instead of emitting a cryptographically invalid placeholder.
+        let state = ProviderState::new(test_storage(), "no-key-provider".to_string());
+        let err = state
+            .sign(b"any message")
+            .expect_err("must refuse to sign without a keypair");
+        assert!(matches!(err, Error::SigningUnavailable));
+    }
+
+    #[test]
+    fn sign_with_keypair_returns_real_sr25519_signature() {
+        // Round-trip: sign with //Alice, decode the hex, verify against
+        // Alice's public key. This catches any regression where sign() ever
+        // returns the 0x00..00 placeholder again, and also catches the more
+        // subtle case where the bytes look random but aren't valid sr25519.
+        let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
+        let message = b"commitment-payload-bytes";
+
+        let sig_hex = state.sign(message).expect("signing succeeds with keypair");
+        let sig_bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        assert_eq!(sig_bytes.len(), 64, "sr25519 signatures are 64 bytes");
+        assert_ne!(
+            sig_bytes,
+            vec![0u8; 64],
+            "must not return the zero-byte placeholder"
+        );
+
+        let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
+        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        assert!(
+            sr25519::Pair::verify(&sig, message, &alice.public()),
+            "signature did not verify under //Alice's public key"
+        );
+    }
+
+    #[test]
+    fn sign_produces_distinct_signatures_each_call_but_all_verify() {
+        // sr25519 (schnorrkel) is randomised — two calls over the same
+        // message produce different signatures, but both must verify. This
+        // test guards against accidentally swapping to a backend that
+        // returns a constant value (e.g. zero bytes).
+        let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
+        let alice_pub = sr25519::Pair::from_string("//Alice", None)
+            .unwrap()
+            .public();
+        let msg = b"commitment-payload";
+
+        let sig_a = state.sign(msg).unwrap();
+        let sig_b = state.sign(msg).unwrap();
+
+        for sig_hex in [&sig_a, &sig_b] {
+            let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+            assert_ne!(bytes, vec![0u8; 64]);
+            let sig = sr25519::Signature::from_slice(&bytes).unwrap();
+            assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));
         }
+    }
+
+    #[test]
+    fn signatures_from_different_keys_do_not_cross_verify() {
+        // Negative control: //Bob's signature must NOT verify under //Alice.
+        // Cheap protection against a future refactor that accidentally
+        // stops checking the message or the key.
+        let alice = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
+        let bob = ProviderState::with_seed(test_storage(), "//Bob").unwrap();
+        let alice_pub = sr25519::Pair::from_string("//Alice", None)
+            .unwrap()
+            .public();
+        let msg = b"checkpoint payload";
+
+        let bob_sig_hex = bob.sign(msg).unwrap();
+        let bob_sig_bytes = hex::decode(bob_sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let bob_sig = sr25519::Signature::from_slice(&bob_sig_bytes).unwrap();
+
+        assert!(!sr25519::Pair::verify(&bob_sig, msg, &alice_pub));
+
+        // Sanity: //Alice's own signature still verifies under her own key.
+        let alice_sig_hex = alice.sign(msg).unwrap();
+        let alice_sig_bytes = hex::decode(alice_sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let alice_sig = sr25519::Signature::from_slice(&alice_sig_bytes).unwrap();
+        assert!(sr25519::Pair::verify(&alice_sig, msg, &alice_pub));
     }
 }
