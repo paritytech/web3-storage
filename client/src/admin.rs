@@ -47,6 +47,12 @@ impl AdminClient {
         self.base.set_dev_signer(name)
     }
 
+    /// Set a custom keypair signer loaded from a keyfile or seed.
+    /// Must be called after connect().
+    pub fn set_signer(&mut self, signer: subxt_signer::sr25519::Keypair) -> ClientResult<()> {
+        self.base.set_signer(signer)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Bucket Management
     // ═════════════════════════════════════════════════════════════════════════

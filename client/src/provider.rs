@@ -380,17 +380,13 @@ impl ProviderClient {
             )));
         }
 
-        #[derive(serde::Deserialize)]
-        struct InfoResponse {
-            provider_id: String,
-        }
+        let info: serde_json::Value = response.json().await.map_err(ClientError::Http)?;
 
-        let info = response
-            .json::<InfoResponse>()
-            .await
-            .map_err(ClientError::Http)?;
+        let provider_id = info["provider_id"].as_str().ok_or_else(|| {
+            ClientError::Chain("provider /info response missing string `provider_id` field".into())
+        })?;
 
-        SubstrateClient::parse_account(&info.provider_id)
+        SubstrateClient::parse_account(provider_id)
             .map_err(|e| ClientError::Chain(format!("invalid provider_id from /info: {e}")))
     }
 

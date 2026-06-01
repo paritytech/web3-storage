@@ -74,7 +74,7 @@ async fn test_info_endpoint() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "healthy");
+    assert_eq!(body["provider_id"], "0xtest_provider");
 }
 
 #[tokio::test]
