@@ -90,6 +90,16 @@
     .picker .endpoints dt { color: #6b6b80; }
     .picker .endpoints dd { color: #c4c4d6; word-break: break-all; display: flex; align-items: center; gap: 0.5rem; }
     .picker .endpoints dd.placeholder { color: #555; font-style: italic; }
+    .picker .endpoints dd { flex-wrap: wrap; }
+    .picker .endpoints .consoles {
+      flex-basis: 100%;
+      display: flex;
+      gap: 0.85rem;
+      padding-left: 1.1rem;
+    }
+    .picker .endpoints .consoles a { color: #a78bfa; text-decoration: none; font-style: normal; }
+    .picker .endpoints .consoles a:hover { text-decoration: underline; }
+    .picker .endpoints dd.placeholder .consoles { display: none; }
     .status {
       flex-shrink: 0;
       width: 0.6rem;
@@ -109,6 +119,34 @@
       flex-shrink: 0;
     }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .banner .credits {
+      margin-top: 1rem;
+      padding-top: 0.85rem;
+      border-top: 1px dashed #2a2a3e;
+      font-size: 0.85rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem 0.85rem;
+    }
+    .banner .credits .label { color: #888; }
+    .banner .credits .links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem 0.85rem;
+    }
+    .banner .credits .links a:not(:first-child) { position: relative; }
+    .banner .credits .links a:not(:first-child)::before {
+      content: "";
+      position: absolute;
+      left: -0.45rem;
+      top: 0.15em;
+      bottom: 0.15em;
+      border-left: 1px solid #2a2a3e;
+    }
     @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -122,6 +160,14 @@
       providers lock stake proportional to their capacity and face slashing for data loss.
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
+      <div class="credits" data-testid="landing-credits">
+        <div class="label">Design by <a href="https://github.com/eskimor" target="_blank" rel="noopener noreferrer">eskimor</a></div>
+        <div class="links">
+          <a href="https://github.com/paritytech/polkadot-sdk/pull/10731" target="_blank" rel="noopener noreferrer">Design PR</a>
+          <a href="https://github.com/paritytech/polkadot-sdk/blob/rk-design-storage/docs/scalable-web3-storage.md" target="_blank" rel="noopener noreferrer">Scalable Web3 Storage</a>
+          <a href="https://github.com/paritytech/polkadot-sdk/blob/rk-design-storage/docs/scalable-web3-storage-implementation.md" target="_blank" rel="noopener noreferrer">Implementation Details</a>
+        </div>
+      </div>
     </div>
     <div class="picker" id="picker" data-testid="landing-picker">
       <label for="landing-network">Network</label>
@@ -143,6 +189,10 @@
           <span class="status" id="landing-status-ws" data-state="idle" data-testid="landing-status-ws" title="not checked"></span>
           <span id="landing-endpoint-ws" data-testid="landing-endpoint-ws"></span>
           <span class="status-text" id="landing-status-text-ws" data-testid="landing-status-text-ws"></span>
+          <span class="consoles" data-testid="landing-explorers">
+            <a id="landing-pjs" target="_blank" rel="noopener noreferrer" data-testid="landing-pjs">Polkadot.js</a>
+            <a id="landing-papi" target="_blank" rel="noopener noreferrer" data-testid="landing-papi">PAPI Console</a>
+          </span>
         </dd>
         <dt>Provider HTTP</dt>
         <dd>
@@ -199,6 +249,14 @@
     var statusHttp = document.getElementById('landing-status-http');
     var statusTextWs = document.getElementById('landing-status-text-ws');
     var statusTextHttp = document.getElementById('landing-status-text-http');
+    var pjsLink = document.getElementById('landing-pjs');
+    var papiLink = document.getElementById('landing-papi');
+
+    function setExplorers(ws) {
+      if (!ws) return;
+      pjsLink.href = 'https://polkadot.js.org/apps/?rpc=' + encodeURIComponent(ws) + '#/explorer';
+      papiLink.href = 'https://dev.papi.how/explorer#networkId=custom&endpoint=' + encodeURIComponent(ws);
+    }
 
     // Visual default: previously persisted selection if any, else DEFAULT_NETWORK_ID.
     select.value = DEFAULT_NETWORK_ID;
@@ -316,6 +374,7 @@
       }
       setEndpoint(endpointWs, ws, placeholder);
       setEndpoint(endpointHttp, http, placeholder);
+      setExplorers(ws);
       error.hidden = true;
 
       var debounce = opts && opts.debounce;
