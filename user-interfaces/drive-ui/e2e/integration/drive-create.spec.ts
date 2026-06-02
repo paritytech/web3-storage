@@ -28,10 +28,10 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
   await page.getByTestId("new-drive-button").click();
   await expect(page.getByTestId("new-drive-dialog")).toBeVisible();
   await page.getByTestId("new-drive-name").fill(name);
-  // Capacity / duration / payment / min-providers — defaults are fine for these tests.
+  // Capacity / duration / price-per-byte — defaults are fine for these tests.
 }
 
-/**
+/** 
  * Wait for a freshly-created drive to land in Bob's UserDrives. Returns
  * the latest drive id. Fresh chain's first drive has id 0n which is falsy
  * in JS — poll on `length`, then read the id outside the poll.
@@ -60,7 +60,13 @@ async function expectDriveOnChain(driveId: bigint, expectedName: string) {
 test("drive lands on chain with the user-supplied name", async ({ localPage }) => {
   const name = `create-${Date.now()}`;
   await fillBaseFields(localPage, name);
-  await localPage.getByTestId("new-drive-submit").click();
+  // Provider picker is embedded in the create dialog — picking a provider
+  // IS the submit. globalSetup registered Alice as the lone provider, so
+  // the first row is always the one we want.
+  await expect(localPage.getByTestId("provider-picker")).toBeVisible({
+    timeout: 30_000,
+  });
+  await localPage.getByTestId("provider-picker-select").first().click();
 
   const driveId = await waitForCreatedDriveId();
   await expectDriveOnChain(driveId, name);

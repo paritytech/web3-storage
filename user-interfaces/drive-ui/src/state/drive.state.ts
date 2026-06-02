@@ -10,9 +10,12 @@ import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } fr
 import { bind } from "@react-rxjs/core";
 import {
   DriveClient,
+  negotiateTerms,
+  parseMultiaddrToHttp,
+  type AvailableProvider,
   type DriveInfo,
   type FsEntry,
-  type CreateDriveOptions,
+  type SignedTerms,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
 import { signer$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
@@ -21,16 +24,24 @@ import { signer$$, getSignerAddress, refreshBalance } from "@/state/wallet.state
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CreationStage = "submitting" | "created" | "waiting" | "ready" | "failed";
+export type CreationStage = "submitting" | "ready" | "failed";
 
 export interface CreationStatus {
   id: string;
   name: string;
   stage: CreationStage;
-  statusMessage?: string;
   elapsedMs: number;
   error?: string;
   bucketId?: bigint;
+}
+
+export interface CreateDriveInput {
+  name?: string;
+  maxCapacity: bigint;
+  storagePeriod: number;
+  pricePerByte?: bigint;
+  /** The provider the user picked. */
+  provider: AvailableProvider;
 }
 
 export type ViewMode = "list" | "grid";
@@ -294,46 +305,112 @@ export function dismissCreation(id: string): void {
   creations$.next(creations$.getValue().filter((c) => c.id !== id));
 }
 
-export async function createDrive(options: CreateDriveOptions): Promise<DriveInfo | null> {
-  if (!client.hasApi() || !client.hasSigner()) return null;
+interface RetryCtx {
+  name: string | undefined;
+  provider: AvailableProvider;
+  url: string;
+  signed: SignedTerms;
+}
+const retryCtx = new Map<string, RetryCtx>();
 
-  const id = crypto.randomUUID();
-  const name = options.name || "Untitled Drive";
-  creations$.next([
-    ...creations$.getValue(),
-    { id, name, stage: "submitting", elapsedMs: 0 },
-  ]);
+export function canRetryCreation(id: string): boolean {
+  return retryCtx.has(id);
+}
 
+async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | null> {
+  updateCreation(id, { stage: "submitting", error: undefined });
   try {
-    const drive = await client.createDrive(options);
-    updateCreation(id, { stage: "created", bucketId: drive.bucketId });
-
-    updateCreation(id, { stage: "waiting" });
-    try {
-      await client.waitForProvider(drive.bucketId, (status, elapsedMs) => {
-        updateCreation(id, { statusMessage: status, elapsedMs });
-      });
-      updateCreation(id, { stage: "ready" });
-      await refreshDrives();
-      const refreshed = drives$.getValue().find((d) => d.driveId === drive.driveId) ?? drive;
-      await selectDrive(refreshed);
-      await refreshBalance();
-      return refreshed;
-    } catch (err) {
-      updateCreation(id, {
-        stage: "failed",
-        error: err instanceof Error ? err.message : "Provider did not accept",
-      });
-      await refreshDrives();
-      return null;
-    }
+    const drive = await client.submitCreateDrive(ctx.name, ctx.provider.account, ctx.url, ctx.signed);
+    updateCreation(id, { stage: "ready", bucketId: drive.bucketId });
+    retryCtx.delete(id);
+    await refreshDrives();
+    const refreshed = drives$.getValue().find((d) => d.driveId === drive.driveId) ?? drive;
+    await selectDrive(refreshed);
+    await refreshBalance();
+    return refreshed;
   } catch (err) {
     updateCreation(id, {
       stage: "failed",
-      error: err instanceof Error ? err.message : "Failed to create drive",
+      error: err instanceof Error ? err.message : "Failed to submit on chain",
     });
     return null;
   }
+}
+
+export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | null> {
+  if (!client.hasApi() || !client.hasSigner()) return null;
+
+  const url = parseMultiaddrToHttp(input.provider.multiaddr);
+  if (!url) {
+    const id = crypto.randomUUID();
+    creations$.next([
+      ...creations$.getValue(),
+      {
+        id,
+        name: input.name || "Untitled Drive",
+        stage: "failed",
+        elapsedMs: 0,
+        error: `Provider ${input.provider.account} has an unparseable multiaddr: ${input.provider.multiaddr}`,
+      },
+    ]);
+    return null;
+  }
+
+  const id = crypto.randomUUID();
+  const displayName = input.name || "Untitled Drive";
+  creations$.next([
+    ...creations$.getValue(),
+    { id, name: displayName, stage: "submitting", elapsedMs: 0 },
+  ]);
+
+  const ownerAddress = client.getSignerAddress();
+  if (!ownerAddress) {
+    updateCreation(id, { stage: "failed", error: "Signer not set" });
+    return null;
+  }
+
+  // Phase A: negotiate. Failure here means re-negotiate from scratch on retry.
+  let signed: SignedTerms;
+  try {
+    signed = await negotiateTerms(url, {
+      owner: ownerAddress,
+      max_bytes: input.maxCapacity,
+      duration: input.storagePeriod,
+      price_per_byte: input.pricePerByte ?? 0n,
+      replica_params: null,
+    });
+  } catch (err) {
+    updateCreation(id, {
+      stage: "failed",
+      error: err instanceof Error ? err.message : "Failed to negotiate with provider",
+    });
+    return null;
+  }
+
+  // Phase B: chain submit. Stash retry context first so a failure leaves
+  // a retry handle attached to the CreationStatus.
+  const ctx: RetryCtx = { name: input.name, provider: input.provider, url, signed };
+  retryCtx.set(id, ctx);
+  return runChainSubmit(id, ctx);
+}
+
+/**
+ * Retry a failed on-chain submit using the cached signed terms. No-op if
+ * the creation expired or never negotiated successfully.
+ */
+export async function retryCreation(id: string): Promise<DriveInfo | null> {
+  const ctx = retryCtx.get(id);
+  if (!ctx) return null;
+  return runChainSubmit(id, ctx);
+}
+
+/**
+ * Walk on-chain provider state and return the list of registered
+ * providers. The picker dialog consumes this before negotiation.
+ */
+export async function listAvailableProviders(): Promise<AvailableProvider[]> {
+  if (!client.hasApi()) return [];
+  return client.listAvailableProviders();
 }
 
 export async function deleteDrive(driveId: bigint): Promise<void> {

@@ -15,24 +15,17 @@ import {
   Bob,
   Charlie,
   cleanupDrives,
-  createDriveViaApi,
 } from "@web3-storage/test-helpers";
+import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 let driveId: bigint;
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
   test.setTimeout(120_000);
-  const drive = await createDriveViaApi(Bob, {
-    name: `members-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-  });
-  driveId = drive.driveId;
+  driveId = await createDriveInFreshContext(browser, `members-${Date.now()}`);
 });
 
 test.afterAll(async () => {
