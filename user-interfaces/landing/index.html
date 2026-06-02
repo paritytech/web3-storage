@@ -90,6 +90,16 @@
     .picker .endpoints dt { color: #6b6b80; }
     .picker .endpoints dd { color: #c4c4d6; word-break: break-all; display: flex; align-items: center; gap: 0.5rem; }
     .picker .endpoints dd.placeholder { color: #555; font-style: italic; }
+    .picker .endpoints dd { flex-wrap: wrap; }
+    .picker .endpoints .consoles {
+      flex-basis: 100%;
+      display: flex;
+      gap: 0.85rem;
+      padding-left: 1.1rem;
+    }
+    .picker .endpoints .consoles a { color: #a78bfa; text-decoration: none; font-style: normal; }
+    .picker .endpoints .consoles a:hover { text-decoration: underline; }
+    .picker .endpoints dd.placeholder .consoles { display: none; }
     .status {
       flex-shrink: 0;
       width: 0.6rem;
@@ -179,6 +189,10 @@
           <span class="status" id="landing-status-ws" data-state="idle" data-testid="landing-status-ws" title="not checked"></span>
           <span id="landing-endpoint-ws" data-testid="landing-endpoint-ws"></span>
           <span class="status-text" id="landing-status-text-ws" data-testid="landing-status-text-ws"></span>
+          <span class="consoles" data-testid="landing-explorers">
+            <a id="landing-pjs" target="_blank" rel="noopener noreferrer" data-testid="landing-pjs">Polkadot.js</a>
+            <a id="landing-papi" target="_blank" rel="noopener noreferrer" data-testid="landing-papi">PAPI Console</a>
+          </span>
         </dd>
         <dt>Provider HTTP</dt>
         <dd>
@@ -235,6 +249,14 @@
     var statusHttp = document.getElementById('landing-status-http');
     var statusTextWs = document.getElementById('landing-status-text-ws');
     var statusTextHttp = document.getElementById('landing-status-text-http');
+    var pjsLink = document.getElementById('landing-pjs');
+    var papiLink = document.getElementById('landing-papi');
+
+    function setExplorers(ws) {
+      if (!ws) return;
+      pjsLink.href = 'https://polkadot.js.org/apps/?rpc=' + encodeURIComponent(ws) + '#/explorer';
+      papiLink.href = 'https://dev.papi.how/explorer#networkId=custom&endpoint=' + encodeURIComponent(ws);
+    }
 
     // Visual default: previously persisted selection if any, else DEFAULT_NETWORK_ID.
     select.value = DEFAULT_NETWORK_ID;
@@ -352,6 +374,7 @@
       }
       setEndpoint(endpointWs, ws, placeholder);
       setEndpoint(endpointHttp, http, placeholder);
+      setExplorers(ws);
       error.hidden = true;
 
       var debounce = opts && opts.debounce;
