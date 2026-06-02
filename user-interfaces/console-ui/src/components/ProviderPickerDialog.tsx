@@ -56,7 +56,7 @@ export default function ProviderPickerDialog({
   };
 
   return (
-    <Card className="border-2">
+    <Card className="border-2" data-testid="provider-picker">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
@@ -168,6 +168,7 @@ export default function ProviderPickerDialog({
                             </span>
                           ) : (
                             <Button
+                              data-testid="provider-picker-select"
                               variant="outline"
                               size="sm"
                               className="h-7 text-xs"
