@@ -75,9 +75,12 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   try {
     await connectToChain(ep)
 
-    // Fetch chain properties and configure formatting
+    // Fetch chain properties and configure formatting + SS58 prefix
     const chainProps = await getChainProperties()
     configureFromChain(chainProps)
+    // Dynamically import to avoid circular dependency (wallet → chain-client → chain)
+    const { updateSs58Prefix } = await import('@/state/wallet.state')
+    await updateSs58Prefix(chainProps.ss58Prefix)
     // Store minProviderStake for Registration page
     ;(globalThis as any).__minProviderStake = chainProps.minProviderStake
 

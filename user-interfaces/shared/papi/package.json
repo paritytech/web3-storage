@@ -4,6 +4,10 @@
   "private": true,
   "description": "Single source of truth for the parachain runtime descriptors. Owns the only tracked metadata snapshot in the repo. The internally-named @polkadot-api/descriptors package under .papi/descriptors is what the UIs consume via workspace:*.",
   "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "papi:install": "papi generate",
     "papi:generate": "papi add -w ws://127.0.0.1:2222 parachain && papi generate"
@@ -12,6 +16,7 @@
     "@polkadot-api/cli": "^0.20.4"
   },
   "dependencies": {
-    "@polkadot-api/descriptors": "file:.papi/descriptors"
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@polkadot-labs/hdkd-helpers": "^0.0.30"
   }
 }

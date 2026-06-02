@@ -27,9 +27,10 @@ import { getPolkadotSigner } from 'polkadot-api/signer'
 import { fromBufferToBase58 } from '@polkadot-api/substrate-bindings'
 import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
 
-// Must match the runtime's SS58Prefix (42 = Substrate generic)
-const SS58_PREFIX = 42
-const toSs58 = fromBufferToBase58(SS58_PREFIX)
+// SS58 prefix — defaults to 0 (Polkadot), updated from the runtime
+// System pallet when the chain connects via `updateSs58Prefix()`.
+let ss58Prefix = 0
+let toSs58 = fromBufferToBase58(ss58Prefix)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -83,6 +84,25 @@ const registrationStatusSubject = new BehaviorSubject<Map<string, boolean>>(new 
 const STORAGE_KEY_MODE = 'provider-dashboard-wallet-mode'
 const STORAGE_KEY_EXTENSION = 'provider-dashboard-wallet-extension'
 const STORAGE_KEY_ACCOUNT = 'provider-dashboard-wallet-account'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SS58 prefix update (called after chain connects)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Update the SS58 prefix from the runtime and re-encode any dev accounts.
+ * Called from chain.state after getChainProperties() resolves.
+ */
+export async function updateSs58Prefix(prefix: number): Promise<void> {
+  if (prefix === ss58Prefix) return
+  ss58Prefix = prefix
+  toSs58 = fromBufferToBase58(ss58Prefix)
+
+  // Re-encode dev accounts with the correct prefix if in dev mode
+  if (modeSubject.getValue() === 'dev' && accountsSubject.getValue().length > 0) {
+    await connectDevAccounts()
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dev Account Creation (for local development - NO REAL MONEY)
