@@ -109,6 +109,34 @@
       flex-shrink: 0;
     }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .banner .credits {
+      margin-top: 1rem;
+      padding-top: 0.85rem;
+      border-top: 1px dashed #2a2a3e;
+      font-size: 0.85rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem 0.85rem;
+    }
+    .banner .credits .label { color: #888; }
+    .banner .credits .links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem 0.85rem;
+    }
+    .banner .credits .links a:not(:first-child) { position: relative; }
+    .banner .credits .links a:not(:first-child)::before {
+      content: "";
+      position: absolute;
+      left: -0.45rem;
+      top: 0.15em;
+      bottom: 0.15em;
+      border-left: 1px solid #2a2a3e;
+    }
     @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -122,6 +150,14 @@
       providers lock stake proportional to their capacity and face slashing for data loss.
       The chain acts as a credible threat for accountability, not the hot path &mdash;
       normal reads and writes happen off-chain via HTTP and scale with provider capacity, not chain throughput.
+      <div class="credits" data-testid="landing-credits">
+        <div class="label">Design by <a href="https://github.com/eskimor" target="_blank" rel="noopener noreferrer">eskimor</a></div>
+        <div class="links">
+          <a href="https://github.com/paritytech/polkadot-sdk/pull/10731" target="_blank" rel="noopener noreferrer">Design PR</a>
+          <a href="https://github.com/paritytech/polkadot-sdk/blob/rk-design-storage/docs/scalable-web3-storage.md" target="_blank" rel="noopener noreferrer">Scalable Web3 Storage</a>
+          <a href="https://github.com/paritytech/polkadot-sdk/blob/rk-design-storage/docs/scalable-web3-storage-implementation.md" target="_blank" rel="noopener noreferrer">Implementation Details</a>
+        </div>
+      </div>
     </div>
     <div class="picker" id="picker" data-testid="landing-picker">
       <label for="landing-network">Network</label>
