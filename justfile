@@ -65,7 +65,7 @@ _download BIN URL:
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-download-binaries: download-polkadot-sdk-binaries download-zombienet
+download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher
     @echo "All binaries downloaded to .bin/"
 
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
@@ -73,6 +73,9 @@ download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node 
 
 # Download zombienet
 download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet-sdk/releases/download/" + zombienet_version + "/" + zombienet_asset)
+
+# Download frame-omni-bencher (for benchmarks / `/cmd bench`)
+download-frame-omni-bencher: (_download "frame-omni-bencher" polkadot_sdk_base + "frame-omni-bencher" + darwin_suffix)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
