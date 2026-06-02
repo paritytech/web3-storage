@@ -5,5 +5,5 @@ packages:
   - console-ui
   - drive-ui
 
-ignoredBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
