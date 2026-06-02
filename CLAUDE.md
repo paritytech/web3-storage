@@ -224,6 +224,10 @@ web3-storage/
 ├── primitives/                 # Layer 0 shared types and utilities
 │   ├── src/lib.rs            # Common types
 │   └── Cargo.toml            # Primitive dependencies
+├── precompiles/                # pallet_revive precompiles (Solidity → pallets)
+│   ├── storage-provider-precompile/  # 0x…0901 — bucket lifecycle
+│   └── drive-registry-precompile/    # 0x…0902 — drive lifecycle
+├── examples/contracts/         # Example Solidity dApps (StorageMarketplace.sol)
 ├── storage-interfaces/         # Layer 1 - High-level interfaces
 │   └── file-system/           # File System Interface
 │       ├── primitives/        # File system types (DriveInfo, CommitStrategy, etc.)
@@ -277,6 +281,8 @@ web3-storage/
 - Challenge providers (on-chain)
 
 **Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
+
+**Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/design/smart-contracts.md](docs/design/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 

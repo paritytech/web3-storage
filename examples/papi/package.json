@@ -11,7 +11,8 @@
     "demo:s3-lifecycle": "node s3-lifecycle.js",
     "demo:drive-lifecycle": "node drive-lifecycle.js",
     "demo:checkpoint-rewards": "node checkpoint-rewards.js",
-    "demo:checkpoint-missed": "node checkpoint-missed.js"
+    "demo:checkpoint-missed": "node checkpoint-missed.js",
+    "demo:sc-flow": "node sc-flow.js"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
@@ -19,6 +20,7 @@
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "polkadot-api": "^1.23.3",
+    "viem": "^2.21.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
