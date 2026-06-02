@@ -140,7 +140,12 @@ export function buildSignedTermsArgs(
   if (!variantName) {
     throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
   }
-  const sig = Enum(variantName as any, sigBytes.slice(1));
+  const sigPayloadHex =
+    "0x" +
+    Array.from(sigBytes.slice(1))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  const sig = Enum(variantName as any, sigPayloadHex);
 
   const t = signed.terms;
   const terms = {
