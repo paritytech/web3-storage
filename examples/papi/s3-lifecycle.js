@@ -94,13 +94,13 @@ async function main() {
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
     console.log("\n=== Step 2: Negotiate signed agreement terms ===");
-    const maxBytes = 1_048_576; // 1 MiB
+    const maxBytes = 1_048_576n; // 1 MiB
     const duration = 100;
     const signed = await negotiateTerms(PROVIDER_URL, {
       owner: client.address,
       max_bytes: maxBytes,
       duration,
-      price_per_byte: 0,
+      price_per_byte: 1n,
       replica_params: null,
     });
     console.log(

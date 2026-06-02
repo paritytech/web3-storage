@@ -15,7 +15,7 @@
 //! encoding has to be used on both sides — `sign_terms` enforces that.
 
 use codec::Encode;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::AgreementTerms;
@@ -39,10 +39,14 @@ pub struct NegotiateRequest {
     /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
+    /// FIX: Safely handles the JS BigInt sent as a string
+    #[serde(deserialize_with = "deserialize_number_from_string_or_number")]
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
     /// Price per byte per block the owner is willing to lock in.
+    /// FIX: Safely handles the JS BigInt sent as a string
+    #[serde(deserialize_with = "deserialize_number_from_string_or_number")]
     pub price_per_byte: u128,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
@@ -90,5 +94,26 @@ mod hex_multi_signature {
         let s = String::deserialize(d)?;
         let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
         MultiSignature::decode(&mut &bytes[..]).map_err(serde::de::Error::custom)
+    }
+}
+
+
+// Universal helper function to accept either a JSON string or raw JSON number
+fn deserialize_number_from_string_or_number<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: std::str::FromStr + Deserialize<'de>,
+    <T as std::str::FromStr>::Err: std::fmt::Display,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrNumber<T> {
+        String(String),
+        Number(T),
+    }
+
+    match StringOrNumber::deserialize(deserializer)? {
+        StringOrNumber::String(s) => s.parse::<T>().map_err(serde::de::Error::custom),
+        StringOrNumber::Number(n) => Ok(n),
     }
 }

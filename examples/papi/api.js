@@ -42,7 +42,9 @@ export async function negotiateTerms(providerUrl, request) {
   const res = await fetch(`${providerUrl}/negotiate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify(request, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
   });
   if (!res.ok) {
     throw new Error(

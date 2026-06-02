@@ -68,19 +68,27 @@ export default function Storage() {
         {providerCapacity && (
           <div className="flex items-center gap-2 flex-1 min-w-[200px]">
             <span className="text-muted-foreground">Provider capacity:</span>
-            <div className="flex items-center gap-2 flex-1 max-w-xs">
-              <div className="h-2 flex-1 rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{
-                    width: `${providerCapacity.max > 0n ? Number((providerCapacity.used * 100n) / providerCapacity.max) : 0}%`,
-                  }}
-                />
-              </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {formatBytes(Number(providerCapacity.used))} / {formatBytes(Number(providerCapacity.max))}
-              </span>
-            </div>
+            {
+              providerCapacity.max === 0n ? (
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  Unlimited
+                </span>
+              ) : (
+                <div className="flex items-center gap-2 flex-1 max-w-xs">
+                  <div className="h-2 flex-1 rounded-full bg-secondary">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{
+                        width: `${providerCapacity.max > 0n ? Number((providerCapacity.used * 100n) / providerCapacity.max) : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {formatBytes(Number(providerCapacity.used))} / {formatBytes(Number(providerCapacity.max))}
+                  </span>
+                </div>
+              )
+            }
           </div>
         )}
       </div>
