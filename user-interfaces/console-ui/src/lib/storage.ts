@@ -8,6 +8,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
+import { parseMultiaddrToUrl, resolveProviderEndpoint } from "@web3-storage/papi";
 import { EncryptionKey } from "./encryption";
 import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
@@ -295,62 +296,6 @@ export class StorageClient {
   // --- Provider Resolution ---
 
   /**
-   * Parse a multiaddr string like /ip4/127.0.0.1/tcp/3333 or /dns4/host/tcp/3333
-   * into an HTTP URL.
-   */
-  private parseMultiaddrToHttp(multiaddr: string): string | null {
-    const parts = multiaddr.split("/").filter(Boolean);
-    let host: string | null = null;
-    let port: string | null = null;
-
-    for (let i = 0; i < parts.length; i++) {
-      if ((parts[i] === "ip4" || parts[i] === "ip6" || parts[i] === "dns4" || parts[i] === "dns6") && parts[i + 1]) {
-        host = parts[i + 1];
-      }
-      if (parts[i] === "tcp" && parts[i + 1]) {
-        port = parts[i + 1];
-      }
-    }
-
-    if (host && port) {
-      return `http://${host}:${port}`;
-    }
-    return null;
-  }
-
-  /**
-   * Resolve the HTTP endpoint for a bucket's primary provider by reading
-   * on-chain bucket data and provider multiaddr.
-   */
-  private async resolveProviderEndpoint(bucketId: bigint): Promise<string> {
-    if (!this.api) throw new Error("Not connected");
-
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
-
-    const providers: string[] = bucket.primary_providers ?? [];
-    if (providers.length === 0) {
-      throw new Error(`Bucket ${bucketId} has no primary providers`);
-    }
-
-    // Try each provider until we find one with a valid multiaddr
-    for (const providerAccount of providers) {
-      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount);
-      if (!provider) continue;
-
-      // multiaddr is a BoundedVec<u8> — decode to string
-      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-
-      console.log(`[StorageClient] Provider ${providerAccount} multiaddr raw:`, provider.multiaddr, `decoded: "${multiaddrStr}"`);
-      const url = this.parseMultiaddrToHttp(multiaddrStr);
-      console.log(`[StorageClient] Parsed URL:`, url);
-      if (url) return url;
-    }
-
-    throw new Error(`Could not resolve HTTP endpoint for bucket ${bucketId} providers`);
-  }
-
-  /**
    * Get the provider HTTP URL for a bucket, with caching.
    * Retries a few times if the bucket has no providers yet (agreement pending acceptance).
    */
@@ -364,7 +309,8 @@ export class StorageClient {
 
     // Try to resolve from on-chain bucket data (works when provider has accepted agreement)
     try {
-      const url = await this.resolveProviderEndpoint(bucketId);
+      if (!this.api) throw new Error("Not connected");
+      const url = await resolveProviderEndpoint(this.api, bucketId);
       this.providerUrlCache.set(key, url);
       onProgress?.("Provider ready", 1, 1);
       return url;
@@ -426,7 +372,8 @@ export class StorageClient {
       onProgress?.(status, elapsedMs, i + 1);
 
       try {
-        const url = await this.resolveProviderEndpoint(bucketId);
+        if (!this.api) throw new Error("Not connected");
+        const url = await resolveProviderEndpoint(this.api, bucketId);
         this.providerUrlCache.set(bucketId.toString(), url);
         onProgress?.("Provider accepted — ready to use", Date.now() - startTime, intervals.length);
         return url;
@@ -992,7 +939,7 @@ export class StorageClient {
 
       const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
-      const url = this.parseMultiaddrToHttp(multiaddrStr) ?? "unknown";
+      const url = parseMultiaddrToUrl(multiaddrStr) ?? "unknown";
       const healthy = url !== "unknown" ? await this.probeHealthy(url) : false;
 
       results.push({ account: providerAccount, endpoint: url, healthy });

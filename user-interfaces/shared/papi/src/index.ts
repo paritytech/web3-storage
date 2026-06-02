@@ -1,0 +1,69 @@
+import { multiaddrToUri } from "@multiformats/multiaddr-to-uri";
+import { parachain } from "@polkadot-api/descriptors";
+import type { TypedApi } from "polkadot-api";
+
+/** Typed parachain API, shared by every UI that talks to the chain. */
+export type ParachainApi = TypedApi<typeof parachain>;
+
+/**
+ * Resolve a libp2p multiaddr string to an HTTP(S) base URL, or `null` if it
+ * does not describe one.
+ *
+ * Delegates to `@multiformats/multiaddr-to-uri` so we speak the same multiaddr
+ * grammar as the rest of the ecosystem (`tls`/`https`, `http-path`, `sni`,
+ * default-port elision, …). The provider node registers plain
+ * `/ip4/<host>/tcp/<port>` for local dev and
+ * `/dns4/<host>/tcp/443/tls/http/http-path/<path>` for TLS-terminated hosted
+ * deployments; both round-trip through this function:
+ * - `/ip4/127.0.0.1/tcp/3333` → `http://127.0.0.1:3333`
+ * - `/dns4/host/tcp/443/tls/http/http-path/web3-storage-provider`
+ *   → `https://host/web3-storage-provider`
+ *
+ * `multiaddrToUri` throws on malformed input and can emit non-HTTP schemes
+ * (e.g. `tcp://` for a bare `/tls` or a `/p2p`-terminated address) or a
+ * scheme-less host; we treat all of those as "not an HTTP endpoint" and return
+ * `null` so callers fall through to the next provider.
+ */
+export function parseMultiaddrToUrl(multiaddr: string): string | null {
+  let uri: string;
+  try {
+    uri = multiaddrToUri(multiaddr);
+  } catch {
+    return null;
+  }
+  return /^https?:\/\//.test(uri) ? uri : null;
+}
+
+/**
+ * Resolve the HTTP(S) endpoint for a bucket's primary provider purely from
+ * on-chain data: read the bucket, walk its primary providers, and return the
+ * first one whose registered multiaddr parses to an HTTP(S) URL.
+ *
+ * Throws when the bucket is missing, has no primary providers, or none of them
+ * expose a usable HTTP endpoint. Callers that want a dev fallback (e.g. local
+ * `http://127.0.0.1:3333`) should layer it on top of this.
+ */
+export async function resolveProviderEndpoint(
+  api: ParachainApi,
+  bucketId: bigint,
+): Promise<string> {
+  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
+
+  const providers: string[] = bucket.primary_providers ?? [];
+  if (providers.length === 0) {
+    throw new Error(`Bucket ${bucketId} has no primary providers`);
+  }
+
+  for (const providerAccount of providers) {
+    const provider = await api.query.StorageProvider.Providers.getValue(providerAccount);
+    if (!provider) continue;
+
+    // multiaddr is a BoundedVec<u8> — decode to string.
+    const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
+    const url = parseMultiaddrToUrl(multiaddrStr);
+    if (url) return url;
+  }
+
+  throw new Error(`Could not resolve HTTP endpoint for bucket ${bucketId} providers`);
+}
