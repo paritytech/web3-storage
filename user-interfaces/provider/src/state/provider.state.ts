@@ -25,7 +25,7 @@ import {
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 
 /** Compare two SS58 addresses by raw public key bytes (prefix-agnostic). */
-function sameAddress(a: string, b: string): boolean {
+function isSameAddress(a: string, b: string): boolean {
   try {
     const [aBytes] = ss58Decode(a)
     const [bBytes] = ss58Decode(b)
