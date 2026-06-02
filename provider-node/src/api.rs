@@ -17,7 +17,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use sp_core::{Pair, H256};
+use sp_core::H256;
 use std::sync::Arc;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
 use tower_http::cors::CorsLayer;
@@ -273,7 +273,7 @@ async fn commit(
     // Create commitment payload and sign it
     // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
     let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
-    let signature = state.sign(&payload.encode());
+    let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
@@ -338,7 +338,7 @@ async fn get_commitment(
     // Create commitment payload and sign it
     // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
     let payload = CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, 0);
-    let signature = state.sign(&payload.encode());
+    let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitmentResponse {
         bucket_id: query.bucket_id,
@@ -372,7 +372,7 @@ async fn get_checkpoint_signature(
         bucket.start_seq,
         leaf_count,
     );
-    let signature = state.sign(&payload.encode());
+    let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CheckpointSignatureResponse {
         bucket_id: query.bucket_id,
@@ -467,7 +467,7 @@ async fn delete_data(
     // Create commitment payload and sign it
     // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
     let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
-    let signature = state.sign(&payload.encode());
+    let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
@@ -596,16 +596,7 @@ async fn sign_checkpoint_proposal(
     );
     let encoded = proposal.encode();
 
-    let signature = match &state.keypair {
-        Some(kp) => {
-            let sig = kp.sign(&encoded);
-            format!("0x{}", hex::encode(sig.0))
-        }
-        None => {
-            // No keypair configured - return placeholder
-            format!("0x{}", hex::encode([0u8; 64]))
-        }
-    };
+    let signature = state.sign(&encoded)?;
 
     Ok(Json(SignProposalResponse {
         signer: state.provider_id.clone(),

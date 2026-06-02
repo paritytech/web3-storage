@@ -66,6 +66,9 @@ pub enum Error {
 
     #[error("Insufficient role for this operation")]
     InsufficientRole,
+
+    #[error("Signing unavailable: provider has no keypair configured")]
+    SigningUnavailable,
 }
 
 #[derive(Serialize)]
@@ -198,6 +201,16 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "insufficient_role".to_string(),
                     details: None,
+                },
+            ),
+            Error::SigningUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "signing_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider node has no signing key configured; \
+                                    start with --keyfile to enable signing-bound endpoints"
+                    })),
                 },
             ),
         };

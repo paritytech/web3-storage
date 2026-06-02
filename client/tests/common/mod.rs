@@ -206,9 +206,13 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 // ─── In-process provider node (for StorageUserClient tests) ──────────────────
 
 /// Spawn an in-process provider node on a random port and return its URL.
+///
+/// Uses `//Alice` as the signing key so endpoints that sign commitments
+/// (`/commit`, `/commitment`, `/checkpoint/sign`, `/delete`) work end-to-end.
 pub async fn start_test_provider() -> String {
     let storage = Arc::new(Storage::new());
-    let state = Arc::new(ProviderState::new(storage, "0xtest_provider".to_string()));
+    let state =
+        Arc::new(ProviderState::with_seed(storage, "//Alice").expect("//Alice is a valid SURI"));
     let app = create_router(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
