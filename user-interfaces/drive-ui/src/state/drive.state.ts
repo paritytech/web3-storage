@@ -72,8 +72,11 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-signer$$.subscribe((signer) => {
-  client.setSigner(signer, getSignerAddress());
+// Use combineLatest so the client always receives signer + address together.
+// With separate subscriptions, signer$ fires before signerAddress$ inside
+// setSigner(), leaving client.signerAddress null when refreshDrives() runs.
+combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
+  client.setSigner(signer, address);
 });
 
 export function getDriveClient(): DriveClient {
