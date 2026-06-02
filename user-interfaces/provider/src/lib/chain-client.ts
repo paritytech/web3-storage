@@ -12,6 +12,22 @@ import { getWsProvider } from 'polkadot-api/ws'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
+import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
+
+/** Compare two SS58 addresses by raw public key bytes (prefix-agnostic). */
+function sameAddress(a: string, b: string): boolean {
+  try {
+    const [aBytes] = ss58Decode(a)
+    const [bBytes] = ss58Decode(b)
+    if (aBytes.length !== bBytes.length) return false
+    for (let i = 0; i < aBytes.length; i++) {
+      if (aBytes[i] !== bBytes[i]) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
 
 export type { PolkadotClient }
 type ParachainApi = TypedApi<typeof parachain>
@@ -347,7 +363,7 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
   const out: OnChainAgreement[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
-    if (providerAddr !== address) continue
+    if (!sameAddress(providerAddr, address)) continue
     const bucketId = Number(bucketIdRaw)
     const expiresAt = value.expires_at
     let status: 'active' | 'expired' | 'terminated' = 'active'
@@ -375,7 +391,7 @@ export async function getAgreementRequests(address: string): Promise<OnChainAgre
   const out: OnChainAgreementRequest[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
-    if (providerAddr !== address) continue
+    if (!sameAddress(providerAddr, address)) continue
     out.push({
       bucketId: Number(bucketIdRaw),
       requester: value.requester,
@@ -499,7 +515,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
     const deadline = Number(keyArgs[0])
     for (let idx = 0; idx < value.length; idx++) {
       const ch = value[idx]
-      if (ch.provider !== address) continue
+      if (!sameAddress(ch.provider, address)) continue
       challenges.push({
         id: idx,
         bucketId: Number(ch.bucket_id),
@@ -623,7 +639,7 @@ export function subscribeToChallengeEvents(
   const created = a.event.StorageProvider.ChallengeCreated.watch().subscribe({
     next: ({ block, events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!sameAddress(payload.provider, address)) continue
         onChallenge({
           id: payload.challenge_id.index,
           bucketId: Number(payload.bucket_id),
@@ -646,7 +662,7 @@ export function subscribeToChallengeEvents(
   const defended = a.event.StorageProvider.ChallengeDefended.watch().subscribe({
     next: ({ events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!sameAddress(payload.provider, address)) continue
         onChallenge({
           id: Number(payload.challenge_id.index),
           bucketId: 0,
@@ -664,7 +680,7 @@ export function subscribeToChallengeEvents(
   const slashed = a.event.StorageProvider.ChallengeSlashed.watch().subscribe({
     next: ({ events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!sameAddress(payload.provider, address)) continue
         onChallenge({
           id: Number(payload.challenge_id.index),
           bucketId: 0,

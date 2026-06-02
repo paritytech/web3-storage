@@ -22,6 +22,22 @@ import {
   OnChainChallenge,
   OnChainBucketDetails,
 } from '@/lib/chain-client'
+import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
+
+/** Compare two SS58 addresses by raw public key bytes (prefix-agnostic). */
+function sameAddress(a: string, b: string): boolean {
+  try {
+    const [aBytes] = ss58Decode(a)
+    const [bBytes] = ss58Decode(b)
+    if (aBytes.length !== bBytes.length) return false
+    for (let i = 0; i < aBytes.length; i++) {
+      if (aBytes[i] !== bBytes[i]) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
 import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 
@@ -258,7 +274,7 @@ export async function loadProviderData(address: string): Promise<void> {
     // Phase 2: Fetch bucket details (depends on agreement data for bucket IDs)
     const bucketIds = [...new Set(
       chainAgreements
-        .filter((a) => a.provider === address)
+        .filter((a) => sameAddress(a.provider, address))
         .map((a) => a.bucketId)
     )]
     if (bucketIds.length > 0) {
@@ -267,7 +283,7 @@ export async function loadProviderData(address: string): Promise<void> {
         const currentBlock = getCurrentBlock() || 0
         const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
         for (const a of chainAgreements) {
-          if (a.provider === address) agreementsByBucket.set(a.bucketId, a)
+          if (sameAddress(a.provider, address)) agreementsByBucket.set(a.bucketId, a)
         }
         bucketDetails$.next(
           chainBucketDetails.map((bd) => {

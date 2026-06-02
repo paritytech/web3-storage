@@ -27,8 +27,8 @@ import { getPolkadotSigner } from 'polkadot-api/signer'
 import { fromBufferToBase58 } from '@polkadot-api/substrate-bindings'
 import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
 
-// System parachain `SS58_PREFIX` is 0
-const SS58_PREFIX = 0
+// Must match the runtime's SS58Prefix (42 = Substrate generic)
+const SS58_PREFIX = 42
 const toSs58 = fromBufferToBase58(SS58_PREFIX)
 
 // ─────────────────────────────────────────────────────────────────────────────
