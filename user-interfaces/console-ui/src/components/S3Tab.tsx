@@ -69,8 +69,6 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const [bucketCapacity, setBucketCapacity] = useState("10485760");
   const [bucketDuration, setBucketDuration] = useState("10000");
   const [bucketMaxPayment, setBucketMaxPayment] = useState("120000000000000000");
-  const [creating, setCreating] = useState(false);
-
   // Creation status tracking
   const [creations, setCreations] = useState<CreationStatusItem[]>([]);
   const [pickerTarget, setPickerTarget] = useState<CreationStatusItem | null>(null);
@@ -191,18 +189,20 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     return true;
   };
 
-  const waitAndTrack = async (creationId: string, layer0BucketId: bigint) => {
+  const waitAndTrack = async (creationId: string, layer0BucketId: bigint): Promise<boolean> => {
     updateCreation(creationId, { stage: "waiting", elapsedMs: 0 });
     try {
       await waitForProvider(layer0BucketId, (status, elapsedMs) => {
         updateCreation(creationId, { statusMessage: status, elapsedMs });
       });
       updateCreation(creationId, { stage: "ready" });
+      return true;
     } catch (err) {
       updateCreation(creationId, {
         stage: "failed",
         error: err instanceof Error ? err.message : "Provider did not accept. Try choosing a provider manually.",
       });
+      return false;
     }
   };
 
@@ -214,29 +214,47 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       return;
     }
 
-    setCreating(true);
+    const creationId = crypto.randomUUID();
+    const name = newBucketName;
+
+    setCreations(prev => [...prev, {
+      id: creationId,
+      name,
+      type: "bucket",
+      stage: "submitting",
+      elapsedMs: 0,
+      createdAt: Date.now(),
+    }]);
+
+    // Close the form so the user sees the status card
+    setShowCreateBucket(false);
+    setNewBucketName("");
     setCreateError(null);
 
     try {
-      const bucket = await createBucket(newBucketName, {
+      const bucket = await createBucket(name, {
         capacity: BigInt(bucketCapacity),
         duration: parseInt(bucketDuration, 10),
         maxPayment: BigInt(bucketMaxPayment),
       });
-      setSelectedBucket(bucket);
-      setShowCreateBucket(false);
-      setNewBucketName("");
-      toast({ title: "Success", description: `Bucket "${bucket.name}" created` });
+
+      updateCreation(creationId, { stage: "created", bucketId: bucket.layer0BucketId });
+
+      // Poll for provider acceptance in the background
+      waitAndTrack(creationId, bucket.layer0BucketId).then((ready) => {
+        if (!ready) return;
+        // Provider accepted — select the bucket and refresh the list
+        refreshBuckets();
+        setSelectedBucket(bucket);
+        onBucketSelect?.(bucket.layer0BucketId);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create bucket";
-      // Show friendly error for common cases
+      let errorMsg = msg;
       if (msg.includes("NoProvidersAvailable")) {
-        setCreateError("No storage providers available. Make sure a provider is running and accepting agreements.");
-      } else {
-        setCreateError(msg);
+        errorMsg = "No storage providers available. Make sure a provider is running and accepting agreements.";
       }
-    } finally {
-      setCreating(false);
+      updateCreation(creationId, { stage: "failed", error: errorMsg });
     }
   };
 
@@ -461,10 +479,10 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
               <p data-testid="s3-create-error" className="text-sm text-destructive">{createError}</p>
             )}
             <div className="flex gap-2">
-              <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={creating || loading}>
-                {creating ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Submitting...</> : "Create"}
+              <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={loading}>
+                Create
               </Button>
-              <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }} disabled={creating}>Cancel</Button>
+              <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }}>Cancel</Button>
             </div>
           </CardContent>
         </Card>
