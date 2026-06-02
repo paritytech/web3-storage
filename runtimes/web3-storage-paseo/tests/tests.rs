@@ -62,25 +62,30 @@ fn construct_extrinsic(
         }),
         frame_system::CheckWeight::<Runtime>::new(),
         pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(0u128),
+        // SetOrigin's substrate-signed path is a no-op; only the eth path
+        // (built by `EthExtraImpl::get_eth_extension`) sets `is_eth_transaction`.
+        pallet_revive::evm::tx_extension::SetOrigin::<Runtime>::default(),
     );
     let tx_ext: TxExtension =
         cumulus_pallet_weight_reclaim::StorageWeightReclaim::<Runtime, _>::from(inner);
 
-    if let Some(s) = sender.as_ref() {
-        // Signed call.
+    // `pallet_revive`'s `UncheckedExtrinsic` wraps `generic::UncheckedExtrinsic` and
+    // only exposes constructors through traits — go through the wrapped form so the
+    // test helper stays readable.
+    let inner_xt = if let Some(s) = sender.as_ref() {
         let account_id = AccountId::from(s.public());
         let payload = sp_runtime::generic::SignedPayload::new(call.clone(), tx_ext.clone())?;
         let signature = payload.using_encoded(|e| s.sign(e));
-        Ok(UncheckedExtrinsic::new_signed(
+        sp_runtime::generic::UncheckedExtrinsic::new_signed(
             call,
             account_id.into(),
             PcSignature::Sr25519(signature),
             tx_ext,
-        ))
+        )
     } else {
-        // Unsigned call.
-        Ok(UncheckedExtrinsic::new_transaction(call, tx_ext))
-    }
+        sp_runtime::generic::UncheckedExtrinsic::new_transaction(call, tx_ext)
+    };
+    Ok(UncheckedExtrinsic::from(inner_xt))
 }
 
 fn construct_and_apply_extrinsic(
