@@ -12,6 +12,7 @@
 
 import assert from "node:assert";
 import {
+  acceptAgreement,
   cancelDeregister,
   completeDeregister,
   createBucket,
@@ -23,7 +24,6 @@ import {
 import {
   ensureProviderRegistered,
   makeSigner,
-  waitForAgreementAcceptance,
 } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
@@ -108,7 +108,8 @@ async function main() {
         duration,
         max_payment: maxBytes * BigInt(duration) * 10n,
       });
-      await waitForAgreementAcceptance(api, charlie.address, bucketId);
+      // Manually accept — Charlie has no provider node running.
+      await acceptAgreement(api, charlie, bucketId);
       const tx = api.tx.StorageProvider.deregister_provider();
       await submitTxExpectFailure(tx, charlie.signer, "ProviderHasActiveAgreements", "8.4");
     },
@@ -186,4 +187,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});

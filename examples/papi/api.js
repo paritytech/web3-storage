@@ -308,14 +308,13 @@ export async function topUpAgreement(api, client, bucketId, provider, params) {
   );
 }
 
-export async function setExtensionsBlocked(api, client, bucketId, provider, blocked) {
+export async function setExtensionsBlocked(api, provider, bucketId, blocked) {
   return submitTx(
     api.tx.StorageProvider.set_extensions_blocked({
       bucket_id: bucketId,
-      provider: provider.address,
       blocked,
     }),
-    client.signer,
+    provider.signer,
     "set_extensions_blocked"
   );
 }

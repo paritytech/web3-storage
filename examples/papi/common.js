@@ -167,13 +167,14 @@ export class NonceManager {
 export async function waitForNextBlock(papi) {
   return new Promise((resolve) => {
     let initial = null;
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    let sub;
+    sub = papi.finalizedBlock$.subscribe((block) => {
       if (initial === null) {
         initial = block.number;
         return;
       }
       if (block.number > initial) {
-        sub.unsubscribe();
+        sub?.unsubscribe();
         resolve();
       }
     });
@@ -189,12 +190,13 @@ export async function waitForNextBlock(papi) {
  */
 export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
   await new Promise((resolve) => {
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    let sub;
+    sub = papi.finalizedBlock$.subscribe((block) => {
       if (logEvery > 0 && block.number % logEvery === 0) {
         console.log("    head=#%d (target > %d)", block.number, target);
       }
       if (block.number > target) {
-        sub.unsubscribe();
+        sub?.unsubscribe();
         resolve();
       }
     });

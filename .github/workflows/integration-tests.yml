@@ -101,45 +101,15 @@ jobs:
       - name: Build runtime and provider
         run: just ${{ matrix.runtime.build_command }} && just build-provider
 
-      - name: Start chain and wait for blocks
-        run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
-          echo "Waiting for parachain to produce finalized blocks..."
-          for i in $(seq 1 180); do
-            # Check parachain finalized head
-            RESPONSE=$(curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null) || true
-            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "$FINALIZED_HASH" ]; then
-              HEADER=$(curl -s -H "Content-Type: application/json" \
-                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
-                http://127.0.0.1:2222 2>/dev/null) || true
-              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
-              if [ -n "$BLOCK_HEX" ]; then
-                BLOCK_NUM=$((BLOCK_HEX))
-                if [ "$BLOCK_NUM" -ge 1 ]; then
-                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
-                  break
-                fi
-              fi
-            fi
-            if [ "$i" -eq 180 ]; then
-              echo "TIMEOUT: parachain did not finalize blocks"
-              exit 1
-            fi
-            sleep 5
-          done
+      - name: Start chain
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ matrix.runtime.zombienet_config }}
 
-      - name: Start provider (inmemory) and wait for health
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
@@ -147,21 +117,13 @@ jobs:
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-          echo "Waiting for provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
 
-      - name: Start provider (disk) and wait for health
+      - name: Wait for provider (inmemory) health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          label: inmemory
+
+      - name: Start provider (disk)
         run: |
           echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
           nohup ./target/release/storage-provider-node \
@@ -169,19 +131,13 @@ jobs:
             --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider-disk.log 2>&1 &
-          echo "Waiting for disk provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3334/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Disk provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: disk provider did not become healthy"
-              cat /tmp/provider-disk.log || true
-              exit 1
-            fi
-            sleep 2
-          done
+
+      - name: Wait for provider (disk) health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          url: http://127.0.0.1:3334
+          label: disk
+          log-file: /tmp/provider-disk.log
 
       - name: Run L0 demo (disk provider)
         run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
@@ -290,44 +246,15 @@ jobs:
           CARGO_TARGET_DIR: target-cov
           CARGO_INCREMENTAL: '0'
 
-      - name: Start chain and wait for blocks
-        run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
-          echo "Waiting for parachain to produce finalized blocks..."
-          for i in $(seq 1 180); do
-            RESPONSE=$(curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null) || true
-            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "$FINALIZED_HASH" ]; then
-              HEADER=$(curl -s -H "Content-Type: application/json" \
-                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
-                http://127.0.0.1:2222 2>/dev/null) || true
-              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
-              if [ -n "$BLOCK_HEX" ]; then
-                BLOCK_NUM=$((BLOCK_HEX))
-                if [ "$BLOCK_NUM" -ge 1 ]; then
-                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
-                  break
-                fi
-              fi
-            fi
-            if [ "$i" -eq 180 ]; then
-              echo "TIMEOUT: parachain did not finalize blocks"
-              exit 1
-            fi
-            sleep 5
-          done
+      - name: Start chain
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ matrix.runtime.zombienet_config }}
 
-      - name: Start provider (inmemory) and wait for health
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           mkdir -p /tmp/coverage
@@ -336,21 +263,11 @@ jobs:
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-          echo "Waiting for provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
         env:
           LLVM_PROFILE_FILE: /tmp/coverage/provider-%p-%m.profraw
+
+      - name: Wait for provider health
+        uses: ./.github/actions/wait-for-provider-health
 
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
@@ -509,44 +426,15 @@ jobs:
       - name: Build example contracts
         run: just build-contracts
 
-      - name: Start chain and wait for blocks
-        run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
-          echo "Waiting for parachain to produce finalized blocks..."
-          for i in $(seq 1 180); do
-            RESPONSE=$(curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null) || true
-            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "$FINALIZED_HASH" ]; then
-              HEADER=$(curl -s -H "Content-Type: application/json" \
-                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
-                http://127.0.0.1:2222 2>/dev/null) || true
-              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
-              if [ -n "$BLOCK_HEX" ]; then
-                BLOCK_NUM=$((BLOCK_HEX))
-                if [ "$BLOCK_NUM" -ge 1 ]; then
-                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
-                  break
-                fi
-              fi
-            fi
-            if [ "$i" -eq 180 ]; then
-              echo "TIMEOUT: parachain did not finalize blocks"
-              exit 1
-            fi
-            sleep 5
-          done
+      - name: Start chain
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ matrix.runtime.zombienet_config }}
 
-      - name: Start provider (inmemory) and wait for health
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
@@ -554,18 +442,9 @@ jobs:
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
+
+      - name: Wait for provider health
+        uses: ./.github/actions/wait-for-provider-health
 
       - name: Run smart-contract end-to-end demo
         run: just sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"

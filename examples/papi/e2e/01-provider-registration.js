@@ -124,9 +124,9 @@ async function main() {
         const maxCapacity = 1_048_576n;
         const duration = 50;
         const { bucketId, matchedProvider } = await createBucketWithStorage(api, dave, {
-          max_capacity: maxCapacity,
+          max_bytes: maxCapacity,
           duration,
-          max_payment: maxCapacity * BigInt(duration) * 10n,
+          max_price_per_byte: 10n,
         });
         assert.ok(bucketId !== undefined, "Bucket should be created");
         assert.ok(
@@ -237,9 +237,9 @@ async function main() {
       const restore = await ensureSoleAcceptingProvider(api, charlie);
       try {
         const tx = api.tx.StorageProvider.create_bucket_with_storage({
-          max_capacity: 1_048_576n,
+          max_bytes: 1_048_576n,
           duration: 50,
-          max_payment: 1_048_576n * 50n * 10n,
+          max_price_per_byte: 10n,
         });
         await submitTxExpectFailure(tx, dave.signer, "NoMatchingProvider", "1.11");
       } finally {
@@ -272,4 +272,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});

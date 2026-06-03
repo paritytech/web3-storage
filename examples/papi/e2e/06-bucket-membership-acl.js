@@ -78,10 +78,10 @@ async function main() {
   });
 
   tests.push({
-    name: "6.4 Demote non-last Admin to Writer",
+    name: "6.4 Demote non-last Admin to Writer (self-demotion)",
     fn: async () => {
-      // We have two admins now (Dave + Eve). Demoting Eve to Writer is allowed.
-      await setMember(api, admin, bucketId, writer, "Writer");
+      // Eve was promoted to Admin in 6.3. Pallet only allows self-demotion.
+      await setMember(api, writer, bucketId, writer, "Writer");
       const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
       const writerMember = bucket.members.find((m) => sameAddress(m.account, writer.address));
       assert.strictEqual(writerMember.role.type, "Writer", "Eve should be Writer again");
@@ -162,4 +162,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});

@@ -151,9 +151,9 @@ async function main() {
     name: "10.5 Freeze is irreversible",
     fn: async () => {
       const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_capacity: maxBytes,
+        max_bytes: maxBytes,
         duration: 100,
-        max_payment: maxBytes * 100n * 10n,
+        max_price_per_byte: 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
       await freezeBucket(api, bob, bucketId);
@@ -170,9 +170,9 @@ async function main() {
     name: "10.6 Checkpoint after freeze",
     fn: async () => {
       const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_capacity: maxBytes,
+        max_bytes: maxBytes,
         duration: 100,
-        max_payment: maxBytes * 100n * 10n,
+        max_price_per_byte: 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
       // Upload some data.
@@ -213,9 +213,9 @@ async function main() {
     name: "10.8 Upload verify blake2-256",
     fn: async () => {
       const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_capacity: maxBytes,
+        max_bytes: maxBytes,
         duration: 100,
-        max_payment: maxBytes * 100n * 10n,
+        max_price_per_byte: 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
       const data = "integrity check data for blake2-256";
@@ -230,9 +230,9 @@ async function main() {
     name: "10.9 Identical content → same hash, different MMR leaves",
     fn: async () => {
       const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_capacity: maxBytes,
+        max_bytes: maxBytes,
         duration: 100,
-        max_payment: maxBytes * 100n * 10n,
+        max_price_per_byte: 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
       const data = "identical content for dedup test";
@@ -255,4 +255,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});

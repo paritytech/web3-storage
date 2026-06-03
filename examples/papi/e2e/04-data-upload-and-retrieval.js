@@ -47,9 +47,9 @@ async function main() {
   const maxCapacity = 10_485_760n; // 10 MiB
   const duration = 100;
   const { bucketId } = await createBucketWithStorage(api, client, {
-    max_capacity: maxCapacity,
+    max_bytes: maxCapacity,
     duration,
-    max_payment: maxCapacity * BigInt(duration) * 10n,
+    max_price_per_byte: 10n,
   });
   await waitForAgreementAcceptance(api, provider.address, bucketId);
 
@@ -249,4 +249,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});

@@ -77,7 +77,7 @@ async function main() {
       );
       const extDuration = 25;
       const result = await extendAgreement(api, client, bucketId, provider, {
-        duration: extDuration,
+        additional_duration: extDuration,
         max_payment: maxBytes * BigInt(extDuration) * 10n,
       });
       const events = api.event.StorageProvider.AgreementExtended.filter(result.events);
@@ -117,16 +117,16 @@ async function main() {
   tests.push({
     name: "7.3 Block extensions per-agreement",
     fn: async () => {
-      await setExtensionsBlocked(api, client, bucketId, provider, true);
+      await setExtensionsBlocked(api, provider, bucketId, true);
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        duration: 10,
+        additional_duration: 10,
         max_payment: maxBytes * 10n * 10n,
       });
       await submitTxExpectFailure(tx, client.signer, "AgreementExtensionsBlocked", "7.3");
       // Unblock for further tests.
-      await setExtensionsBlocked(api, client, bucketId, provider, false);
+      await setExtensionsBlocked(api, provider, bucketId, false);
     },
   });
 
@@ -145,7 +145,7 @@ async function main() {
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        duration: 10,
+        additional_duration: 10,
         max_payment: maxBytes * 10n * 10n,
       });
       await submitTxExpectFailure(tx, client.signer, "ProviderNotAcceptingExtensions", "7.4");
@@ -168,7 +168,7 @@ async function main() {
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        duration: 10,
+        additional_duration: 10,
         max_payment: maxBytes * 10n * 10n,
       });
       await submitTxExpectFailure(tx, charlie.signer, "NotBucketAdmin", "7.5");
@@ -181,7 +181,7 @@ async function main() {
       const tx = api.tx.StorageProvider.extend_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        duration: 10,
+        additional_duration: 10,
         max_payment: 1n, // Way too low
       });
       await submitTxExpectFailure(tx, client.signer, "PaymentExceedsMax", "7.6");
@@ -192,4 +192,9 @@ async function main() {
   papi.destroy();
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+}).finally(() => {
+  process.exit(process.exitCode || 0);
+});
