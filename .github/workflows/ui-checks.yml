@@ -1,16 +1,13 @@
 name: UI Checks
 
+# No top-level `paths:` filter so the `UI Checks` gate always reports and is
+# safe to require in branch protection. The expensive jobs skip (via `changes`)
+# when the UI is untouched, instead of the whole workflow being filtered out.
 on:
   push:
     branches: [main, dev]
-    paths:
-      - "user-interfaces/**"
-      - ".github/workflows/ui-checks.yml"
   pull_request:
     branches: [main, dev]
-    paths:
-      - "user-interfaces/**"
-      - ".github/workflows/ui-checks.yml"
   workflow_dispatch:
 
 concurrency:
@@ -18,8 +15,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect UI changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: |
+            ui:
+              - 'user-interfaces/**'
+              - '.github/workflows/ui-checks.yml'
+
   unit-tests:
     name: Unit tests (Vitest)
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -47,6 +61,8 @@ jobs:
 
   build:
     name: Typecheck + build (${{ matrix.ui }})
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,3 +97,17 @@ jobs:
       - name: Build
         working-directory: user-interfaces
         run: pnpm --filter ${{ matrix.filter }} run build
+
+  # Aggregate gate — the stable check to require in branch protection. Stays
+  # green when the UI is untouched (skips aren't failures), red on real failure.
+  ui-checks:
+    name: UI Checks
+    needs: [changes, unit-tests, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "UI checks failed or were cancelled"
+          exit 1
