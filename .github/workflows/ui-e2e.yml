@@ -1,4 +1,4 @@
-name: UI E2E (Playwright)
+name: UI E2E
 
 on:
   push:
