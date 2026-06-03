@@ -9,7 +9,9 @@ let UNIT = 10n ** BigInt(tokenDecimals)
  * Apply chain-derived configuration from chain metadata. Called once after
  * chain connection to replace hardcoded defaults: number formatting
  * (decimals/symbol/block time), the SS58 prefix used to encode addresses, and
- * the minimum provider stake surfaced to the Registration page.
+ * the minimum provider stake surfaced to the Registration page. Returns the
+ * chain identity (name / runtime spec version / genesis hash) for the caller to
+ * publish into chain state.
  */
 export async function configureFromChain(props: {
   tokenDecimals: number
@@ -17,7 +19,10 @@ export async function configureFromChain(props: {
   blockTimeMs: number
   ss58Prefix: number
   minProviderStake: bigint
-}) {
+  specName: string
+  specVersion: number
+  genesisHash: string
+}): Promise<{ name: string; version: string; genesisHash: string }> {
   tokenDecimals = props.tokenDecimals
   tokenSymbol = props.tokenSymbol
   blockTimeMs = props.blockTimeMs
@@ -29,6 +34,12 @@ export async function configureFromChain(props: {
 
   // Store minProviderStake for Registration page
   ;(globalThis as any).__minProviderStake = props.minProviderStake
+
+  return {
+    name: props.specName,
+    version: String(props.specVersion),
+    genesisHash: props.genesisHash,
+  }
 }
 
 export function getTokenSymbol(): string {

@@ -76,6 +76,9 @@ export async function getChainProperties(): Promise<{
   blockTimeMs: number
   minProviderStake: bigint
   ss58Prefix: number
+  specName: string
+  specVersion: number
+  genesisHash: string
 }> {
   // Defaults match the current runtime; overridden where the chain exposes
   // them via constants / spec data.
@@ -84,10 +87,14 @@ export async function getChainProperties(): Promise<{
   let blockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
   let ss58Prefix = getSs58Prefix()
+  let specName = ''
+  let specVersion = 0
+  let genesisHash = ''
 
   if (client && api) {
     try {
       const spec = await client.getChainSpecData()
+      genesisHash = spec.genesisHash || genesisHash
       const props = spec.properties as { tokenDecimals?: number | number[]; tokenSymbol?: string | string[]; ss58Format?: number } | undefined
       if (props) {
         const dec = props.tokenDecimals
@@ -106,6 +113,12 @@ export async function getChainProperties(): Promise<{
     } catch { /* use default */ }
 
     try {
+      const version = await api.constants.System.Version()
+      specName = version.spec_name
+      specVersion = version.spec_version
+    } catch { /* use default */ }
+
+    try {
       minProviderStake = await api.constants.StorageProvider.MinProviderStake()
     } catch { /* use default */ }
 
@@ -116,7 +129,7 @@ export async function getChainProperties(): Promise<{
     } catch { /* use default */ }
   }
 
-  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix }
+  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
 }
 
 export async function getGenesisHash(): Promise<string> {
