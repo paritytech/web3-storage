@@ -8,6 +8,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
+import { parseMultiaddrToUrl, resolveProviderEndpoint } from "@web3-storage/papi";
 import { EncryptionKey } from "./encryption";
 import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
@@ -462,7 +463,8 @@ export class StorageClient {
 
     // Try to resolve from on-chain bucket data (works when provider has accepted agreement)
     try {
-      const url = await this.resolveProviderEndpoint(bucketId);
+      if (!this.api) throw new Error("Not connected");
+      const url = await resolveProviderEndpoint(this.api, bucketId);
       this.providerUrlCache.set(key, url);
       onProgress?.("Provider ready", 1, 1);
       return url;

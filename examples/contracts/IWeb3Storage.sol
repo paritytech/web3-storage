@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.34;
+
+/// @title IWeb3Storage
+/// @notice ABI of the web3-storage precompile at
+///         `0x0000000000000000000000000000000009010000` (matcher
+///         `Fixed(0x0901)`). Mirrors
+///         `precompiles/storage-provider-precompile/src/IWeb3Storage.sol`;
+///         kept in sync manually. Substrate `AccountId32` is `bytes32`. The
+///         EVM caller becomes the substrate-mapped owner via
+///         `AccountId32Mapper`.
+///
+/// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
+interface IWeb3Storage {
+    // TODO: Find out way to make it re-useable
+    struct PrimitiveReplicaTerms {
+        /// Balance reserved by the owner to fund per-sync confirmations.
+        uint128 syncBalance;
+        /// Minimum blocks between sync confirmations the provider commits to.
+        uint32 minSyncInterval;
+    }
+
+    struct PrimitiveAgreementTerms {
+        /// Owner bound by these terms (must be the caller's substrate-mapped
+        /// account at redemption).
+        bytes32 owner;
+        /// Storage quota committed by the provider, in bytes.
+        uint64 maxBytes;
+        /// Agreement duration in blocks from activation.
+        uint32 duration;
+        /// Price per byte per block locked at quote time.
+        uint128 pricePerByte;
+        /// Block number after which the quote is no longer redeemable.
+        uint32 validUntil;
+        /// Provider-chosen replay-protection nonce.
+        uint64 nonce;
+        /// `true` if the provider quoted replica terms (`Some(_)` on the Rust side).
+        bool hasReplicaParams;
+        /// Replica funding parameters; only read when `hasReplicaParams` is true.
+        PrimitiveReplicaTerms replicaParams;
+    }
+
+    // --- Bucket lifecycle ---------------------------------------------------
+
+    /// Redeem provider-signed agreement terms: create a bucket and open a
+    /// primary agreement atomically. `terms` must match the SCALE payload the
+    /// provider signed; `terms.owner` must be the caller's substrate-mapped
+    /// account. `signature` is the SCALE-encoded `MultiSignature` from the
+    /// provider's `/negotiate` response (variant byte + raw signature bytes).
+    /// Returns the new bucket id.
+    function establishStorageAgreement(
+        bytes32 provider,
+        PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
+    ) external returns (uint64 bucketId);
+
+    /// Freeze a bucket — append-only, irreversible.
+    function freezeBucket(uint64 bucketId) external;
+
+    // --- Membership ---------------------------------------------------------
+
+    /// Add or update a bucket member.
+    function setMember(uint64 bucketId, bytes32 member, uint8 role) external;
+
+    /// Remove a member from a bucket.
+    function removeMember(uint64 bucketId, bytes32 member) external;
+
+    // --- Agreement lifecycle ------------------------------------------------
+
+    /// Add funds and capacity to an existing agreement.
+    function topUpAgreement(
+        uint64 bucketId,
+        bytes32 provider,
+        uint64 additionalBytes,
+        uint128 maxPayment
+    ) external;
+
+    /// Extend an existing agreement's duration.
+    function extendAgreement(
+        uint64 bucketId,
+        bytes32 provider,
+        uint32 additionalDuration,
+        uint128 maxPayment
+    ) external;
+
+    /// End an agreement, paying the provider in full.
+    function endAgreementPay(uint64 bucketId, bytes32 provider) external;
+
+    /// End an agreement, burning `burnPercent` (0-100) and paying the rest.
+    function endAgreementBurn(uint64 bucketId, bytes32 provider, uint8 burnPercent) external;
+
+    // --- Challenges ---------------------------------------------------------
+
+    /// Challenge a provider's checkpoint at a specific leaf/chunk.
+    function challengeCheckpoint(
+        uint64 bucketId,
+        bytes32 provider,
+        uint64 leafIndex,
+        uint64 chunkIndex
+    ) external;
+}

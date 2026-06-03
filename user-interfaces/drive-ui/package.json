@@ -27,6 +27,7 @@
     "@react-rxjs/utils": "^0.9.7",
     "@web3-storage/network-config": "workspace:*",
     "@web3-storage/network-picker": "workspace:*",
+    "@web3-storage/papi": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.9.0",
@@ -43,10 +44,10 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@web3-storage/test-helpers": "workspace:*",
     "tailwindcss": "^4.2.4",
     "typescript": "~5.8.3",
     "vite": "^8.0.10",
-    "vitest": "^4.1.5",
-    "@web3-storage/test-helpers": "workspace:*"
+    "vitest": "^4.1.5"
   }
 }

@@ -3,11 +3,11 @@
 //! Bucket owners ask the provider node for signed terms via
 //! `POST /negotiate`. The provider node:
 //!
-//! 1. Allocates a fresh nonce from a persistent monotonic counter
+//! 1. Allocates a fresh nonce from an in-memory monotonic counter
 //!    ([`NonceCounter`]). The counter is initialized at startup from the
-//!    chain's `ProviderReplayState.hwm + 1`, so duplicates can't survive a
-//!    restart that lost the local file (the on-chain replay window will
-//!    reject them).
+//!    chain's `ProviderReplayState.hsn + 1`, so a restart can't reissue a
+//!    nonce the chain already accepted (the on-chain replay window is
+//!    authoritative and rejects any out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_block + valid_until_offset`.
@@ -17,63 +17,46 @@
 use codec::Encode;
 use sp_core::Pair;
 use sp_runtime::MultiSignature;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
 pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 
-/// Persistent monotonic nonce counter for provider-signed terms.
+/// In-memory monotonic nonce counter for provider-signed terms.
 ///
-/// Nonces are atomically allocated via [`Self::next`]. Each allocation
-/// writes the new value to `path` synchronously so a crash mid-handler
-/// can't reissue the same nonce.
+/// Nonces are atomically allocated via [`Self::next`]. There is no local
+/// persistence: at startup the caller reconciles against the chain by
+/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain
+/// `hsn`, so the counter resumes at `hsn + 1`. This:
 ///
-/// At startup, the caller should reconcile against the chain by calling
-/// [`Self::bootstrap_from_hwm`] with the provider's on-chain `hwm`. The
-/// counter then resumes at `max(local, hwm + 1)`, which:
-///
-/// * survives a restart that lost the local file (uses chain hwm);
-/// * survives a restart where the chain advanced past our local view
+/// * survives a restart (the chain hsn is the source of truth);
+/// * survives a restart where the chain advanced past our last view
 ///   (e.g. a parallel quote was redeemed elsewhere) — we skip past it
 ///   rather than reissue.
 ///
 /// Gap-skipping is fine: unused nonces just expire from the replay
-/// window without effect.
+/// window without effect. The on-chain replay window is authoritative
+/// and rejects any out-of-range reuse, so a missed nonce can never lead
+/// to a double redemption.
 #[derive(Debug)]
 pub struct NonceCounter {
     counter: AtomicU64,
-    path: Option<PathBuf>,
 }
 
 impl NonceCounter {
-    /// In-memory counter (testing). No persistence.
-    pub fn in_memory(start: u64) -> Self {
+    /// Create a counter starting at `start`. In normal operation the
+    /// caller follows up with [`Self::bootstrap_from_hsn`] to align with
+    /// the chain.
+    pub fn new(start: u64) -> Self {
         Self {
             counter: AtomicU64::new(start),
-            path: None,
         }
     }
 
-    /// Counter backed by a file. Reads the existing value if present,
-    /// otherwise starts at 0.
-    pub fn open(path: PathBuf) -> std::io::Result<Self> {
-        let start = match fs::read_to_string(&path) {
-            Ok(s) => s.trim().parse::<u64>().unwrap_or(0),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(e) => return Err(e),
-        };
-        Ok(Self {
-            counter: AtomicU64::new(start),
-            path: Some(path),
-        })
-    }
-
-    /// Advance the counter to at least `hwm + 1`. Idempotent — only
+    /// Advance the counter to at least `hsn + 1`. Idempotent — only
     /// advances forward.
-    pub fn bootstrap_from_hwm(&self, hwm: u64) {
-        let target = hwm.saturating_add(1);
+    pub fn bootstrap_from_hsn(&self, hsn: u64) {
+        let target = hsn.saturating_add(1);
         // Standard CAS loop — bump only if our target is higher than
         // whatever is already there.
         let mut current = self.counter.load(Ordering::SeqCst);
@@ -88,27 +71,12 @@ impl NonceCounter {
                 Err(observed) => current = observed,
             }
         }
-        self.persist();
     }
 
-    /// Allocate the next nonce. Atomic + persistent: even concurrent
-    /// callers each get a distinct value, and the on-disk file always
-    /// trails (or matches) the highest issued nonce.
+    /// Allocate the next nonce. Atomic: concurrent callers each get a
+    /// distinct value.
     pub fn next(&self) -> u64 {
-        let n = self.counter.fetch_add(1, Ordering::SeqCst);
-        self.persist();
-        n
-    }
-
-    /// Best-effort persist of the *next* value to disk. Failures are
-    /// logged but don't fail the call — the chain's replay window is
-    /// authoritative anyway.
-    fn persist(&self) {
-        let Some(ref path) = self.path else { return };
-        let next = self.counter.load(Ordering::SeqCst);
-        if let Err(e) = fs::write(path, next.to_string()) {
-            tracing::warn!("Failed to persist nonce counter to {:?}: {}", path, e);
-        }
+        self.counter.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -127,33 +95,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nonce_counter_in_memory_is_monotonic() {
-        let c = NonceCounter::in_memory(0);
+    fn nonce_counter_is_monotonic() {
+        let c = NonceCounter::new(0);
         assert_eq!(c.next(), 0);
         assert_eq!(c.next(), 1);
         assert_eq!(c.next(), 2);
     }
 
     #[test]
-    fn bootstrap_from_hwm_only_advances() {
-        let c = NonceCounter::in_memory(10);
-        c.bootstrap_from_hwm(5); // lower than current — no-op
+    fn bootstrap_from_hsn_only_advances() {
+        let c = NonceCounter::new(10);
+        c.bootstrap_from_hsn(5); // lower than current — no-op
         assert_eq!(c.next(), 10);
-        c.bootstrap_from_hwm(20); // higher — advance
+        c.bootstrap_from_hsn(20); // higher — advance
         assert_eq!(c.next(), 21);
-    }
-
-    #[test]
-    fn persists_and_resumes_from_disk() {
-        let dir = std::env::temp_dir().join(format!("nonce-counter-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("nonce");
-        let c = NonceCounter::open(path.clone()).unwrap();
-        assert_eq!(c.next(), 0);
-        assert_eq!(c.next(), 1);
-        drop(c);
-        // Reopening should pick up where we left off.
-        let c2 = NonceCounter::open(path).unwrap();
-        assert_eq!(c2.next(), 2);
     }
 }

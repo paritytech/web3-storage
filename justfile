@@ -65,7 +65,7 @@ _download BIN URL:
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
 # Download all required binaries
-download-binaries: download-polkadot-sdk-binaries download-zombienet
+download-binaries: download-polkadot-sdk-binaries download-zombienet download-frame-omni-bencher
     @echo "All binaries downloaded to .bin/"
 
 # Download Polkadot SDK binaries (polkadot, omni-node, chain-spec-builder)
@@ -73,6 +73,9 @@ download-polkadot-sdk-binaries: _download-polkadot _download-polkadot-omni-node 
 
 # Download zombienet
 download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombienet-sdk/releases/download/" + zombienet_version + "/" + zombienet_asset)
+
+# Download frame-omni-bencher (for benchmarks / `/cmd bench`)
+download-frame-omni-bencher: (_download "frame-omni-bencher" polkadot_sdk_base + "frame-omni-bencher" + darwin_suffix)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
@@ -178,6 +181,35 @@ generate-chain-spec: build-runtime
 #   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Compile the example marketplace contract to PolkaVM bytecode + ABI.
+# Requires: solc and resolc on PATH (see examples/contracts/README.md).
+build-contracts:
+    bash examples/contracts/build.sh
+
+# Smart-contract e2e demo: deploy StorageMarketplace, call buyStorage through
+# the storage-provider precompile, exercise upload/challenge, end via contract.
+# Requires: chain + provider running, contracts built (`just build-contracts`).
+sc-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Smart-contract precompile-coverage e2e: directly invokes every selector on
+# all three precompiles (storage-provider + drive-registry + s3-registry) and
+# asserts pallet events/storage updated. No intermediate contract.
+# Requires: chain + provider running, contracts built (`just build-contracts`).
+sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-coverage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Smart-contract team-drive demo: deploys SharedTeamDrive, exercises
+# createTeam → invite → kick → disband through the drive-registry precompile.
+sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-team-drive.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
+# NFT-shaped access token per S3 object through the s3-registry precompile,
+# transfers + burns + shuts down.
+sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/sc-token-gated.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Wait until the parachain's transaction pool is empty (bounded ~60s, then
 # proceeds with a warning). Run between back-to-back integration tests so the

@@ -2,15 +2,15 @@
 //!
 //! Each provider maintains a sliding window over the most recent
 //! [`REPLAY_WINDOW_BITS`] nonces it has issued. The window is anchored at the
-//! highest nonce ever accepted (`hwm`) and tracks the inclusive range
-//! `hwm - (REPLAY_WINDOW_BITS - 1) ..= hwm`. Nonces older than the window
+//! highest sequence nonce ever accepted (`hsn`) and tracks the inclusive range
+//! `hsn - (REPLAY_WINDOW_BITS - 1) ..= hsn`. Nonces older than the window
 //! are rejected outright; nonces inside the window are accepted at most
 //! once.
 //!
 //! # Bit layout
 //!
-//! The LSB of `bitmap[0]` represents `hwm`, the next bit represents
-//! `hwm - 1`, and so on. Advancing the window by `d` slots shifts the
+//! The LSB of `bitmap[0]` represents `hsn`, the next bit represents
+//! `hsn - 1`, and so on. Advancing the window by `d` slots shifts the
 //! bitmap left by `d` bits, dropping the oldest entries.
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
@@ -36,10 +36,10 @@ pub const REPLAY_WINDOW_BITS: u32 = 256;
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplayWindow {
-    /// Highest nonce ever accepted for this provider (window anchor).
-    pub hwm: u64,
+    /// Highest sequence nonce ever accepted for this provider (window anchor).
+    pub hsn: u64,
     /// 256-bit acceptance bitmap; bit `i` (counting from the LSB of
-    /// `bitmap[0]`) is set iff nonce `hwm - i` has been accepted.
+    /// `bitmap[0]`) is set iff nonce `hsn - i` has been accepted.
     pub bitmap: [u8; 32],
 }
 
@@ -48,33 +48,33 @@ pub struct ReplayWindow {
 pub enum ReplayError {
     /// The nonce is inside the window and has already been marked as seen.
     AlreadyUsed,
-    /// The nonce is more than [`REPLAY_WINDOW_BITS`] slots behind `hwm`.
+    /// The nonce is more than [`REPLAY_WINDOW_BITS`] slots behind `hsn`.
     TooOld,
 }
 
 impl ReplayWindow {
     /// Records `nonce` as seen, advancing the window if necessary.
     ///
-    /// When `nonce > hwm`, the bitmap is shifted left by `nonce - hwm` and
-    /// `hwm` is updated; the new high-water mark is then marked at bit 0.
-    /// When `nonce <= hwm`, the bit at distance `hwm - nonce` is set.
+    /// When `nonce > hsn`, the bitmap is shifted left by `nonce - hsn` and
+    /// `hsn` is updated; the new high sequence nonce is then marked at bit 0.
+    /// When `nonce <= hsn`, the bit at distance `hsn - nonce` is set.
     ///
     /// # Errors
     ///
     /// * [`ReplayError::AlreadyUsed`] if the nonce is inside the window
     ///   and its bit is already set.
     /// * [`ReplayError::TooOld`] if the nonce is more than
-    ///   [`REPLAY_WINDOW_BITS`] slots behind `hwm`.
+    ///   [`REPLAY_WINDOW_BITS`] slots behind `hsn`.
     pub fn try_accept(&mut self, nonce: u64) -> Result<(), ReplayError> {
-        if nonce > self.hwm {
-            let shift = nonce - self.hwm;
+        if nonce > self.hsn {
+            let shift = nonce - self.hsn;
             shift_left_le(&mut self.bitmap, shift);
-            self.hwm = nonce;
+            self.hsn = nonce;
             self.bitmap[0] |= 1;
             return Ok(());
         }
 
-        let distance = self.hwm - nonce;
+        let distance = self.hsn - nonce;
         if distance >= REPLAY_WINDOW_BITS as u64 {
             return Err(ReplayError::TooOld);
         }
@@ -127,10 +127,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_nonce_sets_hwm() {
+    fn first_nonce_sets_hsn() {
         let mut w = ReplayWindow::default();
         assert!(w.try_accept(5).is_ok());
-        assert_eq!(w.hwm, 5);
+        assert_eq!(w.hsn, 5);
         assert_eq!(w.bitmap[0] & 1, 1);
     }
 
@@ -147,7 +147,7 @@ mod tests {
         for n in [3u64, 7, 1, 10, 2] {
             assert!(w.try_accept(n).is_ok(), "nonce {n} should be accepted");
         }
-        assert_eq!(w.hwm, 10);
+        assert_eq!(w.hsn, 10);
         for n in [3u64, 7, 1, 10, 2] {
             assert_eq!(w.try_accept(n), Err(ReplayError::AlreadyUsed));
         }
@@ -177,7 +177,7 @@ mod tests {
         w.try_accept(5).unwrap();
         w.try_accept(7).unwrap();
         w.try_accept(1000).unwrap();
-        assert_eq!(w.hwm, 1000);
+        assert_eq!(w.hsn, 1000);
         assert_eq!(w.bitmap[0], 1);
         for b in &w.bitmap[1..] {
             assert_eq!(*b, 0);
@@ -189,11 +189,11 @@ mod tests {
         let mut w = ReplayWindow::default();
         w.try_accept(100).unwrap();
         w.try_accept(101).unwrap();
-        // 101 is hwm; 100 sits at distance 1, so bits 0 and 1 of byte 0 are set.
+        // 101 is hsn; 100 sits at distance 1, so bits 0 and 1 of byte 0 are set.
         assert_eq!(w.bitmap[0] & 0b11, 0b11);
         w.try_accept(109).unwrap();
         // After shifting left by 8, the bits previously at positions 0 and 1
-        // land in byte 1 at positions 0 and 1; bit 0 of byte 0 marks the new hwm.
+        // land in byte 1 at positions 0 and 1; bit 0 of byte 0 marks the new hsn.
         assert_eq!(w.bitmap[0] & 1, 1);
         assert_eq!(w.bitmap[1] & 0b11, 0b11);
     }

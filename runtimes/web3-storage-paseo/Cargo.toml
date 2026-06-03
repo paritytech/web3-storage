@@ -10,9 +10,12 @@ description = "Paseo's Web3 Storage parachain runtime"
 [dependencies]
 # Internal
 storage-primitives = { workspace = true }
-pallet-storage-provider = { workspace = true }
 pallet-drive-registry = { workspace = true }
+pallet-drive-registry-precompile = { workspace = true }
 pallet-s3-registry = { workspace = true }
+pallet-s3-registry-precompile = { workspace = true }
+pallet-storage-provider = { workspace = true }
+pallet-storage-provider-precompile = { workspace = true }
 
 # Parity codec
 codec = { workspace = true, features = ["derive"] }
@@ -35,6 +38,7 @@ pallet-authorship = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-collator-selection = { workspace = true }
 pallet-message-queue = { workspace = true }
+pallet-revive = { workspace = true }
 pallet-session = { workspace = true }
 pallet-sudo = { workspace = true }
 pallet-timestamp = { workspace = true }
@@ -90,8 +94,11 @@ substrate-wasm-builder = { workspace = true, optional = true }
 default = ["std"]
 std = [
 	"codec/std",
+	"pallet-drive-registry-precompile/std",
 	"pallet-drive-registry/std",
+	"pallet-s3-registry-precompile/std",
 	"pallet-s3-registry/std",
+	"pallet-storage-provider-precompile/std",
 	"pallet-storage-provider/std",
 	"scale-info/std",
 	"storage-primitives/std",
@@ -109,6 +116,7 @@ std = [
 	"pallet-balances/std",
 	"pallet-collator-selection/std",
 	"pallet-message-queue/std",
+	"pallet-revive/std",
 	"pallet-session/std",
 	"pallet-sudo/std",
 	"pallet-timestamp/std",
@@ -169,11 +177,14 @@ runtime-benchmarks = [
 	"frame-system/runtime-benchmarks",
 	"pallet-balances/runtime-benchmarks",
 	"pallet-collator-selection/runtime-benchmarks",
+	"pallet-drive-registry-precompile/runtime-benchmarks",
 	"pallet-drive-registry/runtime-benchmarks",
 	"pallet-message-queue/runtime-benchmarks",
-	"pallet-s3-registry/runtime-benchmarks",
+	"pallet-revive/runtime-benchmarks",
+	"pallet-s3-registry-precompile/runtime-benchmarks",
 	"pallet-s3-registry/runtime-benchmarks",
 	"pallet-session/runtime-benchmarks",
+	"pallet-storage-provider-precompile/runtime-benchmarks",
 	"pallet-storage-provider/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
 	"pallet-timestamp/runtime-benchmarks",
@@ -203,9 +214,13 @@ try-runtime = [
 	"pallet-authorship/try-runtime",
 	"pallet-balances/try-runtime",
 	"pallet-collator-selection/try-runtime",
+	"pallet-drive-registry-precompile/try-runtime",
 	"pallet-message-queue/try-runtime",
+	"pallet-revive/try-runtime",
+	"pallet-s3-registry-precompile/try-runtime",
 	"pallet-s3-registry/try-runtime",
 	"pallet-session/try-runtime",
+	"pallet-storage-provider-precompile/try-runtime",
 	"pallet-storage-provider/try-runtime",
 	"pallet-sudo/try-runtime",
 	"pallet-timestamp/try-runtime",

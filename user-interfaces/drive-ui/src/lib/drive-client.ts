@@ -7,6 +7,7 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
+import { resolveProviderEndpoint } from "@web3-storage/papi";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
@@ -145,11 +146,6 @@ async function httpFetch(
   throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
 }
 
-/**
- * Parse a libp2p multiaddr string (e.g. `/ip4/127.0.0.1/tcp/3333`) into an
- * HTTP URL. Picks the FIRST matching host/port pair so multi-`/tcp/` addrs
- * with multiple host candidates resolve deterministically.
- */
 function decodeName(name: Uint8Array | undefined): string | null {
   if (!name) return null;
   try {
@@ -332,33 +328,11 @@ export class DriveClient {
 
   // ── Provider resolution ───────────────────────────────────────────────────
 
-  private async resolveProviderEndpoint(bucketId: bigint): Promise<string> {
-    const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
-
-    const providers = bucket.primary_providers;
-    if (providers.length === 0) {
-      throw new Error(`Bucket ${bucketId} has no primary providers`);
-    }
-
-    for (const providerAccount of providers) {
-      const provider = await api.query.StorageProvider.Providers.getValue(providerAccount);
-      if (!provider) continue;
-
-      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-      const url = parseMultiaddrToHttp(multiaddrStr);
-      if (url) return url;
-    }
-
-    throw new Error(`Could not resolve HTTP endpoint for bucket ${bucketId} providers`);
-  }
-
   async getProviderUrl(bucketId: bigint): Promise<string> {
     const key = bucketId.toString();
     const cached = this.providerUrlCache.get(key);
     if (cached) return cached;
-    const url = await this.resolveProviderEndpoint(bucketId);
+    const url = await resolveProviderEndpoint(this.requireApi(), bucketId);
     this.providerUrlCache.set(key, url);
     return url;
   }

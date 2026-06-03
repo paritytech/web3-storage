@@ -25,6 +25,7 @@ docs/
 
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
+- **[Smart Contracts](./design/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow.
 - **[Execution Flows](./design/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs for the main flows.
 - **[Marketplace](./design/marketplace.md)** — provider capacity, discovery, and matching.
 - **[Checkpoint Protocol](./design/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.

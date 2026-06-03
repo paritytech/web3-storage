@@ -301,10 +301,10 @@ impl ProviderClient {
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Read a provider's on-chain `ProviderReplayState.hwm`. Returns
+    /// Read a provider's on-chain `ProviderReplayState.hsn`. Returns
     /// `Ok(None)` if the provider has no replay state yet (never signed
     /// any terms).
-    pub async fn fetch_replay_hwm(
+    pub async fn fetch_replay_hsn(
         chain_ws_url: &str,
         provider: &AccountId32,
     ) -> ClientResult<Option<u64>> {
@@ -325,7 +325,7 @@ impl ProviderClient {
         let decoded = thunk
             .to_value()
             .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(named_field(&decoded, "hwm")
+        Ok(named_field(&decoded, "hsn")
             .and_then(|v| v.as_u128())
             .map(|h| h as u64))
     }

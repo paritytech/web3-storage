@@ -803,7 +803,7 @@ pub mod pallet {
         /// replay window.
         NonceAlreadyUsed,
         /// The terms' nonce is older than the provider's replay window
-        /// (distance from `hwm` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
+        /// (distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
         NonceTooOld,
         /// The terms' declared owner does not match the extrinsic origin.
         TermsOwnerMismatch,

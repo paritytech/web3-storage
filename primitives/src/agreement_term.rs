@@ -12,7 +12,6 @@ use core::fmt::Debug;
 use scale_info::TypeInfo;
 
 /// Off-chain quote signed by the provider and redeemed on-chain by the owner.
-///
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
@@ -39,7 +38,6 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
 }
 
 /// Replica terms
-///
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
