@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { getApi, disconnect, type ParachainApi } from "./chain-api";
+import { getApi, getBestBlockNumber, disconnect, type ParachainApi } from "./chain-api";
 
 const PROVIDER_HEALTH_URL =
   process.env.PROVIDER_HEALTH_URL ?? "http://127.0.0.1:3333/health";
@@ -13,19 +13,35 @@ export async function waitForConnection(page: Page, timeout = 30_000): Promise<v
 /**
  * Wait for the chain to produce enough blocks so mortal transactions have a
  * valid era. Submitting at block 1 on a freshly started --dev chain yields
- * "Stale" errors. CI gets a longer default than local because zombienet boot
- * variance can push the first finalized block past 30s on slow runners.
+ * "Stale" errors.
+ *
+ * Reads the chain's *best* block directly (not the UI's finalized badge): a
+ * mortal tx is valid against the best chain, and best blocks advance ~6s/block
+ * regardless of finality lag — keying this off the finalized head made it flake
+ * on slow runners where finality trails well behind block production. The
+ * `_page` arg is kept for call-site compatibility but is unused.
  */
 export async function waitForMinBlock(
-  page: Page,
+  _page: Page,
   minBlock = 3,
   timeout = DEFAULT_MIN_BLOCK_TIMEOUT,
 ): Promise<void> {
   await expect(async () => {
-    const text = await page.getByTestId("block-number").textContent();
-    const digits = (text ?? "").replace(/\D/g, "");
-    const num = digits ? parseInt(digits, 10) : NaN;
-    expect(num).toBeGreaterThanOrEqual(minBlock);
+    expect(await getBestBlockNumber()).toBeGreaterThanOrEqual(minBlock);
+  }).toPass({ timeout });
+}
+
+/**
+ * Smoke-test liveness assertion shared by all three UIs: the block-number badge
+ * is present, and the chain's *best* block advances within `timeout`. Keyed off
+ * best blocks (not the UI's finalized badge), so it won't flake when finality
+ * lags behind block production (~6s/block).
+ */
+export async function expectBestBlockToAdvance(page: Page, timeout = 30_000): Promise<void> {
+  await expect(page.getByTestId("block-number")).toBeVisible();
+  const first = await getBestBlockNumber();
+  await expect(async () => {
+    expect(await getBestBlockNumber()).toBeGreaterThan(first);
   }).toPass({ timeout });
 }
 

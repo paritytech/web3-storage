@@ -1,4 +1,4 @@
-name: UI E2E (Playwright)
+name: UI E2E
 
 on:
   push:
@@ -111,35 +111,12 @@ jobs:
         working-directory: user-interfaces
         run: pnpm --filter @web3-storage/drive-ui exec playwright install --with-deps chromium
 
-      - name: Start chain and wait for blocks
+      - name: Start chain
         run: |
           nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml > /tmp/zombienet.log 2>&1 &
-          echo "Waiting for parachain to produce finalized blocks..."
-          for i in $(seq 1 180); do
-            RESPONSE=$(curl -s -H "Content-Type: application/json" \
-              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
-              http://127.0.0.1:2222 2>/dev/null) || true
-            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
-            if [ -n "$FINALIZED_HASH" ]; then
-              HEADER=$(curl -s -H "Content-Type: application/json" \
-                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
-                http://127.0.0.1:2222 2>/dev/null) || true
-              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
-              if [ -n "$BLOCK_HEX" ]; then
-                BLOCK_NUM=$((BLOCK_HEX))
-                if [ "$BLOCK_NUM" -ge 3 ]; then
-                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
-                  break
-                fi
-              fi
-            fi
-            if [ "$i" -eq 180 ]; then
-              echo "TIMEOUT: parachain did not finalize block #3"
-              cat /tmp/zombienet.log || true
-              exit 1
-            fi
-            sleep 5
-          done
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
 
       - name: Start provider (Alice, inmemory) and wait for health
         run: |
