@@ -1858,3 +1858,651 @@ mod auto_matching_tests {
         });
     }
 }
+
+mod challenge_tests {
+    use super::*;
+    use codec::Encode;
+    use frame_support::{traits::Hooks, BoundedVec};
+    use sp_core::H256;
+    use storage_primitives::{
+        blake2_256, BucketSnapshot, ChallengeId, MerkleProof, MmrLeaf, MmrProof, ProviderRole,
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Run blocks forward, invoking both system and pallet hooks each block so
+    /// `on_finalize` for the storage provider fires (the default `run_to_block`
+    /// in `mock.rs` only invokes system hooks).
+    fn advance_to(n: u64) {
+        while System::block_number() < n {
+            <StorageProvider as Hooks<u64>>::on_finalize(System::block_number());
+            <System as Hooks<u64>>::on_finalize(System::block_number());
+            System::set_block_number(System::block_number() + 1);
+            <System as Hooks<u64>>::on_initialize(System::block_number());
+            <StorageProvider as Hooks<u64>>::on_initialize(System::block_number());
+        }
+    }
+
+    /// Build a valid (MMR root, MMR proof, chunk merkle proof) for a single-leaf
+    /// MMR containing a single chunk. With one chunk, the data_root collapses to
+    /// the chunk hash and the MMR root collapses to the leaf hash.
+    fn single_chunk_proof(chunk_data: &[u8]) -> (H256, MmrProof, MerkleProof) {
+        let chunk_hash = blake2_256(chunk_data);
+        // Single chunk → data_root is the chunk hash (no intermediate nodes).
+        let data_root = chunk_hash;
+        let leaf = MmrLeaf {
+            data_root,
+            data_size: chunk_data.len() as u64,
+            total_size: chunk_data.len() as u64,
+        };
+        let leaf_hash = blake2_256(&leaf.encode());
+        // Single leaf → MMR root is the leaf hash.
+        let mmr_root = leaf_hash;
+        let mmr_proof = MmrProof {
+            peaks: vec![leaf_hash],
+            leaf,
+            leaf_proof: MerkleProof {
+                siblings: vec![],
+                path: vec![],
+            },
+        };
+        let chunk_proof = MerkleProof {
+            siblings: vec![],
+            path: vec![],
+        };
+        (mmr_root, mmr_proof, chunk_proof)
+    }
+
+    fn make_chunk_bv(data: &[u8]) -> BoundedVec<u8, <Test as Config>::MaxChunkSize> {
+        data.to_vec()
+            .try_into()
+            .expect("chunk fits in MaxChunkSize")
+    }
+
+    /// Register provider 2, create bucket 0 owned by 1, accept a primary
+    /// agreement, then write a snapshot for `(mmr_root, start_seq, leaf_count)`
+    /// signed by provider 2. Returns nothing — state is in storage.
+    fn setup_primary_with_snapshot(mmr_root: H256, start_seq: u64, leaf_count: u64) {
+        // Provider 2 stakes 200; min stake is 100.
+        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+        assert_ok!(StorageProvider::register_provider(
+            RuntimeOrigin::signed(2),
+            multiaddr.try_into().unwrap(),
+            test_public_key(),
+            200
+        ));
+        // Bucket 0 owned by 1, requires 1 primary signature for checkpoint.
+        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        // Small agreement that fits within stake.
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(1),
+            0,    // bucket_id
+            2,    // provider
+            100,  // max_bytes
+            100,  // duration
+            1000  // max_payment
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(2),
+            0
+        ));
+
+        // Inject a snapshot directly. Provider 2 is at index 0 in the primaries
+        // BoundedVec (only provider in bucket), so bit 0 is set.
+        let snapshot = BucketSnapshot {
+            mmr_root,
+            start_seq,
+            leaf_count,
+            checkpoint_block: System::block_number(),
+            primary_signers: vec![0b0000_0001],
+        };
+        Buckets::<Test>::mutate(0u64, |bucket| {
+            let bucket = bucket.as_mut().expect("bucket exists");
+            bucket.snapshot = Some(snapshot);
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // challenge_checkpoint — challenge creation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn challenge_checkpoint_creates_challenge_in_storage() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0, // bucket_id
+                2, // provider
+                0, // leaf_index
+                0, // chunk_index
+            ));
+
+            // Challenge stored at deadline = block(1) + ChallengeTimeout(100) = 101.
+            let challenges = Challenges::<Test>::get(101).expect("challenge present");
+            assert_eq!(challenges.len(), 1);
+            let challenge = &challenges[0];
+            assert_eq!(challenge.provider, 2);
+            assert_eq!(challenge.challenger, 3);
+            assert_eq!(challenge.mmr_root, mmr_root);
+            // Currently a fixed `100u32`; commit 4 will change this.
+            assert_eq!(challenge.deposit, 100);
+
+            // Provider stats reflect received challenge.
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stats.challenges_received, 1);
+        });
+    }
+
+    #[test]
+    fn challenge_checkpoint_fails_without_snapshot() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                multiaddr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+            assert_noop!(
+                StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), 0, 2, 0, 0),
+                Error::<Test>::NoSnapshot
+            );
+        });
+    }
+
+    #[test]
+    fn challenge_checkpoint_fails_if_provider_not_in_primaries() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            // Provider 5 is not registered / not in the bucket.
+            assert_noop!(
+                StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), 0, 5, 0, 0),
+                Error::<Test>::ProviderNotInSnapshot
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // respond_to_challenge — happy paths and rejections
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn respond_with_valid_proof_defends_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            let challenge_id = ChallengeId {
+                deadline: 101u64,
+                index: 0u16,
+            };
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+
+            // Challenge cleared from storage.
+            assert!(Challenges::<Test>::get(101).is_none());
+            // Defended path slashes a fraction of the deposit from the
+            // provider's stake based on response time. At block 1 (challenge
+            // also created at block 1) the response is within "block 1" → 10%
+            // of the 100-deposit = 10 deducted, stake drops 200 → 190.
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 190);
+            assert_eq!(provider.stats.challenges_failed, 0);
+        });
+    }
+
+    #[test]
+    fn respond_to_nonexistent_challenge_fails() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (_, mmr_proof, chunk_proof) = single_chunk_proof(b"chunk-0");
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 999u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(b"chunk-0"),
+                        mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::ChallengeNotFound
+            );
+        });
+    }
+
+    #[test]
+    fn respond_with_wrong_provider_fails() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Account 4 is not the challenged provider.
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(4),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::NotChallengeProvider
+            );
+        });
+    }
+
+    /// Documents current behaviour — commit 3 will rewrite this so the provider
+    /// is slashed immediately rather than the extrinsic erroring out.
+    #[test]
+    fn respond_with_invalid_chunk_proof_currently_errors() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, _good_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Bogus chunk proof — has an extra sibling that doesn't match the leaf.
+            let bad_chunk_proof = MerkleProof {
+                siblings: vec![H256::repeat_byte(0xab)],
+                path: vec![true],
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof: bad_chunk_proof,
+                    },
+                ),
+                Error::<Test>::InvalidChallengeProof
+            );
+
+            // Challenge stays in storage — slashing waits for timeout.
+            assert!(Challenges::<Test>::get(101).is_some());
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 200);
+        });
+    }
+
+    /// Same as above for the MMR-proof half of `respond_to_challenge`.
+    #[test]
+    fn respond_with_invalid_mmr_proof_currently_errors() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, _, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Construct an MMR proof for a different leaf — the bagged root
+            // won't match the challenged root.
+            let bad_leaf = MmrLeaf {
+                data_root: H256::repeat_byte(0xff),
+                data_size: 1,
+                total_size: 1,
+            };
+            let bad_peak = blake2_256(&bad_leaf.encode());
+            let bad_mmr_proof = MmrProof {
+                peaks: vec![bad_peak],
+                leaf: bad_leaf,
+                leaf_proof: MerkleProof {
+                    siblings: vec![],
+                    path: vec![],
+                },
+            };
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof: bad_mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::InvalidChallengeProof
+            );
+        });
+    }
+
+    #[test]
+    fn respond_with_superseded_succeeds_when_canonical_advanced() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, _, _) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            // Challenge leaf 0 in a checkpoint that has been superseded.
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Bump snapshot to cover seq 0..10 — the challenged seq 0 is now
+            // within the canonical window, so `Superseded` is valid.
+            Buckets::<Test>::mutate(0u64, |bucket| {
+                let bucket = bucket.as_mut().unwrap();
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root: H256::repeat_byte(0x77),
+                    start_seq: 0,
+                    leaf_count: 10,
+                    checkpoint_block: 1,
+                    primary_signers: vec![0b0000_0001],
+                });
+            });
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Superseded,
+            ));
+            assert!(Challenges::<Test>::get(101).is_none());
+        });
+    }
+
+    #[test]
+    fn respond_after_deadline_fails() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Walk forward one block past the deadline. (Don't invoke pallet
+            // hooks here — we want to observe the rejection branch in
+            // `respond_to_challenge`, not the timeout slashing in `on_finalize`.)
+            System::set_block_number(102);
+            assert_noop!(
+                StorageProvider::respond_to_challenge(
+                    RuntimeOrigin::signed(2),
+                    ChallengeId {
+                        deadline: 101u64,
+                        index: 0u16,
+                    },
+                    ChallengeResponse::Proof {
+                        chunk_data: make_chunk_bv(&chunk_data),
+                        mmr_proof,
+                        chunk_proof,
+                    },
+                ),
+                Error::<Test>::ChallengeExpired
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Timeout slashing via on_finalize
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn challenge_timeout_slashes_provider() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            // Challenger 3 starts with 10_000 (genesis), then `create_challenge`
+            // reserves 100 deposit.
+            let challenger_before = Balances::free_balance(3);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(Balances::reserved_balance(3), 100);
+
+            // Provider has stake of 200 reserved at registration.
+            assert_eq!(Balances::reserved_balance(2), 200);
+
+            // Advance one block past the deadline; `on_finalize(101)` slashes.
+            advance_to(102);
+
+            // Provider stake is zero post-slash.
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
+
+            // Challenger deposit is unreserved and they receive a 10% reward of
+            // the 200-stake slash = 20.
+            assert_eq!(Balances::reserved_balance(3), 0);
+            assert_eq!(Balances::free_balance(3), challenger_before + 20);
+
+            // Challenge cleared from storage.
+            assert!(Challenges::<Test>::get(101).is_none());
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // challenge_replica
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn challenge_replica_uses_last_sync() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            // Two providers — primary (2) and replica (4).
+            let primary_addr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(2),
+                primary_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            let replica_addr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(4),
+                replica_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            // Enable replica acceptance via settings update.
+            let settings = ProviderSettings {
+                min_duration: 0u64,
+                max_duration: 1000u64,
+                price_per_byte: 0u64,
+                accepting_primary: false,
+                replica_sync_price: Some(1u64),
+                accepting_extensions: true,
+                max_capacity: 0,
+            };
+            assert_ok!(StorageProvider::update_provider_settings(
+                RuntimeOrigin::signed(4),
+                settings
+            ));
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+            // Set up the primary so a bucket has a snapshot lineage.
+            assert_ok!(StorageProvider::request_primary_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                100,
+                100,
+                1000
+            ));
+            assert_ok!(StorageProvider::accept_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
+
+            // Inject a replica agreement directly with a `last_sync` set. The
+            // request_replica_agreement / accept flow has a lot of moving parts
+            // unrelated to what's under test here.
+            let last_root = H256::repeat_byte(0x42);
+            let replica_agreement = StorageAgreement::<Test> {
+                owner: 1,
+                max_bytes: 100,
+                payment_locked: 0,
+                price_per_byte: 0,
+                expires_at: 1000,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: 100,
+                    sync_price: 1,
+                    min_sync_interval: 0,
+                    last_sync: Some((last_root, 1)),
+                },
+                started_at: 1,
+            };
+            StorageAgreements::<Test>::insert(0u64, 4u64, replica_agreement);
+            // Provider 4 stats need challenges_received bump infra — bump
+            // committed_bytes so the slash path doesn't underflow:
+            Providers::<Test>::mutate(4u64, |p| {
+                if let Some(p) = p.as_mut() {
+                    p.committed_bytes = 100;
+                }
+            });
+
+            assert_ok!(StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(3),
+                0, // bucket
+                4, // replica provider
+                0, // leaf
+                0, // chunk
+            ));
+
+            let challenges = Challenges::<Test>::get(101).expect("created");
+            assert_eq!(challenges[0].mmr_root, last_root);
+            // start_seq is 0 today — commit 4 will replace this with a stored
+            // value from the replica's sync record.
+            assert_eq!(challenges[0].start_seq, 0);
+        });
+    }
+
+    #[test]
+    fn challenge_replica_fails_for_primary_provider() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_noop!(
+                StorageProvider::challenge_replica(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2, // primary
+                    0,
+                    0,
+                ),
+                Error::<Test>::NotReplica
+            );
+        });
+    }
+
+    #[test]
+    fn challenge_replica_fails_without_last_sync() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+            let replica_addr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(4),
+                replica_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            // Replica agreement without a confirmed sync.
+            let replica_agreement = StorageAgreement::<Test> {
+                owner: 1,
+                max_bytes: 100,
+                payment_locked: 0,
+                price_per_byte: 0,
+                expires_at: 1000,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: 100,
+                    sync_price: 1,
+                    min_sync_interval: 0,
+                    last_sync: None,
+                },
+                started_at: 1,
+            };
+            StorageAgreements::<Test>::insert(0u64, 4u64, replica_agreement);
+
+            assert_noop!(
+                StorageProvider::challenge_replica(RuntimeOrigin::signed(3), 0, 4, 0, 0,),
+                Error::<Test>::InvalidSyncRoot
+            );
+        });
+    }
+}
