@@ -15,6 +15,7 @@ const LANDING_URL = import.meta.env.DEV ? "http://127.0.0.1:5176/" : "../";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { useNetworkSelection } from "@/state/network.state";
+import { withNetworkHandoff } from "@web3-storage/network-config";
 import { NetworkPicker } from "@web3-storage/network-picker";
 import { Button } from "@/components/ui/button";
 import { cn, truncateHash, formatTokens } from "@/lib/utils";
@@ -43,7 +44,7 @@ export default function Layout() {
       <div className="hidden w-64 flex-col border-r bg-card md:flex">
         <div className="flex h-14 items-center border-b px-4 gap-2">
           <a
-            href={LANDING_URL}
+            href={withNetworkHandoff(LANDING_URL, selectedNetwork)}
             data-testid="back-to-landing"
             title="Back to home"
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

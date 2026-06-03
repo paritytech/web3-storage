@@ -273,6 +273,31 @@
       }
     } catch (e) { /* ignore */ }
 
+    // Network handoff from an app's "back to home" link (?network=...). Takes
+    // precedence over the persisted selection (an app on its own origin in dev
+    // can't share localStorage), persists it, then strips the params so a
+    // refresh doesn't re-apply a stale handoff.
+    try {
+      var hp = new URLSearchParams(window.location.search);
+      var incoming = hp.get('network');
+      if (incoming && VALID_IDS.indexOf(incoming) !== -1) {
+        select.value = incoming;
+        localStorage.setItem('web3-storage-selected-network', incoming);
+        if (incoming === 'custom') {
+          var iws = hp.get('parachainWs');
+          var ihttp = hp.get('providerHttp');
+          if (iws) customWs.value = iws;
+          if (ihttp) customHttp.value = ihttp;
+          if (iws && ihttp) {
+            localStorage.setItem('web3-storage-custom-network', JSON.stringify({ parachainWs: iws, providerHttp: ihttp }));
+          }
+        }
+        hp.delete('network'); hp.delete('parachainWs'); hp.delete('providerHttp');
+        var hqs = hp.toString();
+        window.history.replaceState({}, '', window.location.pathname + (hqs ? '?' + hqs : '') + window.location.hash);
+      }
+    } catch (e) { /* ignore */ }
+
     function setEndpoint(el, value, placeholder) {
       if (value) {
         el.textContent = value;

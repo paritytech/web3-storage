@@ -15,6 +15,7 @@ export {
   loadSelectedNetwork,
   clearSelectedNetwork,
   loadFromUrl,
+  withNetworkHandoff,
 } from './storage'
 
 import { loadFromUrl as _loadFromUrl } from './storage'
