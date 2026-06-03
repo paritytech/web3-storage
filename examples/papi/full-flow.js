@@ -101,6 +101,7 @@ async function uploadAndVerify(api, bucketId) {
     leafIndex: commit.leaf_indices[0],
     mmrRoot: commit.mmr_root,
     startSeq: commit.start_seq,
+    leafCount: commit.leaf_count,
     providerSignature: commit.provider_signature,
     nonce: commit.nonce,
   };

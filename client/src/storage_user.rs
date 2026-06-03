@@ -695,6 +695,9 @@ struct CommitRequest {
 pub struct CommitResponse {
     pub mmr_root: String,
     pub start_seq: u64,
+    /// Leaves in the MMR after this commit. Needed when the resulting
+    /// signature is submitted via `challenge_offchain`.
+    pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
     pub provider_signature: String,
     /// Echo of the nonce the provider signed over.

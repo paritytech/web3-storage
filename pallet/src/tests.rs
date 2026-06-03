@@ -1866,6 +1866,7 @@ mod challenge_tests {
     use sp_core::H256;
     use storage_primitives::{
         blake2_256, BucketSnapshot, ChallengeId, MerkleProof, MmrLeaf, MmrProof, ProviderRole,
+        ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2452,7 +2453,12 @@ mod challenge_tests {
                     sync_balance: 100,
                     sync_price: 1,
                     min_sync_interval: 0,
-                    last_sync: Some((last_root, 1)),
+                    last_sync: Some(ReplicaSyncRecord {
+                        mmr_root: last_root,
+                        start_seq: 7, // commit 4: replica's challenge_replica now uses this
+                        leaf_count: 3,
+                        block: 1,
+                    }),
                 },
                 started_at: 1,
             };
@@ -2475,9 +2481,9 @@ mod challenge_tests {
 
             let challenges = Challenges::<Test>::get(101).expect("created");
             assert_eq!(challenges[0].mmr_root, last_root);
-            // start_seq is 0 today — commit 4 will replace this with a stored
-            // value from the replica's sync record.
-            assert_eq!(challenges[0].start_seq, 0);
+            // start_seq now reflects the value captured at sync time
+            // (previously hardcoded 0u64 placeholder).
+            assert_eq!(challenges[0].start_seq, 7);
         });
     }
 
@@ -2522,12 +2528,13 @@ mod challenge_tests {
             assert_noop!(
                 StorageProvider::challenge_offchain(
                     RuntimeOrigin::signed(3),
-                    0,
-                    2,
+                    0, // bucket_id
+                    2, // provider
                     mmr_root,
-                    0,
-                    0,
-                    0,
+                    0, // start_seq
+                    1, // leaf_count
+                    0, // leaf_index
+                    0, // chunk_index
                     1, // nonce — block 1 is 499 blocks behind, > MaxNonceAge=200
                     dummy_sig,
                 ),
@@ -2554,6 +2561,7 @@ mod challenge_tests {
                     2,
                     mmr_root,
                     0,
+                    1,
                     0,
                     0,
                     9999, // nonce in the future
@@ -2619,7 +2627,7 @@ mod challenge_tests {
                     sync_balance: 100,
                     sync_price: 1,
                     min_sync_interval: 0,
-                    last_sync: None,
+                    last_sync: None::<ReplicaSyncRecord<u64>>,
                 },
                 started_at: 1,
             };

@@ -914,9 +914,10 @@ mod benchmarks {
             bucket_id,
             provider,
             mmr_root,
-            0,
-            0,
-            0,
+            0,    // start_seq
+            0,    // leaf_count
+            0,    // leaf_index
+            0,    // chunk_index
             0u64, // nonce
             signature,
         );

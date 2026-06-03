@@ -79,6 +79,7 @@ parameter_types! {
     pub const MaxPrimaryProviders: u32 = 3;
     pub const MaxChunkSize: u32 = 256 * 1024; // 256 KiB
     pub const ChallengeTimeout: u64 = 100;
+    pub const ChallengeDeposit: u64 = 100;
     pub const MaxNonceAge: u64 = 200;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 50;
@@ -100,6 +101,7 @@ impl pallet_storage_provider::Config for Test {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = MaxChunkSize;
     type ChallengeTimeout = ChallengeTimeout;
+    type ChallengeDeposit = ChallengeDeposit;
     type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;

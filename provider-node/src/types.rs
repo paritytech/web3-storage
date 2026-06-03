@@ -73,6 +73,8 @@ pub struct CommitRequest {
 pub struct CommitResponse {
     pub mmr_root: String,
     pub start_seq: u64,
+    /// Number of leaves in the MMR after the commit.
+    pub leaf_count: u64,
     /// Leaf indices assigned to each data root
     pub leaf_indices: Vec<u64>,
     /// Provider signature over the commitment

@@ -20,6 +20,10 @@ parameter_types! {
     // normal off-chain choreography (provider signs, client builds & broadcasts
     // tx, tx finalises) without forcing re-signing.
     pub const MaxNonceAge: BlockNumber = 24 * HOURS;
+    // Reserved from the challenger when opening a challenge. 1 token at 12
+    // decimals = floor on spam economics. Previously hardcoded `100u32`
+    // (1e-10 of a token) which made challenge spam effectively free.
+    pub const ChallengeDeposit: Balance = UNIT;
     pub const SettlementTimeout: BlockNumber = 24 * HOURS;
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
@@ -79,6 +83,7 @@ impl pallet_storage_provider::Config for Runtime {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
+    type ChallengeDeposit = ChallengeDeposit;
     type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;

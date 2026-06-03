@@ -168,6 +168,7 @@ async function main() {
     const offchainId = await challengeOffchain(api, client, provider, bucketId, {
       mmrRoot: upload.commit.mmr_root,
       startSeq: upload.commit.start_seq,
+      leafCount: upload.commit.leaf_count,
       leafIndex: upload.commit.leaf_indices[0],
       providerSignature: upload.commit.provider_signature,
       nonce: upload.commit.nonce,

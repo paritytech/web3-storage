@@ -78,10 +78,36 @@ pub enum ProviderRole<Balance, BlockNumber> {
         sync_price: Balance,
         /// Minimum blocks between sync confirmations for this agreement.
         min_sync_interval: BlockNumber,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumber)>,
+        /// Last confirmed sync. None if replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
     },
+}
+
+/// Snapshot metadata captured at a replica's `confirm_replica_sync` so the
+/// pallet can later challenge a specific leaf without going back to the
+/// historical_roots table (which doesn't store sequence metadata).
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReplicaSyncRecord<BlockNumber> {
+    /// MMR root the replica confirmed sync to.
+    pub mmr_root: H256,
+    /// First sequence number covered by that root.
+    pub start_seq: u64,
+    /// Number of leaves under that root.
+    pub leaf_count: u64,
+    /// Block at which `confirm_replica_sync` was executed.
+    pub block: BlockNumber,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

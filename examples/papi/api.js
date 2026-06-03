@@ -144,11 +144,12 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
       provider: provider.address,
       mmr_root: Binary.fromBytes(hexToBytes(upload.mmrRoot)),
       start_seq: BigInt(upload.startSeq),
+      // The pallet honours `leaf_count` in the reconstructed `CommitmentPayload`
+      // (previously hardcoded 0). The provider returned the value it signed
+      // over from /commit — pass it through verbatim.
+      leaf_count: BigInt(upload.leafCount),
       leaf_index: BigInt(upload.leafIndex),
       chunk_index: 0n,
-      // `upload.nonce` came from the provider's /commit response (see
-      // `uploadChunk`) — it's the block number the provider used in the
-      // signed `CommitmentPayload`.
       nonce: BigInt(upload.nonce),
       provider_signature: Enum(
         "Sr25519",

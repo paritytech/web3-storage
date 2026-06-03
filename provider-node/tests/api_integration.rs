@@ -492,11 +492,15 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
     );
 
     // Reconstruct exactly what the handler signed: CommitmentPayload with
-    // leaf_count = 0 (matches /commit's encoding) and nonce echoed back.
+    // the real post-commit leaf_count (no longer hardcoded 0) and the nonce
+    // echoed back from the response.
     let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
     let mmr_root = H256::from_slice(&mmr_root_bytes);
     let nonce = body["nonce"].as_u64().expect("nonce echoed in response");
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0, nonce);
+    let leaf_count = body["leaf_count"]
+        .as_u64()
+        .expect("leaf_count present in /commit response");
+    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
     let encoded = payload.encode();
 
     let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");

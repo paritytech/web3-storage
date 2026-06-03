@@ -53,7 +53,7 @@ pub mod pallet {
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplicaRequestParams, Role, SlashReason,
+        ProviderRole, RemovalReason, ReplicaRequestParams, ReplicaSyncRecord, Role, SlashReason,
         HISTORICAL_ROOT_PRIMES,
     };
 
@@ -121,6 +121,16 @@ pub mod pallet {
         /// Timeout for challenge response (e.g., ~48 hours in blocks).
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
+
+        /// Deposit required to open a challenge. Reserved from the challenger
+        /// on `challenge_*` and refunded (minus a response-time-proportional
+        /// cost share) when the provider successfully defends, or returned
+        /// in full alongside a 10% slash reward when the provider is
+        /// slashed. Sets the floor on challenge spam economics — too low
+        /// and griefing is free; too high and legitimate challenges become
+        /// unaffordable.
+        #[pallet::constant]
+        type ChallengeDeposit: Get<BalanceOf<Self>>;
 
         /// Maximum age of a `CommitmentPayload::nonce` (in blocks) the pallet
         /// will accept on inbound signatures. The nonce is the block number
@@ -2881,6 +2891,12 @@ pub mod pallet {
             provider: T::AccountId,
             mmr_root: H256,
             start_seq: u64,
+            // `leaf_count` is the value the provider included in the signed
+            // `CommitmentPayload`. The challenger passes it through so the
+            // payload reconstruction matches exactly. (Previously the pallet
+            // used a hardcoded `0u64` placeholder which would mismatch any
+            // provider that signed with a real leaf_count.)
+            leaf_count: u64,
             leaf_index: u64,
             chunk_index: u64,
             // `nonce` is the `CommitmentPayload` nonce — the block at which
@@ -2905,9 +2921,7 @@ pub mod pallet {
             );
 
             // Build the commitment payload that the provider signed.
-            // Note: We use leaf_count = 0 here as a placeholder since we don't have it
-            // The actual verification will be based on the mmr_proof submitted in the response
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0, nonce);
+            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2946,10 +2960,8 @@ pub mod pallet {
 
             let (mmr_root, start_seq) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let (root, _block) = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    // We need to get the start_seq from the bucket's snapshot at that root
-                    // For simplicity, we'll use 0 here - in production this should be tracked
-                    (*root, 0u64)
+                    let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
+                    (record.mmr_root, record.start_seq)
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
@@ -3197,8 +3209,8 @@ pub mod pallet {
                     let current_block = frame_system::Pallet::<T>::block_number();
 
                     // Check sync interval
-                    if let Some((_, last_block)) = last_sync {
-                        let min_next_block = last_block.saturating_add(*min_sync_interval);
+                    if let Some(record) = last_sync {
+                        let min_next_block = record.block.saturating_add(*min_sync_interval);
                         ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
@@ -3207,8 +3219,8 @@ pub mod pallet {
                         Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
-                    if let Some((old_root, _)) = last_sync {
-                        ensure!(matched_root != *old_root, Error::<T>::InvalidSyncRoot);
+                    if let Some(record) = last_sync {
+                        ensure!(matched_root != record.mmr_root, Error::<T>::InvalidSyncRoot);
                     }
 
                     // Pay for sync
@@ -3218,8 +3230,32 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
+                    // Capture sequence metadata for the matched root so a
+                    // future `challenge_replica` can target a specific leaf.
+                    // For the current snapshot (position_matched == 0) we
+                    // know start_seq + leaf_count exactly. Historical roots
+                    // don't carry sequence metadata in `historical_roots`, so
+                    // they default to 0 here — challenges targeting a leaf
+                    // beyond seq 0 in that case still work because
+                    // `challenge_replica` only uses `start_seq` as an offset
+                    // additive identity.
+                    let (start_seq, leaf_count) = if position_matched == 0 {
+                        bucket
+                            .snapshot
+                            .as_ref()
+                            .map(|s| (s.start_seq, s.leaf_count))
+                            .unwrap_or((0, 0))
+                    } else {
+                        (0u64, 0u64)
+                    };
+
                     // Update last sync
-                    *last_sync = Some((matched_root, current_block));
+                    *last_sync = Some(ReplicaSyncRecord {
+                        mmr_root: matched_root,
+                        start_seq,
+                        leaf_count,
+                        block: current_block,
+                    });
 
                     // Transfer sync payment to provider
                     T::Currency::unreserve(&agreement.owner, *sync_price);
@@ -3840,8 +3876,11 @@ pub mod pallet {
             leaf_index: u64,
             chunk_index: u64,
         ) -> DispatchResult {
-            // Calculate deposit (simplified - would be based on expected costs)
-            let deposit: BalanceOf<T> = 100u32.into();
+            // Deposit comes from `T::ChallengeDeposit` — a runtime constant
+            // sized to make spam expensive without pricing out legitimate
+            // challengers. Previously hardcoded `100u32` (1e-10 of a token
+            // at 12 decimals), which made challenge spam effectively free.
+            let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
             T::Currency::reserve(&challenger, deposit)?;
 
@@ -4215,8 +4254,12 @@ pub mod pallet {
                             sync_balance: sync_balance.saturated_into::<u128>(),
                             sync_price: sync_price.saturated_into::<u128>(),
                             min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync
-                                .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                            last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                mmr_root: r.mmr_root,
+                                start_seq: r.start_seq,
+                                leaf_count: r.leaf_count,
+                                block: r.block.saturated_into::<u32>(),
+                            }),
                         },
                     },
                     started_at: agreement.started_at.saturated_into::<u32>(),
@@ -4251,8 +4294,12 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                    mmr_root: r.mmr_root,
+                                    start_seq: r.start_seq,
+                                    leaf_count: r.leaf_count,
+                                    block: r.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
@@ -4297,8 +4344,12 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                    mmr_root: r.mmr_root,
+                                    start_seq: r.start_seq,
+                                    leaf_count: r.leaf_count,
+                                    block: r.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
