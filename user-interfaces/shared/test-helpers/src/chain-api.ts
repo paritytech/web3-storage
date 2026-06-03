@@ -127,18 +127,25 @@ export async function getBlockNumber(): Promise<number> {
 export async function getBestBlockNumber(): Promise<number> {
   const client = getClient();
   return new Promise((resolve, reject) => {
-    const sub = client.bestBlocks$.subscribe({
+    // bestBlocks$ replays its latest value synchronously on subscribe, so this
+    // callback can run *during* the subscribe() call — before `sub` is bound.
+    // Track settledness and unsubscribe via the post-subscribe guard for that
+    // synchronous case; `sub` (a `let` initialised to null) avoids the TDZ.
+    let sub: { unsubscribe: () => void } | null = null;
+    let settled = false;
+    const done = (cb: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (sub) sub.unsubscribe();
+      cb();
+    };
+    sub = client.bestBlocks$.subscribe({
       next: (blocks) => {
         const best = blocks[0];
-        if (best) {
-          sub.unsubscribe();
-          resolve(best.number);
-        }
+        if (best) done(() => resolve(best.number));
       },
-      error: (err) => {
-        sub.unsubscribe();
-        reject(err);
-      },
+      error: (err) => done(() => reject(err)),
     });
+    if (settled) sub.unsubscribe();
   });
 }
