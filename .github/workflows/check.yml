@@ -1,4 +1,4 @@
-name: CI
+name: Basic checks
 
 on:
   push:
@@ -141,3 +141,17 @@ jobs:
       - name: Run test pallet-drive-registry
         run: |
           cargo test -p pallet-drive-registry --features runtime-benchmarks
+
+  # Aggregate gate — the stable check to require in branch protection, instead
+  # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
+  basic-checks:
+    name: Basic checks
+    needs: [check-fmt, check, clippy, test, benchmarks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Basic checks failed or were cancelled"
+          exit 1
