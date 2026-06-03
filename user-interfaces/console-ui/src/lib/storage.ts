@@ -8,7 +8,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
-import { parseMultiaddrToUrl, resolveProviderEndpoint } from "@web3-storage/papi";
+import { resolveProviderEndpoint } from "@web3-storage/papi";
 import { EncryptionKey } from "./encryption";
 import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
@@ -416,38 +416,6 @@ export class StorageClient {
   }
 
   // --- Provider Resolution ---
-
-  /**
-   * Resolve the HTTP endpoint for a bucket's primary provider by reading
-   * on-chain bucket data and provider multiaddr.
-   */
-  private async resolveProviderEndpoint(bucketId: bigint): Promise<string> {
-    if (!this.api) throw new Error("Not connected");
-
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
-
-    const providers: string[] = bucket.primary_providers ?? [];
-    if (providers.length === 0) {
-      throw new Error(`Bucket ${bucketId} has no primary providers`);
-    }
-
-    // Try each provider until we find one with a valid multiaddr
-    for (const providerAccount of providers) {
-      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount);
-      if (!provider) continue;
-
-      // multiaddr is a BoundedVec<u8> — decode to string
-      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
-
-      console.log(`[StorageClient] Provider ${providerAccount} multiaddr raw:`, provider.multiaddr, `decoded: "${multiaddrStr}"`);
-      const url = parseMultiaddrToHttp(multiaddrStr);
-      console.log(`[StorageClient] Parsed URL:`, url);
-      if (url) return url;
-    }
-
-    throw new Error(`Could not resolve HTTP endpoint for bucket ${bucketId} providers`);
-  }
 
   /**
    * Get the provider HTTP URL for a bucket, with caching.
