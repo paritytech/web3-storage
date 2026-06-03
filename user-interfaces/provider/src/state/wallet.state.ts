@@ -24,13 +24,8 @@ import {
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
 import { getPolkadotSigner } from 'polkadot-api/signer'
-import { fromBufferToBase58 } from '@polkadot-api/substrate-bindings'
+import { getSs58Prefix, isSameAddress, setSs58Prefix, toSs58 } from '@web3-storage/papi'
 import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
-
-// SS58 prefix — defaults to 0 (Polkadot), updated from the runtime
-// System pallet when the chain connects via `updateSs58Prefix()`.
-let ss58Prefix = 0
-let toSs58 = fromBufferToBase58(ss58Prefix)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -94,9 +89,8 @@ const STORAGE_KEY_ACCOUNT = 'provider-dashboard-wallet-account'
  * Called from chain.state after getChainProperties() resolves.
  */
 export async function updateSs58Prefix(prefix: number): Promise<void> {
-  if (prefix === ss58Prefix) return
-  ss58Prefix = prefix
-  toSs58 = fromBufferToBase58(ss58Prefix)
+  if (prefix === getSs58Prefix()) return
+  setSs58Prefix(prefix)
 
   // Re-encode dev accounts with the correct prefix if in dev mode
   if (modeSubject.getValue() === 'dev' && accountsSubject.getValue().length > 0) {
@@ -166,8 +160,10 @@ export async function connectDevAccounts(): Promise<void> {
     // default to Alice. Mirrors the extension-mode hydration so a persisted
     // choice survives reload.
     const savedAddress = localStorage.getItem(STORAGE_KEY_ACCOUNT)
+    // Byte-level match: a persisted address may have been encoded under a
+    // different SS58 prefix than the current one.
     const savedAccount = savedAddress
-      ? devAccounts.find((a) => a.address === savedAddress)
+      ? devAccounts.find((a) => isSameAddress(a.address, savedAddress))
       : undefined
     const accountToSelect =
       savedAccount ?? devAccounts.find((a) => a.name?.includes('Alice'))
@@ -209,10 +205,11 @@ export async function connectExtension(extensionName: string): Promise<void> {
     const accounts = extension.getAccounts()
     accountsSubject.next(accounts)
 
-    // Restore previously selected account, or auto-select first
+    // Restore previously selected account, or auto-select first. Byte-level
+    // match: a persisted address may use a different SS58 prefix.
     const savedAddress = localStorage.getItem(STORAGE_KEY_ACCOUNT)
     const savedAccount = savedAddress
-      ? accounts.find((a) => a.address === savedAddress)
+      ? accounts.find((a) => isSameAddress(a.address, savedAddress))
       : undefined
 
     if (!selectedAccountSubject.getValue()) {

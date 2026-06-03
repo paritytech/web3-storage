@@ -2,13 +2,39 @@
  * Shared PAPI utilities used across all UIs.
  */
 
-import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
+import { ss58Address, ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { multiaddrToUri } from "@multiformats/multiaddr-to-uri";
 import { parachain } from "@polkadot-api/descriptors";
 import type { TypedApi } from "polkadot-api";
 
 /** Typed parachain API, shared by every UI that talks to the chain. */
 export type ParachainApi = TypedApi<typeof parachain>;
+
+/**
+ * SS58 address prefix used to encode public keys for display.
+ *
+ * Defaults to 0 (Polkadot `1…` style). The prefix is a per-network property, so
+ * a UI that connects to a chain refines it from the runtime on connect via
+ * `setSs58Prefix(api.constants.System.SS58Prefix())`. Every address *comparison*
+ * goes through `isSameAddress` below (raw bytes), so this value only affects how
+ * addresses are rendered — never matching correctness.
+ */
+let ss58Prefix = 0
+
+/** Current SS58 prefix used by `toSs58`. */
+export function getSs58Prefix(): number {
+  return ss58Prefix
+}
+
+/** Set the SS58 prefix, typically from the connected runtime's `SS58Prefix`. */
+export function setSs58Prefix(prefix: number): void {
+  ss58Prefix = prefix
+}
+
+/** Encode a raw public key as an SS58 address using the current prefix. */
+export function toSs58(publicKey: Uint8Array): string {
+  return ss58Address(publicKey, ss58Prefix)
+}
 
 /** Compare two SS58 addresses by raw public key bytes (prefix-agnostic). */
 export function isSameAddress(a: string, b: string): boolean {

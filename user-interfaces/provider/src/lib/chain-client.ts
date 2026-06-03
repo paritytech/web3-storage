@@ -12,7 +12,7 @@ import { getWsProvider } from 'polkadot-api/ws'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
-import { isSameAddress } from '@web3-storage/papi'
+import { getSs58Prefix, isSameAddress } from '@web3-storage/papi'
 
 export type { PolkadotClient }
 type ParachainApi = TypedApi<typeof parachain>
@@ -83,7 +83,7 @@ export async function getChainProperties(): Promise<{
   let tokenSymbol = 'UNIT'
   let blockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
-  let ss58Prefix = 0
+  let ss58Prefix = getSs58Prefix()
 
   if (client && api) {
     try {

@@ -25,6 +25,7 @@ import {
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
+import { isSameAddress } from "@web3-storage/papi";
 import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
 import { EncryptionKey, bytesToHex } from "@/lib/encryption";
 import CreationStatusCard, { type CreationStatusItem } from "./CreationStatusCard";
@@ -108,13 +109,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     // The bucket owner is always Admin (the on-chain creator is added as Admin
     // in the pallet, but the member query can fail or return a format that
     // doesn't match the signer address string).
-    if (selectedBucket.owner === signerAddress) {
+    if (isSameAddress(selectedBucket.owner, signerAddress)) {
       setUserRole('Admin');
       return;
     }
     fetchBucketMembers(selectedBucket.layer0BucketId)
       .then((members) => {
-        const me = members.find((m) => m.account === signerAddress);
+        const me = members.find((m) => isSameAddress(m.account, signerAddress));
         setUserRole(me?.role ?? null);
       })
       .catch(() => setUserRole(null));

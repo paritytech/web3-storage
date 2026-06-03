@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { truncateHash } from "@/lib/utils";
+import { isSameAddress } from "@web3-storage/papi";
 import type { BucketMember, ProviderEndpointInfo } from "@/lib/storage";
 
 interface BucketInfoPanelProps {
@@ -40,9 +41,13 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
   const [newMemberRole, setNewMemberRole] = useState<'Admin' | 'Writer' | 'Reader'>('Writer');
   const [adding, setAdding] = useState(false);
 
-  const isAdmin = members.some(
-    (m) => m.account === signerAddress && m.role === 'Admin'
-  );
+  // Compare by raw bytes: member accounts come from chain (runtime prefix)
+  // while signerAddress is locally encoded, so string equality can fail across
+  // SS58 prefixes.
+  const isMe = (account: string) =>
+    signerAddress != null && isSameAddress(account, signerAddress);
+
+  const isAdmin = members.some((m) => isMe(m.account) && m.role === 'Admin');
 
   const refreshMembers = useCallback(async () => {
     setLoadingMembers(true);
@@ -81,7 +86,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
     // The runtime's set_member updates an existing member's role rather
     // than rejecting; surface the duplicate at the UI layer so users get
     // an obvious "already a member" message instead of a silent role swap.
-    if (members.some((m) => m.account === trimmed)) {
+    if (members.some((m) => isSameAddress(m.account, trimmed))) {
       toast({
         title: "Failed to add member",
         description: `${truncateHash(trimmed)} is already a member`,
@@ -100,7 +105,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
       // list. Reconciliation happens on the next expand or via the
       // manual refresh button. Mirrors useStorage.createBucket.
       setMembers((prev) =>
-        prev.some((m) => m.account === trimmed)
+        prev.some((m) => isSameAddress(m.account, trimmed))
           ? prev
           : [...prev, { account: trimmed, role: newMemberRole }],
       );
@@ -236,7 +241,7 @@ export default function BucketInfoPanel({ bucketId }: BucketInfoPanelProps) {
                       <td className="py-1.5">{roleBadge(m.role)}</td>
                       {isAdmin && (
                         <td className="py-1.5 text-right">
-                          {m.account !== signerAddress && (
+                          {!isMe(m.account) && (
                             <Button
                               data-testid={`bucket-member-remove-${m.account}`}
                               variant="ghost"
