@@ -198,6 +198,128 @@ export async function endAgreement(api, client, provider, bucketId, action = "Pa
   );
 }
 
+export async function addStake(api, provider, amount) {
+  return submitTx(
+    api.tx.StorageProvider.add_stake({ amount }),
+    provider.signer,
+    "add_stake"
+  );
+}
+
+export async function deregisterProvider(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.deregister_provider(),
+    provider.signer,
+    "deregister_provider"
+  );
+}
+
+export async function completeDeregister(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.complete_deregister(),
+    provider.signer,
+    "complete_deregister"
+  );
+}
+
+export async function cancelDeregister(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.cancel_deregister(),
+    provider.signer,
+    "cancel_deregister"
+  );
+}
+
+export async function updateProviderMultiaddr(api, provider, multiaddr) {
+  const bytes = typeof multiaddr === "string"
+    ? new TextEncoder().encode(multiaddr)
+    : multiaddr;
+  return submitTx(
+    api.tx.StorageProvider.update_provider_multiaddr({
+      multiaddr: Binary.fromBytes(bytes),
+    }),
+    provider.signer,
+    "update_provider_multiaddr"
+  );
+}
+
+export async function setMinProviders(api, admin, bucketId, minProviders) {
+  return submitTx(
+    api.tx.StorageProvider.set_min_providers({
+      bucket_id: bucketId,
+      min_providers: minProviders,
+    }),
+    admin.signer,
+    "set_min_providers"
+  );
+}
+
+export async function rejectAgreement(api, provider, bucketId) {
+  return submitTx(
+    api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
+    provider.signer,
+    "reject_agreement"
+  );
+}
+
+export async function withdrawAgreementRequest(api, client, bucketId, provider) {
+  return submitTx(
+    api.tx.StorageProvider.withdraw_agreement_request({
+      bucket_id: bucketId,
+      provider: provider.address,
+    }),
+    client.signer,
+    "withdraw_agreement_request"
+  );
+}
+
+export async function claimExpiredAgreement(api, caller, bucketId, provider) {
+  return submitTx(
+    api.tx.StorageProvider.claim_expired_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+    }),
+    caller.signer,
+    "claim_expired_agreement"
+  );
+}
+
+export async function extendAgreement(api, client, bucketId, provider, params) {
+  return submitTx(
+    api.tx.StorageProvider.extend_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+      ...params,
+    }),
+    client.signer,
+    "extend_agreement"
+  );
+}
+
+export async function topUpAgreement(api, client, bucketId, provider, params) {
+  return submitTx(
+    api.tx.StorageProvider.top_up_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+      ...params,
+    }),
+    client.signer,
+    "top_up_agreement"
+  );
+}
+
+export async function setExtensionsBlocked(api, client, bucketId, provider, blocked) {
+  return submitTx(
+    api.tx.StorageProvider.set_extensions_blocked({
+      bucket_id: bucketId,
+      provider: provider.address,
+      blocked,
+    }),
+    client.signer,
+    "set_extensions_blocked"
+  );
+}
+
 export async function freezeBucket(api, client, bucketId) {
   const result = await submitTx(
     api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId }),
