@@ -42,6 +42,8 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
+  h160ToSubstrate,
+  negotiatePrecompileTerms,
 } from "./sc-api.js";
 
 const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientArgs();
@@ -96,14 +98,20 @@ async function main() {
     const deployed = await deployContract(api, client, bytecode);
     console.log("  contract:", deployed.address);
 
-    // 2) createTeam{value: 10 UNIT} — the contract becomes the drive owner.
-    console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', 1MiB, 50 blocks, …)");
+    // 2) createTeam{value: 10 UNIT} — the contract becomes the drive owner,
+    //    so the terms are negotiated with the contract's substrate-mapped
+    //    account as owner; msg.value funds that account's payment reserve.
+    console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', provider, terms[1MiB×50], sig)");
+    const contractAccount = h160ToSubstrate(deployed.addressBytes);
+    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+      maxBytes: 1n << 20n, // 1 MiB capacity
+      duration: 50,
+    });
     const createData = encodeCall(abi, "createTeam", [
       "team-cov",
-      1n << 20n, // 1 MiB capacity
-      50,
-      UNIT, // payment to lock
-      0, // minProviders=0 → None
+      toHex(provider.publicKey),
+      signed.terms,
+      signed.signature,
     ]);
     let r = await callContract(api, client, deployed.addressBytes, createData, {
       value: 10n * UNIT,
