@@ -101,6 +101,9 @@ pub enum FsClientError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("CID mismatch: expected {expected:?}, got {got:?}")]
+    CidMismatch { expected: Cid, got: Cid },
 }
 
 pub type Result<T> = std::result::Result<T, FsClientError>;
@@ -218,11 +221,10 @@ impl FileSystemClient {
         let root_dir_bytes = root_dir.to_scale_bytes();
         let root_cid = self.upload_blob(bucket_id, &root_dir_bytes).await?;
 
-        // Verify the CID matches what we would compute locally
-        let expected_cid = compute_cid(&root_dir_bytes);
-        if root_cid != expected_cid {
-            tracing::warn!("CID mismatch: data_root={root_cid:?}, expected={expected_cid:?}");
-        }
+        // Verify the provider returned the CID we expect for these bytes.
+        // A mismatch means the provider's content-addressing disagrees with ours
+        // (corruption, tampering, or hash-algo drift) — refuse to continue.
+        Self::ensure_cid_matches(compute_cid(&root_dir_bytes), root_cid)?;
 
         // Cache the root CID (now managed off-chain only)
         tracing::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
@@ -807,6 +809,16 @@ impl FileSystemClient {
         Ok(data)
     }
 
+    /// Ensure a locally-computed CID matches the CID a provider returned for
+    /// the same bytes. Returns `CidMismatch` on disagreement so callers can
+    /// refuse to trust the provider's response.
+    fn ensure_cid_matches(expected: Cid, got: Cid) -> Result<()> {
+        if expected != got {
+            return Err(FsClientError::CidMismatch { expected, got });
+        }
+        Ok(())
+    }
+
     /// Split a path into (parent_path, name)
     fn split_path(path: &str) -> Result<(&str, &str)> {
         if !path.starts_with('/') {
@@ -983,5 +995,27 @@ mod tests {
         );
         assert!(FileSystemClient::split_path("/").is_err());
         assert!(FileSystemClient::split_path("no-slash").is_err());
+    }
+
+    #[test]
+    fn ensure_cid_matches_accepts_matching_pair() {
+        let cid = compute_cid(b"hello world");
+        FileSystemClient::ensure_cid_matches(cid, cid).expect("matching CIDs must be accepted");
+    }
+
+    #[test]
+    fn ensure_cid_matches_rejects_provider_returning_different_blob() {
+        let uploaded = compute_cid(b"the bytes we uploaded");
+        let returned = compute_cid(b"a different blob the provider gave back");
+        assert_ne!(uploaded, returned, "test setup: CIDs must differ");
+        let err = FileSystemClient::ensure_cid_matches(uploaded, returned)
+            .expect_err("mismatched CIDs must be rejected");
+        match err {
+            FsClientError::CidMismatch { expected, got } => {
+                assert_eq!(expected, uploaded);
+                assert_eq!(got, returned);
+            }
+            other => panic!("expected CidMismatch, got {other:?}"),
+        }
     }
 }
