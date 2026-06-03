@@ -136,6 +136,7 @@ start-e2e-chain: check build-runtime
     .bin/polkadot-omni-node \
         --chain "$SPEC_FILE" \
         --alice --tmp \
+        --unsafe-force-node-key-generation \
         --dev-block-time 2000 \
         --rpc-port {{ CHAIN_PORT }} \
         --rpc-cors all \

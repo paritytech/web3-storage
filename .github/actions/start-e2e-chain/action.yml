@@ -33,6 +33,7 @@ runs:
         nohup .bin/polkadot-omni-node \
           --chain "$SPEC_FILE" \
           --alice --tmp \
+          --unsafe-force-node-key-generation \
           --dev-block-time ${{ inputs.block-time }} \
           --rpc-port ${{ inputs.rpc-port }} \
           --rpc-cors all \
