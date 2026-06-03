@@ -183,23 +183,14 @@ jobs:
             sleep 2
           done
 
-      - name: Run L0 demo (inmemory provider)
-        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
-
       - name: Run L0 demo (disk provider)
-        run: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
         run: just drain-tx-pool-then fs-demo-ci
 
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
-
-      - name: Run PAPI s3-lifecycle demo
-        run: just drain-tx-pool-then papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
-
-      - name: Run PAPI drive-lifecycle demo
-        run: just drain-tx-pool-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
 
       - name: Stop services
         if: always()
@@ -222,10 +213,213 @@ jobs:
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
 
+  # E2E test suite — runs all 10 PAPI E2E workflows against a single
+  # inmemory provider. Supersedes the standalone PAPI demo scripts.
+  e2e-integration-tests:
+    name: E2E Integration Tests (${{ matrix.runtime.name }})
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, runtime-matrix]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "e2e-integration-tests-${{ matrix.runtime.name }}"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+
+      - name: Cache zombienet
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        id: zombienet-cache
+        with:
+          path: .bin/zombienet
+          key: zombienet-${{ env.ZOMBIENET_VERSION }}
+
+      - name: Download zombienet
+        if: steps.zombienet-cache.outputs.cache-hit != 'true'
+        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
+
+      - name: Log binary versions
+        run: |
+          .bin/zombienet --version
+          .bin/polkadot --version
+          .bin/polkadot-omni-node --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build runtime
+        run: just ${{ matrix.runtime.build_command }}
+
+      - name: Build provider with coverage instrumentation
+        run: cargo build --release -p storage-provider-node
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          CARGO_TARGET_DIR: target-cov
+          CARGO_INCREMENTAL: '0'
+
+      - name: Start chain and wait for blocks
+        run: |
+          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
+          ZOMBIE_PID=$!
+          echo "Waiting for zombienet to set up nodes..."
+          sleep 15
+          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
+            echo "ERROR: zombienet exited early"
+            cat /tmp/zombienet.log || true
+            exit 1
+          fi
+          echo "Waiting for parachain to produce finalized blocks..."
+          for i in $(seq 1 180); do
+            RESPONSE=$(curl -s -H "Content-Type: application/json" \
+              -d '{"id":1,"jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}' \
+              http://127.0.0.1:2222 2>/dev/null) || true
+            FINALIZED_HASH=$(echo "$RESPONSE" | jq -r '.result // empty' 2>/dev/null)
+            if [ -n "$FINALIZED_HASH" ]; then
+              HEADER=$(curl -s -H "Content-Type: application/json" \
+                -d "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$FINALIZED_HASH\"]}" \
+                http://127.0.0.1:2222 2>/dev/null) || true
+              BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
+              if [ -n "$BLOCK_HEX" ]; then
+                BLOCK_NUM=$((BLOCK_HEX))
+                if [ "$BLOCK_NUM" -ge 1 ]; then
+                  echo "Parachain finalized block: #$BLOCK_NUM (attempt $i)"
+                  break
+                fi
+              fi
+            fi
+            if [ "$i" -eq 180 ]; then
+              echo "TIMEOUT: parachain did not finalize blocks"
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Start provider (inmemory) and wait for health
+        run: |
+          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          mkdir -p /tmp/coverage
+          nohup ./target-cov/release/storage-provider-node \
+            --keyfile /tmp/alice-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
+            > /tmp/provider.log 2>&1 &
+          echo "Waiting for provider HTTP server..."
+          for i in $(seq 1 60); do
+            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
+              echo "Provider is healthy (attempt $i)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timeout: provider did not become healthy"
+              cat /tmp/provider.log || true
+              exit 1
+            fi
+            sleep 2
+          done
+        env:
+          LLVM_PROFILE_FILE: /tmp/coverage/provider-%p-%m.profraw
+
+      - name: Run E2E test suite
+        run: just e2e "http://127.0.0.1:3333"
+
+      - name: Stop services and generate Rust coverage
+        if: always()
+        run: |
+          # Graceful shutdown — SIGTERM lets provider flush profraw
+          pkill -TERM -f "storage-provider-node" 2>/dev/null || true
+          sleep 5
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+
+          # Generate Rust coverage report
+          if ls /tmp/coverage/*.profraw 1>/dev/null 2>&1; then
+            rustup component add llvm-tools 2>/dev/null || true
+            LLVM_PROFDATA=$(find $(rustc --print sysroot) -name llvm-profdata -type f | head -1)
+            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
+            if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
+              mkdir -p /tmp/coverage/report
+              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/*.profraw -o /tmp/coverage/provider.profdata
+              echo ""
+              echo "═══════════════════════════════════════════════════════════"
+              echo "  Rust Provider Coverage (provider-node/src/)"
+              echo "═══════════════════════════════════════════════════════════"
+              "$LLVM_COV" report \
+                ./target-cov/release/storage-provider-node \
+                --instr-profile=/tmp/coverage/provider.profdata \
+                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
+                --sources provider-node/src/
+              echo ""
+              "$LLVM_COV" export \
+                ./target-cov/release/storage-provider-node \
+                --instr-profile=/tmp/coverage/provider.profdata \
+                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
+                --sources provider-node/src/ \
+                --format=lcov > /tmp/coverage/report/rust-lcov.info 2>/dev/null || true
+            fi
+          fi
+
+      - name: Upload JS coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: js-coverage-${{ matrix.runtime.name }}
+          path: examples/papi/coverage/
+
+      - name: Upload Rust coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage-${{ matrix.runtime.name }}
+          path: /tmp/coverage/report/
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-integration-test-logs-${{ matrix.runtime.name }}
+          path: |
+            /tmp/zombienet.log
+            /tmp/provider.log
+            /tmp/zombie-*/*.log
+            /tmp/zombie-*/**/*.log
+            /tmp/zombie-*/*-plain.json
+            /tmp/zombie-*/*-raw.json
+
   # Smart-contract demos run in a parallel job with their own chain +
-  # provider — the sequential time of L0 demos + fs/s3 lifecycles + sc demos
-  # was bumping against the 60-minute job timeout. Parallel splits the
-  # wall-clock roughly in half; SC tests only need //Alice as a provider.
+  # provider. SC tests only need //Alice as a provider.
   sc-integration-tests:
     name: SC Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
@@ -407,7 +601,7 @@ jobs:
 
   integration-tests-complete:
     name: Integration Tests
-    needs: [integration-tests, sc-integration-tests]
+    needs: [integration-tests, e2e-integration-tests, sc-integration-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
