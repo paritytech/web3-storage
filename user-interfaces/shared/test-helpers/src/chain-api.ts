@@ -117,3 +117,28 @@ export async function getBlockNumber(): Promise<number> {
   const block = await getClient().getFinalizedBlock();
   return block.number;
 }
+
+/**
+ * Latest *best* block number (head of the best chain). Unlike the finalized
+ * head, this advances as soon as a block is authored (~6s) and is immune to
+ * finality lag, so it's the right signal for "is the chain alive" liveness
+ * checks that must not flake on a healthy-but-not-yet-finalizing chain.
+ */
+export async function getBestBlockNumber(): Promise<number> {
+  const client = getClient();
+  return new Promise((resolve, reject) => {
+    const sub = client.bestBlocks$.subscribe({
+      next: (blocks) => {
+        const best = blocks[0];
+        if (best) {
+          sub.unsubscribe();
+          resolve(best.number);
+        }
+      },
+      error: (err) => {
+        sub.unsubscribe();
+        reject(err);
+      },
+    });
+  });
+}
