@@ -124,6 +124,23 @@ start-paseo-chain: check build-paseo-runtime
     echo ""
     PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml
 
+# Start a standalone dev chain with 2s blocks for E2E testing (no relay chain).
+# Blocks finalize instantly — much faster than zombienet for automated tests.
+start-e2e-chain: check build-runtime
+    #!/usr/bin/env bash
+    echo ""
+    echo "=== Starting E2E Dev Chain (2s blocks, no relay chain) ==="
+    echo ""
+    SPEC_FILE="/tmp/e2e-chain-spec.json"
+    ./scripts/build-chain-spec.sh > "$SPEC_FILE"
+    .bin/polkadot-omni-node \
+        --chain "$SPEC_FILE" \
+        --alice --tmp \
+        --dev-block-time 2000 \
+        --rpc-port {{ CHAIN_PORT }} \
+        --rpc-cors all \
+        -lruntime=info
+
 # Start the storage provider node
 # Examples:
 #   just start-provider                                       # inmemory, //Alice key, port 3333

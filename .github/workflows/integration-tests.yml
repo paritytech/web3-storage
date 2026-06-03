@@ -214,22 +214,10 @@ jobs:
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
-      - name: Cache zombienet
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        id: zombienet-cache
-        with:
-          path: .bin/zombienet
-          key: zombienet-${{ env.ZOMBIENET_VERSION }}
-
-      - name: Download zombienet
-        if: steps.zombienet-cache.outputs.cache-hit != 'true'
-        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
-
       - name: Log binary versions
         run: |
-          .bin/zombienet --version
-          .bin/polkadot --version
           .bin/polkadot-omni-node --version
+          .bin/chain-spec-builder --version 2>/dev/null || true
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -246,10 +234,10 @@ jobs:
           CARGO_TARGET_DIR: target-cov
           CARGO_INCREMENTAL: '0'
 
-      - name: Start chain
-        uses: ./.github/actions/start-zombienet
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
         with:
-          config: ${{ matrix.runtime.zombienet_config }}
+          chain-spec-script: ${{ matrix.runtime.chain_spec_script }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
@@ -328,12 +316,8 @@ jobs:
         with:
           name: e2e-integration-test-logs-${{ matrix.runtime.name }}
           path: |
-            /tmp/zombienet.log
+            /tmp/omni-node.log
             /tmp/provider.log
-            /tmp/zombie-*/*.log
-            /tmp/zombie-*/**/*.log
-            /tmp/zombie-*/*-plain.json
-            /tmp/zombie-*/*-raw.json
 
   # Smart-contract demos run in a parallel job with their own chain +
   # provider. SC tests only need //Alice as a provider.
