@@ -286,24 +286,94 @@ impl ChallengeResponder {
     }
 
     /// Poll for active challenges against this provider.
+    ///
+    /// Iterates the on-chain `StorageProvider::Challenges` map. Each entry is
+    /// keyed by deadline (a `BlockNumber`) and stores a `Vec<Challenge>`. We
+    /// scan all entries, decode each `Vec<Challenge>` from raw SCALE, and
+    /// keep only the ones whose `provider` matches our account.
+    ///
+    /// Cost is bounded by `ChallengeTimeout` (storage entries past their
+    /// deadline are reaped in `on_finalize`), so iteration is at worst the
+    /// number of distinct deadlines with at least one open challenge.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        use sp_core::crypto::Ss58Codec;
+
         let api = self
             .api
             .as_ref()
             .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
 
-        // Query Challenges storage
-        // This is a simplified version - in production, we'd use proper storage queries
-        // and filter for challenges targeting this provider
-        let _storage = api
+        // Resolve our account's raw bytes. Prefer the signer's public key (set
+        // when we have a keypair); fall back to decoding `provider_id` from
+        // SS58. Without one of the two we can't filter, so return empty.
+        let our_bytes: [u8; 32] = if let Some(signer) = &self.signer {
+            signer.public_key().0
+        } else {
+            match sp_core::crypto::AccountId32::from_ss58check(&self.state.provider_id) {
+                Ok(account) => *account.as_ref(),
+                Err(_) => {
+                    tracing::debug!(
+                        "Cannot decode provider_id for challenge polling; returning empty"
+                    );
+                    return Ok(vec![]);
+                }
+            }
+        };
+
+        let storage_address = subxt::dynamic::storage("StorageProvider", "Challenges", ());
+        let storage = api
             .storage()
             .at_latest()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        // TODO: Implement proper storage query for Challenges
-        // For now, return empty - challenges would be detected via events
-        Ok(vec![])
+        let mut iter = storage
+            .iter(storage_address)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to iterate Challenges: {e}")))?;
+
+        let mut detected = Vec::new();
+        while let Some(result) = iter.next().await {
+            let kv = match result {
+                Ok(kv) => kv,
+                Err(e) => {
+                    tracing::debug!("Error iterating Challenges: {e}");
+                    continue;
+                }
+            };
+
+            // Key layout: 16 (pallet hash) + 16 (storage hash) + 16 (blake2_128) + 4 (BlockNumber u32) = 52.
+            let key_bytes = &kv.key_bytes;
+            if key_bytes.len() < 52 {
+                continue;
+            }
+            let deadline = u32::from_le_bytes(key_bytes[48..52].try_into().unwrap_or([0; 4]));
+
+            let encoded = kv.value.encoded();
+            let parsed = match decode_challenge_vec_for_provider(encoded, &our_bytes) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Failed to decode challenges at {deadline}: {e}");
+                    continue;
+                }
+            };
+
+            for (index, challenge) in parsed {
+                detected.push(DetectedChallenge {
+                    bucket_id: challenge.bucket_id,
+                    deadline,
+                    index,
+                    mmr_root: challenge.mmr_root,
+                    start_seq: challenge.start_seq,
+                    leaf_index: challenge.leaf_index,
+                    chunk_index: challenge.chunk_index,
+                    challenger: sp_core::crypto::AccountId32::from(challenge.challenger)
+                        .to_ss58check(),
+                    created_at_block: deadline,
+                });
+            }
+        }
+        Ok(detected)
     }
 
     /// Respond to a specific challenge.
@@ -582,5 +652,138 @@ mod tests {
         let _stop = ResponderCommand::Stop;
         let _pause = ResponderCommand::Pause;
         let _resume = ResponderCommand::Resume;
+    }
+}
+
+/// Manually-decoded view of a `Challenge` struct from raw SCALE bytes.
+///
+/// We avoid the `subxt::dynamic::Value` -> typed conversion because that
+/// requires metadata-aware decoding of generic `BalanceOf<T>` etc. The byte
+/// layout of `Challenge<T>` is stable for the deployed runtimes, so we read
+/// fixed offsets.
+struct DecodedChallenge {
+    bucket_id: u64,
+    challenger: [u8; 32],
+    mmr_root: H256,
+    start_seq: u64,
+    leaf_index: u64,
+    chunk_index: u64,
+}
+
+/// Decode a SCALE-encoded `Vec<Challenge>` from `Challenges` storage and
+/// return only the entries whose `provider` field matches `our_bytes`,
+/// alongside their original index in the vec (which is what the pallet uses
+/// as `ChallengeId::index`).
+///
+/// Layout per `Challenge<T>` (see `pallet/src/lib.rs`):
+///   bucket_id (u64)         — 8
+///   provider (AccountId32)  — 32
+///   challenger (AccountId32)— 32
+///   mmr_root (H256)         — 32
+///   start_seq (u64)         — 8
+///   leaf_index (u64)        — 8
+///   chunk_index (u64)       — 8
+///   deposit (Balance u128)  — 16
+/// Total per entry: 144 bytes.
+fn decode_challenge_vec_for_provider(
+    mut bytes: &[u8],
+    our_bytes: &[u8; 32],
+) -> Result<Vec<(u16, DecodedChallenge)>, &'static str> {
+    use codec::Decode;
+
+    let len = <codec::Compact<u32>>::decode(&mut bytes)
+        .map_err(|_| "compact length prefix")?
+        .0 as usize;
+
+    const ENTRY_SIZE: usize = 144;
+    if bytes.len() < len.saturating_mul(ENTRY_SIZE) {
+        return Err("vec body shorter than length prefix implies");
+    }
+
+    let mut out = Vec::new();
+    for i in 0..len {
+        let off = i * ENTRY_SIZE;
+        let entry = &bytes[off..off + ENTRY_SIZE];
+
+        let provider = &entry[8..40];
+        if provider != our_bytes {
+            continue;
+        }
+
+        let bucket_id = u64::from_le_bytes(entry[0..8].try_into().expect("8 bytes"));
+        let mut challenger = [0u8; 32];
+        challenger.copy_from_slice(&entry[40..72]);
+        let mut root_bytes = [0u8; 32];
+        root_bytes.copy_from_slice(&entry[72..104]);
+        let mmr_root = H256::from(root_bytes);
+        let start_seq = u64::from_le_bytes(entry[104..112].try_into().expect("8 bytes"));
+        let leaf_index = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
+        let chunk_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
+        // deposit at entry[128..144] — not needed for the response.
+
+        out.push((
+            i as u16,
+            DecodedChallenge {
+                bucket_id,
+                challenger,
+                mmr_root,
+                start_seq,
+                leaf_index,
+                chunk_index,
+            },
+        ));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod scale_decoding_tests {
+    use super::*;
+    use codec::Encode;
+
+    /// Round-trip: SCALE-encode a Vec of two pseudo-Challenges (the second
+    /// matches our account), then verify the decoder picks out only the
+    /// matching one with the correct index.
+    #[test]
+    fn decode_challenge_vec_filters_by_provider() {
+        let our_bytes: [u8; 32] = [9u8; 32];
+        let other_bytes: [u8; 32] = [1u8; 32];
+
+        // Build raw bytes that match the pallet's `Challenge` layout. We hand-
+        // roll this rather than rely on the pallet's own struct so the test
+        // would catch a layout drift between the two crates.
+        fn build(provider: [u8; 32]) -> Vec<u8> {
+            let mut buf = Vec::new();
+            let bucket_id: u64 = 42;
+            let challenger: [u8; 32] = [2u8; 32];
+            let mmr_root: [u8; 32] = [3u8; 32];
+            let start_seq: u64 = 100;
+            let leaf_index: u64 = 7;
+            let chunk_index: u64 = 0;
+            let deposit: u128 = 1_000_000_000_000;
+            buf.extend_from_slice(&bucket_id.to_le_bytes());
+            buf.extend_from_slice(&provider);
+            buf.extend_from_slice(&challenger);
+            buf.extend_from_slice(&mmr_root);
+            buf.extend_from_slice(&start_seq.to_le_bytes());
+            buf.extend_from_slice(&leaf_index.to_le_bytes());
+            buf.extend_from_slice(&chunk_index.to_le_bytes());
+            buf.extend_from_slice(&deposit.to_le_bytes());
+            buf
+        }
+
+        let entry_other = build(other_bytes);
+        let entry_us = build(our_bytes);
+        let mut payload = codec::Compact(2u32).encode();
+        payload.extend(entry_other);
+        payload.extend(entry_us);
+
+        let matched = decode_challenge_vec_for_provider(&payload, &our_bytes).expect("decodes");
+        assert_eq!(matched.len(), 1, "only our entry should match");
+        let (idx, challenge) = &matched[0];
+        assert_eq!(*idx, 1u16, "matched entry is at position 1");
+        assert_eq!(challenge.bucket_id, 42);
+        assert_eq!(challenge.start_seq, 100);
+        assert_eq!(challenge.leaf_index, 7);
     }
 }

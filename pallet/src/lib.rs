@@ -238,7 +238,7 @@ pub mod pallet {
         _,
         Blake2_128Concat,
         T::AccountId,
-        storage_primitives::ChallengerStatRecord<BalanceOf<T>>,
+        ChallengerStatRecord<BalanceOf<T>>,
         ValueQuery,
     >;
 

@@ -4,9 +4,10 @@ use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, CheckpointCoordinator,
+    CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::sync::Arc;
@@ -104,6 +105,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
     let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
+    let _challenge_responder_handle = start_challenge_responder(&cli, &seed, state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address (requires signing key)
     if let Some(seed) = &seed {
@@ -243,6 +245,50 @@ async fn start_agreement_coordinator(
         }
         Err(e) => {
             tracing::error!("Failed to start agreement coordinator: {}", e);
+            None
+        }
+    }
+}
+
+async fn start_challenge_responder(
+    cli: &Cli,
+    seed: &Option<String>,
+    state: Arc<ProviderState>,
+) -> Option<ChallengeResponderHandle> {
+    if !cli.challenge_responder.enable_challenge_responder {
+        return None;
+    }
+
+    let seed = match seed {
+        Some(s) => s.clone(),
+        None => {
+            tracing::error!("Challenge responder requires --keyfile for signing. Skipping.");
+            return None;
+        }
+    };
+
+    let config = ChallengeResponderConfig {
+        chain_ws_url: cli.rpc.chain_rpc.clone(),
+        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
+        seed: Some(seed),
+        ..Default::default()
+    };
+
+    let mut responder = ChallengeResponder::new(config, state);
+
+    if let Err(e) = responder.connect().await {
+        tracing::error!("Failed to connect challenge responder: {}", e);
+        return None;
+    }
+    tracing::info!("Challenge responder connected to chain");
+
+    match responder.start(None).await {
+        Ok(handle) => {
+            tracing::info!("Challenge responder started — auto-responding to challenges");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::error!("Failed to start challenge responder: {}", e);
             None
         }
     }
