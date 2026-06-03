@@ -9,7 +9,7 @@ import type { AvailableProvider } from "@/lib/storage";
 interface ProviderPickerDialogProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (providerAccount: string) => void;
+  onSelect: (provider: AvailableProvider) => void;
   requiredCapacity: bigint;
   requiredDuration: number;
 }
@@ -49,14 +49,14 @@ export default function ProviderPickerDialog({
 
   const getDisabledReason = (p: AvailableProvider): string | null => {
     if (!p.acceptingPrimary) return "Not accepting";
-    if (p.availableCapacity < requiredCapacity) return "Capacity full";
+    if (p.availableCapacity !== 0n && p.availableCapacity < requiredCapacity) return "Capacity full";
     if (requiredDuration < p.minDuration) return "Duration too short";
     if (p.maxDuration > 0 && requiredDuration > p.maxDuration) return "Duration too long";
     return null;
   };
 
   return (
-    <Card className="border-2">
+    <Card className="border-2" data-testid="provider-picker">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
@@ -168,10 +168,11 @@ export default function ProviderPickerDialog({
                             </span>
                           ) : (
                             <Button
+                              data-testid="provider-picker-select"
                               variant="outline"
                               size="sm"
                               className="h-7 text-xs"
-                              onClick={() => onSelect(p.account)}
+                              onClick={() => onSelect(p)}
                             >
                               Select
                             </Button>

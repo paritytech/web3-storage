@@ -43,7 +43,7 @@ import { formatAddress } from '@/utils/format'
 const navItems = [
   { path: '/', label: 'Overview', icon: Server },
   { path: '/registration', label: 'Registration', icon: Settings },
-  { path: '/agreements', label: 'Agreements', icon: FileText },
+  // { path: '/agreements', label: 'Agreements', icon: FileText },
   { path: '/buckets', label: 'Buckets', icon: Database },
   { path: '/checkpoints', label: 'Checkpoints', icon: CheckCircle },
   { path: '/challenges', label: 'Challenges', icon: Shield },

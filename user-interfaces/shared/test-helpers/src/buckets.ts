@@ -1,11 +1,121 @@
+import { Binary, Enum } from "polkadot-api";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
 import type { DevSigner } from "./signers";
+
+// ─── Negotiate + signed-terms helpers ────────────────────────────────────────
+
+const DEFAULT_PROVIDER_URL = "http://127.0.0.1:3333";
+
+// SCALE variant ordering of sp_runtime::MultiSignature.
+const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
+  0: "Ed25519",
+  1: "Sr25519",
+  2: "Ecdsa",
+  3: "Eth",
+};
+
+interface NegotiateRequest {
+  owner: string;
+  max_bytes: number | bigint;
+  duration: number;
+  price_per_byte: number | bigint;
+  replica_params: unknown | null;
+}
+
+interface SignedTerms {
+  terms: {
+    owner: string;
+    max_bytes: number | bigint;
+    duration: number;
+    price_per_byte: number | bigint;
+    valid_until: number;
+    nonce: number | bigint;
+    replica_params: unknown | null;
+  };
+  signature: string;
+}
+
+async function negotiateTerms(
+  providerUrl: string,
+  request: NegotiateRequest,
+): Promise<SignedTerms> {
+  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`/negotiate failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Build the `{ provider, terms, sig }` args shared by every signed-terms
+ * extrinsic. Mirrors `console-ui/src/lib/storage.ts::buildSignedTermsArgs`.
+ *
+ * The inner of `MultiSignature::Sr25519` is `[u8; 64]` which PAPI v2 encodes
+ * as `SizedBytes(64) = Codec<string>` — pass a `0x`-prefixed hex string,
+ * NOT a `Uint8Array`. (See PAPI v2 migration doc + console-ui's working
+ * implementation.)
+ */
+function buildSignedTermsArgs(providerAccount: string, signed: SignedTerms) {
+  const sigBytes = hexToBytes(signed.signature);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
+  if (!variantName) {
+    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
+  }
+  const sigPayloadHex =
+    "0x" +
+    Array.from(sigBytes.slice(1))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sig = Enum(variantName as any, sigPayloadHex);
+
+  const t = signed.terms;
+  const terms = {
+    owner: t.owner,
+    max_bytes: BigInt(t.max_bytes),
+    duration: t.duration,
+    price_per_byte: BigInt(t.price_per_byte),
+    valid_until: t.valid_until,
+    nonce: BigInt(t.nonce),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    replica_params: (t.replica_params ?? undefined) as any,
+  };
+  return { provider: providerAccount, terms, sig };
+}
 
 // ─── S3 Buckets (console-ui) ─────────────────────────────────────────────────
 
 export interface CreateBucketOptions {
   name: string;
-  minProviders?: number;
+  /** Provider HTTP base URL for the /negotiate call. Defaults to env or localhost. */
+  providerUrl?: string;
+  /** Provider on-chain account. Defaults to the signer (CI's Alice is both owner and provider). */
+  providerAccount?: string;
+  /** Storage capacity in bytes negotiated with the provider. Defaults to 10 MiB. */
+  maxBytes?: bigint;
+  /** Agreement duration in blocks. Defaults to 10,000. */
+  duration?: number;
+  /** Price per byte per block. Defaults to 0 (test fixture). */
+  pricePerByte?: bigint;
 }
 
 export interface BucketHandle {
@@ -19,11 +129,21 @@ export async function createBucketViaApi(
   opts: CreateBucketOptions,
 ): Promise<BucketHandle> {
   const api = getApi();
-  const nameBytes = new TextEncoder().encode(opts.name);
+  const providerUrl = opts.providerUrl ?? DEFAULT_PROVIDER_URL;
+  const providerAccount = opts.providerAccount ?? signer.address;
+
+  const signed = await negotiateTerms(providerUrl, {
+    owner: signer.address,
+    max_bytes: opts.maxBytes ?? 10_485_760n,
+    duration: opts.duration ?? 10_000,
+    price_per_byte: opts.pricePerByte ?? 0n,
+    replica_params: null,
+  });
+
   const result = await submitExtrinsic(
     api.tx.S3Registry.create_s3_bucket({
-      name: nameBytes,
-      min_providers: opts.minProviders ?? 1,
+      name: Binary.fromText(opts.name),
+      ...buildSignedTermsArgs(providerAccount, signed),
     }),
     signer.signer,
   );
@@ -84,10 +204,16 @@ export async function cleanupBuckets(signer: DevSigner): Promise<number> {
 
 export interface CreateDriveOptions {
   name?: string;
-  maxCapacity: bigint;
-  storagePeriod: number;
-  payment: bigint;
-  minProviders?: number;
+  /** Provider HTTP base URL for the /negotiate call. Defaults to env or localhost. */
+  providerUrl?: string;
+  /** Provider on-chain account. Defaults to the signer. */
+  providerAccount?: string;
+  /** Storage capacity in bytes. Defaults to 10 MiB. */
+  maxCapacity?: bigint;
+  /** Agreement duration in blocks. Defaults to 10,000. */
+  storagePeriod?: number;
+  /** Price per byte per block. Defaults to 0. */
+  pricePerByte?: bigint;
 }
 
 export interface DriveHandle {
@@ -98,18 +224,25 @@ export interface DriveHandle {
 
 export async function createDriveViaApi(
   signer: DevSigner,
-  opts: CreateDriveOptions,
+  opts: CreateDriveOptions = {},
 ): Promise<DriveHandle> {
   const api = getApi();
+  const providerUrl = opts.providerUrl ?? DEFAULT_PROVIDER_URL;
+  const providerAccount = opts.providerAccount ?? signer.address;
 
-  const nameBytes = opts.name ? new TextEncoder().encode(opts.name) : undefined;
+  const signed = await negotiateTerms(providerUrl, {
+    owner: signer.address,
+    max_bytes: opts.maxCapacity ?? 10_485_760n,
+    duration: opts.storagePeriod ?? 10_000,
+    price_per_byte: opts.pricePerByte ?? 0n,
+    replica_params: null,
+  });
+
+  const nameBytes = opts.name ? Binary.fromText(opts.name) : undefined;
   const result = await submitExtrinsic(
     api.tx.DriveRegistry.create_drive({
       name: nameBytes,
-      max_capacity: opts.maxCapacity,
-      storage_period: opts.storagePeriod,
-      payment: opts.payment,
-      min_providers: opts.minProviders ?? undefined,
+      ...buildSignedTermsArgs(providerAccount, signed),
     }),
     signer.signer,
   );
@@ -117,25 +250,7 @@ export async function createDriveViaApi(
   const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
   if (created.length === 0) throw new Error("DriveCreated event not found");
   const { drive_id, bucket_id } = created[0].payload;
-  const handle: DriveHandle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
-
-  // create_drive auto-emits a request_agreement targeting the matched
-  // provider. Only the provider can call accept_agreement (the drive owner
-  // can't), so we wait for the provider node's auto-coordinator to settle
-  // it. The coordinator polls every ~6s; accept_agreement finalizes in
-  // ~12-24s — typical end-to-end is 30-36s, worst case ~50s under nonce
-  // contention from rapid prior cleanup. 90s absorbs the worst case and
-  // adds <30s to the worst-case test (which we'd happily pay vs. a flake).
-  const start = Date.now();
-  const timeoutMs = 90_000;
-  while (Date.now() - start < timeoutMs) {
-    const bucket = await api.query.StorageProvider.Buckets.getValue(handle.bucketId);
-    if (bucket && bucket.primary_providers.length > 0) return handle;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  throw new Error(
-    `createDriveViaApi: bucket ${handle.bucketId} primary_providers stayed empty after ${timeoutMs}ms — provider node may not be running or not auto-accepting.`,
-  );
+  return { driveId: drive_id, bucketId: bucket_id, name: opts.name };
 }
 
 export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Promise<void> {
