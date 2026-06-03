@@ -287,10 +287,24 @@ jobs:
 
       - name: Install solc and resolc
         run: |
-          curl -L -o /usr/local/bin/solc \
-            "https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"
-          curl -L -o /usr/local/bin/resolc \
-            "https://github.com/paritytech/revive/releases/download/v${RESOLC_VERSION}/resolc-x86_64-unknown-linux-musl"
+          for bin_url in \
+            "/usr/local/bin/solc https://github.com/ethereum/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+            "/usr/local/bin/resolc https://github.com/paritytech/revive/releases/download/v${RESOLC_VERSION}/resolc-x86_64-unknown-linux-musl"; do
+            dest="${bin_url%% *}"
+            url="${bin_url#* }"
+            for attempt in 1 2 3; do
+              echo "Downloading $dest (attempt $attempt/3)..."
+              if curl -L --retry 2 --retry-delay 5 --connect-timeout 30 --max-time 600 \
+                  -o "$dest" "$url"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "Failed to download $dest after 3 attempts"
+                exit 1
+              fi
+              sleep $((attempt * 5))
+            done
+          done
           chmod +x /usr/local/bin/solc /usr/local/bin/resolc
           solc --version
           resolc --version

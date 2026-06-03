@@ -10,6 +10,7 @@ import { bind } from "@react-rxjs/core";
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
+import { setSs58Prefix } from "@web3-storage/papi";
 import { loadSelectedNetwork } from "@web3-storage/network-config";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -66,6 +67,15 @@ export async function connect(wsEndpoint?: string): Promise<void> {
 
     client$.next(client);
     api$.next(api);
+
+    // Render addresses with the runtime's SS58 prefix (per-network). Dev-account
+    // addresses are re-derived lazily on every setSigner(), so they pick this up.
+    try {
+      setSs58Prefix(await api.constants.System.SS58Prefix());
+    } catch {
+      /* keep the default prefix */
+    }
+
     connectionStatus$.next("connected");
   } catch (error) {
     connectionStatus$.next("error");

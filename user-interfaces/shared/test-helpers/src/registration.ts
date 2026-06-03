@@ -7,8 +7,8 @@ import { Alice, devSigners, type DevAccountName, type DevSigner } from "./signer
  * Hex-encode an account's raw 32-byte public key. PAPI returns
  * `getEntries()` keys in the chain's SS58 prefix (42 on the local
  * runtime, 0 on paseo) while `signers.ts` builds dev-signer addresses
- * with prefix 0 — string equality then fails on local. Compare via raw
- * bytes so the helper works against either runtime.
+ * with the shared default prefix (42) — string equality then fails on
+ * paseo. Compare via raw bytes so the helper works against either runtime.
  */
 function publicKeyHex(address: string): string {
   const [bytes] = ss58Decode(address);

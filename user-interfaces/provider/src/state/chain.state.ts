@@ -75,11 +75,10 @@ export async function connect(wsEndpoint?: string): Promise<void> {
   try {
     await connectToChain(ep)
 
-    // Fetch chain properties and configure formatting
+    // Fetch chain properties and apply all chain-derived config: formatting,
+    // SS58 prefix, and minProviderStake.
     const chainProps = await getChainProperties()
-    configureFromChain(chainProps)
-    // Store minProviderStake for Registration page
-    ;(globalThis as any).__minProviderStake = chainProps.minProviderStake
+    await configureFromChain(chainProps)
 
     chainInfo$.next({
       name: 'Storage Parachain',

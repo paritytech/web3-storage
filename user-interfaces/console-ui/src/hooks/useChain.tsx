@@ -8,7 +8,9 @@ import {
 } from "react";
 import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
+import { parachain } from "@polkadot-api/descriptors";
 import { BehaviorSubject } from "rxjs";
+import { setSs58Prefix } from "@web3-storage/papi";
 import { loadSelectedNetwork } from "@web3-storage/network-config";
 
 const initialEndpoint = loadSelectedNetwork().config.parachainWs;
@@ -67,6 +69,15 @@ export function ChainProvider({ children }: { children: ReactNode }) {
 
         setClient(newClient);
         setConnected(true);
+
+        // Render addresses with the runtime's SS58 prefix (per-network).
+        try {
+          setSs58Prefix(
+            await newClient.getTypedApi(parachain).constants.System.SS58Prefix(),
+          );
+        } catch {
+          /* keep the default prefix */
+        }
 
         // Store cleanup
         (newClient as unknown as { _unsub: () => void })._unsub = unsub.unsubscribe.bind(unsub);

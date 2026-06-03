@@ -22,6 +22,7 @@ import {
   OnChainChallenge,
   OnChainBucketDetails,
 } from '@/lib/chain-client'
+import { isSameAddress } from '@web3-storage/papi'
 import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 
@@ -258,7 +259,7 @@ export async function loadProviderData(address: string): Promise<void> {
     // Phase 2: Fetch bucket details (depends on agreement data for bucket IDs)
     const bucketIds = [...new Set(
       chainAgreements
-        .filter((a) => a.provider === address)
+        .filter((a) => isSameAddress(a.provider, address))
         .map((a) => a.bucketId)
     )]
     if (bucketIds.length > 0) {
@@ -267,7 +268,7 @@ export async function loadProviderData(address: string): Promise<void> {
         const currentBlock = getCurrentBlock() || 0
         const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
         for (const a of chainAgreements) {
-          if (a.provider === address) agreementsByBucket.set(a.bucketId, a)
+          if (isSameAddress(a.provider, address)) agreementsByBucket.set(a.bucketId, a)
         }
         bucketDetails$.next(
           chainBucketDetails.map((bd) => {
