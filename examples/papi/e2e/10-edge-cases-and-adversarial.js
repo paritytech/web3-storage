@@ -81,12 +81,17 @@ async function main() {
   tests.push({
     name: "10.2 Request + withdraw returns funds",
     fn: async () => {
+      // Use a large duration so the reserved payment far exceeds tx fees.
+      // The pallet reserves price_per_byte * max_bytes * duration, which at
+      // price_per_byte=1 must be large enough to dwarf the withdraw tx fee.
+      const longDuration = 10_000;
+      const longMaxPayment = maxBytes * BigInt(longDuration) * 10n;
       const balBefore = await getFree(api, bob);
       const bucketId = await createBucket(api, bob);
       await requestPrimaryAgreement(api, bob, provider, bucketId, {
         max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
+        duration: longDuration,
+        max_payment: longMaxPayment,
       });
       const balAfterRequest = await getFree(api, bob);
       await withdrawAgreementRequest(api, bob, bucketId, provider);
@@ -156,9 +161,13 @@ async function main() {
         max_price_per_byte: 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
+      // freeze_bucket requires a snapshot (checkpoint) to exist.
+      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot");
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
       const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
-      assert.ok(bucket.frozen, "Bucket should be frozen");
+      assert.ok(bucket.frozen_start_seq !== undefined, "Bucket should be frozen");
       // There's no "unfreeze" extrinsic — verify by checking the bucket stays frozen.
       // Attempting to freeze again should fail (already frozen).
       const tx = api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId });

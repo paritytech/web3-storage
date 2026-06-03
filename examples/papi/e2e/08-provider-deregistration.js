@@ -32,11 +32,17 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 async function main() {
   const charlie = makeSigner("//Charlie");
   const dave = makeSigner("//Dave");
+  const ferdie = makeSigner("//Ferdie");
 
   const { papi, api } = await setupChain(CHAIN_WS);
 
-  // Ensure Charlie is registered.
+  // Ensure Charlie is registered (used for 8.4+ tests with active agreements).
   await ensureProviderRegistered(api, charlie, PROVIDER_URL);
+
+  // Register Ferdie as a fresh provider with no prior agreements.
+  // Charlie may have active agreements from earlier workflows (test 01 creates
+  // one via createBucketWithStorage), so use Ferdie for deregister tests.
+  await ensureProviderRegistered(api, ferdie, PROVIDER_URL);
 
   const tests = [];
 
@@ -45,17 +51,12 @@ async function main() {
   tests.push({
     name: "8.1 Announce deregistration (no active agreements)",
     fn: async () => {
-      // Verify committed_bytes = 0 (no active agreements for Charlie).
-      const info = await api.query.StorageProvider.Providers.getValue(charlie.address);
-      // If committed_bytes > 0, this test can't proceed. Skip gracefully.
-      if (info.committed_bytes > 0n) {
-        console.log("    Charlie has active agreements (%s bytes); skipping", info.committed_bytes);
-        return;
-      }
-      const result = await deregisterProvider(api, charlie);
+      const info = await api.query.StorageProvider.Providers.getValue(ferdie.address);
+      assert.strictEqual(info.committed_bytes, 0n, "Ferdie should have no active agreements");
+      const result = await deregisterProvider(api, ferdie);
       const events = api.event.StorageProvider.DeregisterAnnounced.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected DeregisterAnnounced event");
-      const after = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address);
       assert.strictEqual(
         after.settings.accepting_primary,
         false,
@@ -67,10 +68,10 @@ async function main() {
   tests.push({
     name: "8.2 Cancel deregistration",
     fn: async () => {
-      const result = await cancelDeregister(api, charlie);
+      const result = await cancelDeregister(api, ferdie);
       const events = api.event.StorageProvider.DeregisterCancelled.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected DeregisterCancelled event");
-      const after = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address);
       assert.ok(after, "Provider should still exist after cancel");
     },
   });
@@ -78,7 +79,7 @@ async function main() {
   tests.push({
     name: "8.3 Re-registration works after cancel",
     fn: async () => {
-      await updateProviderSettings(api, charlie, {
+      await updateProviderSettings(api, ferdie, {
         min_duration: 10,
         max_duration: 100_000,
         price_per_byte: 1n,
@@ -87,7 +88,7 @@ async function main() {
         accepting_extensions: true,
         max_capacity: 0n,
       });
-      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const stored = await api.query.StorageProvider.Providers.getValue(ferdie.address);
       assert.strictEqual(stored.settings.accepting_primary, true, "Should accept agreements again");
     },
   });
@@ -116,23 +117,19 @@ async function main() {
   tests.push({
     name: "8.5 Complete before period elapsed",
     fn: async () => {
-      // Re-announce (will fail if committed > 0, so we try and accept either outcome).
-      // Actually if 8.4 created an active agreement, Charlie can't deregister.
-      // Use a fresh provider (Dave?) — but Dave isn't registered. Let's test
-      // complete_deregister on a provider that hasn't announced at all.
+      // Ferdie hasn't announced deregistration (8.2 cancelled it).
+      // Test that complete_deregister fails when not announced.
       const tx = api.tx.StorageProvider.complete_deregister();
-      // Charlie has active agreements from 8.4, so deregister_provider would fail.
-      // Instead, test that complete_deregister fails on a provider that hasn't announced.
-      await submitTxExpectFailure(tx, charlie.signer, "DeregisterNotAnnounced", "8.5");
+      await submitTxExpectFailure(tx, ferdie.signer, "DeregisterNotAnnounced", "8.5");
     },
   });
 
   tests.push({
     name: "8.6 Cancel without announcement",
     fn: async () => {
-      // Charlie hasn't announced (it failed or was cancelled).
+      // Ferdie hasn't announced (8.2 cancelled it, and no new announcement since).
       const tx = api.tx.StorageProvider.cancel_deregister();
-      await submitTxExpectFailure(tx, charlie.signer, "DeregisterNotAnnounced", "8.6");
+      await submitTxExpectFailure(tx, ferdie.signer, "DeregisterNotAnnounced", "8.6");
     },
   });
 

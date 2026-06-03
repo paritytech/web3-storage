@@ -74,7 +74,10 @@ async function main() {
         bucketId,
         provider.address
       );
-      const extDuration = 25;
+      // extend_agreement resets expires_at to current_block + additional_duration
+      // (does NOT add to the existing expires_at). Use a value larger than the
+      // original duration so the new expires_at always exceeds the old one.
+      const extDuration = 200;
       const result = await extendAgreement(api, client, bucketId, provider, {
         additional_duration: extDuration,
         max_payment: maxBytes * BigInt(extDuration) * 10n,
