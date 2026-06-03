@@ -13,7 +13,6 @@ import { createDrive, deleteDrive, shareDrive, unshareDrive } from "../api.js";
 import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
-  fmtRole,
   makeSigner,
   printBucketMembers,
   sameAddress,

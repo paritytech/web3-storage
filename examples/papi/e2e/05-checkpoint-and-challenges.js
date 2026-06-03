@@ -30,7 +30,6 @@ import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
-  sameAddress,
   waitForAgreementAcceptance,
   waitForBlock,
 } from "../common.js";

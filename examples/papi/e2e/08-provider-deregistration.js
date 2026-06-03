@@ -14,10 +14,8 @@ import assert from "node:assert";
 import {
   acceptAgreement,
   cancelDeregister,
-  completeDeregister,
   createBucket,
   deregisterProvider,
-  registerProvider,
   requestPrimaryAgreement,
   updateProviderSettings,
 } from "../api.js";
@@ -29,7 +27,7 @@ import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const UNIT = 1_000_000_000_000n;
+
 
 async function main() {
   const charlie = makeSigner("//Charlie");

@@ -13,14 +13,12 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   createBucketWithStorage,
   downloadChunk,
-  putChunk,
   uploadChunk,
 } from "../api.js";
 import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
-  providerFetch,
   toHex,
   waitForAgreementAcceptance,
 } from "../common.js";

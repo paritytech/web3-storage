@@ -21,9 +21,8 @@ import {
   ensureProviderRegistered,
   makeSigner,
   waitForAgreementAcceptance,
-  waitForBlock,
 } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
+import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";

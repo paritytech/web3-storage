@@ -27,7 +27,7 @@ import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-const UNIT = 1_000_000_000_000n;
+
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -95,7 +95,9 @@ async function main() {
       const result = await rejectAgreement(api, provider, rejectBucketId);
       const events = api.event.StorageProvider.AgreementRejected.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected AgreementRejected event");
-      // Payment returned (minus tx fees, so just check it went up from post-request).
+      // Payment returned (minus tx fees).
+      const balAfter = await getFree(api, client);
+      assert.ok(balAfter >= balBefore, "Balance should be restored after reject (minus fees)");
       const req = await api.query.StorageProvider.AgreementRequests.getValue(
         rejectBucketId,
         provider.address
