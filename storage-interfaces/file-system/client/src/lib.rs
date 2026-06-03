@@ -224,7 +224,7 @@ impl FileSystemClient {
         // Verify the provider returned the CID we expect for these bytes.
         // A mismatch means the provider's content-addressing disagrees with ours
         // (corruption, tampering, or hash-algo drift) — refuse to continue.
-        Self::verify_cid(compute_cid(&root_dir_bytes), root_cid)?;
+        Self::ensure_cid_matches(compute_cid(&root_dir_bytes), root_cid)?;
 
         // Cache the root CID (now managed off-chain only)
         tracing::debug!("create_drive: caching root_cid={root_cid:?} for drive {drive_id}");
@@ -809,10 +809,10 @@ impl FileSystemClient {
         Ok(data)
     }
 
-    /// Compare a locally-computed CID against the CID a provider returned for
+    /// Ensure a locally-computed CID matches the CID a provider returned for
     /// the same bytes. Returns `CidMismatch` on disagreement so callers can
     /// refuse to trust the provider's response.
-    fn verify_cid(expected: Cid, got: Cid) -> Result<()> {
+    fn ensure_cid_matches(expected: Cid, got: Cid) -> Result<()> {
         if expected != got {
             return Err(FsClientError::CidMismatch { expected, got });
         }
@@ -998,17 +998,17 @@ mod tests {
     }
 
     #[test]
-    fn verify_cid_accepts_matching_pair() {
+    fn ensure_cid_matches_accepts_matching_pair() {
         let cid = compute_cid(b"hello world");
-        FileSystemClient::verify_cid(cid, cid).expect("matching CIDs must be accepted");
+        FileSystemClient::ensure_cid_matches(cid, cid).expect("matching CIDs must be accepted");
     }
 
     #[test]
-    fn verify_cid_rejects_provider_returning_different_blob() {
+    fn ensure_cid_matches_rejects_provider_returning_different_blob() {
         let uploaded = compute_cid(b"the bytes we uploaded");
         let returned = compute_cid(b"a different blob the provider gave back");
         assert_ne!(uploaded, returned, "test setup: CIDs must differ");
-        let err = FileSystemClient::verify_cid(uploaded, returned)
+        let err = FileSystemClient::ensure_cid_matches(uploaded, returned)
             .expect_err("mismatched CIDs must be rejected");
         match err {
             FsClientError::CidMismatch { expected, got } => {
