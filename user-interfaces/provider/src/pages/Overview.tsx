@@ -17,8 +17,9 @@ import {
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork } from '@/state/network.state'
+import { useChainInfo, useConnectionStatus } from '@/state/chain.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatBytes, formatTokens, formatDuration } from '@/utils/format'
+import { formatBytes, formatTokens, formatDuration, formatHash } from '@/utils/format'
 
 function StatCard({
   title,
@@ -81,6 +82,8 @@ function OverviewContent() {
   const capacityUsage = useCapacityUsage()
   const isLoading = useIsProviderLoading()
   const selectedNetwork = useSelectedNetwork()
+  const chainInfo = useChainInfo()
+  const connectionStatus = useConnectionStatus()
 
   if (isLoading) {
     return (
@@ -143,6 +146,28 @@ function OverviewContent() {
         </CardHeader>
         <CardContent>
           <NetworkStatusPanel network={selectedNetwork} />
+          {connectionStatus === 'connected' && chainInfo && (
+            <dl className="mt-4 grid grid-cols-1 gap-2 border-t border-gray-800 pt-4 sm:grid-cols-3">
+              <div>
+                <dt className="text-xs text-gray-500">Chain</dt>
+                <dd data-testid="chain-name" className="text-sm font-medium">{chainInfo.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500">Runtime</dt>
+                <dd data-testid="chain-version" className="text-sm font-medium">{chainInfo.version}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-500">Genesis</dt>
+                <dd
+                  data-testid="chain-genesis"
+                  title={chainInfo.genesisHash}
+                  className="font-mono text-sm font-medium"
+                >
+                  {formatHash(chainInfo.genesisHash)}
+                </dd>
+              </div>
+            </dl>
+          )}
         </CardContent>
       </Card>
 
