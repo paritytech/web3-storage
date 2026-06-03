@@ -1865,8 +1865,8 @@ mod challenge_tests {
     use frame_support::{traits::Hooks, BoundedVec};
     use sp_core::H256;
     use storage_primitives::{
-        blake2_256, BucketSnapshot, ChallengeId, MerkleProof, MmrLeaf, MmrProof, ProviderRole,
-        ReplicaSyncRecord,
+        blake2_256, BucketSnapshot, ChallengeId, ChallengerStatRecord, MerkleProof, MmrLeaf,
+        MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2637,6 +2637,128 @@ mod challenge_tests {
                 StorageProvider::challenge_replica(RuntimeOrigin::signed(3), 0, 4, 0, 0,),
                 Error::<Test>::InvalidSyncRoot
             );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ChallengerStats — per-challenger aggregates
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn challenger_stats_total_bumps_on_create_challenge() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_eq!(
+                ChallengerStats::<Test>::get(3),
+                ChallengerStatRecord::default()
+            );
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            let stats = ChallengerStats::<Test>::get(3);
+            assert_eq!(stats.total_challenges, 1);
+            assert_eq!(stats.successful_challenges, 0);
+            assert_eq!(stats.failed_challenges, 0);
+        });
+    }
+
+    #[test]
+    fn challenger_stats_failed_bumps_when_provider_defends() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            let stats = ChallengerStats::<Test>::get(3);
+            assert_eq!(stats.total_challenges, 1);
+            assert_eq!(stats.failed_challenges, 1);
+            assert_eq!(stats.successful_challenges, 0);
+            assert_eq!(stats.total_earnings, 0);
+        });
+    }
+
+    #[test]
+    fn challenger_stats_successful_bumps_on_timeout_slash() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            advance_to(102);
+            let stats = ChallengerStats::<Test>::get(3);
+            assert_eq!(stats.total_challenges, 1);
+            assert_eq!(stats.successful_challenges, 1);
+            assert_eq!(stats.failed_challenges, 0);
+            // 10% of provider stake (200) = 20 reward.
+            assert_eq!(stats.total_earnings, 20);
+        });
+    }
+
+    #[test]
+    fn challenger_stats_successful_bumps_on_invalid_proof_slash() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            let bad_proof = MerkleProof {
+                siblings: vec![H256::repeat_byte(0xab)],
+                path: vec![true],
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof: bad_proof,
+                },
+            ));
+            let stats = ChallengerStats::<Test>::get(3);
+            assert_eq!(stats.successful_challenges, 1);
+            assert_eq!(stats.total_earnings, 20);
         });
     }
 }

@@ -177,6 +177,37 @@ pub struct ReplicaRequestParams<Balance, BlockNumber> {
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Aggregated per-challenger statistics kept on-chain so the SDK can answer
+/// "how many challenges have I issued / won / lost / earned" without scanning
+/// historical events. Updated on `create_challenge`, on `ChallengeDefended`,
+/// and on `ChallengeSlashed`.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Default,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ChallengerStatRecord<Balance> {
+    /// Total challenges the challenger has ever opened.
+    pub total_challenges: u32,
+    /// Challenges where the provider was slashed (either invalid response
+    /// or timeout). These pay the challenger.
+    pub successful_challenges: u32,
+    /// Challenges where the provider successfully defended.
+    pub failed_challenges: u32,
+    /// Cumulative rewards earned from successful challenges (provider stake
+    /// slash share). Refunded deposits are NOT counted here.
+    pub total_earnings: Balance,
+}
+
 /// Why a provider was slashed via the challenge mechanism.
 ///
 /// Emitted in `ChallengeSlashed` so observers can distinguish a provider that

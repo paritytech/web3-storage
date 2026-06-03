@@ -52,9 +52,9 @@ pub mod pallet {
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplicaRequestParams, ReplicaSyncRecord, Role, SlashReason,
-        HISTORICAL_ROOT_PRIMES,
+        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, CommitmentPayload, EndAction,
+        MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplicaRequestParams,
+        ReplicaSyncRecord, Role, SlashReason, HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
@@ -228,6 +228,19 @@ pub mod pallet {
     #[pallet::getter(fn challenges)]
     pub type Challenges<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+
+    /// Per-challenger aggregates so the SDK doesn't have to scan historical
+    /// events to answer `get_challenge_stats` / `get_total_challenge_earnings`.
+    /// Updated by `create_challenge`, the defended path of
+    /// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
+    #[pallet::storage]
+    pub type ChallengerStats<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        T::AccountId,
+        storage_primitives::ChallengerStatRecord<BalanceOf<T>>,
+        ValueQuery,
+    >;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -3159,6 +3172,13 @@ pub mod pallet {
                 }
             });
 
+            // Challenger lost — they pay `challenger_cost` from their deposit
+            // and the provider keeps their stake. Bump the failed counter so
+            // the SDK can report a realistic success rate.
+            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
+                stats.failed_challenges = stats.failed_challenges.saturating_add(1);
+            });
+
             Self::deposit_event(Event::ChallengeDefended {
                 challenge_id,
                 provider: who,
@@ -3913,6 +3933,12 @@ pub mod pallet {
                 }
             });
 
+            // Bump challenger's total_challenges aggregate so the SDK's
+            // `get_challenge_stats` doesn't have to scan event history.
+            ChallengerStats::<T>::mutate(&challenger, |stats| {
+                stats.total_challenges = stats.total_challenges.saturating_add(1);
+            });
+
             let challenge_id = ChallengeId { deadline, index };
 
             Self::deposit_event(Event::ChallengeCreated {
@@ -4012,6 +4038,14 @@ pub mod pallet {
                 provider_info.stake = Zero::zero();
 
                 Providers::<T>::insert(&challenge.provider, provider_info);
+
+                // Bump challenger's aggregate so the SDK's
+                // `get_total_challenge_earnings` and `get_challenge_stats`
+                // can answer without scanning event history.
+                ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
+                    stats.successful_challenges = stats.successful_challenges.saturating_add(1);
+                    stats.total_earnings = stats.total_earnings.saturating_add(challenger_reward);
+                });
 
                 // Emit event
                 Self::deposit_event(Event::ChallengeSlashed {
