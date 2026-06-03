@@ -26,8 +26,18 @@ function readConfig() {
   const networksSrc = readFileSync(NETWORKS_TS, 'utf8')
   const typesSrc = readFileSync(TYPES_TS, 'utf8')
 
-  const defaultId = networksSrc.match(/DEFAULT_NETWORK_ID:\s*NetworkId\s*=\s*'([a-z]+)'/)?.[1]
-  if (!defaultId) throw new Error('could not extract DEFAULT_NETWORK_ID')
+  // `DEFAULT_NETWORK_ID` may be a plain literal or a build-time ternary
+  // (`import.meta.env?.DEV ? 'local' : 'previewnet'`). This is a dev server, so
+  // mirror `import.meta.env.DEV === true` and pick the truthy branch (the
+  // literal right after `?`); fall back to the sole literal otherwise.
+  const defaultExpr = networksSrc.match(
+    /DEFAULT_NETWORK_ID:\s*NetworkId\s*=\s*([\s\S]*?)(?=\n\s*\n|\nexport\b|\nfunction\b)/,
+  )?.[1]
+  if (!defaultExpr) throw new Error('could not extract DEFAULT_NETWORK_ID')
+  const defaultId = defaultExpr.includes('?')
+    ? defaultExpr.match(/\?\s*'([a-z]+)'/)?.[1]
+    : defaultExpr.match(/'([a-z]+)'/)?.[1]
+  if (!defaultId) throw new Error('could not extract DEFAULT_NETWORK_ID literal')
 
   const unionBody = typesSrc.match(/export\s+type\s+NetworkId\s*=\s*([^\n;]+)/)?.[1]
   if (!unionBody) throw new Error('could not extract NetworkId union')
