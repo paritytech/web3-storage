@@ -204,34 +204,19 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-/// Open the persistent nonce counter and bootstrap it from the chain's
-/// `ProviderReplayState.hwm`. Default fallback to local storage, starting from 0
+/// Create the in-memory nonce counter and bootstrap it from the chain's
+/// `ProviderReplayState.hwm`. The chain is the source of truth, so there
+/// is nothing to persist locally.
 async fn setup_nonce_counter(
     cli: &Cli,
     provider_id: &str,
 ) -> Result<Arc<NonceCounter>, Box<dyn std::error::Error>> {
-    let counter = match cli.storage.storage_mode {
-        StorageMode::Inmemory => NonceCounter::in_memory(0),
-        StorageMode::Disk => {
-            let nonce_path = cli.storage.storage_path.join("nonce");
-            if let Some(parent) = nonce_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    format!(
-                        "failed to create nonce-counter parent dir {:?}: {}",
-                        parent, e,
-                    )
-                })?;
-            }
-            NonceCounter::open(nonce_path.clone())
-                .map_err(|e| format!("failed to open nonce counter at {:?}: {}", nonce_path, e))?
-        }
-    };
     // Start the `nonce` from 1.
-    counter.bootstrap_from_hwm(0);
+    let counter = NonceCounter::new(1);
 
-    // Otherwise, bootstrap from on-chain hwm. Best-effort: if the chain isn't
-    // reachable yet, fall back to the local counter — the on-chain
-    // replay window will reject any out-of-range reissues anyway.
+    // Bootstrap from on-chain hwm. Best-effort: if the chain isn't
+    // reachable yet, start from 0 — the on-chain replay window will
+    // reject any out-of-range reissues anyway.
     let provider_account = sp_runtime::AccountId32::from_str(provider_id)
         .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
     match storage_client::ProviderClient::fetch_replay_hwm(&cli.rpc.chain_rpc, &provider_account)
@@ -247,13 +232,13 @@ async fn setup_nonce_counter(
         }
         Ok(None) => {
             tracing::info!(
-                "No on-chain replay state for provider {} yet; starting nonce counter from local storage",
+                "No on-chain replay state for provider {} yet; starting nonce counter from 0",
                 provider_id,
             );
         }
         Err(e) => {
             tracing::warn!(
-                "Failed to bootstrap nonce counter from chain: {}; falling back to local storage",
+                "Failed to bootstrap nonce counter from chain: {}; starting nonce counter from 0",
                 e,
             );
         }
