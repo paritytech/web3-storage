@@ -1,43 +1,67 @@
 import { describe, expect, it } from "vitest";
-import { parseMultiaddrToHttp } from "@/lib/drive-client";
+import { parseMultiaddrToUrl } from "@web3-storage/papi";
 
-describe("parseMultiaddrToHttp", () => {
-  it("parses /ip4/<host>/tcp/<port>", () => {
-    expect(parseMultiaddrToHttp("/ip4/127.0.0.1/tcp/3333")).toBe("http://127.0.0.1:3333");
-  });
-
-  it("parses /dns4/<host>/tcp/<port>", () => {
-    expect(parseMultiaddrToHttp("/dns4/provider.example.com/tcp/443")).toBe(
-      "http://provider.example.com:443",
-    );
+describe("parseMultiaddrToUrl", () => {
+  it("parses /ip4/<host>/tcp/<port> as http", () => {
+    expect(parseMultiaddrToUrl("/ip4/127.0.0.1/tcp/3333")).toBe("http://127.0.0.1:3333");
   });
 
   it("brackets ip6 hosts", () => {
-    expect(parseMultiaddrToHttp("/ip6/::1/tcp/3333")).toBe("http://[::1]:3333");
+    expect(parseMultiaddrToUrl("/ip6/::1/tcp/3333")).toBe("http://[::1]:3333");
   });
 
-  it("returns null when port is missing", () => {
-    expect(parseMultiaddrToHttp("/ip4/127.0.0.1")).toBeNull();
+  it("treats a bare /tcp/443 dns host as https", () => {
+    expect(parseMultiaddrToUrl("/dns4/provider.example.com/tcp/443")).toBe(
+      "https://provider.example.com",
+    );
   });
 
-  it("returns null when host is missing", () => {
-    expect(parseMultiaddrToHttp("/tcp/3333")).toBeNull();
+  it("selects https from a /tls/http layer and omits the default :443", () => {
+    expect(parseMultiaddrToUrl("/dns4/host.example.com/tcp/443/tls/http")).toBe(
+      "https://host.example.com",
+    );
   });
 
-  it("ignores trailing protocol layers (e.g. /p2p/<peer>)", () => {
+  it("keeps a non-default https port", () => {
+    expect(parseMultiaddrToUrl("/dns4/host.example.com/tcp/8443/tls/http")).toBe(
+      "https://host.example.com:8443",
+    );
+  });
+
+  it("omits the default http :80", () => {
+    expect(parseMultiaddrToUrl("/ip4/127.0.0.1/tcp/80")).toBe("http://127.0.0.1");
+  });
+
+  it("appends an http-path reverse-proxy prefix (the hosted-provider form)", () => {
     expect(
-      parseMultiaddrToHttp("/ip4/127.0.0.1/tcp/3333/p2p/12D3KooWAbcd"),
-    ).toBe("http://127.0.0.1:3333");
+      parseMultiaddrToUrl(
+        "/dns4/previewnet.substrate.dev/tcp/443/tls/http/http-path/web3-storage-provider",
+      ),
+    ).toBe("https://previewnet.substrate.dev/web3-storage-provider");
   });
 
-  it("uses the first host/port when multiple are present", () => {
+  it("percent-decodes a multi-segment http-path", () => {
     expect(
-      parseMultiaddrToHttp("/ip4/10.0.0.1/tcp/4000/ip4/127.0.0.1/tcp/3333"),
-    ).toBe("http://10.0.0.1:4000");
+      parseMultiaddrToUrl("/dns4/host.example.com/tcp/443/tls/http/http-path/a%2fb%2fc"),
+    ).toBe("https://host.example.com/a/b/c");
   });
 
-  it("returns null on garbage input", () => {
-    expect(parseMultiaddrToHttp("not-a-multiaddr")).toBeNull();
-    expect(parseMultiaddrToHttp("")).toBeNull();
+  it("returns null when the multiaddr has no port", () => {
+    // multiaddrToUri yields a scheme-less host here, which is not a usable endpoint.
+    expect(parseMultiaddrToUrl("/ip4/127.0.0.1")).toBeNull();
+  });
+
+  it("returns null for a non-HTTP scheme (bare /tls without /http → tcp://)", () => {
+    expect(parseMultiaddrToUrl("/dns4/host.example.com/tcp/443/tls")).toBeNull();
+  });
+
+  it("returns null for a /p2p-terminated address (tcp://, not an HTTP endpoint)", () => {
+    expect(parseMultiaddrToUrl("/ip4/127.0.0.1/tcp/3333/p2p/12D3KooWAbcd")).toBeNull();
+  });
+
+  it("returns null on malformed input", () => {
+    expect(parseMultiaddrToUrl("not-a-multiaddr")).toBeNull();
+    expect(parseMultiaddrToUrl("/tcp/3333")).toBeNull();
+    expect(parseMultiaddrToUrl("")).toBeNull();
   });
 });
