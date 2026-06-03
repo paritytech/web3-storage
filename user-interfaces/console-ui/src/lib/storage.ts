@@ -51,6 +51,7 @@ export interface CheckpointSignatureInfo {
   startSeq: number;
   leafCount: number;
   providerSignature: string;
+  nonce: number;
 }
 
 export interface CheckpointStatus {
@@ -702,10 +703,13 @@ export class StorageClient {
     return { config, lastWindow, currentWindow, poolBalance, pendingRewards, snapshot };
   }
 
-  async getCheckpointSignature(bucketId: bigint): Promise<CheckpointSignatureInfo> {
+  async getCheckpointSignature(
+    bucketId: bigint,
+    nonce: number
+  ): Promise<CheckpointSignatureInfo> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await fetch(
-      `${providerUrl}/checkpoint-signature?bucket_id=${Number(bucketId)}`
+      `${providerUrl}/checkpoint-signature?bucket_id=${Number(bucketId)}&nonce=${nonce}`
     );
     if (!response.ok) {
       throw new Error(`Failed to get checkpoint signature: ${response.status} ${await response.text()}`);
@@ -717,6 +721,7 @@ export class StorageClient {
       startSeq: data.start_seq,
       leafCount: data.leaf_count,
       providerSignature: data.provider_signature,
+      nonce: data.nonce,
     };
   }
 

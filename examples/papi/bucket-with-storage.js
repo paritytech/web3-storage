@@ -90,15 +90,18 @@ async function main() {
     }
 
     console.log("\n=== Step 3: Upload one chunk ===");
+    const uploadNonce = Number(await api.query.System.Number.getValue());
     const { data, commit } = await uploadChunk(
       PROVIDER_URL,
       bucketId,
-      `Quickstart payload @ ${new Date().toISOString()}`
+      `Quickstart payload @ ${new Date().toISOString()}`,
+      uploadNonce
     );
     console.log("  uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
     console.log("\n=== Step 4: Submit checkpoint ===");
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    const ckNonce = Number(await api.query.System.Number.getValue());
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);
     console.log("  Checkpoint submitted (leaf_count=%s)", ck.leaf_count);
 

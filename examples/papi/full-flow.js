@@ -75,9 +75,18 @@ async function setupAgreement(api, client, provider, bucketId) {
   console.log("  Agreement accepted");
 }
 
-async function uploadAndVerify(bucketId) {
+async function uploadAndVerify(api, bucketId) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload);
+  // Snapshot the current block as the nonce — both the provider's signed
+  // CommitmentPayload and the eventual `challenge_offchain` extrinsic share
+  // this value so the pallet's recency check passes.
+  const nonce = Number(await api.query.System.Number.getValue());
+  const { hash, data, commit } = await uploadChunk(
+    PROVIDER_URL,
+    bucketId,
+    payload,
+    nonce
+  );
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -93,6 +102,7 @@ async function uploadAndVerify(bucketId) {
     mmrRoot: commit.mmr_root,
     startSeq: commit.start_seq,
     providerSignature: commit.provider_signature,
+    nonce: commit.nonce,
   };
 }
 
@@ -158,7 +168,7 @@ async function main() {
     await setupAgreement(api, client, provider, bucketId);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(bucketId);
+    const upload = await uploadAndVerify(api, bucketId);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
@@ -180,7 +190,8 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    const ckNonce = Number(await api.query.System.Number.getValue());
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);

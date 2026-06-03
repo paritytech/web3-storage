@@ -217,6 +217,12 @@ pub struct MmrProof {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Payload that providers sign to commit to bucket state.
+///
+/// The `nonce` field binds each signature to a specific moment in time —
+/// callers populate it with the block number at sign-time. The pallet rejects
+/// signatures whose nonce is too far in the past, preventing an attacker who
+/// captures a single signature from replaying it forever to challenge or
+/// defend against the signer.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
@@ -232,20 +238,31 @@ pub struct CommitmentPayload {
     pub start_seq: u64,
     /// Number of leaves in this MMR
     pub leaf_count: u64,
+    /// Replay-protection nonce — block number at the time the signer signed.
+    pub nonce: u64,
 }
 
 impl CommitmentPayload {
-    /// Current protocol version
-    pub const CURRENT_VERSION: u8 = 1;
+    /// Current protocol version. Bumped from `0x01` to `0x02` when the `nonce`
+    /// field was added; older signatures (no nonce) cannot be replayed against
+    /// this version because the encoded payload would mismatch on `version`.
+    pub const CURRENT_VERSION: u8 = 2;
 
     /// Create a new commitment payload
-    pub fn new(bucket_id: BucketId, mmr_root: H256, start_seq: u64, leaf_count: u64) -> Self {
+    pub fn new(
+        bucket_id: BucketId,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        nonce: u64,
+    ) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
             mmr_root,
             start_seq,
             leaf_count,
+            nonce,
         }
     }
 
@@ -280,6 +297,11 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Bit i is set if primary_providers[i] signed.
     /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
+    /// The `nonce` value from the `CommitmentPayload` that the original
+    /// signers signed. Required by `extend_checkpoint` so a late-arriving
+    /// signature can be verified against the same payload the initial
+    /// signers committed to.
+    pub commitment_nonce: u64,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
@@ -485,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_commitment_payload_range() {
-        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5);
+        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5, 42);
 
         assert_eq!(payload.range_end(), 15);
         assert!(!payload.contains_seq(9));

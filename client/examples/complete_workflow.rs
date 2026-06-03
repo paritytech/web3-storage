@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("  Committing to chain...");
-    let commitment = user_client.commit(bucket_id, vec![data_root]).await?;
+    let commitment = user_client.commit(bucket_id, vec![data_root], 0u64).await?;
     println!("  ✓ Committed with MMR root: {}\n", commitment.mmr_root);
 
     // ═════════════════════════════════════════════════════════════════════════

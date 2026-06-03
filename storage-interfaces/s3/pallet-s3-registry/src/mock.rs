@@ -79,6 +79,7 @@ parameter_types! {
     pub const MaxPrimaryProviders: u32 = 5;
     pub const MaxChunkSize: u32 = 262144;
     pub const ChallengeTimeout: u64 = 100;
+    pub const MaxNonceAge: u64 = 200;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 25;
     pub const DefaultCheckpointInterval: u64 = 100;
@@ -99,6 +100,7 @@ impl pallet_storage_provider::Config for Test {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>;
     type ChallengeTimeout = ChallengeTimeout;
+    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type DefaultCheckpointInterval = DefaultCheckpointInterval;

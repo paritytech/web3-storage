@@ -197,10 +197,12 @@ async function main() {
     );
 
     console.log("\n=== Step 4: Upload data so the MMR has something to commit ===");
+    const uploadNonce = Number(await api.query.System.Number.getValue());
     const { data, commit } = await uploadChunk(
       PROVIDER_URL,
       bucketId,
-      `checkpoint-rewards @ ${new Date().toISOString()}`
+      `checkpoint-rewards @ ${new Date().toISOString()}`,
+      uploadNonce
     );
     console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 

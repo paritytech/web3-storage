@@ -326,6 +326,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -621,7 +622,9 @@ mod benchmarks {
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
+        );
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut signatures: BoundedVec<
@@ -641,6 +644,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
     }
@@ -676,10 +680,13 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             empty_sigs,
         );
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
+        );
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut additional_signatures: BoundedVec<
@@ -855,6 +862,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -892,7 +900,9 @@ mod benchmarks {
 
         // Sign the commitment payload via host function
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 0);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 0, 0u64, /* nonce */
+        );
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -907,6 +917,7 @@ mod benchmarks {
             0,
             0,
             0,
+            0u64, // nonce
             signature,
         );
     }
@@ -931,6 +942,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -1053,8 +1065,13 @@ mod benchmarks {
 
         let new_mmr_root = H256::repeat_byte(0xEF);
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
-        let payload =
-            storage_primitives::CommitmentPayload::new(bucket_id, new_mmr_root, new_start_seq, 0);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            new_mmr_root,
+            new_start_seq,
+            0,
+            0u64, /* nonce */
+        );
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &admin_key, &encoded)
             .expect("signing should work");
@@ -1063,6 +1080,7 @@ mod benchmarks {
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
             new_mmr_root,
             new_start_seq,
+            nonce: 0u64,
             admin: admin.clone(),
             admin_signature,
         };
@@ -1094,6 +1112,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -1130,6 +1149,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 

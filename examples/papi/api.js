@@ -115,12 +115,16 @@ export async function removeMember(api, admin, bucketId, member) {
 }
 
 export async function submitClientCheckpoint(api, client, provider, bucketId, ck) {
+  // `ck.nonce` is the block number the provider signed over (returned by
+  // `fetchCheckpointSignature`). The on-chain pallet rejects signatures whose
+  // nonce is older than `MaxNonceAge` so we pass it through here.
   return submitTx(
     api.tx.StorageProvider.checkpoint({
       bucket_id: bucketId,
       mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
       start_seq: BigInt(ck.start_seq),
       leaf_count: BigInt(ck.leaf_count),
+      nonce: BigInt(ck.nonce),
       signatures: [
         [
           provider.address,
@@ -142,6 +146,10 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
       start_seq: BigInt(upload.startSeq),
       leaf_index: BigInt(upload.leafIndex),
       chunk_index: 0n,
+      // `upload.nonce` came from the provider's /commit response (see
+      // `uploadChunk`) — it's the block number the provider used in the
+      // signed `CommitmentPayload`.
+      nonce: BigInt(upload.nonce),
       provider_signature: Enum(
         "Sr25519",
         Binary.fromBytes(hexToBytes(upload.providerSignature))
@@ -491,7 +499,14 @@ export async function putChunk(providerUrl, bucketId, data) {
  * chunk hash, original bytes, and the /commit response (mmr_root, leaf_indices,
  * start_seq, provider_signature).
  */
-export async function uploadChunk(providerUrl, bucketId, data) {
+export async function uploadChunk(providerUrl, bucketId, data, nonce) {
+  // `nonce` is the block at which the caller intends to submit any extrinsic
+  // that consumes the resulting `provider_signature` (`challenge_offchain`,
+  // `checkpoint`, …). The pallet rejects signatures whose nonce is older than
+  // `MaxNonceAge`, so capture a recent block and pass it through.
+  if (typeof nonce !== "number" && typeof nonce !== "bigint") {
+    throw new Error("uploadChunk requires a numeric `nonce` (block number)");
+  }
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
   await providerFetch(providerUrl, "/node", {
@@ -505,7 +520,11 @@ export async function uploadChunk(providerUrl, bucketId, data) {
   });
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    body: {
+      bucket_id: Number(bucketId),
+      data_roots: [hash],
+      nonce: Number(nonce),
+    },
   });
   return { hash, data: bytes, commit };
 }
@@ -517,9 +536,17 @@ export async function downloadChunk(providerUrl, chunkHashHex) {
   return Buffer.from(downloaded.data, "base64");
 }
 
-export async function fetchCheckpointSignature(providerUrl, bucketId) {
+export async function fetchCheckpointSignature(providerUrl, bucketId, nonce) {
+  // The provider signs over the `CommitmentPayload` including the supplied
+  // `nonce`. Pass the block the caller will submit at so the on-chain
+  // recency check passes.
+  if (typeof nonce !== "number" && typeof nonce !== "bigint") {
+    throw new Error(
+      "fetchCheckpointSignature requires a numeric `nonce` (block number)"
+    );
+  }
   return providerFetch(providerUrl, "/checkpoint-signature", {
-    params: { bucket_id: Number(bucketId) },
+    params: { bucket_id: Number(bucketId), nonce: Number(nonce) },
   });
 }
 

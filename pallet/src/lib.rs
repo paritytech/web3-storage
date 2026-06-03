@@ -33,6 +33,12 @@ mod mock;
 mod tests;
 
 #[frame_support::pallet]
+// Several extrinsics in this pallet legitimately take more than 7 args (e.g.
+// `checkpoint` now takes 7 explicit + a replay-protection nonce). The
+// macro-generated wrapper functions exceed clippy's `too_many_arguments`
+// threshold even when the originals have `#[allow(...)]`, so allow at the
+// module level.
+#[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::weights::WeightInfo;
     use alloc::vec;
@@ -110,6 +116,13 @@ pub mod pallet {
         /// Timeout for challenge response (e.g., ~48 hours in blocks).
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
+
+        /// Maximum age of a `CommitmentPayload::nonce` (in blocks) the pallet
+        /// will accept on inbound signatures. The nonce is the block number
+        /// at which the signer signed; values older than this are rejected
+        /// to prevent indefinite signature replay.
+        #[pallet::constant]
+        type MaxNonceAge: Get<BlockNumberFor<Self>>;
 
         /// Settlement window after agreement expiry for owner to call end_agreement.
         #[pallet::constant]
@@ -494,6 +507,10 @@ pub mod pallet {
         Deleted {
             new_mmr_root: H256,
             new_start_seq: u64,
+            /// Block at which the admin signed the deletion commitment. Used
+            /// as the `nonce` in `CommitmentPayload` and recency-checked by
+            /// the pallet to prevent signature replay.
+            nonce: u64,
             admin: T::AccountId,
             admin_signature: sp_runtime::MultiSignature,
         },
@@ -805,6 +822,10 @@ pub mod pallet {
         NoSnapshot,
         SnapshotViolatesFrozen,
         InsufficientSignatures,
+        /// `CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks
+        /// behind the current block, or refers to a future block. Rejected
+        /// to prevent replay of captured signatures.
+        NonceTooOld,
 
         // General errors
         ArithmeticOverflow,
@@ -845,6 +866,7 @@ pub mod pallet {
     // ─────────────────────────────────────────────────────────────────────────
 
     #[pallet::call]
+    #[allow(clippy::too_many_arguments)]
     impl<T: Config> Pallet<T> {
         // ─────────────────────────────────────────────────────────────────────
         // Provider Management
@@ -2252,18 +2274,24 @@ pub mod pallet {
         /// Submit a new checkpoint with provider signatures.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
+        #[allow(clippy::too_many_arguments)]
         pub fn checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             mmr_root: H256,
             start_seq: u64,
             leaf_count: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // all `signatures` signed. Recency-checked to prevent replay.
+            nonce: u64,
             signatures: BoundedVec<
                 (T::AccountId, sp_runtime::MultiSignature),
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
@@ -2280,7 +2308,8 @@ pub mod pallet {
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
+                let payload =
+                    CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -2326,6 +2355,7 @@ pub mod pallet {
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: nonce,
                 });
 
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
@@ -2367,12 +2397,15 @@ pub mod pallet {
                 // Must have existing snapshot
                 let snapshot = bucket.snapshot.as_mut().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Verify and add signatures
+                // Verify and add signatures. The late signer signs the same
+                // payload the original signers signed — including the nonce
+                // captured in the snapshot.
                 let payload = CommitmentPayload::new(
                     bucket_id,
                     snapshot.mmr_root,
                     snapshot.start_seq,
                     snapshot.leaf_count,
+                    snapshot.commitment_nonce,
                 );
                 let encoded_payload = payload.encode();
 
@@ -2547,13 +2580,23 @@ pub mod pallet {
                 // Update historical roots
                 Self::update_historical_roots(bucket, current_block, mmr_root);
 
-                // Update bucket snapshot
+                // Update bucket snapshot.
+                //
+                // `commitment_nonce` is only meaningful for snapshots produced
+                // by the client-initiated `checkpoint` extrinsic (which signs
+                // over `CommitmentPayload`). Provider-initiated checkpoints
+                // sign over `CheckpointProposal::window` instead, so
+                // `extend_checkpoint` (which expects `CommitmentPayload`-shaped
+                // late signatures) is not applicable here — leave the nonce
+                // at zero rather than smuggling in `window` and confusing the
+                // two schemes.
                 bucket.snapshot = Some(BucketSnapshot {
                     mmr_root,
                     start_seq,
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: 0,
                 });
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
 
@@ -2831,9 +2874,14 @@ pub mod pallet {
             start_seq: u64,
             leaf_index: u64,
             chunk_index: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // the provider signed. Recency-checked to prevent replay.
+            nonce: u64,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             // Verify the bucket exists
             ensure!(
@@ -2847,10 +2895,10 @@ pub mod pallet {
                 Error::<T>::AgreementNotFound
             );
 
-            // Build the commitment payload that the provider signed
+            // Build the commitment payload that the provider signed.
             // Note: We use leaf_count = 0 here as a placeholder since we don't have it
             // The actual verification will be based on the mmr_proof submitted in the response
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0);
+            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2970,9 +3018,12 @@ pub mod pallet {
                 ChallengeResponse::Deleted {
                     new_mmr_root,
                     new_start_seq,
+                    nonce,
                     admin,
                     admin_signature,
                 } => {
+                    Self::ensure_recent_nonce(*nonce)?;
+
                     // Verify admin is bucket admin
                     Self::ensure_admin(admin, &bucket)?;
 
@@ -2983,12 +3034,13 @@ pub mod pallet {
                         Error::<T>::InvalidDeletionProof
                     );
 
-                    // Verify admin signature on the deletion commitment
+                    // Verify admin signature on the deletion commitment.
                     let deletion_payload = CommitmentPayload::new(
                         challenge.bucket_id,
                         *new_mmr_root,
                         *new_start_seq,
                         0, // leaf_count not needed for deletion proof
+                        *nonce,
                     );
                     let encoded = deletion_payload.encode();
                     Self::verify_signature(admin_signature, &encoded, admin)?;
@@ -3215,6 +3267,23 @@ pub mod pallet {
         /// 3. Verifies the signature matches the message and public key
         ///
         /// Returns Error::InvalidSignature if verification fails.
+        /// Reject a `CommitmentPayload::nonce` that is too far behind (or ahead
+        /// of) the current block. This prevents an attacker who captures one
+        /// signed commitment from replaying it forever.
+        fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
+            use sp_runtime::traits::SaturatedConversion;
+            let current: u64 = frame_system::Pallet::<T>::block_number().saturated_into();
+            let max_age: u64 = T::MaxNonceAge::get().saturated_into();
+            // Future-dated nonces are nonsensical — the signer can only know
+            // the current block at sign-time. Allow exact equality.
+            ensure!(nonce <= current, Error::<T>::NonceTooOld);
+            ensure!(
+                current.saturating_sub(nonce) <= max_age,
+                Error::<T>::NonceTooOld
+            );
+            Ok(())
+        }
+
         fn verify_signature(
             signature: &sp_runtime::MultiSignature,
             message: &[u8],
@@ -4067,6 +4136,7 @@ pub mod pallet {
                     leaf_count: s.leaf_count,
                     checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
                     primary_signers: s.primary_signers.clone(),
+                    commitment_nonce: s.commitment_nonce,
                 }),
                 total_snapshots: bucket.total_snapshots,
             })

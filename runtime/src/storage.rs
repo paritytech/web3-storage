@@ -15,6 +15,11 @@ use crate::{
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
     pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
+    // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
+    // nonce is older than this is rejected. Set wide enough to accommodate
+    // normal off-chain choreography (provider signs, client builds & broadcasts
+    // tx, tx finalises) without forcing re-signing.
+    pub const MaxNonceAge: BlockNumber = 24 * HOURS;
     pub const SettlementTimeout: BlockNumber = 24 * HOURS;
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
@@ -74,6 +79,7 @@ impl pallet_storage_provider::Config for Runtime {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
+    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type DefaultCheckpointInterval = DefaultCheckpointInterval;

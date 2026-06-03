@@ -1957,6 +1957,7 @@ mod challenge_tests {
             leaf_count,
             checkpoint_block: System::block_number(),
             primary_signers: vec![0b0000_0001],
+            commitment_nonce: System::block_number(),
         };
         Buckets::<Test>::mutate(0u64, |bucket| {
             let bucket = bucket.as_mut().expect("bucket exists");
@@ -2258,6 +2259,7 @@ mod challenge_tests {
                     leaf_count: 10,
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
+                    commitment_nonce: 1,
                 });
             });
 
@@ -2465,6 +2467,101 @@ mod challenge_tests {
                     0,
                 ),
                 Error::<Test>::NotReplica
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Replay protection — `CommitmentPayload::nonce` recency
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Pre-replay-protection, a provider's signature was valid forever. With
+    /// `T::MaxNonceAge` enforcement, a nonce older than that window is
+    /// rejected before signature verification fires — so the test can use a
+    /// dummy signature and still observe the rejection.
+    #[test]
+    fn challenge_offchain_rejects_old_nonce() {
+        new_test_ext().execute_with(|| {
+            // Mock `MaxNonceAge = 200`. Place us far enough ahead that nonce=1
+            // is outside the window.
+            System::set_block_number(500);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            let dummy_sig =
+                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+            assert_noop!(
+                StorageProvider::challenge_offchain(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    mmr_root,
+                    0,
+                    0,
+                    0,
+                    1, // nonce — block 1 is 499 blocks behind, > MaxNonceAge=200
+                    dummy_sig,
+                ),
+                Error::<Test>::NonceTooOld
+            );
+        });
+    }
+
+    /// A future-dated nonce is nonsensical (the signer can't know future
+    /// blocks at sign-time) and is rejected the same way.
+    #[test]
+    fn challenge_offchain_rejects_future_nonce() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(10);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            let dummy_sig =
+                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+            assert_noop!(
+                StorageProvider::challenge_offchain(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    mmr_root,
+                    0,
+                    0,
+                    0,
+                    9999, // nonce in the future
+                    dummy_sig,
+                ),
+                Error::<Test>::NonceTooOld
+            );
+        });
+    }
+
+    /// The same recency gate fires on the multi-signature `checkpoint`
+    /// extrinsic, before any per-signature work happens. Same dummy-signature
+    /// trick works here.
+    #[test]
+    fn checkpoint_rejects_old_nonce() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(500);
+            // No snapshot needed — the recency check runs before bucket
+            // resolution.
+            let dummy_sig =
+                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+            let sigs: frame_support::BoundedVec<
+                (u64, sp_runtime::MultiSignature),
+                <Test as Config>::MaxPrimaryProviders,
+            > = vec![(2, dummy_sig)].try_into().unwrap();
+
+            assert_noop!(
+                StorageProvider::checkpoint(
+                    RuntimeOrigin::signed(1),
+                    0, // bucket
+                    H256::zero(),
+                    0, // start_seq
+                    0, // leaf_count
+                    1, // stale nonce
+                    sigs,
+                ),
+                Error::<Test>::NonceTooOld
             );
         });
     }
