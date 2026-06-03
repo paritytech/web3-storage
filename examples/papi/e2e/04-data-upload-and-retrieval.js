@@ -162,7 +162,7 @@ async function main() {
         return;
       }
       const data = await resp.json();
-      assert.ok(Array.isArray(data.objects || data), "List should return an array");
+      assert.ok(Array.isArray(data.contents || data), "List should return an array");
     },
   });
 

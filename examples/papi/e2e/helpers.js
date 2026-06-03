@@ -82,7 +82,36 @@ export async function runSuite(suiteName, tests, ctx) {
  */
 export async function submitTxExpectFailure(tx, signer, expectedError, label) {
   try {
-    const result = await tx.signAndSubmit(signer);
+    const observable = tx.signSubmitAndWatch(signer);
+    const result = await new Promise((resolve, reject) => {
+      let done = false;
+      let sub;
+      const cleanup = () => {
+        done = true;
+        clearTimeout(timer);
+        if (sub) sub.unsubscribe();
+      };
+      const timer = setTimeout(() => {
+        if (!done) {
+          cleanup();
+          reject(new Error(`${label}: timed out after 180s`));
+        }
+      }, 180_000);
+      sub = observable.subscribe({
+        next: (ev) => {
+          if (done) return;
+          if (ev.type === "txBestBlocksState" && ev.found) {
+            cleanup();
+            resolve(ev);
+          }
+        },
+        error: (err) => {
+          if (done) return;
+          cleanup();
+          reject(err);
+        },
+      });
+    });
     if (result.ok) {
       throw new Error(
         `${label}: expected dispatch failure containing "${expectedError}", but tx succeeded`

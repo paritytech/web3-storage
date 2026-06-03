@@ -155,7 +155,7 @@ export class NonceManager {
 }
 
 /**
- * Wait until the chain advances to a new finalized block.
+ * Wait until the chain advances to a new best block.
  *
  * Run this once at the top of every example before submitting any extrinsic.
  * The provider node runs background coordinators (agreement auto-accept,
@@ -168,7 +168,8 @@ export async function waitForNextBlock(papi) {
   return new Promise((resolve) => {
     let initial = null;
     let sub;
-    sub = papi.finalizedBlock$.subscribe((block) => {
+    sub = papi.bestBlocks$.subscribe((blocks) => {
+      const block = blocks[blocks.length - 1];
       if (initial === null) {
         initial = block.number;
         return;
@@ -182,7 +183,7 @@ export async function waitForNextBlock(papi) {
 }
 
 /**
- * Wait until the chain's finalized head is strictly greater than `target`.
+ * Wait until the chain's best head is strictly greater than `target`.
  *
  * Examples that need to land an extrinsic at a specific block window (e.g.
  * `provider_checkpoint`, `report_missed_checkpoint`) use this to time their
@@ -191,7 +192,8 @@ export async function waitForNextBlock(papi) {
 export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
   await new Promise((resolve) => {
     let sub;
-    sub = papi.finalizedBlock$.subscribe((block) => {
+    sub = papi.bestBlocks$.subscribe((blocks) => {
+      const block = blocks[blocks.length - 1];
       if (logEvery > 0 && block.number % logEvery === 0) {
         console.log("    head=#%d (target > %d)", block.number, target);
       }
@@ -339,13 +341,9 @@ export async function waitForTransaction(
  * Sign + submit a transaction, assert it dispatched successfully, and return
  * the PAPI result (`{ ok, events, block, ... }`).
  *
- * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }`
- * and does NOT throw when dispatch fails — only when the tx is invalid (bad
- * signature, low nonce, etc). Without this helper, a failed extrinsic looks
- * indistinguishable from a successful one with no events, and the failure
- * surfaces later as a confusing "Expected exactly 1 X event, got 0".
- *
- * Bounded by `timeoutMs` so a stuck mempool can't hang the example.
+ * Resolves once the tx is included in a **best block** (not finalized), which
+ * is ~5x faster than waiting for finalization on a parachain with 6s slots.
+ * Throws on dispatch error or timeout.
  */
 export async function submitTx(
   tx,
@@ -353,28 +351,7 @@ export async function submitTx(
   label,
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
-  let timer;
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new Error(`${label}: signAndSubmit timed out after ${timeoutMs}ms`)
-        ),
-      timeoutMs
-    );
-  });
-  let result;
-  try {
-    result = await Promise.race([tx.signAndSubmit(signer), timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!result.ok) {
-    throw new Error(
-      `${label} dispatch failed: ${formatDispatchError(result.dispatchError)}`
-    );
-  }
-  return result;
+  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
 }
 
 export async function providerFetch(providerUrl, path, opts = {}) {
