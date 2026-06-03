@@ -53,7 +53,8 @@ pub mod pallet {
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
+        ProviderRole, RemovalReason, ReplicaRequestParams, Role, SlashReason,
+        HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
@@ -74,7 +75,11 @@ pub mod pallet {
                         deadline: n,
                         index: index as u16,
                     };
-                    Self::slash_provider_for_failed_challenge(challenge, challenge_id);
+                    Self::slash_provider_for_failed_challenge(
+                        challenge,
+                        challenge_id,
+                        SlashReason::Timeout,
+                    );
                 }
             }
         }
@@ -701,6 +706,10 @@ pub mod pallet {
             provider: T::AccountId,
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
+            /// Whether the provider was slashed for failing to respond
+            /// (`Timeout`) or for submitting a demonstrably-false response
+            /// (`InvalidProof` etc).
+            reason: SlashReason,
         },
 
         // Provider-initiated checkpoint events
@@ -2989,31 +2998,35 @@ pub mod pallet {
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            match &response {
+            // Adjudicate the response. Returns:
+            //   `Ok(())`       — response defends the challenge
+            //   `Err(reason)`  — response is a demonstrable lie; slash the
+            //                    provider immediately (do NOT let them stall
+            //                    until the deadline timeout)
+            //
+            // Parameter-shape errors (stale nonce, non-admin signer, missing
+            // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
+            // — they represent caller mistakes, not adversarial responses.
+            let response_outcome: Result<(), SlashReason> = match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    // Verify chunk hash
                     let chunk_hash = storage_primitives::blake2_256(chunk_data);
-
-                    // Verify chunk is in data_root
-                    ensure!(
-                        storage_primitives::verify_merkle_proof(
-                            chunk_hash,
-                            challenge.chunk_index,
-                            chunk_proof,
-                            &mmr_proof.leaf.data_root,
-                        ),
-                        Error::<T>::InvalidChallengeProof
+                    let chunk_ok = storage_primitives::verify_merkle_proof(
+                        chunk_hash,
+                        challenge.chunk_index,
+                        chunk_proof,
+                        &mmr_proof.leaf.data_root,
                     );
-
-                    // Verify MMR proof: leaf is in the MMR with the challenged root
-                    ensure!(
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root),
-                        Error::<T>::InvalidChallengeProof
-                    );
+                    let mmr_ok =
+                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    if chunk_ok && mmr_ok {
+                        Ok(())
+                    } else {
+                        Err(SlashReason::InvalidProof)
+                    }
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
@@ -3023,48 +3036,67 @@ pub mod pallet {
                     admin_signature,
                 } => {
                     Self::ensure_recent_nonce(*nonce)?;
-
-                    // Verify admin is bucket admin
                     Self::ensure_admin(admin, &bucket)?;
 
-                    // Verify challenged seq is before new start
                     let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    ensure!(
-                        challenged_seq < *new_start_seq,
-                        Error::<T>::InvalidDeletionProof
-                    );
-
-                    // Verify admin signature on the deletion commitment.
-                    let deletion_payload = CommitmentPayload::new(
-                        challenge.bucket_id,
-                        *new_mmr_root,
-                        *new_start_seq,
-                        0, // leaf_count not needed for deletion proof
-                        *nonce,
-                    );
-                    let encoded = deletion_payload.encode();
-                    Self::verify_signature(admin_signature, &encoded, admin)?;
+                    if challenged_seq >= *new_start_seq {
+                        // Provider claims data was purged before the
+                        // challenged leaf, but the new start_seq doesn't
+                        // actually cover it.
+                        Err(SlashReason::InvalidDeletionClaim)
+                    } else {
+                        let deletion_payload = CommitmentPayload::new(
+                            challenge.bucket_id,
+                            *new_mmr_root,
+                            *new_start_seq,
+                            0, // leaf_count not needed for deletion proof
+                            *nonce,
+                        );
+                        let encoded = deletion_payload.encode();
+                        if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {
+                            Ok(())
+                        } else {
+                            Err(SlashReason::InvalidDeletionClaim)
+                        }
+                    }
                 }
                 ChallengeResponse::Superseded => {
-                    let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-                    let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    let canonical_end = snapshot.start_seq.saturating_add(snapshot.leaf_count);
-
-                    ensure!(
-                        challenged_seq < canonical_end,
-                        Error::<T>::LeafBeyondCanonical
-                    );
+                    // No snapshot to lean on → claim is unsupported, slash.
+                    match bucket.snapshot.as_ref() {
+                        None => Err(SlashReason::InvalidSupersededClaim),
+                        Some(snapshot) => {
+                            let challenged_seq =
+                                challenge.start_seq.saturating_add(challenge.leaf_index);
+                            let canonical_end =
+                                snapshot.start_seq.saturating_add(snapshot.leaf_count);
+                            if challenged_seq < canonical_end {
+                                Ok(())
+                            } else {
+                                Err(SlashReason::InvalidSupersededClaim)
+                            }
+                        }
+                    }
                 }
-            }
+            };
 
-            // Challenge defended - calculate costs based on response time
+            // Remove the challenge from storage regardless of outcome — the
+            // response has been adjudicated, the challenge is no longer
+            // pending. The owned copy below feeds either the defended-path
+            // cost-split or the slash helper.
             let challenge = challenges.remove(challenge_id.index as usize);
-
-            // Update or remove the challenges list
             if challenges.is_empty() {
                 Challenges::<T>::remove(challenge_id.deadline);
             } else {
                 Challenges::<T>::insert(challenge_id.deadline, challenges);
+            }
+
+            if let Err(reason) = response_outcome {
+                // Invalid response → slash now. The extrinsic itself returns
+                // `Ok(())` because the slash *is* the valid state transition;
+                // the provider is the one paying the price, recorded via the
+                // `ChallengeSlashed { reason, .. }` event.
+                Self::slash_provider_for_failed_challenge(&challenge, challenge_id, reason);
+                return Ok(());
             }
 
             // Calculate response time (blocks since challenge was created)
@@ -3893,16 +3925,22 @@ pub mod pallet {
             Err(Error::<T>::InvalidSyncRoot.into())
         }
 
-        /// Slash a provider who failed to respond to a challenge.
+        /// Slash a provider for failing a challenge.
         ///
         /// This:
         /// 1. Slashes the provider's entire stake
-        /// 2. Refunds the challenger with their deposit plus a reward
+        /// 2. Refunds the challenger's deposit plus a 10% slash reward
         /// 3. Updates provider statistics
-        /// 4. Marks the provider as slashed (so they can be removed from buckets)
+        /// 4. Emits `ChallengeSlashed` with the supplied `SlashReason`
+        ///
+        /// `reason` distinguishes a timeout (`on_finalize` path) from an
+        /// invalid response (`respond_to_challenge` paths). Both lead to the
+        /// same financial outcome — the distinction is for observers
+        /// reading the event log.
         fn slash_provider_for_failed_challenge(
             challenge: &Challenge<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
+            reason: SlashReason,
         ) {
             // Get provider info
             if let Some(mut provider_info) = Providers::<T>::get(&challenge.provider) {
@@ -3942,6 +3980,7 @@ pub mod pallet {
                     provider: challenge.provider.clone(),
                     slashed_amount: actually_slashed,
                     challenger_reward,
+                    reason,
                 });
             }
         }

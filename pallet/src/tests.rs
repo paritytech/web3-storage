@@ -2138,10 +2138,11 @@ mod challenge_tests {
         });
     }
 
-    /// Documents current behaviour — commit 3 will rewrite this so the provider
-    /// is slashed immediately rather than the extrinsic erroring out.
+    /// A response whose chunk-Merkle proof doesn't verify is a clear-cut
+    /// lie — the provider is slashed immediately rather than the extrinsic
+    /// erroring out (which previously let them stall until timeout).
     #[test]
-    fn respond_with_invalid_chunk_proof_currently_errors() {
+    fn respond_with_invalid_chunk_proof_slashes_immediately() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
@@ -2155,37 +2156,35 @@ mod challenge_tests {
                 0,
             ));
 
-            // Bogus chunk proof — has an extra sibling that doesn't match the leaf.
+            // Bogus chunk proof — extra sibling won't recombine to the data root.
             let bad_chunk_proof = MerkleProof {
                 siblings: vec![H256::repeat_byte(0xab)],
                 path: vec![true],
             };
-            assert_noop!(
-                StorageProvider::respond_to_challenge(
-                    RuntimeOrigin::signed(2),
-                    ChallengeId {
-                        deadline: 101u64,
-                        index: 0u16,
-                    },
-                    ChallengeResponse::Proof {
-                        chunk_data: make_chunk_bv(&chunk_data),
-                        mmr_proof,
-                        chunk_proof: bad_chunk_proof,
-                    },
-                ),
-                Error::<Test>::InvalidChallengeProof
-            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof: bad_chunk_proof,
+                },
+            ));
 
-            // Challenge stays in storage — slashing waits for timeout.
-            assert!(Challenges::<Test>::get(101).is_some());
+            // Challenge gone, provider stake gone, stats reflect the loss.
+            assert!(Challenges::<Test>::get(101).is_none());
             let provider = Providers::<Test>::get(2).unwrap();
-            assert_eq!(provider.stake, 200);
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
         });
     }
 
-    /// Same as above for the MMR-proof half of `respond_to_challenge`.
+    /// Same for an MMR proof that doesn't bag to the challenged root.
     #[test]
-    fn respond_with_invalid_mmr_proof_currently_errors() {
+    fn respond_with_invalid_mmr_proof_slashes_immediately() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let chunk_data = b"chunk-0".to_vec();
@@ -2199,7 +2198,7 @@ mod challenge_tests {
                 0,
             ));
 
-            // Construct an MMR proof for a different leaf — the bagged root
+            // Construct an MMR proof for a different leaf — its bagged root
             // won't match the challenged root.
             let bad_leaf = MmrLeaf {
                 data_root: H256::repeat_byte(0xff),
@@ -2215,21 +2214,51 @@ mod challenge_tests {
                     path: vec![],
                 },
             };
-            assert_noop!(
-                StorageProvider::respond_to_challenge(
-                    RuntimeOrigin::signed(2),
-                    ChallengeId {
-                        deadline: 101u64,
-                        index: 0u16,
-                    },
-                    ChallengeResponse::Proof {
-                        chunk_data: make_chunk_bv(&chunk_data),
-                        mmr_proof: bad_mmr_proof,
-                        chunk_proof,
-                    },
-                ),
-                Error::<Test>::InvalidChallengeProof
-            );
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof: bad_mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+        });
+    }
+
+    /// `ChallengeResponse::Superseded` claimed against a leaf the snapshot
+    /// doesn't actually cover is a lie — slash.
+    #[test]
+    fn respond_with_bogus_superseded_claim_slashes_immediately() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Snapshot covers seq 0..1. Pick leaf 5 — way beyond canonical.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                5,
+                0,
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Superseded,
+            ));
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
         });
     }
 

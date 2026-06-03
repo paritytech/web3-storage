@@ -151,6 +151,38 @@ pub struct ReplicaRequestParams<Balance, BlockNumber> {
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Why a provider was slashed via the challenge mechanism.
+///
+/// Emitted in `ChallengeSlashed` so observers can distinguish a provider that
+/// went silent (Timeout) from one that submitted a demonstrably-false response
+/// (InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim).
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SlashReason {
+    /// Provider failed to respond before the challenge deadline.
+    Timeout,
+    /// Provider submitted a `Proof` response whose chunk-Merkle or MMR proof
+    /// did not verify.
+    InvalidProof,
+    /// Provider submitted a `Deleted` response with a signature or
+    /// `new_start_seq` that does not stand up against on-chain state.
+    InvalidDeletionClaim,
+    /// Provider claimed `Superseded` but the bucket's canonical snapshot
+    /// does not actually cover the challenged sequence.
+    InvalidSupersededClaim,
+}
+
 /// Challenge identifier combining deadline and index.
 #[derive(
     Clone,
