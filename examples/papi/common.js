@@ -341,8 +341,9 @@ export async function waitForTransaction(
  * Sign + submit a transaction, assert it dispatched successfully, and return
  * the PAPI result (`{ ok, events, block, ... }`).
  *
- * Resolves once the tx is included in a **best block** (not finalized), which
- * is ~5x faster than waiting for finalization on a parachain with 6s slots.
+ * Uses the observable-based `waitForTransaction` with finalized-block mode
+ * so that subsequent `api.query` calls (which read from finalized state) see
+ * the state changes made by this transaction.
  * Throws on dispatch error or timeout.
  */
 export async function submitTx(
@@ -351,7 +352,7 @@ export async function submitTx(
   label,
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
-  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+  return waitForTransaction(tx, signer, label, TX_MODE_FINALIZED_BLOCK, timeoutMs);
 }
 
 export async function providerFetch(providerUrl, path, opts = {}) {
