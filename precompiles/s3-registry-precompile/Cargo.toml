@@ -16,6 +16,7 @@ pallet-s3-registry = { workspace = true }
 pallet-storage-provider = { workspace = true }
 sp-core = { workspace = true }
 sp-runtime = { workspace = true }
+storage-primitives = { workspace = true }
 tracing = { workspace = true }
 
 [features]
@@ -29,6 +30,7 @@ std = [
 	"pallet-storage-provider/std",
 	"sp-core/std",
 	"sp-runtime/std",
+	"storage-primitives/std",
 	"tracing/std",
 ]
 runtime-benchmarks = [

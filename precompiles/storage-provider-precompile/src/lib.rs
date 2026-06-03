@@ -51,6 +51,33 @@ where
     })
 }
 
+/// Rebuild the pallet's [`AgreementTermsOf`](pallet_storage_provider::AgreementTermsOf)
+/// from its Solidity mirror so the SCALE encoding matches the payload the
+/// provider signed.
+fn decode_terms<T>(
+    terms: &IWeb3Storage::PrimitiveAgreementTerms,
+) -> Result<pallet_storage_provider::AgreementTermsOf<T>, Error>
+where
+    T: pallet_storage_provider::Config,
+    BalanceOf<T>: From<u128>,
+    BlockNumberFor<T>: From<u32>,
+{
+    Ok(storage_primitives::AgreementTerms {
+        owner: decode_account::<T>(&terms.owner.0)?,
+        max_bytes: terms.maxBytes,
+        duration: BlockNumberFor::<T>::from(terms.duration),
+        price_per_byte: BalanceOf::<T>::from(terms.pricePerByte),
+        valid_until: BlockNumberFor::<T>::from(terms.validUntil),
+        nonce: terms.nonce,
+        replica_params: terms
+            .hasReplicaParams
+            .then(|| storage_primitives::ReplicaTerms {
+                sync_balance: BalanceOf::<T>::from(terms.replicaParams.syncBalance),
+                min_sync_interval: BlockNumberFor::<T>::from(terms.replicaParams.minSyncInterval),
+            }),
+    })
+}
+
 /// Decode a Solidity `uint8` as a `Role` enum (0 = Admin, 1 = Writer, 2 = Reader).
 fn decode_role(tag: u8) -> Result<Role, Error> {
     match tag {
@@ -100,38 +127,34 @@ where
         };
 
         match input {
-            IWeb3StorageCalls::createBucket(IWeb3Storage::createBucketCall { minProviders }) => {
-                env.charge(
-                    <Runtime as pallet_storage_provider::Config>::WeightInfo::create_bucket(),
-                )?;
+            IWeb3StorageCalls::establishStorageAgreement(
+                IWeb3Storage::establishStorageAgreementCall {
+                    provider,
+                    terms,
+                    signature,
+                },
+            ) => {
+                env.charge(<Runtime as pallet_storage_provider::Config>::WeightInfo::establish_storage_agreement())?;
+                let provider = decode_account::<Runtime>(&provider.0)?;
+                let terms = decode_terms::<Runtime>(terms)?;
+                let sig =
+                    sp_runtime::MultiSignature::decode(&mut signature.as_ref()).map_err(|e| {
+                        revert(
+                            &e,
+                            "Invalid signature encoding: expected SCALE-encoded MultiSignature",
+                        )
+                    })?;
                 // `NextBucketId` is incremented inside the extrinsic; capture
                 // the pre-dispatch value so we can return the id assigned to
                 // this call.
                 let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
-                pallet_storage_provider::Pallet::<Runtime>::create_bucket(
+                pallet_storage_provider::Pallet::<Runtime>::establish_storage_agreement(
                     frame_origin,
-                    *minProviders,
+                    provider,
+                    terms,
+                    sig,
                 )
-                .map_err(|e| revert(&e, "createBucket failed"))?;
-                Ok(bucket_id.abi_encode())
-            }
-
-            IWeb3StorageCalls::createBucketWithStorage(
-                IWeb3Storage::createBucketWithStorageCall {
-                    maxBytes,
-                    duration,
-                    maxPricePerByte,
-                },
-            ) => {
-                env.charge(<Runtime as pallet_storage_provider::Config>::WeightInfo::create_bucket_with_storage())?;
-                let bucket_id: BucketId = pallet_storage_provider::NextBucketId::<Runtime>::get();
-                pallet_storage_provider::Pallet::<Runtime>::create_bucket_with_storage(
-                    frame_origin,
-                    *maxBytes,
-                    BlockNumberFor::<Runtime>::from(*duration),
-                    BalanceOf::<Runtime>::from(*maxPricePerByte),
-                )
-                .map_err(|e| revert(&e, "createBucketWithStorage failed"))?;
+                .map_err(|e| revert(&e, "establishStorageAgreement failed"))?;
                 Ok(bucket_id.abi_encode())
             }
 
@@ -179,29 +202,6 @@ where
                     member,
                 )
                 .map_err(|e| revert(&e, "removeMember failed"))?;
-                Ok(Vec::new())
-            }
-
-            IWeb3StorageCalls::requestPrimaryAgreement(
-                IWeb3Storage::requestPrimaryAgreementCall {
-                    bucketId,
-                    provider,
-                    maxBytes,
-                    duration,
-                    maxPayment,
-                },
-            ) => {
-                env.charge(<Runtime as pallet_storage_provider::Config>::WeightInfo::request_primary_agreement())?;
-                let provider = decode_account::<Runtime>(&provider.0)?;
-                pallet_storage_provider::Pallet::<Runtime>::request_primary_agreement(
-                    frame_origin,
-                    *bucketId,
-                    provider,
-                    *maxBytes,
-                    BlockNumberFor::<Runtime>::from(*duration),
-                    BalanceOf::<Runtime>::from(*maxPayment),
-                )
-                .map_err(|e| revert(&e, "requestPrimaryAgreement failed"))?;
                 Ok(Vec::new())
             }
 

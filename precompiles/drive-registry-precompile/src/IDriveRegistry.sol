@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 /// @title IDriveRegistry
 /// @notice Solidity interface for the web3-storage `pallet_drive_registry`
@@ -9,19 +9,49 @@ pragma solidity ^0.8.0;
 ///
 /// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
 interface IDriveRegistry {
-    /// Create a new drive (auto-allocates a Layer 0 bucket and selects providers).
+    // TODO: Find out way to make it re-useable
+    struct PrimitiveReplicaTerms {
+        /// Balance reserved by the owner to fund per-sync confirmations.
+        uint128 syncBalance;
+        /// Minimum blocks between sync confirmations the provider commits to.
+        uint32 minSyncInterval;
+    }
+
+    struct PrimitiveAgreementTerms {
+        /// Owner bound by these terms (must be the caller's substrate-mapped
+        /// account at redemption).
+        bytes32 owner;
+        /// Storage quota committed by the provider, in bytes.
+        uint64 maxBytes;
+        /// Agreement duration in blocks from activation.
+        uint32 duration;
+        /// Price per byte per block locked at quote time.
+        uint128 pricePerByte;
+        /// Block number after which the quote is no longer redeemable.
+        uint32 validUntil;
+        /// Provider-chosen replay-protection nonce.
+        uint64 nonce;
+        /// `true` if the provider quoted replica terms (`Some(_)` on the Rust side).
+        bool hasReplicaParams;
+        /// Replica funding parameters; only read when `hasReplicaParams` is true.
+        PrimitiveReplicaTerms replicaParams;
+    }
+
+    /// Create a new drive by redeeming provider-signed agreement terms: the
+    /// underlying Layer 0 bucket and primary agreement are opened atomically.
     ///
     /// - `name` may be empty (treated as `None`).
-    /// - `minProviders == 0` means "use runtime default"; any value > 0 is
-    ///   forwarded as `Some(n)`.
+    /// - `terms` must match the SCALE payload the provider signed;
+    ///   `terms.owner` must be the caller's substrate-mapped account.
+    /// - `signature` is the SCALE-encoded `MultiSignature` from the provider's
+    ///   `/negotiate` response (variant byte + raw signature bytes).
     ///
     /// Returns the new drive id.
     function createDrive(
         string calldata name,
-        uint64 maxCapacity,
-        uint32 storagePeriod,
-        uint128 payment,
-        uint8 minProviders
+        bytes32 provider,
+        PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external returns (uint64 driveId);
 
     /// Delete a drive, refunding any remaining payment to the owner.

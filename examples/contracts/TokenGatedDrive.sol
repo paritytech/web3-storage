@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 import "./IS3Registry.sol";
 
@@ -15,7 +15,9 @@ import "./IS3Registry.sol";
 /// gating pattern, not ship a marketplace-ready NFT.
 ///
 /// Lifecycle:
-///   1. Deployer calls `initialize(name, maxCapacity, duration, maxPayment)`
+///   1. Deployer negotiates terms off-chain with a provider (`POST
+///      /negotiate`, `terms.owner` = the contract's substrate-mapped
+///      account), then calls `initialize(name, provider, terms, signature)`
 ///      with `msg.value` funding the agreement reserve. Becomes the
 ///      publisher.
 ///   2. Publisher calls `mint(buyer, key, cid, size, contentType)` per
@@ -56,22 +58,19 @@ contract TokenGatedDrive {
         _;
     }
 
-    /// Bootstrap the bucket. One-shot.
+    /// Bootstrap the bucket by redeeming provider-signed terms
+    /// (`terms.owner` must be the contract's substrate-mapped account).
+    /// One-shot.
     function initialize(
         string calldata name,
-        uint64 maxCapacity,
-        uint32 duration,
-        uint128 maxPayment
+        bytes32 provider,
+        IS3Registry.PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external payable returns (uint64) {
         require(publisher == address(0), "already init");
         require(msg.value > 0, "must fund agreement");
         publisher = msg.sender;
-        s3BucketId = S3_REGISTRY.createS3BucketWithStorage(
-            name,
-            maxCapacity,
-            duration,
-            maxPayment
-        );
+        s3BucketId = S3_REGISTRY.createS3Bucket(name, provider, terms, signature);
         emit Initialized(msg.sender, s3BucketId);
         return s3BucketId;
     }

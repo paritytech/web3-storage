@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 import "./IWeb3Storage.sol";
 
@@ -8,13 +8,17 @@ import "./IWeb3Storage.sol";
 ///         precompile to buy storage on behalf of its users.
 ///
 /// Flow:
-///   1. User calls `buyStorage{value: nativeAmount}(maxBytes, duration, maxPricePerByte)`.
+///   1. Off-chain, the user negotiates terms with a provider (`POST
+///      /negotiate` on the provider node) using the *contract's*
+///      substrate-mapped account as `terms.owner` — the contract is the
+///      precompile caller, so the pallet binds the agreement to it.
+///   2. User calls `buyStorage{value: nativeAmount}(provider, terms, signature)`.
 ///      `msg.value` funds the contract's substrate-mapped account; the
-///      precompile then reserves the agreement payment from that balance.
-///   2. The precompile auto-matches a provider, opens a primary agreement,
-///      and returns the new bucket id. The contract records the (user,
-///      bucket, provider) triple so users can wind their agreement down
-///      later without touching the chain directly.
+///      precompile verifies the provider's signature, reserves the payment
+///      from that balance, and atomically creates the bucket + primary
+///      agreement, returning the new bucket id. The contract records the
+///      (user, bucket) pair so users can wind their agreement down later
+///      without touching the chain directly.
 ///   3. To wind down, the user calls `endMyAgreement(bucketId, provider)`.
 ///      Only the original buyer can end their bucket's agreement.
 ///
@@ -33,18 +37,20 @@ contract StorageMarketplace {
     event BucketBoughtFor(address indexed user, uint64 indexed bucketId);
     event AgreementEnded(address indexed user, uint64 indexed bucketId);
 
-    /// Buy storage on behalf of `msg.sender`. The contract becomes the
-    /// substrate-side bucket admin; per-user ownership is tracked here.
+    /// Buy storage on behalf of `msg.sender` by redeeming provider-signed
+    /// terms. The contract becomes the substrate-side bucket admin
+    /// (`terms.owner` must be its substrate-mapped account); per-user
+    /// ownership is tracked here.
     function buyStorage(
-        uint64 maxBytes,
-        uint32 duration,
-        uint128 maxPricePerByte
+        bytes32 provider,
+        IWeb3Storage.PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external payable returns (uint64 bucketId) {
         require(msg.value > 0, "msg.value must cover the agreement payment");
-        bucketId = WEB3_STORAGE.createBucketWithStorage(
-            maxBytes,
-            duration,
-            maxPricePerByte
+        bucketId = WEB3_STORAGE.establishStorageAgreement(
+            provider,
+            terms,
+            signature
         );
         bucketOwner[bucketId] = msg.sender;
         emit BucketBoughtFor(msg.sender, bucketId);

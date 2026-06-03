@@ -5736,6 +5736,7 @@ dependencies = [
  "parity-scale-codec",
  "sp-core",
  "sp-runtime",
+ "storage-primitives",
  "tracing",
 ]
 

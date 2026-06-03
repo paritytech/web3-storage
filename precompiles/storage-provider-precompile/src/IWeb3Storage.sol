@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 /// @title IWeb3Storage
 /// @notice Solidity interface for the web3-storage `pallet_storage_provider`
@@ -10,19 +10,46 @@ pragma solidity ^0.8.0;
 ///
 /// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
 interface IWeb3Storage {
+    // TODO: Find out way to make it re-useable
+    struct PrimitiveReplicaTerms {
+        /// Balance reserved by the owner to fund per-sync confirmations.
+        uint128 syncBalance;
+        /// Minimum blocks between sync confirmations the provider commits to.
+        uint32 minSyncInterval;
+    }
+
+    struct PrimitiveAgreementTerms {
+        /// Owner bound by these terms (must be the caller's substrate-mapped
+        /// account at redemption).
+        bytes32 owner;
+        /// Storage quota committed by the provider, in bytes.
+        uint64 maxBytes;
+        /// Agreement duration in blocks from activation.
+        uint32 duration;
+        /// Price per byte per block locked at quote time.
+        uint128 pricePerByte;
+        /// Block number after which the quote is no longer redeemable.
+        uint32 validUntil;
+        /// Provider-chosen replay-protection nonce.
+        uint64 nonce;
+        /// `true` if the provider quoted replica terms (`Some(_)` on the Rust side).
+        bool hasReplicaParams;
+        /// Replica funding parameters; only read when `hasReplicaParams` is true.
+        PrimitiveReplicaTerms replicaParams;
+    }
+
     // --- Bucket lifecycle ---------------------------------------------------
 
-    /// Create an empty bucket. The caller (substrate-mapped) becomes the bucket
-    /// admin. Returns the new bucket id.
-    function createBucket(uint32 minProviders) external returns (uint64 bucketId);
-
-    /// Create a bucket and atomically open a primary agreement against an
-    /// auto-matched provider. The caller's reserved balance must cover the
-    /// payment derived from `maxBytes * duration * matched-price`.
-    function createBucketWithStorage(
-        uint64 maxBytes,
-        uint32 duration,
-        uint128 maxPricePerByte
+    /// Redeem provider-signed agreement terms: create a bucket and open a
+    /// primary agreement atomically. `terms` must match the SCALE payload the
+    /// provider signed; `terms.owner` must be the caller's substrate-mapped
+    /// account. `signature` is the SCALE-encoded `MultiSignature` from the
+    /// provider's `/negotiate` response (variant byte + raw signature bytes).
+    /// Returns the new bucket id.
+    function establishStorageAgreement(
+        bytes32 provider,
+        PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external returns (uint64 bucketId);
 
     /// Freeze a bucket — append-only, irreversible.
@@ -37,16 +64,6 @@ interface IWeb3Storage {
     function removeMember(uint64 bucketId, bytes32 member) external;
 
     // --- Agreement lifecycle ------------------------------------------------
-
-    /// Request a primary storage agreement from `provider`. Provider must
-    /// `accept` separately (substrate side); the caller is bucket admin.
-    function requestPrimaryAgreement(
-        uint64 bucketId,
-        bytes32 provider,
-        uint64 maxBytes,
-        uint32 duration,
-        uint128 maxPayment
-    ) external;
 
     /// Add funds and capacity to an existing agreement.
     function topUpAgreement(
