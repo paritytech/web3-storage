@@ -10,8 +10,6 @@ import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } fr
 import { bind } from "@react-rxjs/core";
 import {
   DriveClient,
-  negotiateTerms,
-  parseMultiaddrToHttp,
   type AvailableProvider,
   type DriveInfo,
   type FsEntry,
@@ -37,11 +35,12 @@ export interface CreationStatus {
 
 export interface CreateDriveInput {
   name?: string;
-  maxCapacity: bigint;
-  storagePeriod: number;
-  pricePerByte?: bigint;
   /** The provider the user picked. */
   provider: AvailableProvider;
+  /** Provider HTTP endpoint (parsed from its multiaddr). */
+  url: string;
+  /** Terms already negotiated with the provider (`POST /negotiate`). */
+  signed: SignedTerms;
 }
 
 export type ViewMode = "list" | "grid";
@@ -340,22 +339,6 @@ async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | nu
 export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | null> {
   if (!client.hasApi() || !client.hasSigner()) return null;
 
-  const url = parseMultiaddrToHttp(input.provider.multiaddr);
-  if (!url) {
-    const id = crypto.randomUUID();
-    creations$.next([
-      ...creations$.getValue(),
-      {
-        id,
-        name: input.name || "Untitled Drive",
-        stage: "failed",
-        elapsedMs: 0,
-        error: `Provider ${input.provider.account} has an unparseable multiaddr: ${input.provider.multiaddr}`,
-      },
-    ]);
-    return null;
-  }
-
   const id = crypto.randomUUID();
   const displayName = input.name || "Untitled Drive";
   creations$.next([
@@ -363,33 +346,10 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
     { id, name: displayName, stage: "submitting", elapsedMs: 0 },
   ]);
 
-  const ownerAddress = client.getSignerAddress();
-  if (!ownerAddress) {
-    updateCreation(id, { stage: "failed", error: "Signer not set" });
-    return null;
-  }
-
-  // Phase A: negotiate. Failure here means re-negotiate from scratch on retry.
-  let signed: SignedTerms;
-  try {
-    signed = await negotiateTerms(url, {
-      owner: ownerAddress,
-      max_bytes: input.maxCapacity,
-      duration: input.storagePeriod,
-      price_per_byte: input.pricePerByte ?? 0n,
-      replica_params: null,
-    });
-  } catch (err) {
-    updateCreation(id, {
-      stage: "failed",
-      error: err instanceof Error ? err.message : "Failed to negotiate with provider",
-    });
-    return null;
-  }
-
-  // Phase B: chain submit. Stash retry context first so a failure leaves
-  // a retry handle attached to the CreationStatus.
-  const ctx: RetryCtx = { name: input.name, provider: input.provider, url, signed };
+  // Terms are negotiated by the caller; this only does the chain submit.
+  // Stash retry context first so a failure leaves a retry handle attached
+  // to the CreationStatus.
+  const ctx: RetryCtx = { name: input.name, provider: input.provider, url: input.url, signed: input.signed };
   retryCtx.set(id, ctx);
   return runChainSubmit(id, ctx);
 }

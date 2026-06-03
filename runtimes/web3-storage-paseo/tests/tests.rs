@@ -63,6 +63,7 @@ fn construct_extrinsic(
         }),
         frame_system::CheckWeight::<Runtime>::new(),
         pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(0u128),
+        frame_metadata_hash_extension::CheckMetadataHash::<Runtime>::new(true),
         // SetOrigin's substrate-signed path is a no-op; only the eth path
         // (built by `EthExtraImpl::get_eth_extension`) sets `is_eth_transaction`.
         pallet_revive::evm::tx_extension::SetOrigin::<Runtime>::default(),

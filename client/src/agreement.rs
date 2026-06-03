@@ -15,7 +15,7 @@
 //! encoding has to be used on both sides — `sign_terms` enforces that.
 
 use codec::Encode;
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::AgreementTerms;
@@ -96,7 +96,6 @@ mod hex_multi_signature {
         MultiSignature::decode(&mut &bytes[..]).map_err(serde::de::Error::custom)
     }
 }
-
 
 // Universal helper function to accept either a JSON string or raw JSON number
 fn deserialize_number_from_string_or_number<'de, T, D>(deserializer: D) -> Result<T, D::Error>

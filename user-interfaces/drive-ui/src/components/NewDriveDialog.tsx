@@ -13,11 +13,17 @@ import {
   canRetryCreation,
   createDrive,
   dismissCreation,
+  getSignerAddress,
   retryCreation,
   useCreations,
   type CreationStatus,
 } from "@/state";
-import type { AvailableProvider } from "@/lib/drive-client";
+import {
+  negotiateTerms,
+  parseMultiaddrToHttp,
+  type AvailableProvider,
+  type SignedTerms,
+} from "@/lib/drive-client";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
@@ -61,7 +67,7 @@ function CreationStatusCard({
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{item.name}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {item.stage === "submitting" && "Negotiating with provider and submitting on-chain..."}
+            {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Drive is ready to use"}
             {item.stage === "failed" && (item.error || "Something went wrong")}
           </p>
@@ -100,21 +106,53 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   const [duration, setDuration] = useState("10000");
   const [pricePerByte, setPricePerByte] = useState("0");
   const [submitting, setSubmitting] = useState(false);
+  const [negotiateError, setNegotiateError] = useState<string | null>(null);
 
   /**
-   * Clicking a provider's Select button IS the submit action. Hand the
-   * form values + picked provider to the state hook, which runs
-   * `negotiate → submit_create_drive` atomically.
+   * Clicking a provider's Select button IS the submit action. Negotiate
+   * signed terms with the provider here, then hand them + the form values
+   * to the state hook, which runs the `submit_create_drive` chain submit.
    */
   const handleProviderSelect = async (provider: AvailableProvider) => {
     setSubmitting(true);
+    setNegotiateError(null);
     try {
+      const url = parseMultiaddrToHttp(provider.multiaddr);
+      if (!url) {
+        setNegotiateError(
+          `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
+        );
+        return;
+      }
+
+      const owner = getSignerAddress();
+      if (!owner) {
+        setNegotiateError("Signer not set");
+        return;
+      }
+
+      // Failure here means re-negotiate from scratch on retry.
+      let signed: SignedTerms;
+      try {
+        signed = await negotiateTerms(url, {
+          owner,
+          max_bytes: BigInt(capacity),
+          duration: parseInt(duration, 10),
+          price_per_byte: BigInt(pricePerByte || "0"),
+          replica_params: null,
+        });
+      } catch (err) {
+        setNegotiateError(
+          err instanceof Error ? err.message : "Failed to negotiate with provider",
+        );
+        return;
+      }
+
       const drive = await createDrive({
         name: name || undefined,
-        maxCapacity: BigInt(capacity),
-        storagePeriod: parseInt(duration, 10),
-        pricePerByte: BigInt(pricePerByte || "0"),
         provider,
+        url,
+        signed,
       });
       if (drive) {
         setName("");
@@ -186,6 +224,12 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
               requiredDuration={parseInt(duration, 10) || 0}
               disabled={submitting}
             />
+
+            {negotiateError && (
+              <p data-testid="negotiate-error" className="text-sm text-red-600">
+                {negotiateError}
+              </p>
+            )}
 
             {creations.length > 0 && (
               <div className="space-y-2">

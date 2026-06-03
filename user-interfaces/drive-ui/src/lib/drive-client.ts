@@ -197,10 +197,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 /**
  * Build the `{ provider, terms, sig }` args shared by every signed-terms
- * extrinsic. The inner of `MultiSignature::Sr25519` is `[u8; 64]` which
- * PAPI v2 encodes as `SizedBytes(64) = Codec<string>` — pass a
- * `0x`-prefixed hex string, NOT a `Uint8Array`. Mirrors
- * `console-ui/src/lib/storage.ts::buildSignedTermsArgs`.
+ * extrinsic.
  */
 export function buildSignedTermsArgs(
   providerAccount: string,

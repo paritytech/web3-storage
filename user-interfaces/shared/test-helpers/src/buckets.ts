@@ -1,10 +1,11 @@
 import { Binary, Enum } from "polkadot-api";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
-import type { DevSigner } from "./signers";
+import { Alice, type DevSigner } from "./signers";
 
 // ─── Negotiate + signed-terms helpers ────────────────────────────────────────
 
 const DEFAULT_PROVIDER_URL = "http://127.0.0.1:3333";
+const DEFAULT_PROVIDER_ACCOUNT = Alice.address;
 
 // SCALE variant ordering of sp_runtime::MultiSignature.
 const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
@@ -130,7 +131,7 @@ export async function createBucketViaApi(
 ): Promise<BucketHandle> {
   const api = getApi();
   const providerUrl = opts.providerUrl ?? DEFAULT_PROVIDER_URL;
-  const providerAccount = opts.providerAccount ?? signer.address;
+  const providerAccount = opts.providerAccount ?? DEFAULT_PROVIDER_ACCOUNT;
 
   const signed = await negotiateTerms(providerUrl, {
     owner: signer.address,
