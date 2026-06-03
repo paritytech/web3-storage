@@ -643,27 +643,80 @@ impl ChallengerClient {
     // Analytics
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get your total earnings from challenges.
+    /// Get cumulative challenge earnings for this account.
     ///
-    /// Note: challenge rewards are distributed automatically on-chain. There is no
-    /// per-challenger aggregate stored in chain state. Querying historical earnings
-    /// requires scanning block events, which is not supported here.
+    /// Reads the on-chain `ChallengerStats` aggregate. Returns 0 for accounts
+    /// that have never been credited (the pallet uses `ValueQuery` so empty
+    /// reads decode to the default record).
     pub async fn get_total_challenge_earnings(&self) -> ClientResult<u128> {
-        Ok(0)
+        let stats = self.fetch_challenger_stats().await?;
+        Ok(stats.total_earnings)
     }
 
-    /// Get statistics about your active challenge activity.
+    /// Get aggregated stats for this account's challenge activity.
     ///
-    /// Counts currently pending challenges. Historical success/failure counts and
-    /// earnings are not aggregated on-chain per challenger.
+    /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
+    /// these on `create_challenge`, on `ChallengeDefended`, and on each
+    /// `slash_provider_for_failed_challenge` call.
     pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
-        let active = self.list_my_challenges().await?;
+        let stats = self.fetch_challenger_stats().await?;
         Ok(ChallengeStats {
-            total_challenges: active.len() as u32,
-            successful_challenges: 0,
-            failed_challenges: 0,
-            total_earnings: 0,
+            total_challenges: stats.total_challenges,
+            successful_challenges: stats.successful_challenges,
+            failed_challenges: stats.failed_challenges,
+            total_earnings: stats.total_earnings,
+            // The pallet doesn't yet track an average response time per
+            // challenger; leave at 0 until that aggregate is added.
             avg_response_time: 0,
+        })
+    }
+
+    /// Read this account's `ChallengerStats` record from chain. Returns a
+    /// zeroed record (matching the pallet's `ValueQuery` default) if the
+    /// account has never opened a challenge.
+    async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
+        let chain = self.base.chain()?;
+        let challenger_account = SubstrateClient::parse_account(&self.challenger_account)?;
+        let challenger_bytes: &[u8] = challenger_account.as_ref();
+
+        let storage = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+
+        let query = subxt::dynamic::storage(
+            "StorageProvider",
+            "ChallengerStats",
+            vec![subxt::dynamic::Value::from_bytes(challenger_bytes)],
+        );
+
+        let value = match storage
+            .fetch(&query)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))?
+        {
+            Some(v) => v,
+            None => return Ok(FetchedChallengerStats::default()),
+        };
+
+        let decoded = value
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Decode ChallengerStats: {e}")))?;
+
+        fn read_u128(value: &subxt::ext::scale_value::Value<u32>, field: &str) -> Option<u128> {
+            named_field(value, field).and_then(|v| match &v.value {
+                ValueDef::Primitive(subxt::ext::scale_value::Primitive::U128(n)) => Some(*n),
+                _ => None,
+            })
+        }
+
+        Ok(FetchedChallengerStats {
+            total_challenges: read_u128(&decoded, "total_challenges").unwrap_or(0) as u32,
+            successful_challenges: read_u128(&decoded, "successful_challenges").unwrap_or(0) as u32,
+            failed_challenges: read_u128(&decoded, "failed_challenges").unwrap_or(0) as u32,
+            total_earnings: read_u128(&decoded, "total_earnings").unwrap_or(0),
         })
     }
 
@@ -924,6 +977,17 @@ pub struct ChallengeStats {
     pub failed_challenges: u32,
     pub total_earnings: u128,
     pub avg_response_time: u32,
+}
+
+/// Internal: the raw `ChallengerStatRecord` shape pulled from chain.
+/// Public callers see `ChallengeStats` which wraps these counters with the
+/// `avg_response_time` field the SDK historically exposed.
+#[derive(Debug, Clone, Default)]
+struct FetchedChallengerStats {
+    total_challenges: u32,
+    successful_challenges: u32,
+    failed_challenges: u32,
+    total_earnings: u128,
 }
 
 #[derive(Debug, Clone)]
