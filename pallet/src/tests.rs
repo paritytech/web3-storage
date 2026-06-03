@@ -942,7 +942,7 @@ mod establish_storage_agreement_tests {
 
             // Replay window now anchored at nonce 7.
             let window = ProviderReplayStates::<Test>::get(2);
-            assert_eq!(window.hwm, 7);
+            assert_eq!(window.hsn, 7);
             assert_eq!(window.bitmap[0] & 1, 1);
         });
     }
@@ -1199,7 +1199,7 @@ mod establish_storage_agreement_tests {
 
     #[test]
     fn accepts_nonce_at_window_edge_and_rejects_one_past() {
-        // After advancing hwm to 300, nonce 45 (distance 255) is still in
+        // After advancing hsn to 300, nonce 45 (distance 255) is still in
         // the window, but nonce 44 (distance 256) is one slot past it.
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
@@ -1214,7 +1214,7 @@ mod establish_storage_agreement_tests {
                 advance,
                 sig,
             ));
-            assert_eq!(ProviderReplayStates::<Test>::get(2).hwm, 300);
+            assert_eq!(ProviderReplayStates::<Test>::get(2).hsn, 300);
 
             // Distance == REPLAY_WINDOW_BITS - 1 ⇒ accepted.
             let edge_nonce = 300 - (REPLAY_WINDOW_BITS as u64 - 1);
@@ -1293,9 +1293,9 @@ mod establish_storage_agreement_tests {
                 ));
             }
 
-            // hwm follows the max nonce seen.
+            // hsn follows the max nonce seen.
             let window = ProviderReplayStates::<Test>::get(2);
-            assert_eq!(window.hwm, 10);
+            assert_eq!(window.hsn, 10);
 
             // Replays of any of those nonces are rejected.
             for nonce in [3u64, 7, 1, 10, 2] {
@@ -1316,7 +1316,7 @@ mod establish_storage_agreement_tests {
 
     #[test]
     fn forward_jump_beyond_window_clears_old_bits() {
-        // Bitmap shift: when hwm jumps forward by >= REPLAY_WINDOW_BITS,
+        // Bitmap shift: when hsn jumps forward by >= REPLAY_WINDOW_BITS,
         // every previously-set bit drops off the window so prior nonces
         // are now NonceTooOld, not NonceAlreadyUsed.
         new_test_ext().execute_with(|| {
@@ -1345,8 +1345,8 @@ mod establish_storage_agreement_tests {
             ));
 
             let window = ProviderReplayStates::<Test>::get(2);
-            assert_eq!(window.hwm, 10_000);
-            // Only the new hwm bit is set; everything else is zero.
+            assert_eq!(window.hsn, 10_000);
+            // Only the new hsn bit is set; everything else is zero.
             assert_eq!(window.bitmap[0], 0b0000_0001);
             for byte in &window.bitmap[1..] {
                 assert_eq!(*byte, 0);

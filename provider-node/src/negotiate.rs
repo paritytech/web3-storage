@@ -5,7 +5,7 @@
 //!
 //! 1. Allocates a fresh nonce from an in-memory monotonic counter
 //!    ([`NonceCounter`]). The counter is initialized at startup from the
-//!    chain's `ProviderReplayState.hwm + 1`, so a restart can't reissue a
+//!    chain's `ProviderReplayState.hsn + 1`, so a restart can't reissue a
 //!    nonce the chain already accepted (the on-chain replay window is
 //!    authoritative and rejects any out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
@@ -26,10 +26,10 @@ pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTe
 ///
 /// Nonces are atomically allocated via [`Self::next`]. There is no local
 /// persistence: at startup the caller reconciles against the chain by
-/// calling [`Self::bootstrap_from_hwm`] with the provider's on-chain
-/// `hwm`, so the counter resumes at `hwm + 1`. This:
+/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain
+/// `hsn`, so the counter resumes at `hsn + 1`. This:
 ///
-/// * survives a restart (the chain hwm is the source of truth);
+/// * survives a restart (the chain hsn is the source of truth);
 /// * survives a restart where the chain advanced past our last view
 ///   (e.g. a parallel quote was redeemed elsewhere) — we skip past it
 ///   rather than reissue.
@@ -45,7 +45,7 @@ pub struct NonceCounter {
 
 impl NonceCounter {
     /// Create a counter starting at `start`. In normal operation the
-    /// caller follows up with [`Self::bootstrap_from_hwm`] to align with
+    /// caller follows up with [`Self::bootstrap_from_hsn`] to align with
     /// the chain.
     pub fn new(start: u64) -> Self {
         Self {
@@ -53,10 +53,10 @@ impl NonceCounter {
         }
     }
 
-    /// Advance the counter to at least `hwm + 1`. Idempotent — only
+    /// Advance the counter to at least `hsn + 1`. Idempotent — only
     /// advances forward.
-    pub fn bootstrap_from_hwm(&self, hwm: u64) {
-        let target = hwm.saturating_add(1);
+    pub fn bootstrap_from_hsn(&self, hsn: u64) {
+        let target = hsn.saturating_add(1);
         // Standard CAS loop — bump only if our target is higher than
         // whatever is already there.
         let mut current = self.counter.load(Ordering::SeqCst);
@@ -103,11 +103,11 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_from_hwm_only_advances() {
+    fn bootstrap_from_hsn_only_advances() {
         let c = NonceCounter::new(10);
-        c.bootstrap_from_hwm(5); // lower than current — no-op
+        c.bootstrap_from_hsn(5); // lower than current — no-op
         assert_eq!(c.next(), 10);
-        c.bootstrap_from_hwm(20); // higher — advance
+        c.bootstrap_from_hsn(20); // higher — advance
         assert_eq!(c.next(), 21);
     }
 }

@@ -205,7 +205,7 @@ async fn start_replica_sync_coordinator(
 }
 
 /// Create the in-memory nonce counter and bootstrap it from the chain's
-/// `ProviderReplayState.hwm`. The chain is the source of truth, so there
+/// `ProviderReplayState.hsn`. The chain is the source of truth, so there
 /// is nothing to persist locally.
 async fn setup_nonce_counter(
     cli: &Cli,
@@ -214,21 +214,21 @@ async fn setup_nonce_counter(
     // Start the `nonce` from 1.
     let counter = NonceCounter::new(1);
 
-    // Bootstrap from on-chain hwm. Best-effort: if the chain isn't
+    // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
     // reachable yet, start from 0 — the on-chain replay window will
     // reject any out-of-range reissues anyway.
     let provider_account = sp_runtime::AccountId32::from_str(provider_id)
         .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
-    match storage_client::ProviderClient::fetch_replay_hwm(&cli.rpc.chain_rpc, &provider_account)
+    match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
         .await
     {
-        Ok(Some(hwm)) => {
+        Ok(Some(hsn)) => {
             tracing::info!(
-                "Bootstrapping nonce counter from on-chain hwm {} for provider {}",
-                hwm,
+                "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
+                hsn,
                 provider_id,
             );
-            counter.bootstrap_from_hwm(hwm);
+            counter.bootstrap_from_hsn(hsn);
         }
         Ok(None) => {
             tracing::info!(
