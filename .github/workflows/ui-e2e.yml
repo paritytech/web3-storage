@@ -30,7 +30,7 @@ jobs:
     uses: ./.github/workflows/set-image.yml
 
   ui-e2e:
-    name: UI E2E (chain + provider + Playwright)
+    name: UI E2E Tests (chain + provider + UIs)
     runs-on: parity-large
     timeout-minutes: 60
     needs: [set-image]
