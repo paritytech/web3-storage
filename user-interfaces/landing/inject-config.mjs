@@ -30,10 +30,17 @@ function fail(msg) {
 const networksSrc = readFileSync(NETWORKS_TS, 'utf8')
 const typesSrc = readFileSync(TYPES_TS, 'utf8')
 
-// DEFAULT_NETWORK_ID
-const defaultMatch = networksSrc.match(/DEFAULT_NETWORK_ID:\s*NetworkId\s*=\s*'([a-z]+)'/)
-if (!defaultMatch) fail('could not extract DEFAULT_NETWORK_ID from networks.ts')
-const defaultId = defaultMatch[1]
+// DEFAULT_NETWORK_ID — may be a plain literal or a build-time ternary
+// (`import.meta.env?.DEV ? 'local' : 'previewnet'`). This runs at production
+// build time (DEV is false), so resolve to the else branch: the last quoted
+// literal in the expression, or the sole literal for the plain form.
+const defaultExpr = networksSrc.match(
+  /DEFAULT_NETWORK_ID:\s*NetworkId\s*=\s*([\s\S]*?)(?=\n\s*\n|\nexport\b|\nfunction\b)/,
+)?.[1]
+if (!defaultExpr) fail('could not extract DEFAULT_NETWORK_ID from networks.ts')
+const defaultLiterals = [...defaultExpr.matchAll(/'([a-z]+)'/g)].map((m) => m[1])
+const defaultId = defaultLiterals.at(-1)
+if (!defaultId) fail('could not extract DEFAULT_NETWORK_ID literal from networks.ts')
 
 // NetworkId union → VALID_IDS (string[])
 const unionMatch = typesSrc.match(/export\s+type\s+NetworkId\s*=\s*([^\n;]+)/)

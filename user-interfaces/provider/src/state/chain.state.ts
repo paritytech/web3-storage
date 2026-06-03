@@ -76,15 +76,11 @@ export async function connect(wsEndpoint?: string): Promise<void> {
     await connectToChain(ep)
 
     // Fetch chain properties and apply all chain-derived config: formatting,
-    // SS58 prefix, and minProviderStake.
+    // SS58 prefix, and minProviderStake. Returns the chain identity to publish.
     const chainProps = await getChainProperties()
-    await configureFromChain(chainProps)
+    const info = await configureFromChain(chainProps)
 
-    chainInfo$.next({
-      name: 'Storage Parachain',
-      version: '0.1.0',
-      genesisHash: '0x...',
-    })
+    chainInfo$.next(info)
 
     connectionStatus$.next('connected')
 

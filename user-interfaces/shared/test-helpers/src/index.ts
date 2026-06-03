@@ -9,6 +9,7 @@ export {
   makeLocalPageFixture,
   waitForConnection,
   waitForMinBlock,
+  expectBestBlockToAdvance,
   probeProviderHealth,
   teardownChain,
   type LocalPageFixtureOptions,
@@ -21,6 +22,7 @@ export {
   submitExtrinsic,
   waitForBlock,
   getBlockNumber,
+  getBestBlockNumber,
   type ParachainApi,
 } from "./chain-api";
 
