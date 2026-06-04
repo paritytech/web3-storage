@@ -127,12 +127,9 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   console.log("PASSED: Provider received payment!");
 }
 
-// Pull the ChallengeDefended event straight from the `respond_to_challenge`
-// transaction's in-block events. A background `api.event...watch()` only sees
-// FINALIZED blocks, which lag in-block submission by ~6 blocks — so a count
-// taken right after responding would read 0. The dispatch emits the event in
-// the same block the tx lands in, so the tx result is the authoritative,
-// race-free source.
+// Read ChallengeDefended from the respond tx's own in-block events. A
+// background `api.event...watch()` only sees finalized blocks, so a count taken
+// right after responding would read 0.
 function recordDefended(api, result, label) {
   const event = requireOneEvent(
     result.events,

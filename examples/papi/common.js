@@ -149,9 +149,7 @@ export class NonceManager {
   }
   /** Read the on-chain nonce for `address` and build a manager from it. */
   static async forAccount(api, address) {
-    // Best block, not finalized: with in-block tx submission the on-chain
-    // nonce advances at the best block; a finalized read returns a stale,
-    // lower nonce and the manager would collide with already-applied txs.
+    // Best block: a finalized read lags and returns a stale (too-low) nonce.
     const account = await api.query.System.Account.getValue(address, READ_OPTS);
     return new NonceManager(account.nonce);
   }
@@ -213,19 +211,10 @@ export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
 export const DEFAULT_TX_TIMEOUT_MS = 180_000;
 
 /**
- * Options object for storage reads (`getValue` / `getEntries`).
- *
- * `submitTx` resolves at in-block INCLUSION, not finalization, so any read that
- * must observe a just-submitted write has to target the best (non-finalized)
- * block — a default (finalized) read races the ~6-block finality lag and sees
- * stale state. Spread this into every storage query in the demos:
- *
- *   api.query.Pallet.Item.getValue(key, READ_OPTS)
- *
- * This is the single switch for the whole demo suite: flip `at` to "finalized"
- * here to make every read observe finalized state instead — e.g. on a chain
- * with fast finality where reorg-safety is preferred over read-your-writes
- * latency.
+ * Options for storage reads (`getValue` / `getEntries`). `submitTx` returns at
+ * in-block inclusion, so reads must target the best block to see a just-written
+ * value (the default finalized head lags by ~6 blocks). Single switch for the
+ * suite: flip to "finalized" here to trade read-your-writes for reorg-safety.
  */
 export const READ_OPTS = { at: "best" };
 
@@ -354,30 +343,14 @@ export async function waitForTransaction(
 }
 
 /**
- * Sign + submit a transaction, assert it dispatched successfully, and return
- * the in-block PAPI event (`{ ok, events, block, ... }`).
+ * Sign + submit a tx, assert it dispatched OK, return the in-block event
+ * (`{ ok, events, ... }`). Resolves at inclusion, not finalization — ~6x faster
+ * per tx, and the demos read what they need from the events. PAPI doesn't throw
+ * on a dispatch error (only on an invalid tx), so the `ok === false` check in
+ * `waitForTransaction` is what surfaces failures here.
  *
- * Resolves at best-block INCLUSION, not finalization. On a local zombienet
- * parachain, finality lags inclusion by several blocks (~36s vs ~6s per tx);
- * waiting for finalization on every extrinsic is what pushed the integration
- * demos past the 30-min CI cap. The demos verify outcomes via the emitted
- * events, which are already present at inclusion.
- *
- * Caveat: best blocks are NOT reorg-proof. Even with a single collator the
- * parachain's best block runs ahead of the relay-backed/finalized block and
- * can be discarded before inclusion, rolling back the tx. That's fine for a
- * self-contained tx the demo only reads events from, but NOT for a tx whose
- * on-chain effect a LATER tx references by id (e.g. creating a challenge then
- * responding to it): use `submitTxFinalized` for the creating tx so the id is
- * stable. See its doc below.
- *
- * Like the finalized path it replaces, this asserts dispatch success: PAPI does
- * NOT throw when an extrinsic dispatches with an error (only on an invalid tx —
- * bad signature, low nonce, etc), so without this a failed extrinsic looks
- * indistinguishable from a successful one with no events and surfaces later as
- * a confusing "Expected exactly 1 X event, got 0". `waitForTransaction` raises
- * on `ok === false` and is bounded by `timeoutMs` so a stuck mempool can't hang
- * the example.
+ * Best blocks can be reorged, so for a tx whose effect a LATER tx references by
+ * id (e.g. create a challenge, then respond to it) use `submitTxFinalized`.
  */
 export async function submitTx(
   tx,
@@ -389,15 +362,10 @@ export async function submitTx(
 }
 
 /**
- * Like `submitTx`, but resolves only once the tx is in a FINALIZED block.
- *
- * Slower (~6 blocks of finality lag) — use sparingly, ONLY where a subsequent
- * tx depends on this one's on-chain effect by id. The motivating case: a
- * challenge's id embeds the block height it was created at, and responding to
- * it must reference that exact id. If the creating tx is merely in-block, a
- * best-block reorg can roll it back, leaving the response to fail with
- * `ChallengeNotFound`. Finalizing the creation pins the id so the response
- * (which can stay in-block) always finds it.
+ * Like `submitTx` but waits for FINALIZATION (~6 blocks slower). Use only when
+ * a later tx references this one's effect by id: a challenge id embeds its
+ * creation block, so an in-block creation that gets reorged makes the response
+ * fail with `ChallengeNotFound`. Finalizing pins the id.
  */
 export async function submitTxFinalized(
   tx,

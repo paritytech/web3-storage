@@ -136,9 +136,8 @@ export async function submitClientCheckpoint(api, client, provider, bucketId, ck
 }
 
 export async function challengeOffchain(api, client, provider, bucketId, upload) {
-  // Finalized, not in-block: the returned challenge_id embeds the creation
-  // block height; respond_to_challenge references it. A best-block reorg of the
-  // creating tx would invalidate the id (-> ChallengeNotFound on respond).
+  // Finalized: the challenge_id must survive to the respond that references it
+  // (a best-block reorg would invalidate it -> ChallengeNotFound).
   const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
@@ -163,8 +162,7 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
 }
 
 export async function challengeCheckpoint(api, client, provider, bucketId, leafIndex) {
-  // Finalized, not in-block: see challengeOffchain — the challenge_id must
-  // survive to the respond_to_challenge that references it.
+  // Finalized: see challengeOffchain.
   const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
@@ -554,10 +552,7 @@ export async function signCheckpointProposal(providerUrl, bucketId, duty, window
  * from chain state and fetching MMR + chunk proofs from the provider node.
  */
 export async function fetchChallengeProof(api, providerUrl, challengeId) {
-  // Read at the best (non-finalized) block: submitTx now resolves at in-block
-  // inclusion, so the challenge-creating extrinsic lives in the best block but
-  // not yet the finalized one. A default (finalized) read here races the
-  // ~6-block finality lag and spuriously reports "no challenges".
+  // Best block: a finalized read would lag the just-created challenge.
   const challenges = await api.query.StorageProvider.Challenges.getValue(
     challengeId.deadline,
     READ_OPTS

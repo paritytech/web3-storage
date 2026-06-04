@@ -258,8 +258,7 @@ async function main() {
     await submitClientCheckpoint(api, client, provider, bucketC, ck);
 
     console.log("\n[10a] IWeb3Storage.challengeCheckpoint(bucketC, provider, leafIdx, chunkIdx=0)");
-    // Finalize the challenge-creating call: respond_to_challenge below
-    // references the challenge_id, which a best-block reorg could invalidate.
+    // Finalized: respondToChallenge below references the challenge_id.
     r = await callPrecompile(
       api,
       client,

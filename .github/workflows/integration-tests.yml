@@ -34,16 +34,9 @@ jobs:
           echo "runtime=$TASKS" >> $GITHUB_OUTPUT
 
   # ── Build once ────────────────────────────────────────────────────────────
-  # Compiles the heaviest, shared artifacts a single time and publishes them as
-  # one artifact both test jobs download instead of each rebuilding from
-  # scratch. The artifact holds:
-  #   - target/release/storage-provider-node — the provider binary,
-  #   - the *.compact.compressed.wasm runtime per integration-tested runtime,
-  #     which the chain_spec_command scripts feed to chain-spec-builder.
-  # NOTE: this does not eliminate all compilation downstream — the test jobs
-  # still `cargo run` the fs/s3 ci_integration_test examples and the sc job
-  # still builds the Solidity contracts. Those lean on the shared Rust cache
-  # (shared-key "integration-tests-build"), not on this artifact.
+  # Build the shared artifacts once (provider binary + one compressed wasm per
+  # tested runtime) so both test jobs download instead of rebuilding. The test
+  # jobs still compile the fs/s3 examples and sc contracts via the shared cache.
   build:
     name: Build
     runs-on: parity-large
@@ -67,8 +60,7 @@ jobs:
       - name: Install just
         run: cargo install just --locked || true
 
-      # Build every runtime whose build_command the matrix file declares, so the
-      # single artifact carries a wasm for each runtime the test jobs fan out on.
+      # One wasm per runtime the test jobs fan out on.
       - name: Build all runtimes
         run: |
           for cmd in $(jq -r '.[] | select(.integration_tests == true) | .build_command' scripts/runtimes-matrix.json); do
@@ -80,13 +72,10 @@ jobs:
       - name: Build provider
         run: just build-provider
 
-      # Upload only what the test jobs actually consume: the provider binary and
-      # the final compressed runtime wasm per runtime (the chain_spec_command
-      # scripts read target/release/wbuild/<pkg>/<pkg>.compact.compressed.wasm).
-      # The full wbuild tree is a ~900 MiB / 3400-file Cargo scratch dir — never
-      # upload it. Both listed paths sit under target/release, so the artifact's
-      # least-common-ancestor root is target/release; the download step below
-      # extracts into target/release to put the prefix back.
+      # Upload only what the test jobs consume: provider binary + the final
+      # compressed wasm per runtime. NOT the full wbuild tree (~900 MiB Cargo
+      # scratch). Both paths sit under target/release, so the artifact is rooted
+      # there (LCA) and the download steps extract back into target/release.
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -98,10 +87,8 @@ jobs:
             target/release/wbuild/*/*.compact.compressed.wasm
 
   # ── L0 / file-system / S3 / PAPI demos ──────────────────────────────────────
-  # Runs against its OWN chain + inmemory and disk providers. Demos stay
-  # sequential on the shared chain (drain-tx-pool-then between them), but the
-  # whole job now runs in parallel with sc-integration-tests and skips the
-  # build — both consume the prebuilt artifact.
+  # Own chain + inmemory/disk providers; demos sequential on the shared chain.
+  # Runs in parallel with sc-integration-tests off the prebuilt artifact.
   integration-tests:
     name: Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
@@ -155,19 +142,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # Restored before the artifact download so the cached target/ can't clobber
-      # the freshly downloaded provider + wbuild. save-if false — only the build
-      # job writes this cache.
+      # Before the download so the cached target/ can't clobber it. save-if
+      # false — only the build job writes this cache.
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: "integration-tests-build"
           save-if: false
 
-      # Extract into target/release so the artifact's target/release-rooted
-      # contents (provider binary + wbuild wasm) land back at their original
-      # paths — where the chmod step, the chain_spec_command scripts, and the
-      # demos all expect them.
+      # Extract into target/release so the artifact's contents land back at
+      # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
         with:
@@ -276,10 +260,9 @@ jobs:
             /tmp/zombie-*/*-raw.json
 
   # ── Smart-contract demos ─────────────────────────────────────────────────────
-  # Runs against its OWN chain + inmemory provider, in parallel with
-  # integration-tests. Consumes the prebuilt provider + runtime wasm from the
-  # build artifact, but still installs solc/resolc and builds the example
-  # contracts here (they are cheap and not part of the shared artifact).
+  # Own chain + inmemory provider, parallel with integration-tests off the
+  # prebuilt artifact. Still installs solc/resolc and builds the example
+  # contracts here (cheap, not in the shared artifact).
   sc-integration-tests:
     name: SC Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
