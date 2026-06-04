@@ -95,8 +95,9 @@ async function main() {
     //    (`map_account`) — substrate-native accounts can't dispatch contract
     //    calls or be the target of value transfers until they're mapped.
     console.log("\n[1/6] Provider setup + Revive account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, PROVIDER_URL, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -132,6 +133,7 @@ async function main() {
     const signed = await negotiatePrecompileTerms(PROVIDER_URL, contractAccount, {
       maxBytes: MAX_BYTES,
       duration: DURATION,
+      pricePerByte: PRICE_PER_BYTE,
     });
     const buyData = encodeCall(abi, "buyStorage", [
       toHex(provider.publicKey),

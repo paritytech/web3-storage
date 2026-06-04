@@ -107,8 +107,9 @@ async function main() {
     // registered by earlier demos in the CI matrix) so only the provider we
     // negotiate with holds agreements during this run.
     console.log("\n[setup] provider + account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, providerUrl, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -129,7 +130,7 @@ async function main() {
     const maxBytesA = 2048n;
     const durationA = 100;
     const maxPaymentA = maxBytesA * BigInt(durationA) * 10n; // generous
-    const signedA = await negotiateAbiTerms(client, { maxBytes: maxBytesA, duration: durationA });
+    const signedA = await negotiateAbiTerms(client, { maxBytes: maxBytesA, duration: durationA, pricePerByte: PRICE_PER_BYTE });
     let nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
     let r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
       toHex(providerBytes32),
@@ -198,7 +199,7 @@ async function main() {
     // MILLIUNIT = 1e9 atomic). 10% of `1MiB × 100k blocks × 1` ≈ 1e10 atomic,
     // comfortably above ED.
     console.log("\n[7] IWeb3Storage.establishStorageAgreement(provider, terms[1MiB×100k], sig)  [burn-sized]");
-    const signedB = await negotiateAbiTerms(client, { maxBytes: 1n << 20n, duration: 100_000 });
+    const signedB = await negotiateAbiTerms(client, { maxBytes: 1n << 20n, duration: 100_000, pricePerByte: PRICE_PER_BYTE });
     nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
       toHex(providerBytes32),
@@ -225,7 +226,7 @@ async function main() {
     // challenge. The agreement is left open and is not ended; settlement
     // happens through chain-driven expiry, not this test.
     console.log("\n[9] IWeb3Storage.establishStorageAgreement(provider, terms[2KiB×100], sig)  [freeze/challenge target]");
-    const signedC = await negotiateAbiTerms(client, { maxBytes: 2048n, duration: 100 });
+    const signedC = await negotiateAbiTerms(client, { maxBytes: 2048n, duration: 100, pricePerByte: PRICE_PER_BYTE });
     nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
       toHex(providerBytes32),
@@ -267,7 +268,7 @@ async function main() {
 
     // 11. createDrive -----------------------------------------------------
     console.log("\n[11] IDriveRegistry.createDrive(\"cov\", provider, terms[1MiB×50], sig)");
-    const signedD = await negotiateAbiTerms(client, { maxBytes: 1n << 20n, duration: 50 });
+    const signedD = await negotiateAbiTerms(client, { maxBytes: 1n << 20n, duration: 50, pricePerByte: PRICE_PER_BYTE });
     const nextDriveBefore = await api.query.DriveRegistry.NextDriveId.getValue();
     r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "createDrive", [
       "cov",

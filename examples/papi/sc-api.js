@@ -49,12 +49,12 @@ export function h160ToSubstrate(addressBytes) {
  * (`h160ToSubstrate(deployed.addressBytes)`) when a contract forwards the
  * terms.
  */
-export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, duration }) {
+export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, duration, pricePerByte }) {
   const signed = await negotiateTerms(providerUrl, {
     owner: owner.address,
     max_bytes: BigInt(maxBytes),
     duration,
-    price_per_byte: 0n,
+    price_per_byte: price_per_byte,
     replica_params: null,
     bucket_id: null,
   });

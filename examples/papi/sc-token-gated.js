@@ -80,8 +80,9 @@ async function main() {
     const recipientH160 = substrateToH160(recipient.publicKey);
 
     console.log("\n[setup] provider + Revive account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, providerUrl, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -118,6 +119,7 @@ async function main() {
     const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
       maxBytes: 1n << 20n,
       duration: 50,
+      pricePerByte: PRICE_PER_BYTE,
     });
     const initData = encodeCall(abi, "initialize", [
       bucketName,
