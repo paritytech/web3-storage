@@ -244,9 +244,11 @@ jobs:
   # E2E test suite — runs all 10 PAPI E2E workflows against a single
   # inmemory provider. Uses web3-storage-paseo only: the storage pallet
   # config is identical across runtimes so running both would just double
-  # CI time with zero extra coverage. Consumes the build artifact's runtime
-  # wasm but builds its OWN coverage-instrumented provider (the shared
-  # artifact's provider is not instrumented).
+  # CI time with zero extra coverage. Its chain-spec script is resolved from
+  # runtimes-matrix.json by that runtime name (see the resolve step below), so
+  # it can't drift from the rest of the runtime config. Consumes the build
+  # artifact's runtime wasm but builds its OWN coverage-instrumented provider
+  # (the shared artifact's provider is not instrumented).
   e2e-integration-tests:
     name: E2E Integration Tests
     runs-on: parity-large
@@ -260,6 +262,20 @@ jobs:
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
+
+      # Single-source the chain-spec script from the matrix so it can't drift
+      # from the rest of the runtime config. The E2E suite runs on
+      # web3-storage-paseo (see job comment above).
+      - name: Resolve chain-spec script from matrix
+        run: |
+          RUNTIME=web3-storage-paseo
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -322,7 +338,7 @@ jobs:
       - name: Start chain (dev mode, 2s blocks)
         uses: ./.github/actions/start-e2e-chain
         with:
-          chain-spec-script: scripts/build-paseo-chain-spec.sh
+          chain-spec-script: ${{ env.E2E_CHAIN_SPEC_SCRIPT }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain

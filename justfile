@@ -126,13 +126,24 @@ start-paseo-chain: check build-paseo-runtime
 
 # Start a standalone dev chain with 2s blocks for E2E testing (no relay chain).
 # Blocks finalize instantly — much faster than zombienet for automated tests.
-start-e2e-chain: check build-runtime
+# The runtime build command and chain-spec script are read from
+# scripts/runtimes-matrix.json so a local run matches the CI e2e job exactly.
+# Defaults to web3-storage-paseo (what CI's e2e job uses).
+start-e2e-chain RUNTIME="web3-storage-paseo": check
     #!/usr/bin/env bash
+    set -euo pipefail
+    BUILD_CMD=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .build_command // empty' scripts/runtimes-matrix.json)
+    SPEC_SCRIPT=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+    if [ -z "$BUILD_CMD" ] || [ -z "$SPEC_SCRIPT" ]; then
+        echo "Unknown runtime '{{ RUNTIME }}' (no match with build_command + chain_spec_script in scripts/runtimes-matrix.json)"
+        exit 1
+    fi
+    just "$BUILD_CMD"
     echo ""
-    echo "=== Starting E2E Dev Chain (2s blocks, no relay chain) ==="
+    echo "=== Starting E2E Dev Chain ({{ RUNTIME }}, 2s blocks, no relay chain) ==="
     echo ""
     SPEC_FILE="/tmp/e2e-chain-spec.json"
-    ./scripts/build-chain-spec.sh > "$SPEC_FILE"
+    "$SPEC_SCRIPT" > "$SPEC_FILE"
     .bin/polkadot-omni-node \
         --chain "$SPEC_FILE" \
         --alice --tmp \
