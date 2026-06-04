@@ -34,14 +34,16 @@ jobs:
           echo "runtime=$TASKS" >> $GITHUB_OUTPUT
 
   # ── Build once ────────────────────────────────────────────────────────────
-  # All Rust + contract compilation happens here, exactly once per runtime, and
-  # is published as a single artifact the two test jobs consume — so neither
-  # integration-tests nor sc-integration-tests compiles anything. Includes:
-  #   - the runtime wasm (zombienet's chain_spec_command reads it),
-  #   - the provider node,
-  #   - the fs/s3 ci_integration_test example binaries (run directly instead of
-  #     `cargo run`),
-  #   - the example Solidity contracts (consumed by the sc demos).
+  # Compiles the heaviest, shared artifacts a single time and publishes them as
+  # one artifact both test jobs download instead of each rebuilding from
+  # scratch. The artifact holds:
+  #   - target/release/storage-provider-node — the provider binary,
+  #   - the *.compact.compressed.wasm runtime per integration-tested runtime,
+  #     which the chain_spec_command scripts feed to chain-spec-builder.
+  # NOTE: this does not eliminate all compilation downstream — the test jobs
+  # still `cargo run` the fs/s3 ci_integration_test examples and the sc job
+  # still builds the Solidity contracts. Those lean on the shared Rust cache
+  # (shared-key "integration-tests-build"), not on this artifact.
   build:
     name: Build
     runs-on: parity-large
@@ -275,8 +277,9 @@ jobs:
 
   # ── Smart-contract demos ─────────────────────────────────────────────────────
   # Runs against its OWN chain + inmemory provider, in parallel with
-  # integration-tests. Contracts come prebuilt in the artifact, so this job no
-  # longer installs solc/resolc or compiles anything.
+  # integration-tests. Consumes the prebuilt provider + runtime wasm from the
+  # build artifact, but still installs solc/resolc and builds the example
+  # contracts here (they are cheap and not part of the shared artifact).
   sc-integration-tests:
     name: SC Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
