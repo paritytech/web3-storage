@@ -36,6 +36,7 @@ import {
   ensureProviderRegistered,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -52,7 +53,8 @@ const {
 async function setupAgreement(api, client, provider, bucketId) {
   const existing = await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
-    provider.address
+    provider.address,
+    READ_OPTS
   );
   if (existing) {
     console.log("  Agreement already exists");
@@ -99,21 +101,24 @@ async function uploadAndVerify(bucketId) {
 async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
-    provider.address
+    provider.address,
+    READ_OPTS
   );
   const expiresAt = Number(agreement.expires_at);
   console.log("  Agreement expires at block:", expiresAt);
 
-  const freeBefore = (await api.query.System.Account.getValue(provider.address))
-    .data.free;
+  const freeBefore = (
+    await api.query.System.Account.getValue(provider.address, READ_OPTS)
+  ).data.free;
   console.log("  Provider balance before:", freeBefore.toString());
 
   console.log("  Waiting for agreement to expire...");
   await waitForBlock(papi, expiresAt);
   await endAgreement(api, client, provider, bucketId, "Pay");
 
-  const freeAfter = (await api.query.System.Account.getValue(provider.address))
-    .data.free;
+  const freeAfter = (
+    await api.query.System.Account.getValue(provider.address, READ_OPTS)
+  ).data.free;
   const earned = freeAfter - freeBefore;
   console.log("  Provider balance after:", freeAfter.toString());
   console.log("  Earned from agreement:", earned.toString());

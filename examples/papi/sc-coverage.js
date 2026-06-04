@@ -37,6 +37,7 @@ import {
   hexToBytes,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   sameAddress,
   toHex,
   waitForBlockProduction,
@@ -118,7 +119,8 @@ async function main() {
 
     // 1. createBucket -----------------------------------------------------
     console.log("\n[1] IWeb3Storage.createBucket(1)");
-    let nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
+    let nextBucketBefore =
+      await api.query.StorageProvider.NextBucketId.getValue(READ_OPTS);
     let r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "createBucket", [1]);
     const created = assertEvent(r.events, "StorageProvider", "BucketCreated", "createBucket");
     const bucketA = created.bucket_id;
@@ -133,7 +135,10 @@ async function main() {
       1, // Writer
     ]);
     assertEvent(r.events, "StorageProvider", "MemberSet", "setMember");
-    let bucket = await api.query.StorageProvider.Buckets.getValue(bucketA);
+    let bucket = await api.query.StorageProvider.Buckets.getValue(
+      bucketA,
+      READ_OPTS
+    );
     assert.ok(
       bucket.members.some((m) => sameAddress(m.account, member.address)),
       "Charlie should be in bucket members after setMember"
@@ -200,7 +205,8 @@ async function main() {
     // MILLIUNIT = 1e9 atomic). 10% of `1MiB × 100k blocks × 1` ≈ 1e10 atomic,
     // comfortably above ED.
     console.log("\n[8] IWeb3Storage.createBucketWithStorage(1MiB, 100k blocks, maxPrice=10)  [burn-sized]");
-    nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
+    nextBucketBefore =
+      await api.query.StorageProvider.NextBucketId.getValue(READ_OPTS);
     r = await callPrecompile(
       api,
       client,
@@ -230,7 +236,8 @@ async function main() {
     // challenge. The agreement is left open and is not ended; settlement
     // happens through chain-driven expiry, not this test.
     console.log("\n[10] IWeb3Storage.createBucketWithStorage(2KiB, 100, maxPrice=10)  [freeze/challenge target]");
-    nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
+    nextBucketBefore =
+      await api.query.StorageProvider.NextBucketId.getValue(READ_OPTS);
     r = await callPrecompile(
       api,
       client,
@@ -275,7 +282,8 @@ async function main() {
 
     // 12. createDrive -----------------------------------------------------
     console.log("\n[12] IDriveRegistry.createDrive(\"cov\", 1MiB, 50 blocks, 1 UNIT, default-providers)");
-    const nextDriveBefore = await api.query.DriveRegistry.NextDriveId.getValue();
+    const nextDriveBefore =
+      await api.query.DriveRegistry.NextDriveId.getValue(READ_OPTS);
     r = await callPrecompile(api, client, DRIVE_REGISTRY_ADDR, iDrive, "createDrive", [
       "cov",
       1n << 20n, // 1 MiB
