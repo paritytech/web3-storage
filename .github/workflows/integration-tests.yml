@@ -482,6 +482,79 @@ jobs:
             tail -10 /tmp/provider.log 2>/dev/null || echo "  (no log)"
           fi
 
+      - name: Extract coverage summary
+        if: always()
+        run: |
+          mkdir -p /tmp/coverage/report
+
+          # ── Pallet line coverage ──
+          PALLET_COV="0"
+          if [ -f /tmp/coverage/pallet.profdata ]; then
+            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
+            PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
+            if [ -n "$LLVM_COV" ] && [ -n "$PALLET_TEST_BIN" ]; then
+              PALLET_COV=$("$LLVM_COV" report "$PALLET_TEST_BIN" \
+                --instr-profile=/tmp/coverage/pallet.profdata \
+                --ignore-filename-regex='(\.cargo|rustc|target-cov|weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+                --sources pallet/src/ 2>/dev/null \
+                | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+            fi
+          fi
+
+          # ── Provider line coverage ──
+          PROVIDER_COV="0"
+          if [ -f /tmp/coverage/provider.profdata ]; then
+            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
+            if [ -n "$LLVM_COV" ]; then
+              PROVIDER_COV=$("$LLVM_COV" report ./target-cov/release/storage-provider-node \
+                --instr-profile=/tmp/coverage/provider.profdata \
+                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
+                --sources provider-node/src/ 2>/dev/null \
+                | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+            fi
+          fi
+
+          # ── JS line coverage ──
+          JS_COV="0"
+          if [ -f examples/papi/coverage/coverage-final.json ]; then
+            JS_COV=$(cd examples/papi && npx c8 report --reporter=text 2>/dev/null \
+              | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
+          fi
+
+          echo "{\"pallet\": ${PALLET_COV:-0}, \"provider\": ${PROVIDER_COV:-0}, \"js\": ${JS_COV:-0}}" \
+            > /tmp/coverage/report/coverage-summary.json
+
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  Coverage Summary"
+          echo "═══════════════════════════════════════════════════════════"
+          cat /tmp/coverage/report/coverage-summary.json | python3 -m json.tool
+          echo ""
+
+      - name: Cache coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-${{ github.sha }}
+
+      # Overwrite the well-known key so PRs always restore the latest baseline.
+      # actions/cache is immutable per key, so we delete-then-save to update.
+      - name: Update latest coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Delete the previous "latest" cache entry if it exists
+          gh cache delete "coverage-baseline-latest" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+        # Save is a separate step so the action handles the upload
+      - name: Save latest coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
       - name: Upload JS coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -653,9 +726,78 @@ jobs:
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
 
+  # ── Coverage gate ─────────────────────────────────────────────────────────
+  # On PRs: restores the cached baseline from main/dev, downloads the PR's
+  # coverage summary from the e2e job artifact, and fails if any metric
+  # (pallet, provider, JS) decreased.
+  coverage-gate:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [e2e-integration-tests]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Restore coverage baseline
+        id: baseline
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
+      - name: Download PR coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: rust-coverage
+          path: /tmp/pr-coverage
+
+      - name: Compare coverage
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  Coverage Comparison (base → PR)"
+          echo "═══════════════════════════════════════════════════════════"
+
+          # If no baseline exists yet (first run on main), skip the gate
+          if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
+            echo "No baseline found (first run?) — skipping comparison."
+            echo ""
+            echo "PR coverage:"
+            cat /tmp/pr-coverage/coverage-summary.json | python3 -m json.tool
+            exit 0
+          fi
+
+          BASE=/tmp/coverage/report/coverage-summary.json
+          PR=/tmp/pr-coverage/coverage-summary.json
+
+          echo "Base: $(cat $BASE)"
+          echo "PR:   $(cat $PR)"
+          echo ""
+
+          FAILED=0
+          for METRIC in pallet provider js; do
+            BASE_VAL=$(python3 -c "import json; d=json.load(open('$BASE')); print(d.get('$METRIC', 0))")
+            PR_VAL=$(python3 -c "import json; d=json.load(open('$PR')); print(d.get('$METRIC', 0))")
+
+            DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
+            if [ "$DECREASED" = "1" ]; then
+              echo "FAIL: $METRIC coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"
+              FAILED=1
+            else
+              echo "PASS: $METRIC coverage: ${BASE_VAL}% → ${PR_VAL}%"
+            fi
+          done
+
+          echo ""
+          if [ "$FAILED" = "1" ]; then
+            echo "Coverage decreased — add tests to cover new or modified code."
+            exit 1
+          else
+            echo "All coverage metrics maintained or improved."
+          fi
+
   integration-tests-complete:
     name: Integration Tests
-    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests]
+    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests, coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     steps:

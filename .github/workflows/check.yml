@@ -142,11 +142,84 @@ jobs:
         run: |
           cargo test -p pallet-drive-registry --features runtime-benchmarks
 
+  pallet-coverage:
+    name: Pallet coverage
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, check]
+    if: github.event_name == 'pull_request'
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    env:
+      SKIP_WASM_BUILD: 1
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - name: Checkout PR sources (with base branch history)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "web3-storage-cache-coverage"
+          save-if: false
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Measure PR coverage
+        run: |
+          PR_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+            --summary-only 2>&1 \
+            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          echo "PR_COV=$PR_COV" >> $GITHUB_ENV
+          echo "PR line coverage: ${PR_COV}%"
+
+      - name: Measure base branch coverage
+        run: |
+          # Stash any workspace changes, switch to base branch
+          git stash --include-untracked 2>/dev/null || true
+          git checkout ${{ github.event.pull_request.base.sha }}
+
+          # Clean previous coverage artefacts
+          cargo llvm-cov clean --workspace 2>/dev/null || true
+
+          BASE_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+            --summary-only 2>&1 \
+            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          echo "BASE_COV=$BASE_COV" >> $GITHUB_ENV
+          echo "Base line coverage: ${BASE_COV}%"
+
+          # Return to PR branch
+          git checkout -
+          git stash pop 2>/dev/null || true
+
+      - name: Compare coverage
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  Pallet Coverage: base ${BASE_COV}% → PR ${PR_COV}%"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+
+          # Compare using awk (handles decimals)
+          DECREASED=$(awk "BEGIN { print ($PR_COV < $BASE_COV) ? 1 : 0 }")
+          if [ "$DECREASED" = "1" ]; then
+            echo "FAILED: Coverage decreased from ${BASE_COV}% to ${PR_COV}%"
+            echo "Add tests to cover the new or modified code."
+            exit 1
+          else
+            echo "PASSED: Coverage did not decrease (${BASE_COV}% → ${PR_COV}%)"
+          fi
+
   # Aggregate gate — the stable check to require in branch protection, instead
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
   basic-checks:
     name: Basic checks
-    needs: [check-fmt, check, clippy, test, benchmarks]
+    needs: [check-fmt, check, clippy, test, benchmarks, pallet-coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
