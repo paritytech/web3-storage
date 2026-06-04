@@ -405,8 +405,8 @@ jobs:
             LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
             if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
               "$LLVM_PROFDATA" merge -sparse /tmp/coverage/pallet-*.profraw -o /tmp/coverage/pallet.profdata
-              # Find the test binary (cargo test builds it under target-cov)
-              PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
+              # Find the test binary — cargo test (no --release) builds under debug/
+              PALLET_TEST_BIN=$(find ./target-cov/debug/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
               if [ -n "$PALLET_TEST_BIN" ]; then
                 echo ""
                 echo "═══════════════════════════════════════════════════════════"
@@ -436,8 +436,11 @@ jobs:
       - name: Stop services and generate Rust coverage
         if: always()
         run: |
-          # With %c (continuous mode), profraw is mmap'd and already contains
-          # all coverage data — we can safely SIGKILL without losing anything.
+          # SIGTERM first so the LLVM atexit handler can flush profraw
+          # (continuous mode %c may not be supported on all LLVM versions).
+          # Fall back to SIGKILL after a grace period.
+          kill "$PROVIDER_PID" 2>/dev/null || pkill -f "storage-provider-node" 2>/dev/null || true
+          sleep 5
           kill -9 "$PROVIDER_PID" 2>/dev/null || pkill -9 -f "storage-provider-node" 2>/dev/null || true
           pkill -f "polkadot-omni-node" 2>/dev/null || true
           pkill -f "polkadot" 2>/dev/null || true
@@ -491,7 +494,7 @@ jobs:
           PALLET_COV="0"
           if [ -f /tmp/coverage/pallet.profdata ]; then
             LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
-            PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
+            PALLET_TEST_BIN=$(find ./target-cov/debug/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
             if [ -n "$LLVM_COV" ] && [ -n "$PALLET_TEST_BIN" ]; then
               PALLET_COV=$("$LLVM_COV" report "$PALLET_TEST_BIN" \
                 --instr-profile=/tmp/coverage/pallet.profdata \
