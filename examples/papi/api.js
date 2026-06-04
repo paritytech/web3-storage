@@ -6,6 +6,7 @@ import {
   READ_OPTS,
   requireOneEvent,
   submitTx,
+  submitTxFinalized,
   toHex,
 } from "./common.js";
 
@@ -135,7 +136,10 @@ export async function submitClientCheckpoint(api, client, provider, bucketId, ck
 }
 
 export async function challengeOffchain(api, client, provider, bucketId, upload) {
-  const result = await submitTx(
+  // Finalized, not in-block: the returned challenge_id embeds the creation
+  // block height; respond_to_challenge references it. A best-block reorg of the
+  // creating tx would invalidate the id (-> ChallengeNotFound on respond).
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
       provider: provider.address,
@@ -159,7 +163,9 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
 }
 
 export async function challengeCheckpoint(api, client, provider, bucketId, leafIndex) {
-  const result = await submitTx(
+  // Finalized, not in-block: see challengeOffchain — the challenge_id must
+  // survive to the respond_to_challenge that references it.
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
       provider: provider.address,

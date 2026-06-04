@@ -13,7 +13,13 @@
 import { Binary } from "@polkadot-api/substrate-bindings";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 
-import { hexToBytes, requireOneEvent, submitTx, toHex } from "./common.js";
+import {
+  hexToBytes,
+  requireOneEvent,
+  submitTx,
+  submitTxFinalized,
+  toHex,
+} from "./common.js";
 
 /**
  * Compute the EVM-side H160 of a substrate account via `AccountId32Mapper`'s
@@ -113,7 +119,16 @@ export async function callContract(
   signer,
   contractAddressBytes,
   data,
-  { value = 0n, gasLimit = DEFAULT_GAS_LIMIT, storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT } = {}
+  {
+    value = 0n,
+    gasLimit = DEFAULT_GAS_LIMIT,
+    storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT,
+    // Set when a later tx references this call's on-chain effect by id (e.g. a
+    // precompile that creates a challenge, before respond_to_challenge). Waits
+    // for finalization so a best-block reorg can't roll the id out from under
+    // the dependent tx. See submitTxFinalized.
+    finalized = false,
+  } = {}
 ) {
   const tx = api.tx.Revive.call({
     dest: Binary.fromBytes(contractAddressBytes),
@@ -122,7 +137,8 @@ export async function callContract(
     storage_deposit_limit: storageDepositLimit,
     data: Binary.fromBytes(data),
   });
-  return submitTx(tx, signer.signer, "Revive.call");
+  const submit = finalized ? submitTxFinalized : submitTx;
+  return submit(tx, signer.signer, "Revive.call");
 }
 
 /**

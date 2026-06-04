@@ -365,8 +365,15 @@ export async function waitForTransaction(
  * parachain, finality lags inclusion by several blocks (~36s vs ~6s per tx);
  * waiting for finalization on every extrinsic is what pushed the integration
  * demos past the 30-min CI cap. The demos verify outcomes via the emitted
- * events, which are already present at inclusion — the only thing given up is
- * reorg-safety, which is moot on a single-collator local chain.
+ * events, which are already present at inclusion.
+ *
+ * Caveat: best blocks are NOT reorg-proof. Even with a single collator the
+ * parachain's best block runs ahead of the relay-backed/finalized block and
+ * can be discarded before inclusion, rolling back the tx. That's fine for a
+ * self-contained tx the demo only reads events from, but NOT for a tx whose
+ * on-chain effect a LATER tx references by id (e.g. creating a challenge then
+ * responding to it): use `submitTxFinalized` for the creating tx so the id is
+ * stable. See its doc below.
  *
  * Like the finalized path it replaces, this asserts dispatch success: PAPI does
  * NOT throw when an extrinsic dispatches with an error (only on an invalid tx —
@@ -383,6 +390,32 @@ export async function submitTx(
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
   return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+}
+
+/**
+ * Like `submitTx`, but resolves only once the tx is in a FINALIZED block.
+ *
+ * Slower (~6 blocks of finality lag) — use sparingly, ONLY where a subsequent
+ * tx depends on this one's on-chain effect by id. The motivating case: a
+ * challenge's id embeds the block height it was created at, and responding to
+ * it must reference that exact id. If the creating tx is merely in-block, a
+ * best-block reorg can roll it back, leaving the response to fail with
+ * `ChallengeNotFound`. Finalizing the creation pins the id so the response
+ * (which can stay in-block) always finds it.
+ */
+export async function submitTxFinalized(
+  tx,
+  signer,
+  label,
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS
+) {
+  return waitForTransaction(
+    tx,
+    signer,
+    label,
+    TX_MODE_FINALIZED_BLOCK,
+    timeoutMs
+  );
 }
 
 export async function providerFetch(providerUrl, path, opts = {}) {

@@ -258,12 +258,17 @@ async function main() {
     await submitClientCheckpoint(api, client, provider, bucketC, ck);
 
     console.log("\n[10a] IWeb3Storage.challengeCheckpoint(bucketC, provider, leafIdx, chunkIdx=0)");
-    r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "challengeCheckpoint", [
-      bucketC,
-      toHex(providerBytes32),
-      BigInt(upload.commit.leaf_indices[0]),
-      0n,
-    ]);
+    // Finalize the challenge-creating call: respond_to_challenge below
+    // references the challenge_id, which a best-block reorg could invalidate.
+    r = await callPrecompile(
+      api,
+      client,
+      WEB3_STORAGE_ADDR,
+      iWeb3,
+      "challengeCheckpoint",
+      [bucketC, toHex(providerBytes32), BigInt(upload.commit.leaf_indices[0]), 0n],
+      { finalized: true }
+    );
     const challenge = assertEvent(r.events, "StorageProvider", "ChallengeCreated", "challengeCheckpoint");
 
     console.log("    [substrate] respondToChallenge");

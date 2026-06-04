@@ -37,6 +37,7 @@ import {
   makeSigner,
   parseProviderClientArgs,
   READ_OPTS,
+  requireOneEvent,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -61,7 +62,7 @@ async function setupAgreement(api, client, provider, bucketId) {
     return;
   }
   const maxBytes = 1_073_741_824n; // 1 GiB
-  const duration = 50;
+  const duration = 15;
   console.log(
     "  Requesting agreement (%s), duration=%d blocks...",
     client.seed,
@@ -126,18 +127,23 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   console.log("PASSED: Provider received payment!");
 }
 
-function watchDefendedEvents(api) {
-  const events = [];
-  const sub = api.event.StorageProvider.ChallengeDefended.watch().subscribe(
-    (event) => {
-      console.log("  >> ChallengeDefended event:", {
-        deadline: event.payload.challenge_id.deadline,
-        index: event.payload.challenge_id.index,
-      });
-      events.push(event);
-    }
+// Pull the ChallengeDefended event straight from the `respond_to_challenge`
+// transaction's in-block events. A background `api.event...watch()` only sees
+// FINALIZED blocks, which lag in-block submission by ~6 blocks — so a count
+// taken right after responding would read 0. The dispatch emits the event in
+// the same block the tx lands in, so the tx result is the authoritative,
+// race-free source.
+function recordDefended(api, result, label) {
+  const event = requireOneEvent(
+    result.events,
+    api.event.StorageProvider.ChallengeDefended,
+    label
   );
-  return { events, unsubscribe: () => sub.unsubscribe() };
+  console.log("  >> ChallengeDefended event:", {
+    deadline: event.challenge_id.deadline,
+    index: event.challenge_id.index,
+  });
+  return event;
 }
 
 async function main() {
@@ -153,7 +159,7 @@ async function main() {
   await waitForChainReady(api);
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
-  const defended = watchDefendedEvents(api);
+  const defendedEvents = [];
 
   try {
     console.log("\n=== Step 1: Setup ===");
@@ -181,7 +187,15 @@ async function main() {
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
     const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
-    await respondToChallenge(api, provider, offchainId, offchainProof);
+    const offchainResp = await respondToChallenge(
+      api,
+      provider,
+      offchainId,
+      offchainProof
+    );
+    defendedEvents.push(
+      recordDefended(api, offchainResp, "ChallengeDefended (offchain)")
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
@@ -211,16 +225,26 @@ async function main() {
       PROVIDER_URL,
       checkpointId
     );
-    await respondToChallenge(api, provider, checkpointId, checkpointProof);
+    const checkpointResp = await respondToChallenge(
+      api,
+      provider,
+      checkpointId,
+      checkpointProof
+    );
+    defendedEvents.push(
+      recordDefended(api, checkpointResp, "ChallengeDefended (checkpoint)")
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Verifying challenge results ===");
-    await new Promise((r) => setTimeout(r, 3000));
-    console.log("ChallengeDefended events: %d (expected: 2)", defended.events.length);
+    console.log(
+      "ChallengeDefended events: %d (expected: 2)",
+      defendedEvents.length
+    );
     assert.strictEqual(
-      defended.events.length,
+      defendedEvents.length,
       2,
-      `Expected 2 ChallengeDefended events, got ${defended.events.length}`
+      `Expected 2 ChallengeDefended events, got ${defendedEvents.length}`
     );
     console.log("PASSED: Both challenges were defended!");
 
@@ -231,7 +255,6 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
-    defended.unsubscribe();
     papi.destroy();
   }
 }
