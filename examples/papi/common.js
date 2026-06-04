@@ -335,15 +335,22 @@ export async function waitForTransaction(
 
 /**
  * Sign + submit a transaction, assert it dispatched successfully, and return
- * the PAPI result (`{ ok, events, block, ... }`).
+ * the in-block PAPI event (`{ ok, events, block, ... }`).
  *
- * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }`
- * and does NOT throw when dispatch fails — only when the tx is invalid (bad
- * signature, low nonce, etc). Without this helper, a failed extrinsic looks
- * indistinguishable from a successful one with no events, and the failure
- * surfaces later as a confusing "Expected exactly 1 X event, got 0".
+ * Resolves at best-block INCLUSION, not finalization. On a local zombienet
+ * parachain, finality lags inclusion by several blocks (~36s vs ~6s per tx);
+ * waiting for finalization on every extrinsic is what pushed the integration
+ * demos past the 30-min CI cap. The demos verify outcomes via the emitted
+ * events, which are already present at inclusion — the only thing given up is
+ * reorg-safety, which is moot on a single-collator local chain.
  *
- * Bounded by `timeoutMs` so a stuck mempool can't hang the example.
+ * Like the finalized path it replaces, this asserts dispatch success: PAPI does
+ * NOT throw when an extrinsic dispatches with an error (only on an invalid tx —
+ * bad signature, low nonce, etc), so without this a failed extrinsic looks
+ * indistinguishable from a successful one with no events and surfaces later as
+ * a confusing "Expected exactly 1 X event, got 0". `waitForTransaction` raises
+ * on `ok === false` and is bounded by `timeoutMs` so a stuck mempool can't hang
+ * the example.
  */
 export async function submitTx(
   tx,
@@ -351,28 +358,7 @@ export async function submitTx(
   label,
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
-  let timer;
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new Error(`${label}: signAndSubmit timed out after ${timeoutMs}ms`)
-        ),
-      timeoutMs
-    );
-  });
-  let result;
-  try {
-    result = await Promise.race([tx.signAndSubmit(signer), timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!result.ok) {
-    throw new Error(
-      `${label} dispatch failed: ${formatDispatchError(result.dispatchError)}`
-    );
-  }
-  return result;
+  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
 }
 
 export async function providerFetch(providerUrl, path, opts = {}) {
