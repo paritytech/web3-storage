@@ -1199,14 +1199,15 @@ mod establish_storage_agreement_tests {
 
     #[test]
     fn accepts_nonce_at_window_edge_and_rejects_one_past() {
-        // After advancing hsn to 300, nonce 45 (distance 255) is still in
-        // the window, but nonce 44 (distance 256) is one slot past it.
+        // After advancing hsn to 3000, the nonce at distance
+        // REPLAY_WINDOW_BITS - 1 is still in the window, but the one at
+        // distance REPLAY_WINDOW_BITS is one slot past it.
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let settings = default_test_settings(0, None);
             let provider_pk = register_signing_provider(2, "//Provider", 5_000, settings);
 
-            let advance = primary_terms(1, 1, 100, 0, 1_000, 300);
+            let advance = primary_terms(1, 1, 100, 0, 1_000, 3000);
             let sig = sign_terms(&provider_pk, &advance);
             assert_ok!(StorageProvider::establish_storage_agreement(
                 RuntimeOrigin::signed(1),
@@ -1214,10 +1215,10 @@ mod establish_storage_agreement_tests {
                 advance,
                 sig,
             ));
-            assert_eq!(ProviderReplayStates::<Test>::get(2).hsn, 300);
+            assert_eq!(ProviderReplayStates::<Test>::get(2).hsn, 3000);
 
             // Distance == REPLAY_WINDOW_BITS - 1 ⇒ accepted.
-            let edge_nonce = 300 - (REPLAY_WINDOW_BITS as u64 - 1);
+            let edge_nonce = 3000 - (REPLAY_WINDOW_BITS as u64 - 1);
             let at_edge = primary_terms(1, 1, 100, 0, 1_000, edge_nonce);
             let sig = sign_terms(&provider_pk, &at_edge);
             assert_ok!(StorageProvider::establish_storage_agreement(
@@ -1228,7 +1229,7 @@ mod establish_storage_agreement_tests {
             ));
 
             // Distance == REPLAY_WINDOW_BITS ⇒ rejected.
-            let past_edge_nonce = 300 - REPLAY_WINDOW_BITS as u64;
+            let past_edge_nonce = 3000 - REPLAY_WINDOW_BITS as u64;
             let past_edge = primary_terms(1, 1, 100, 0, 1_000, past_edge_nonce);
             let sig = sign_terms(&provider_pk, &past_edge);
             assert_noop!(
