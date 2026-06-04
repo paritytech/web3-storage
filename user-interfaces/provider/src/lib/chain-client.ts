@@ -12,6 +12,7 @@ import { getWsProvider } from 'polkadot-api/ws'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
+import { getSs58Prefix, isSameAddress } from '@web3-storage/papi'
 
 export type { PolkadotClient }
 type ParachainApi = TypedApi<typeof parachain>
@@ -74,6 +75,10 @@ export async function getChainProperties(): Promise<{
   tokenSymbol: string
   blockTimeMs: number
   minProviderStake: bigint
+  ss58Prefix: number
+  specName: string
+  specVersion: number
+  genesisHash: string
 }> {
   // Defaults match the current runtime; overridden where the chain exposes
   // them via constants / spec data.
@@ -81,11 +86,16 @@ export async function getChainProperties(): Promise<{
   let tokenSymbol = 'UNIT'
   let blockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
+  let ss58Prefix = getSs58Prefix()
+  let specName = ''
+  let specVersion = 0
+  let genesisHash = ''
 
   if (client && api) {
     try {
       const spec = await client.getChainSpecData()
-      const props = spec.properties as { tokenDecimals?: number | number[]; tokenSymbol?: string | string[] } | undefined
+      genesisHash = spec.genesisHash || genesisHash
+      const props = spec.properties as { tokenDecimals?: number | number[]; tokenSymbol?: string | string[]; ss58Format?: number } | undefined
       if (props) {
         const dec = props.tokenDecimals
         if (typeof dec === 'number') tokenDecimals = dec
@@ -93,8 +103,20 @@ export async function getChainProperties(): Promise<{
         const sym = props.tokenSymbol
         if (typeof sym === 'string') tokenSymbol = sym
         else if (Array.isArray(sym) && sym.length > 0) tokenSymbol = sym[0]
+        if (typeof props.ss58Format === 'number') ss58Prefix = props.ss58Format
       }
     } catch { /* use defaults */ }
+
+    // If chain spec didn't have ss58Format, try the runtime constant
+    try {
+      ss58Prefix = await api.constants.System.SS58Prefix()
+    } catch { /* use default */ }
+
+    try {
+      const version = await api.constants.System.Version()
+      specName = version.spec_name
+      specVersion = version.spec_version
+    } catch { /* use default */ }
 
     try {
       minProviderStake = await api.constants.StorageProvider.MinProviderStake()
@@ -107,7 +129,7 @@ export async function getChainProperties(): Promise<{
     } catch { /* use default */ }
   }
 
-  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake }
+  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
 }
 
 export async function getGenesisHash(): Promise<string> {
@@ -347,7 +369,7 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
   const out: OnChainAgreement[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
-    if (providerAddr !== address) continue
+    if (!isSameAddress(providerAddr, address)) continue
     const bucketId = Number(bucketIdRaw)
     const expiresAt = value.expires_at
     let status: 'active' | 'expired' | 'terminated' = 'active'
@@ -375,7 +397,7 @@ export async function getAgreementRequests(address: string): Promise<OnChainAgre
   const out: OnChainAgreementRequest[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
-    if (providerAddr !== address) continue
+    if (!isSameAddress(providerAddr, address)) continue
     out.push({
       bucketId: Number(bucketIdRaw),
       requester: value.requester,
@@ -499,7 +521,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
     const deadline = Number(keyArgs[0])
     for (let idx = 0; idx < value.length; idx++) {
       const ch = value[idx]
-      if (ch.provider !== address) continue
+      if (!isSameAddress(ch.provider, address)) continue
       challenges.push({
         id: idx,
         bucketId: Number(ch.bucket_id),
@@ -623,7 +645,7 @@ export function subscribeToChallengeEvents(
   const created = a.event.StorageProvider.ChallengeCreated.watch().subscribe({
     next: ({ block, events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!isSameAddress(payload.provider, address)) continue
         onChallenge({
           id: payload.challenge_id.index,
           bucketId: Number(payload.bucket_id),
@@ -646,7 +668,7 @@ export function subscribeToChallengeEvents(
   const defended = a.event.StorageProvider.ChallengeDefended.watch().subscribe({
     next: ({ events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!isSameAddress(payload.provider, address)) continue
         onChallenge({
           id: Number(payload.challenge_id.index),
           bucketId: 0,
@@ -664,7 +686,7 @@ export function subscribeToChallengeEvents(
   const slashed = a.event.StorageProvider.ChallengeSlashed.watch().subscribe({
     next: ({ events }) => {
       for (const { payload } of events) {
-        if (payload.provider !== address) continue
+        if (!isSameAddress(payload.provider, address)) continue
         onChallenge({
           id: Number(payload.challenge_id.index),
           bucketId: 0,

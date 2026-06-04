@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input";
 interface NewFolderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (name: string) => void;
+  onConfirm: (name: string) => Promise<void>;
 }
 
 export default function NewFolderDialog({
@@ -22,17 +23,24 @@ export default function NewFolderDialog({
   onConfirm,
 }: NewFolderDialogProps) {
   const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
 
-  const handleSubmit = () => {
-    if (name.trim()) {
-      onConfirm(name.trim());
+  const handleSubmit = async () => {
+    if (!name.trim() || creating) return;
+    setCreating(true);
+    try {
+      await onConfirm(name.trim());
       setName("");
       onOpenChange(false);
+    } catch {
+      // Error toast is handled by the caller (useDrive.createFolder)
+    } finally {
+      setCreating(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { if (!creating) onOpenChange(v); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New Folder</DialogTitle>
@@ -46,13 +54,21 @@ export default function NewFolderDialog({
           placeholder="Folder name"
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           autoFocus
+          disabled={creating}
         />
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!name.trim()}>
-            Create
+          <Button onClick={handleSubmit} disabled={!name.trim() || creating}>
+            {creating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Creating...
+              </>
+            ) : (
+              "Create"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

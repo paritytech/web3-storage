@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
 import { isValidSs58 } from "@/lib/crypto";
+import { isSameAddress } from "@web3-storage/papi";
 import {
   Dialog,
   DialogContent,
@@ -57,11 +58,14 @@ export default function ManageAccessDialog({
   const [adding, setAdding] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const isAdmin = members.some(
-    (m) => m.account === signerAddress && m.role === "Admin",
-  );
+  // Compare by raw bytes: member accounts come from chain (runtime prefix)
+  // while signerAddress / typed input may use a different SS58 prefix.
+  const isMe = (account: string) =>
+    signerAddress != null && isSameAddress(account, signerAddress);
+  const isMember = (account: string) =>
+    members.some((m) => isSameAddress(m.account, account));
 
-  const memberAddresses = useMemo(() => new Set(members.map((m) => m.account)), [members]);
+  const isAdmin = members.some((m) => isMe(m.account) && m.role === "Admin");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -89,12 +93,12 @@ export default function ManageAccessDialog({
       setValidationError("Invalid SS58 address");
       return;
     }
-    if (memberAddresses.has(newAccount.trim())) {
+    if (isMember(newAccount.trim())) {
       setValidationError("This account is already a member");
       return;
     }
     setValidationError(null);
-  }, [newAccount, memberAddresses]);
+  }, [newAccount, members]);
 
   const handleAdd = async () => {
     const trimmed = newAccount.trim();
@@ -103,7 +107,7 @@ export default function ManageAccessDialog({
       setValidationError("Invalid SS58 address");
       return;
     }
-    if (memberAddresses.has(trimmed)) {
+    if (isMember(trimmed)) {
       setValidationError("This account is already a member");
       return;
     }
@@ -193,7 +197,7 @@ export default function ManageAccessDialog({
                       <td className="py-1.5">{roleBadge(m.role)}</td>
                       {isAdmin && (
                         <td className="py-1.5 text-right">
-                          {m.account !== signerAddress && (
+                          {!isMe(m.account) && (
                             <Button
                               data-testid={`member-remove-${m.account}`}
                               variant="ghost"

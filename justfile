@@ -60,7 +60,18 @@ _download BIN URL:
         exit 0
     fi
     echo "Downloading {{BIN}}..."
-    curl -L -o .bin/{{BIN}} "{{URL}}"
+    for attempt in 1 2 3; do
+        echo "  attempt $attempt/3 ..."
+        if curl -L --retry 2 --retry-delay 5 --connect-timeout 30 --max-time 600 \
+            -o .bin/{{BIN}} "{{URL}}"; then
+            break
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            echo "Failed to download {{BIN}} after 3 attempts"
+            exit 1
+        fi
+        sleep $((attempt * 5))
+    done
     chmod +x .bin/{{BIN}}
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 

@@ -22,6 +22,7 @@ import { truncateHash } from "@/lib/utils";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { seedToKeypair, toSs58 } from "@/lib/crypto";
+import { isSameAddress } from "@web3-storage/papi";
 
 interface Account {
   name: string;
@@ -51,7 +52,14 @@ export default function Accounts() {
   const [customName, setCustomName] = useState("");
   const [settingAccount, setSettingAccount] = useState<string | null>(null);
 
-  const isActive = (account: Account) => account.address === signerAddress;
+  // Compare by raw bytes: dev-account addresses are encoded at module load
+  // (default prefix) while `signerAddress` follows the connected runtime, so
+  // string equality can spuriously fail across prefixes.
+  const isActive = (account: Account) =>
+    signerAddress != null && isSameAddress(account.address, signerAddress);
+
+  const isDevAccount = (address: string) =>
+    DEV_ACCOUNTS.some((d) => isSameAddress(d.address, address));
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -128,7 +136,7 @@ export default function Accounts() {
 
   const handleDeleteAccount = (address: string) => {
     // Don't allow deleting dev accounts
-    if (DEV_ACCOUNTS.some((a) => a.address === address)) {
+    if (isDevAccount(address)) {
       toast({
         title: "Error",
         description: "Cannot delete dev accounts",
@@ -297,7 +305,7 @@ export default function Accounts() {
                           Active
                         </span>
                       )}
-                      {DEV_ACCOUNTS.some((d) => d.address === account.address) && (
+                      {isDevAccount(account.address) && (
                         <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
                           Dev
                         </span>
@@ -336,7 +344,7 @@ export default function Accounts() {
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
-                  {!DEV_ACCOUNTS.some((d) => d.address === account.address) && (
+                  {!isDevAccount(account.address) && (
                     <Button
                       data-testid={`accounts-delete-${account.name}`}
                       variant="ghost"

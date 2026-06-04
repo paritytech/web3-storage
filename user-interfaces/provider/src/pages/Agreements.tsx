@@ -9,9 +9,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table'
-import { useAgreements } from '@/state/provider.state'
+import { useAgreements, useAgreementRequests } from '@/state/provider.state'
 import { RequireProvider } from '@/components/RequireProvider'
-import { formatAddress, formatBytes, formatTokens, formatBlockNumber } from '@/utils/format'
+import { formatAddress, formatBytes, formatTokens, formatBlockNumber, formatDuration } from '@/utils/format'
 
 export function Agreements() {
   return (
@@ -23,6 +23,7 @@ export function Agreements() {
 
 function AgreementsContent() {
   const agreements = useAgreements()
+  const agreementRequests = useAgreementRequests()
   const activeAgreements = agreements.filter((a) => a.status === 'active')
   const expiredAgreements = agreements.filter((a) => a.status !== 'active')
 
@@ -34,7 +35,15 @@ function AgreementsContent() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-400">Pending Requests</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{agreementRequests.length}</div>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-gray-400">Active</CardTitle>
@@ -71,6 +80,48 @@ function AgreementsContent() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pending Requests */}
+      {agreementRequests.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pending Requests</CardTitle>
+            <CardDescription>Agreement requests awaiting acceptance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bucket</TableHead>
+                  <TableHead>Requester</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Payment Locked</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Expires At</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {agreementRequests.map((req) => (
+                  <TableRow key={`req-${req.bucketId}`}>
+                    <TableCell className="font-mono">#{req.bucketId}</TableCell>
+                    <TableCell>
+                      <span className="font-mono">{formatAddress(req.requester)}</span>
+                    </TableCell>
+                    <TableCell>{formatBytes(Number(req.maxBytes))}</TableCell>
+                    <TableCell>{formatTokens(req.paymentLocked)}</TableCell>
+                    <TableCell>{formatDuration(req.duration)}</TableCell>
+                    <TableCell>{formatBlockNumber(req.expiresAt)}</TableCell>
+                    <TableCell>
+                      <Badge variant="warning">Pending</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Active Agreements */}
       <Card>

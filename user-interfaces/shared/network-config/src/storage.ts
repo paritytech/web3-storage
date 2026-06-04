@@ -55,6 +55,25 @@ export function clearSelectedNetwork(): void {
 }
 
 /**
+ * Append the current network selection to a URL as query params, mirroring
+ * what `loadFromUrl()` consumes on the receiving side. Used by the apps'
+ * "back to home" link so the landing page reflects the in-app selection even
+ * in dev, where each app runs on its own origin and localStorage isn't shared.
+ */
+export function withNetworkHandoff(
+  base: string,
+  network: { id: NetworkId; parachainWs?: string; providerHttp?: string },
+): string {
+  const params = new URLSearchParams()
+  params.set('network', network.id)
+  if (network.id === 'custom') {
+    if (network.parachainWs) params.set('parachainWs', network.parachainWs)
+    if (network.providerHttp) params.set('providerHttp', network.providerHttp)
+  }
+  return base + (base.includes('?') ? '&' : '?') + params.toString()
+}
+
+/**
  * Pick up a network selection passed via URL (e.g. landing-page handoff).
  * Reads ?network=, optionally ?parachainWs=&providerHttp= for custom, persists
  * via saveSelectedNetwork(), then strips the params from the URL so a refresh

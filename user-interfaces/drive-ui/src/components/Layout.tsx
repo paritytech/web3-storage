@@ -16,6 +16,7 @@ import {
   selectNetwork,
   selectCustomNetwork,
 } from "@/state/network.state";
+import { withNetworkHandoff } from "@web3-storage/network-config";
 import { NetworkPicker } from "@web3-storage/network-picker";
 import { formatTokens, truncateHash } from "@/lib/utils";
 import DriveList from "./DriveList";
@@ -38,7 +39,7 @@ export default function Layout() {
       <aside className="w-64 flex-shrink-0 border-r bg-card flex flex-col">
         <div className="flex items-center gap-2.5 px-4 py-4 border-b">
           <a
-            href={LANDING_URL}
+            href={withNetworkHandoff(LANDING_URL, selectedNetwork)}
             data-testid="back-to-landing"
             title="Back to home"
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
