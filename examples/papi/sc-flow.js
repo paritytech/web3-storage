@@ -39,6 +39,7 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   requireOneEvent,
   toHex,
   waitForBlockProduction,
@@ -182,16 +183,18 @@ async function main() {
       bucketId,
       toHex(providerBytes32),
     ]);
-    const freeBefore = (await api.query.System.Account.getValue(provider.address))
-      .data.free;
+    const freeBefore = (
+      await api.query.System.Account.getValue(provider.address, READ_OPTS)
+    ).data.free;
     const endResult = await callContract(
       api,
       client,
       deployed.addressBytes,
       endData
     );
-    const freeAfter = (await api.query.System.Account.getValue(provider.address))
-      .data.free;
+    const freeAfter = (
+      await api.query.System.Account.getValue(provider.address, READ_OPTS)
+    ).data.free;
     const earned = freeAfter - freeBefore;
     console.log("  provider earned:", earned.toString(), "atomic units");
     assert.ok(earned > 0n, `expected provider to earn tokens, got ${earned}`);

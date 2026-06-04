@@ -33,6 +33,7 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   sameAddress,
   toHex,
   waitForAgreementAcceptance,
@@ -56,7 +57,10 @@ const OBJECT_KEYS = {
 };
 
 async function listObjects(api, s3BucketId) {
-  const entries = await api.query.S3Registry.Objects.getEntries(s3BucketId);
+  const entries = await api.query.S3Registry.Objects.getEntries(
+    s3BucketId,
+    READ_OPTS
+  );
   console.log("  bucket contains %d object(s):", entries.length);
   for (const { keyArgs, value } of entries) {
     const key = new TextDecoder().decode(keyArgs[1].asBytes());
@@ -68,7 +72,10 @@ async function listObjects(api, s3BucketId) {
       new TextDecoder().decode(value.content_type.asBytes())
     );
   }
-  const bucketInfo = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
+  const bucketInfo = await api.query.S3Registry.S3Buckets.getValue(
+    s3BucketId,
+    READ_OPTS
+  );
   console.log(
     "  bucket stats: object_count=%s total_size=%s",
     bucketInfo.object_count,
@@ -182,7 +189,10 @@ async function main() {
     for (const key of Object.values(OBJECT_KEYS)) {
       await deleteObjectMetadata(api, client, s3BucketId, key);
     }
-    const afterDelete = await api.query.S3Registry.Objects.getEntries(s3BucketId);
+    const afterDelete = await api.query.S3Registry.Objects.getEntries(
+      s3BucketId,
+      READ_OPTS
+    );
     assert.strictEqual(afterDelete.length, 0, "Expected empty bucket after delete");
     console.log("  Bucket is empty");
 

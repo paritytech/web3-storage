@@ -113,7 +113,7 @@ export async function waitForBlockProduction(api, { timeoutSec = 300 } = {}) {
   const deadline = Date.now() + timeoutSec * 1_000;
   while (Date.now() < deadline) {
     try {
-      const n = await api.query.System.Number.getValue();
+      const n = await api.query.System.Number.getValue(READ_OPTS);
       const blockNumber = typeof n === "bigint" ? Number(n) : Number(n);
       if (blockNumber > 0) {
         console.log(`✅ Chain producing blocks (head=#${blockNumber})`);
@@ -149,7 +149,10 @@ export class NonceManager {
   }
   /** Read the on-chain nonce for `address` and build a manager from it. */
   static async forAccount(api, address) {
-    const account = await api.query.System.Account.getValue(address);
+    // Best block, not finalized: with in-block tx submission the on-chain
+    // nonce advances at the best block; a finalized read returns a stale,
+    // lower nonce and the manager would collide with already-applied txs.
+    const account = await api.query.System.Account.getValue(address, READ_OPTS);
     return new NonceManager(account.nonce);
   }
 }
@@ -208,6 +211,23 @@ export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
  * like a missing event downstream.
  */
 export const DEFAULT_TX_TIMEOUT_MS = 180_000;
+
+/**
+ * Options object for storage reads (`getValue` / `getEntries`).
+ *
+ * `submitTx` resolves at in-block INCLUSION, not finalization, so any read that
+ * must observe a just-submitted write has to target the best (non-finalized)
+ * block — a default (finalized) read races the ~6-block finality lag and sees
+ * stale state. Spread this into every storage query in the demos:
+ *
+ *   api.query.Pallet.Item.getValue(key, READ_OPTS)
+ *
+ * This is the single switch for the whole demo suite: flip `at` to "finalized"
+ * here to make every read observe finalized state instead — e.g. on a chain
+ * with fast finality where reorg-safety is preferred over read-your-writes
+ * latency.
+ */
+export const READ_OPTS = { at: "best" };
 
 /**
  * Transaction "doneness" thresholds for `waitForTransaction`. Pick the
@@ -390,7 +410,8 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   // modules finish initialization before this function ever runs.
   const { registerProvider, updateProviderSettings } = await import("./api.js");
   const existing = await api.query.StorageProvider.Providers.getValue(
-    provider.address
+    provider.address,
+    READ_OPTS
   );
   if (!existing) {
     console.log("  Registering provider", provider.address);
@@ -454,7 +475,8 @@ export async function waitForAgreementAcceptance(
   while (Date.now() < deadline) {
     const req = await api.query.StorageProvider.AgreementRequests.getValue(
       bucketId,
-      providerAddress
+      providerAddress,
+      READ_OPTS
     );
     if (!req) return;
     await new Promise((r) => setTimeout(r, pollMs));
@@ -467,7 +489,10 @@ export async function waitForAgreementAcceptance(
 }
 
 export async function printBucketMembers(api, bucketId, label = "members") {
-  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  const bucket = await api.query.StorageProvider.Buckets.getValue(
+    bucketId,
+    READ_OPTS
+  );
   console.log(`  [${label}] bucket ${bucketId}:`);
   for (const m of bucket.members) {
     console.log(`    - ${m.account}  role=${fmtRole(m.role)}`);
@@ -535,7 +560,7 @@ const KNOWN_DEV_SEEDS = [
  */
 export async function ensureSoleAcceptingProvider(api, keep) {
   const toggled = [];
-  const others = await api.query.StorageProvider.Providers.getEntries();
+  const others = await api.query.StorageProvider.Providers.getEntries(READ_OPTS);
   for (const { keyArgs, value: info } of others) {
     const account = keyArgs[0];
     if (sameAddress(account, keep.address)) continue;

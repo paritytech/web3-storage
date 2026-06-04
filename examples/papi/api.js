@@ -3,6 +3,7 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   hexToBytes,
   providerFetch,
+  READ_OPTS,
   requireOneEvent,
   submitTx,
   toHex,
@@ -547,8 +548,13 @@ export async function signCheckpointProposal(providerUrl, bucketId, duty, window
  * from chain state and fetching MMR + chunk proofs from the provider node.
  */
 export async function fetchChallengeProof(api, providerUrl, challengeId) {
+  // Read at the best (non-finalized) block: submitTx now resolves at in-block
+  // inclusion, so the challenge-creating extrinsic lives in the best block but
+  // not yet the finalized one. A default (finalized) read here races the
+  // ~6-block finality lag and spuriously reports "no challenges".
   const challenges = await api.query.StorageProvider.Challenges.getValue(
-    challengeId.deadline
+    challengeId.deadline,
+    READ_OPTS
   );
   if (!challenges)
     throw new Error("No challenges at deadline " + challengeId.deadline);
