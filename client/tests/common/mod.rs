@@ -166,7 +166,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         owner: dev_account("alice"),
         max_bytes: 1_000_000,
         duration: 100,
-        price_per_byte: 0,
+        price_per_byte: 1,
         valid_until: u32::MAX,
         nonce,
         replica_params: None,

@@ -203,6 +203,13 @@ pub mod extrinsics {
                 ])],
             ),
         };
+        let bucket_id_value = match terms.bucket_id {
+            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
+            Some(id) => subxt::dynamic::Value::unnamed_variant(
+                "Some",
+                vec![subxt::dynamic::Value::u128(id as u128)],
+            ),
+        };
         subxt::dynamic::Value::named_composite([
             (
                 "owner",
@@ -225,11 +232,16 @@ pub mod extrinsics {
                 subxt::dynamic::Value::u128(terms.valid_until as u128),
             ),
             ("nonce", subxt::dynamic::Value::u128(terms.nonce as u128)),
+            ("bucket_id", bucket_id_value),
             ("replica_params", replica_params_value),
         ])
     }
 
     /// Encode a [`sp_runtime::MultiSignature`] as a subxt dynamic variant.
+    ///
+    /// Variant names and payloads mirror the pallet's
+    /// `verify_terms_signature` match: the signature travels as the
+    /// variant's raw inner bytes.
     pub fn dynamic_multi_signature(sig: &sp_runtime::MultiSignature) -> subxt::dynamic::Value {
         let (variant, bytes) = match sig {
             sp_runtime::MultiSignature::Sr25519(s) => ("Sr25519", s.encode()),

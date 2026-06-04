@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             owner,
             max_bytes: 1_000_000_000, // 1 GB
             duration: 500,            // 500 blocks
-            price_per_byte: 0,
+            price_per_byte: 1,
             replica_params: None,
             bucket_id: None,
         },

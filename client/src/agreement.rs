@@ -16,7 +16,8 @@
 //! public key, so the same payload has to be built on both sides —
 //! `sign_terms` enforces that via [`AgreementTerms::signing_payload`].
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr, PickFirst};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
@@ -35,19 +36,20 @@ pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
 /// allocates a fresh nonce and a validity window from its own state,
 /// builds the full [`AgreementTermsOf`], signs it, and returns
 /// [`SignedTerms`].
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NegotiateRequest {
     /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
     /// FIX: Safely handles the JS BigInt sent as a string
-    #[serde(deserialize_with = "deserialize_number_from_string_or_number")]
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
     /// Price per byte per block the owner is willing to lock in.
     /// FIX: Safely handles the JS BigInt sent as a string
-    #[serde(deserialize_with = "deserialize_number_from_string_or_number")]
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
     /// Bucket the quote is bound to.
     /// - `None` for primary terms;
@@ -105,22 +107,40 @@ mod hex_multi_signature {
     }
 }
 
-// Universal helper function to accept either a JSON string or raw JSON number
-fn deserialize_number_from_string_or_number<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: std::str::FromStr + Deserialize<'de>,
-    <T as std::str::FromStr>::Err: std::fmt::Display,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StringOrNumber<T> {
-        String(String),
-        Number(T),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Rust clients serialize `max_bytes`/`price_per_byte` as raw JSON
+    // numbers. Regression test: the previous untagged-enum deserializer
+    // rejected any JSON number for the u128 field (serde's untagged
+    // buffering has no 128-bit support), surfacing as a 422 from
+    // `/negotiate` for every Rust caller.
+    #[test]
+    fn negotiate_request_roundtrips_rust_numbers() {
+        let req = NegotiateRequest {
+            owner: AccountId32::new([0u8; 32]),
+            max_bytes: 1_000_000_000,
+            duration: 500,
+            price_per_byte: 1,
+            bucket_id: None,
+            replica_params: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.max_bytes, req.max_bytes);
+        assert_eq!(decoded.price_per_byte, req.price_per_byte);
     }
 
-    match StringOrNumber::deserialize(deserializer)? {
-        StringOrNumber::String(s) => s.parse::<T>().map_err(serde::de::Error::custom),
-        StringOrNumber::Number(n) => Ok(n),
+    // JS clients send BigInt fields as decimal strings (commit 17528eb).
+    #[test]
+    fn negotiate_request_accepts_js_bigint_strings() {
+        let json = format!(
+            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket_id":null,"replica_params":null}}"#,
+            AccountId32::new([0u8; 32])
+        );
+        let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.max_bytes, 1_073_741_824);
+        assert_eq!(decoded.price_per_byte, u128::MAX);
     }
 }

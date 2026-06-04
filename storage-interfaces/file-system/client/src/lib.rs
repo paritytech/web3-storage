@@ -191,7 +191,7 @@ impl FileSystemClient {
     ///         owner: owner_account,
     ///         max_bytes: 10_000_000_000,
     ///         duration: 500,
-    ///         price_per_byte: 0,
+    ///         price_per_byte: 1,
     ///         replica_params: None,
     ///     },
     /// ).await?;

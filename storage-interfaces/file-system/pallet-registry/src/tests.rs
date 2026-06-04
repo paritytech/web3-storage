@@ -35,7 +35,7 @@ fn primary_terms(owner: u64, max_bytes: u64, duration: u64, nonce: u64) -> Agree
         owner,
         max_bytes,
         duration,
-        price_per_byte: 0u128,
+        price_per_byte: 1u128,
         valid_until: 1_000_000u64,
         nonce,
         bucket_id: None,
