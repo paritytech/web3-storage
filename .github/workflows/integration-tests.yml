@@ -170,18 +170,16 @@ jobs:
             /tmp/zombie-*/*-raw.json
 
   # E2E test suite — runs all 10 PAPI E2E workflows against a single
-  # inmemory provider. Supersedes the standalone PAPI demo scripts.
+  # inmemory provider. Uses web3-storage-paseo only: the storage pallet
+  # config is identical across runtimes so running both would just double
+  # CI time with zero extra coverage.
   e2e-integration-tests:
-    name: E2E Integration Tests (${{ matrix.runtime.name }})
+    name: E2E Integration Tests
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image, runtime-matrix]
+    needs: [set-image]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -192,7 +190,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "e2e-integration-tests-${{ matrix.runtime.name }}"
+          shared-key: "e2e-integration-tests"
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
@@ -225,7 +223,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Build runtime
-        run: just ${{ matrix.runtime.build_command }}
+        run: just build-paseo-runtime
 
       - name: Build provider with coverage instrumentation
         run: cargo build --release -p storage-provider-node
@@ -237,7 +235,7 @@ jobs:
       - name: Start chain (dev mode, 2s blocks)
         uses: ./.github/actions/start-e2e-chain
         with:
-          chain-spec-script: ${{ matrix.runtime.chain_spec_script }}
+          chain-spec-script: scripts/build-paseo-chain-spec.sh
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
@@ -259,6 +257,16 @@ jobs:
 
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
+
+      - name: Print JS coverage
+        if: always()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  JS Coverage (api.js, common.js)"
+          echo "═══════════════════════════════════════════════════════════"
+          cd examples/papi && npx c8 report --reporter=text
+          echo ""
 
       - name: Stop services and generate Rust coverage
         if: always()
@@ -300,21 +308,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: js-coverage-${{ matrix.runtime.name }}
+          name: js-coverage
           path: examples/papi/coverage/
 
       - name: Upload Rust coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: rust-coverage-${{ matrix.runtime.name }}
+          name: rust-coverage
           path: /tmp/coverage/report/
 
       - name: Upload logs (on failure)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: e2e-integration-test-logs-${{ matrix.runtime.name }}
+          name: e2e-integration-test-logs
           path: |
             /tmp/omni-node.log
             /tmp/provider.log
