@@ -26,6 +26,7 @@ import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
+  READ_OPTS,
   toHex,
   waitForAgreementAcceptance,
   waitForBlock,
@@ -105,7 +106,7 @@ async function main() {
   tests.push({
     name: "10.3 committed_bytes increments on accept",
     fn: async () => {
-      const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address);
+      const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       const beforeBytes = infoBefore.committed_bytes;
       const bucketId = await createBucket(api, bob);
       await requestPrimaryAgreement(api, bob, provider, bucketId, {
@@ -114,7 +115,7 @@ async function main() {
         max_payment: maxBytes * 100n * 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
-      const infoAfter = await api.query.StorageProvider.Providers.getValue(provider.address);
+      const infoAfter = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       assert.ok(
         infoAfter.committed_bytes > beforeBytes,
         `committed_bytes should increase: ${infoAfter.committed_bytes} > ${beforeBytes}`
@@ -132,14 +133,15 @@ async function main() {
         max_payment: maxBytes * 10n * 10n,
       });
       await waitForAgreementAcceptance(api, provider.address, bucketId);
-      const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address);
+      const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       await waitForBlock(papi, Number(agreement.expires_at));
       await endAgreement(api, bob, provider, bucketId, "Pay");
-      const infoAfter = await api.query.StorageProvider.Providers.getValue(provider.address);
+      const infoAfter = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       assert.ok(
         infoAfter.committed_bytes < infoBefore.committed_bytes,
         `committed_bytes should decrease: ${infoAfter.committed_bytes} < ${infoBefore.committed_bytes}`
@@ -163,7 +165,7 @@ async function main() {
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(bucket.frozen_start_seq !== undefined, "Bucket should be frozen");
       // There's no "unfreeze" extrinsic — verify by checking the bucket stays frozen.
       // Attempting to freeze again should fail (already frozen).
@@ -207,7 +209,7 @@ async function main() {
       const bucket2 = await createBucket(api, dave);
       await setMember(api, dave, bucket1, eve, "Writer");
       await setMember(api, dave, bucket2, eve, "Reader");
-      const eveBuckets = await api.query.StorageProvider.MemberBuckets.getValue(eve.address);
+      const eveBuckets = await api.query.StorageProvider.MemberBuckets.getValue(eve.address, READ_OPTS);
       assert.ok(eveBuckets.some((id) => id === bucket1), "Eve should be member of bucket1");
       assert.ok(eveBuckets.some((id) => id === bucket2), "Eve should be member of bucket2");
     },

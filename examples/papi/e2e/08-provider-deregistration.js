@@ -22,6 +22,7 @@ import {
 import {
   ensureProviderRegistered,
   makeSigner,
+  READ_OPTS,
 } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
@@ -51,12 +52,12 @@ async function main() {
   tests.push({
     name: "8.1 Announce deregistration (no active agreements)",
     fn: async () => {
-      const info = await api.query.StorageProvider.Providers.getValue(ferdie.address);
+      const info = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
       assert.strictEqual(info.committed_bytes, 0n, "Ferdie should have no active agreements");
       const result = await deregisterProvider(api, ferdie);
       const events = api.event.StorageProvider.DeregisterAnnounced.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected DeregisterAnnounced event");
-      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address);
+      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
       assert.strictEqual(
         after.settings.accepting_primary,
         false,
@@ -71,7 +72,7 @@ async function main() {
       const result = await cancelDeregister(api, ferdie);
       const events = api.event.StorageProvider.DeregisterCancelled.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected DeregisterCancelled event");
-      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address);
+      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
       assert.ok(after, "Provider should still exist after cancel");
     },
   });
@@ -88,7 +89,7 @@ async function main() {
         accepting_extensions: true,
         max_capacity: 0n,
       });
-      const stored = await api.query.StorageProvider.Providers.getValue(ferdie.address);
+      const stored = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
       assert.strictEqual(stored.settings.accepting_primary, true, "Should accept agreements again");
     },
   });

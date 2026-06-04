@@ -19,6 +19,7 @@ import {
 import {
   ensureProviderRegistered,
   makeSigner,
+  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
   waitForBlock,
@@ -71,10 +72,11 @@ async function main() {
       await waitForAgreementAcceptance(api, provider.address, mainBucketId);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         mainBucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       assert.ok(agreement, "Agreement should exist after acceptance");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(mainBucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(mainBucketId, READ_OPTS);
       assert.ok(
         bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
         "Provider should be in primary_providers"
@@ -105,7 +107,8 @@ async function main() {
       );
       const req = await api.query.StorageProvider.AgreementRequests.getValue(
         rejectBucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       assert.strictEqual(req, undefined, "Request should be gone after reject");
     },
@@ -131,7 +134,8 @@ async function main() {
     fn: async () => {
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         mainBucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       const expiresAt = Number(agreement.expires_at);
       console.log("    Waiting for expiry at block %d...", expiresAt);
@@ -162,7 +166,8 @@ async function main() {
       await waitForAgreementAcceptance(api, provider.address, burnBucketId);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         burnBucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
       await waitForBlock(papi, Number(agreement.expires_at));

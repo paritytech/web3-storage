@@ -30,6 +30,7 @@ import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
+  READ_OPTS,
   waitForAgreementAcceptance,
   waitForBlock,
 } from "../common.js";
@@ -132,12 +133,12 @@ async function main() {
 
       // Compute current window with headroom.
       const HEADROOM = 8;
-      let currentBlock = Number(await api.query.System.Number.getValue());
+      let currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
       let windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
       let nextWindowStart = (windowNum + 1) * WINDOW_INTERVAL;
       if (nextWindowStart - currentBlock < HEADROOM) {
         await waitForBlock(papi, nextWindowStart - 1);
-        currentBlock = Number(await api.query.System.Number.getValue());
+        currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
         windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
       }
       const window = BigInt(windowNum);
@@ -164,14 +165,16 @@ async function main() {
     fn: async () => {
       const pending = await api.query.StorageProvider.CheckpointRewards.getValue(
         provider.address,
-        bucketId
+        bucketId,
+        READ_OPTS
       );
       assert.ok(pending > 0n, "Should have pending rewards");
       const event = await claimCheckpointRewards(api, provider, bucketId);
       assert.ok(event.amount > 0n, "Claimed amount should be positive");
       const after = await api.query.StorageProvider.CheckpointRewards.getValue(
         provider.address,
-        bucketId
+        bucketId,
+        READ_OPTS
       );
       assert.strictEqual(after, 0n, "Rewards should be cleared after claim");
     },

@@ -15,6 +15,7 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   printBucketMembers,
+  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
 } from "../common.js";
@@ -60,11 +61,11 @@ async function main() {
       await waitForAgreementAcceptance(api, provider.address, bucketId);
 
       // Verify storage.
-      const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
+      const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
       assert.ok(drive, "Drive should exist in storage");
-      const userDrives = await api.query.DriveRegistry.UserDrives.getValue(owner.address);
+      const userDrives = await api.query.DriveRegistry.UserDrives.getValue(owner.address, READ_OPTS);
       assert.ok(userDrives.some((id) => id === driveId), "Owner's UserDrives should contain drive");
-      const driveForBucket = await api.query.DriveRegistry.BucketToDrive.getValue(bucketId);
+      const driveForBucket = await api.query.DriveRegistry.BucketToDrive.getValue(bucketId, READ_OPTS);
       assert.strictEqual(driveForBucket, driveId, "BucketToDrive should map back");
     },
   });
@@ -87,7 +88,7 @@ async function main() {
     fn: async () => {
       const event = await shareDrive(api, owner, driveId, member, "Reader");
       assert.ok(event, "Should get DriveShared event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       const m = bucket.members.find((m) => sameAddress(m.account, member.address));
       assert.strictEqual(m.role.type, "Reader", "Member should now be Reader");
     },
@@ -98,7 +99,7 @@ async function main() {
     fn: async () => {
       const event = await unshareDrive(api, owner, driveId, member);
       assert.ok(event, "Should get DriveUnshared event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
         !bucket.members.some((m) => sameAddress(m.account, member.address)),
         "Member should be gone from bucket"
@@ -115,7 +116,7 @@ async function main() {
       const ownerAfter = await getFree(api, owner);
       // Owner should get a refund (balance increased, minus tx fees).
       console.log("    owner free delta = %s", (ownerAfter - ownerBefore).toString());
-      const driveAfter = await api.query.DriveRegistry.Drives.getValue(driveId);
+      const driveAfter = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
       assert.strictEqual(driveAfter, undefined, "Drive should be gone after delete");
     },
   });

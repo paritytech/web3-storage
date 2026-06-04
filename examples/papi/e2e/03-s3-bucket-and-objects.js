@@ -21,6 +21,7 @@ import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
+  READ_OPTS,
   sameAddress,
   toHex,
   waitForAgreementAcceptance,
@@ -76,7 +77,8 @@ async function main() {
         s3BucketId,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("test.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.ok(stored, "Object should exist in storage");
       assert.strictEqual(stored.size, obj.size, "Size should match");
@@ -95,7 +97,8 @@ async function main() {
         s3BucketId,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("meta.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.ok(stored, "Object with metadata should exist");
     },
@@ -109,13 +112,15 @@ async function main() {
         s3BucketId,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("test.txt")
-        )
+        ),
+        READ_OPTS
       );
       const copy = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("test-copy.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.ok(copy, "Copy should exist");
       assert.deepStrictEqual(
@@ -134,10 +139,11 @@ async function main() {
         s3BucketId,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("meta.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.strictEqual(stored, undefined, "Object should be gone after delete");
-      const bucketInfo = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
+      const bucketInfo = await api.query.S3Registry.S3Buckets.getValue(s3BucketId, READ_OPTS);
       assert.ok(bucketInfo, "Bucket should still exist");
     },
   });
@@ -150,7 +156,7 @@ async function main() {
       await deleteObjectMetadata(api, client, s3BucketId, "test-copy.txt");
       const result = await deleteS3Bucket(api, client, s3BucketId);
       assert.ok(result, "Should get S3BucketDeleted event");
-      const after = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
+      const after = await api.query.S3Registry.S3Buckets.getValue(s3BucketId, READ_OPTS);
       assert.strictEqual(after, undefined, "Bucket should be gone");
     },
   });
@@ -263,7 +269,8 @@ async function main() {
         bid,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("a/b/c/d.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.ok(stored, "Object with nested path key should exist");
       // Cleanup
@@ -297,7 +304,8 @@ async function main() {
         bid,
         (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode("file.txt")
-        )
+        ),
+        READ_OPTS
       );
       assert.strictEqual(stored.size, obj2.size, "Size should reflect the upserted object");
       // Cleanup

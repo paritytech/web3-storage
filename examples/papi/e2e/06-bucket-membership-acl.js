@@ -10,7 +10,7 @@
 
 import assert from "node:assert";
 import { createBucket, removeMember, setMember } from "../api.js";
-import { makeSigner, sameAddress } from "../common.js";
+import { makeSigner, READ_OPTS, sameAddress } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -44,7 +44,7 @@ async function main() {
       const result = await setMember(api, admin, bucketId, writer, "Writer");
       const events = api.event.StorageProvider.MemberSet.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected MemberSet event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
         bucket.members.some((m) => sameAddress(m.account, writer.address)),
         "Writer should be in members"
@@ -58,7 +58,7 @@ async function main() {
       const result = await setMember(api, admin, bucketId, reader, "Reader");
       const events = api.event.StorageProvider.MemberSet.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected MemberSet event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
         bucket.members.some((m) => sameAddress(m.account, reader.address)),
         "Reader should be in members"
@@ -70,7 +70,7 @@ async function main() {
     name: "6.3 Promote Writer to Admin",
     fn: async () => {
       await setMember(api, admin, bucketId, writer, "Admin");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       const writerMember = bucket.members.find((m) => sameAddress(m.account, writer.address));
       assert.ok(writerMember, "Writer should still be in members");
       assert.strictEqual(writerMember.role.type, "Admin", "Writer should now be Admin");
@@ -82,7 +82,7 @@ async function main() {
     fn: async () => {
       // Eve was promoted to Admin in 6.3. Pallet only allows self-demotion.
       await setMember(api, writer, bucketId, writer, "Writer");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       const writerMember = bucket.members.find((m) => sameAddress(m.account, writer.address));
       assert.strictEqual(writerMember.role.type, "Writer", "Eve should be Writer again");
     },
@@ -94,13 +94,13 @@ async function main() {
       const result = await removeMember(api, admin, bucketId, reader);
       const events = api.event.StorageProvider.MemberRemoved.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected MemberRemoved event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
         !bucket.members.some((m) => sameAddress(m.account, reader.address)),
         "Reader should be gone"
       );
       // Check reverse index is updated.
-      const readerBuckets = await api.query.StorageProvider.MemberBuckets.getValue(reader.address);
+      const readerBuckets = await api.query.StorageProvider.MemberBuckets.getValue(reader.address, READ_OPTS);
       assert.ok(
         !readerBuckets.some((id) => id === bucketId),
         "Reader's MemberBuckets should not contain this bucket"

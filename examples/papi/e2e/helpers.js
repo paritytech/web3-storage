@@ -6,6 +6,7 @@
  */
 
 import { formatDispatchError } from "./format.js";
+import { READ_OPTS } from "../common.js";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -156,6 +157,6 @@ export async function setupChain(chainWs) {
  * Grab the free balance for an account.
  */
 export async function getFree(api, who) {
-  const acc = await api.query.System.Account.getValue(who.address);
+  const acc = await api.query.System.Account.getValue(who.address, READ_OPTS);
   return acc.data.free;
 }

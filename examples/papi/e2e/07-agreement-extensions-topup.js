@@ -20,6 +20,7 @@ import {
 import {
   ensureProviderRegistered,
   makeSigner,
+  READ_OPTS,
   waitForAgreementAcceptance,
 } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
@@ -59,7 +60,8 @@ async function main() {
       await waitForAgreementAcceptance(api, provider.address, bucketId);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       assert.ok(agreement, "Agreement should exist");
     },
@@ -72,7 +74,8 @@ async function main() {
     fn: async () => {
       const before = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       // extend_agreement resets expires_at to current_block + additional_duration
       // (does NOT add to the existing expires_at). Use a value larger than the
@@ -86,7 +89,8 @@ async function main() {
       assert.strictEqual(events.length, 1, "Expected AgreementExtended event");
       const after = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       assert.ok(after.expires_at > before.expires_at, "expires_at should increase");
     },
@@ -97,7 +101,8 @@ async function main() {
     fn: async () => {
       const before = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       const extraBytes = 524_288n; // 512 KB
       const result = await topUpAgreement(api, client, bucketId, provider, {
@@ -108,7 +113,8 @@ async function main() {
       assert.strictEqual(events.length, 1, "Expected AgreementToppedUp event");
       const after = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
-        provider.address
+        provider.address,
+        READ_OPTS
       );
       assert.ok(after.max_bytes > before.max_bytes, "max_bytes should increase");
     },

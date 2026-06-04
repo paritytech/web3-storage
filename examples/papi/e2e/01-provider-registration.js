@@ -28,7 +28,7 @@ import {
   updateProviderMultiaddr,
   updateProviderSettings,
 } from "../api.js";
-import { makeSigner, ensureSoleAcceptingProvider, sameAddress } from "../common.js";
+import { makeSigner, ensureSoleAcceptingProvider, sameAddress, READ_OPTS } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -44,7 +44,7 @@ async function main() {
   // Ensure Charlie is not already registered (from a previous run).
   // If already registered, deregister first — but that's complex, so we just
   // check and skip registration test if needed, or re-use a fresh chain.
-  const existing = await api.query.StorageProvider.Providers.getValue(charlie.address);
+  const existing = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
 
   const tests = [];
 
@@ -57,7 +57,7 @@ async function main() {
         const result = await registerProvider(api, charlie, PROVIDER_URL, 1000n * UNIT);
         const events = api.event.StorageProvider.ProviderRegistered.filter(result.events);
         assert.strictEqual(events.length, 1, "Expected ProviderRegistered event");
-        const stored = await api.query.StorageProvider.Providers.getValue(charlie.address);
+        const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
         assert.ok(stored, "Provider should be in storage");
       },
     });
@@ -84,7 +84,7 @@ async function main() {
       });
       const events = api.event.StorageProvider.ProviderSettingsUpdated.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected ProviderSettingsUpdated event");
-      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.strictEqual(stored.settings.price_per_byte, 2n, "price_per_byte should be 2");
     },
   });
@@ -92,11 +92,11 @@ async function main() {
   tests.push({
     name: "1.3 Add stake",
     fn: async () => {
-      const before = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const before = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       const result = await addStake(api, charlie, 500n * UNIT);
       const events = api.event.StorageProvider.ProviderStakeAdded.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected ProviderStakeAdded event");
-      const after = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const after = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.ok(after.stake > before.stake, "Stake should have increased");
     },
   });
@@ -106,7 +106,7 @@ async function main() {
     fn: async () => {
       const newAddr = "/ip4/127.0.0.1/tcp/9999";
       await updateProviderMultiaddr(api, charlie, newAddr);
-      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       const decoded = new TextDecoder().decode(stored.multiaddr.asBytes());
       assert.strictEqual(decoded, newAddr, "Multiaddr should be updated");
       // Restore original
@@ -262,7 +262,7 @@ async function main() {
     name: "1.12 max_capacity=0 (unlimited) allows any size",
     fn: async () => {
       // max_capacity=0 means unlimited.
-      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address);
+      const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.strictEqual(stored.settings.max_capacity, 0n, "max_capacity should be 0 (unlimited)");
       // The previous matching test (1.5) already proved it works with 0.
     },
