@@ -52,9 +52,9 @@ export function h160ToSubstrate(addressBytes) {
 export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, duration }) {
   const signed = await negotiateTerms(providerUrl, {
     owner: owner.address,
-    max_bytes: Number(maxBytes),
+    max_bytes: BigInt(maxBytes),
     duration,
-    price_per_byte: 0,
+    price_per_byte: 0n,
     replica_params: null,
     bucket_id: null,
   });

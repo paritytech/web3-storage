@@ -63,9 +63,9 @@ async function setupAgreement(api, providerUrl, client, provider) {
   );
   const signed = await negotiateTerms(providerUrl, {
     owner: client.address,
-    max_bytes: Number(maxBytes),
+    max_bytes: maxBytes,
     duration,
-    price_per_byte: 1,
+    price_per_byte: 1n,
     replica_params: null,
   });
   console.log(

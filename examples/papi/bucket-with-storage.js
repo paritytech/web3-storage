@@ -69,9 +69,9 @@ async function main() {
     console.log("\n=== Step 2: Negotiate signed agreement terms ===");
     const signed = await negotiateTerms(PROVIDER_URL, {
       owner: client.address,
-      max_bytes: 1_048_576, // 1 MiB
+      max_bytes: 1_048_576n, // 1 MiB
       duration: 50,
-      price_per_byte: 0,
+      price_per_byte: 0n,
       replica_params: null,
     });
     console.log(

@@ -177,9 +177,9 @@ async function main() {
     console.log("\n=== Step 2: Negotiate + establish_storage_agreement (atomic) ===");
     const signed = await negotiateTerms(PROVIDER_URL, {
       owner: client.address,
-      max_bytes: 1_048_576, // 1 MiB
+      max_bytes: 1_048_576n, // 1 MiB
       duration: 200,
-      price_per_byte: 1,
+      price_per_byte: 1n,
       replica_params: null,
     });
     const bucketId = await establishStorageAgreement(api, client, provider, signed);
