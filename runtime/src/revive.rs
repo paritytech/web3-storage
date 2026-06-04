@@ -79,7 +79,7 @@ impl EthExtra for EthExtraImpl {
             frame_system::CheckNonce::<Runtime>::from(nonce),
             frame_system::CheckWeight::<Runtime>::new(),
             pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
-            frame_metadata_hash_extension::CheckMetadataHash::<Runtime>::new(true),
+            frame_metadata_hash_extension::CheckMetadataHash::<Runtime>::new(false),
             pallet_revive::evm::tx_extension::SetOrigin::<Runtime>::new_from_eth_transaction(),
         )
             .into()

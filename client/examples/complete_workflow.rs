@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duration: 100,
             price_per_byte: 1,
             replica_params: None,
+            bucket_id: None,
         },
     )
     .await?;

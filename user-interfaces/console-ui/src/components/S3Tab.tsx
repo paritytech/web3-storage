@@ -267,6 +267,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
         duration: parseInt(bucketDuration, 10),
         price_per_byte: BigInt(bucketPricePerByte || "0"),
         replica_params: null,
+        bucket_id: null,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to negotiate with provider";

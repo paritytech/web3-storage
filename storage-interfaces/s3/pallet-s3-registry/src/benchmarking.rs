@@ -230,6 +230,7 @@ mod benchmarks {
             price_per_byte: 1u32.into(),
             valid_until: BlockNumberFor::<T>::max_value(),
             nonce: 1,
+            bucket_id: None,
             replica_params: None,
         };
         let sig = sign_terms::<T>(&provider_pk, &terms);

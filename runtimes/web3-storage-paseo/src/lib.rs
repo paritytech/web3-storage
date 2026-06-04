@@ -124,11 +124,6 @@ pub type SignedBlock = generic::SignedBlock<Block>;
 pub type BlockId = generic::BlockId<Block>;
 
 /// The SignedExtension to the basic transaction logic.
-///
-/// The trailing `pallet_revive::evm::tx_extension::SetOrigin` lets the runtime
-/// accept Ethereum-signed transactions via `pallet_revive::eth_transact` —
-/// `SetOrigin` recovers the signer's `H160` from the signature and maps it to
-/// a substrate `AccountId32` (see [`crate::revive::EthExtraImpl`]).
 pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
     Runtime,
     (
@@ -141,6 +136,7 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_system::CheckWeight<Runtime>,
         pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
         frame_metadata_hash_extension::CheckMetadataHash<Runtime>,
+        // lets the runtime accept Ethereum-signed transactions via `pallet_revive::eth_transact`
         pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
     ),
 >;

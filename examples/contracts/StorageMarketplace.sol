@@ -40,13 +40,15 @@ contract StorageMarketplace {
     /// Buy storage on behalf of `msg.sender` by redeeming provider-signed
     /// terms. The contract becomes the substrate-side bucket admin
     /// (`terms.owner` must be its substrate-mapped account); per-user
-    /// ownership is tracked here.
+    /// ownership is tracked here. Primary terms must not be bound to an
+    /// existing bucket — the bucket is created at redemption.
     function buyStorage(
         bytes32 provider,
         IWeb3Storage.PrimitiveAgreementTerms calldata terms,
         bytes calldata signature
     ) external payable returns (uint64 bucketId) {
         require(msg.value > 0, "msg.value must cover the agreement payment");
+        require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         bucketId = WEB3_STORAGE.establishStorageAgreement(
             provider,
             terms,

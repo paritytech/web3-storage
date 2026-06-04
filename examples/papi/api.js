@@ -91,6 +91,7 @@ function buildSignedTermsArgs(provider, signed) {
     price_per_byte: BigInt(t.price_per_byte),
     valid_until: t.valid_until,
     nonce: BigInt(t.nonce),
+    bucket_id: t.bucket_id != null ? BigInt(t.bucket_id) : undefined,
     replica_params: t.replica_params ?? undefined,
   };
   return { provider: provider.address, terms, sig };

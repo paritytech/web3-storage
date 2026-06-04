@@ -60,7 +60,8 @@ contract TokenGatedDrive {
 
     /// Bootstrap the bucket by redeeming provider-signed terms
     /// (`terms.owner` must be the contract's substrate-mapped account).
-    /// One-shot.
+    /// One-shot. Primary terms must not be bound to an existing bucket —
+    /// the bucket is created at redemption.
     function initialize(
         string calldata name,
         bytes32 provider,
@@ -69,6 +70,7 @@ contract TokenGatedDrive {
     ) external payable returns (uint64) {
         require(publisher == address(0), "already init");
         require(msg.value > 0, "must fund agreement");
+        require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         publisher = msg.sender;
         s3BucketId = S3_REGISTRY.createS3Bucket(name, provider, terms, signature);
         emit Initialized(msg.sender, s3BucketId);

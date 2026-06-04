@@ -2,13 +2,11 @@
 pragma solidity ^0.8.34;
 
 /// @title IWeb3Storage
-/// @notice ABI of the web3-storage precompile at
-///         `0x0000000000000000000000000000000009010000` (matcher
-///         `Fixed(0x0901)`). Mirrors
-///         `precompiles/storage-provider-precompile/src/IWeb3Storage.sol`;
-///         kept in sync manually. Substrate `AccountId32` is `bytes32`. The
-///         EVM caller becomes the substrate-mapped owner via
-///         `AccountId32Mapper`.
+/// @notice Solidity interface for the web3-storage `pallet_storage_provider`
+///         precompile (client-side bucket lifecycle). Substrate `AccountId32`
+///         values (32-byte sr25519 public keys) cross the boundary as `bytes32`;
+///         the EVM caller's substrate-mapped account is derived from
+///         `msg.sender` via `AccountId32Mapper`.
 ///
 /// Role tags: 0 = Admin, 1 = Writer, 2 = Reader.
 interface IWeb3Storage {
@@ -34,6 +32,12 @@ interface IWeb3Storage {
         uint32 validUntil;
         /// Provider-chosen replay-protection nonce.
         uint64 nonce;
+        /// `true` if the quote is bound to an existing bucket (`Some(_)` on
+        /// the Rust side) — required for replica terms; primary terms leave
+        /// this false.
+        bool hasBucketId;
+        /// Target bucket id; only read when `hasBucketId` is true.
+        uint64 bucketId;
         /// `true` if the provider quoted replica terms (`Some(_)` on the Rust side).
         bool hasReplicaParams;
         /// Replica funding parameters; only read when `hasReplicaParams` is true.

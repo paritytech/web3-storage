@@ -756,6 +756,7 @@ async fn negotiate_terms(
         // TODO: lookup current block and use a bounded offset.
         valid_until: u32::MAX,
         nonce: nonce_counter.next(),
+        bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
     let signature = negotiate::sign_terms(keypair, &terms);

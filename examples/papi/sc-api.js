@@ -56,9 +56,11 @@ export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, d
     duration,
     price_per_byte: 0,
     replica_params: null,
+    bucket_id: null,
   });
   const t = signed.terms;
   const rp = t.replica_params;
+  const bucket = t.bucket_id;
   return {
     terms: {
       owner: toHex(owner.publicKey),
@@ -72,6 +74,8 @@ export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, d
         syncBalance: BigInt(rp?.sync_balance ?? 0),
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
       },
+      hasBucketId: bucket != null,
+      bucketId: BigInt(bucket ?? 0),
     },
     // Hex SCALE-encoded MultiSignature (variant byte + raw sig) — passed
     // through verbatim as the `bytes signature` ABI param.

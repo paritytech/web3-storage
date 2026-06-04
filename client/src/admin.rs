@@ -77,6 +77,7 @@ impl AdminClient {
     ///         duration: 100,
     ///         price_per_byte: 1_000_000,
     ///         replica_params: None,
+    ///         bucket_id: None,
     ///     },
     /// ).await?;
     /// let bucket_id = client.establish_storage_agreement(

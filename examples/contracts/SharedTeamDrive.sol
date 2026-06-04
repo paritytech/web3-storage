@@ -50,6 +50,8 @@ contract SharedTeamDrive {
     /// Create the team's drive by redeeming provider-signed terms
     /// (`terms.owner` must be the contract's substrate-mapped account).
     /// `msg.value` funds the agreement payment reserve held by that account.
+    /// Primary terms must not be bound to an existing bucket — the drive's
+    /// bucket is created at redemption.
     function createTeam(
         string calldata name,
         bytes32 provider,
@@ -58,6 +60,7 @@ contract SharedTeamDrive {
     ) external payable returns (uint64) {
         require(admin == address(0), "team already created");
         require(msg.value > 0, "must fund agreement");
+        require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         admin = msg.sender;
         driveId = DRIVE_REGISTRY.createDrive(name, provider, terms, signature);
         emit TeamCreated(msg.sender, driveId);

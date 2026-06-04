@@ -18,7 +18,7 @@ use codec::Encode;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
-use storage_primitives::AgreementTerms;
+use storage_primitives::{AgreementTerms, BucketId};
 
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///
@@ -48,6 +48,11 @@ pub struct NegotiateRequest {
     /// FIX: Safely handles the JS BigInt sent as a string
     #[serde(deserialize_with = "deserialize_number_from_string_or_number")]
     pub price_per_byte: u128,
+    /// Bucket the quote is bound to.
+    /// - `None` for primary terms;
+    /// - `Some(id)` for replica terms — must match the bucket targeted by
+    ///   the extrinsic.
+    pub bucket_id: Option<BucketId>,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
     pub replica_params: Option<ReplicaTermsOf>,

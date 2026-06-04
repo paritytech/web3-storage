@@ -74,6 +74,7 @@ fn build_primary_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: BlockNumberFor::<T>::max_value(),
         nonce,
+        bucket_id: None,
         replica_params: None,
     }
 }
@@ -81,6 +82,7 @@ fn build_primary_terms<T: Config>(
 /// Build replica [`AgreementTerms`] suitable for a benchmark agreement.
 fn build_replica_terms<T: Config>(
     owner: &T::AccountId,
+    bucket_id: BucketId,
     max_bytes: u64,
     duration: BlockNumberFor<T>,
     nonce: u64,
@@ -92,6 +94,7 @@ fn build_replica_terms<T: Config>(
         price_per_byte: 1u32.into(),
         valid_until: BlockNumberFor::<T>::max_value(),
         nonce,
+        bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance: BalanceOf::<T>::max_value() / 20u32.into(),
             min_sync_interval: 10u32.into(),
@@ -143,8 +146,13 @@ fn setup_replica_agreement<T: Config>(
     replica_index: u32,
 ) {
     let key = register_sr25519_key::<T>(replica, KEY_TYPE, replica_index);
-    let terms =
-        build_replica_terms::<T>(admin, 1_000_000u64, 100u32.into(), replica_index as u64 + 1);
+    let terms = build_replica_terms::<T>(
+        admin,
+        bucket_id,
+        1_000_000u64,
+        100u32.into(),
+        replica_index as u64 + 1,
+    );
     let sig = sign_terms::<T>(&key, &terms);
     Pallet::<T>::establish_replica_agreement_internal(admin, bucket_id, replica, terms, &sig)
         .expect("establish_replica_agreement_internal succeeds");
@@ -500,7 +508,7 @@ mod benchmarks {
 
         let replica = create_provider::<T>(1);
         let key = register_sr25519_key::<T>(&replica, KEY_TYPE, 1);
-        let terms = build_replica_terms::<T>(&admin, 1_000_000u64, 100u32.into(), 1);
+        let terms = build_replica_terms::<T>(&admin, bucket_id, 1_000_000u64, 100u32.into(), 1);
         let signature = sign_terms::<T>(&key, &terms);
 
         #[extrinsic_call]

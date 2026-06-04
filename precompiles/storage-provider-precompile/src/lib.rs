@@ -69,6 +69,7 @@ where
         price_per_byte: BalanceOf::<T>::from(terms.pricePerByte),
         valid_until: BlockNumberFor::<T>::from(terms.validUntil),
         nonce: terms.nonce,
+        bucket_id: terms.hasBucketId.then_some(terms.bucketId),
         replica_params: terms
             .hasReplicaParams
             .then(|| storage_primitives::ReplicaTerms {

@@ -60,6 +60,7 @@ fn primary_terms(
         price_per_byte,
         valid_until,
         nonce,
+        bucket_id: None,
         replica_params: None,
     }
 }
@@ -68,6 +69,7 @@ fn primary_terms(
 #[allow(clippy::too_many_arguments)]
 fn replica_terms(
     owner: u64,
+    bucket_id: BucketId,
     max_bytes: u64,
     duration: u64,
     price_per_byte: u64,
@@ -83,6 +85,7 @@ fn replica_terms(
         price_per_byte,
         valid_until,
         nonce,
+        bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
             sync_balance,
             min_sync_interval,
@@ -1002,6 +1005,30 @@ mod establish_storage_agreement_tests {
     }
 
     #[test]
+    fn rejects_primary_terms_bound_to_a_bucket() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let settings = default_test_settings(0, None);
+            let provider_pk = register_signing_provider(2, "//Provider", 200, settings);
+
+            // Replica-shaped binding on a primary redemption.
+            let mut terms = primary_terms(1, 100, 100, 0, 1_000, 1);
+            terms.bucket_id = Some(0);
+            let sig = sign_terms(&provider_pk, &terms);
+
+            assert_noop!(
+                StorageProvider::establish_storage_agreement(
+                    RuntimeOrigin::signed(1),
+                    2,
+                    terms,
+                    sig,
+                ),
+                Error::<Test>::TermsBucketMismatch
+            );
+        });
+    }
+
+    #[test]
     fn rejects_expired_terms() {
         new_test_ext().execute_with(|| {
             System::set_block_number(50);
@@ -1469,7 +1496,7 @@ mod establish_replica_agreement_tests {
 
             let owner_balance_before = Balances::free_balance(1);
             // payment = price 0 * 50 * 100 = 0; sync_balance = 25 is reserved.
-            let terms = replica_terms(1, 50, 100, 0, 10_000, 1, 25, 10);
+            let terms = replica_terms(1, bucket_id, 50, 100, 0, 10_000, 1, 25, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_ok!(StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),
@@ -1511,7 +1538,7 @@ mod establish_replica_agreement_tests {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
             let replica_pk = register_replica_provider(3, "//Replica");
-            let terms = replica_terms(1, 50, 100, 0, 10_000, 1, 25, 10);
+            let terms = replica_terms(1, 999, 50, 100, 0, 10_000, 1, 25, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1532,8 +1559,10 @@ mod establish_replica_agreement_tests {
             let (bucket_id, _) = setup_primary_bucket();
             let replica_pk = register_replica_provider(3, "//Replica");
 
-            // Primary-shaped terms (no replica_params) cannot drive a replica.
-            let terms = primary_terms(1, 50, 100, 0, 10_000, 1);
+            // Terms without replica_params cannot drive a replica, even when
+            // bound to the right bucket.
+            let mut terms = primary_terms(1, 50, 100, 0, 10_000, 1);
+            terms.bucket_id = Some(bucket_id);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1554,7 +1583,7 @@ mod establish_replica_agreement_tests {
             let (bucket_id, _) = setup_primary_bucket();
             let replica_pk = register_replica_provider(3, "//Replica");
 
-            let terms = replica_terms(1, 10, 100, 0, 10_000, 1, 5, 10);
+            let terms = replica_terms(1, bucket_id, 10, 100, 0, 10_000, 1, 5, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_ok!(StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),
@@ -1565,7 +1594,7 @@ mod establish_replica_agreement_tests {
             ));
 
             // Same provider, same bucket → duplicate agreement.
-            let terms = replica_terms(1, 10, 100, 0, 10_000, 2, 5, 10);
+            let terms = replica_terms(1, bucket_id, 10, 100, 0, 10_000, 2, 5, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1588,7 +1617,7 @@ mod establish_replica_agreement_tests {
             let settings = default_test_settings(0, None);
             let replica_pk = register_signing_provider(3, "//Replica", 1_000, settings);
 
-            let terms = replica_terms(1, 50, 100, 0, 10_000, 1, 25, 10);
+            let terms = replica_terms(1, bucket_id, 50, 100, 0, 10_000, 1, 25, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1609,7 +1638,7 @@ mod establish_replica_agreement_tests {
             let (bucket_id, _) = setup_primary_bucket();
             let replica_pk = register_replica_provider(3, "//Replica");
             // Terms signed for owner = 1, but origin = 4.
-            let terms = replica_terms(1, 50, 100, 0, 10_000, 1, 25, 10);
+            let terms = replica_terms(1, bucket_id, 50, 100, 0, 10_000, 1, 25, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1625,13 +1654,35 @@ mod establish_replica_agreement_tests {
     }
 
     #[test]
+    fn rejects_replica_terms_bound_to_another_bucket() {
+        new_test_ext().execute_with(|| {
+            let (bucket_id, _) = setup_primary_bucket();
+            let replica_pk = register_replica_provider(3, "//Replica");
+
+            // Terms signed for a different bucket than the extrinsic targets.
+            let terms = replica_terms(1, bucket_id + 1, 50, 100, 0, 10_000, 1, 25, 10);
+            let sig = sign_terms(&replica_pk, &terms);
+            assert_noop!(
+                StorageProvider::establish_replica_agreement(
+                    RuntimeOrigin::signed(1),
+                    bucket_id,
+                    3,
+                    terms,
+                    sig,
+                ),
+                Error::<Test>::TermsBucketMismatch
+            );
+        });
+    }
+
+    #[test]
     fn rejects_expired_replica_terms() {
         new_test_ext().execute_with(|| {
             let (bucket_id, _) = setup_primary_bucket();
             let replica_pk = register_replica_provider(3, "//Replica");
 
             System::set_block_number(50);
-            let terms = replica_terms(1, 50, 100, 0, 10, 1, 25, 10);
+            let terms = replica_terms(1, bucket_id, 50, 100, 0, 10, 1, 25, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1653,7 +1704,7 @@ mod establish_replica_agreement_tests {
             let _replica_pk = register_replica_provider(3, "//Replica");
             let (other_pk, _) = generate_provider_public_key("//Imposter");
 
-            let terms = replica_terms(1, 50, 100, 0, 10_000, 1, 25, 10);
+            let terms = replica_terms(1, bucket_id, 50, 100, 0, 10_000, 1, 25, 10);
             let sig = sign_terms(&other_pk, &terms);
             assert_noop!(
                 StorageProvider::establish_replica_agreement(
@@ -1674,7 +1725,7 @@ mod establish_replica_agreement_tests {
             let (bucket_id, _) = setup_primary_bucket();
             let replica_pk = register_replica_provider(3, "//Replica");
 
-            let terms = replica_terms(1, 10, 100, 0, 10_000, 7, 5, 10);
+            let terms = replica_terms(1, bucket_id, 10, 100, 0, 10_000, 7, 5, 10);
             let sig = sign_terms(&replica_pk, &terms);
             assert_ok!(StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),

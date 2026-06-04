@@ -31,6 +31,11 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// Provider-chosen replay-protection nonce; uniqueness is enforced
     /// through the provider's sliding replay window.
     pub nonce: u64,
+    /// Bucket the quote is bound to.
+    /// - `None` for primary terms
+    /// - `Some(id)` for replica terms — must match the bucket targeted by
+    ///   the extrinsic.
+    pub bucket_id: Option<crate::BucketId>,
     /// Replica-specific parameters.
     /// - `None` means these are primary terms;
     /// - `Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.

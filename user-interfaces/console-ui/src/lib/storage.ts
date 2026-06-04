@@ -47,6 +47,7 @@ export interface SignedTerms {
     valid_until: number;
     nonce: number | bigint;
     replica_params: unknown | null;
+    bucket_id: bigint | null;
   };
   signature: string;
 }
@@ -57,6 +58,7 @@ export interface NegotiateRequest {
   duration: number;
   price_per_byte: number | bigint;
   replica_params: unknown | null;
+  bucket_id?: bigint | null;
 }
 
 /**
@@ -157,6 +159,7 @@ export function buildSignedTermsArgs(
     valid_until: t.valid_until,
     nonce: BigInt(t.nonce),
     replica_params: (t.replica_params ?? undefined) as any,
+    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
   };
   return { provider: providerAccount, terms, sig };
 }

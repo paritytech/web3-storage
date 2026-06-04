@@ -810,6 +810,10 @@ pub mod pallet {
         /// Replica terms missing from a signed quote redeemed as a replica
         /// agreement.
         MissingReplicaTerms,
+        /// The terms' bucket binding does not match the redeeming extrinsic:
+        /// primary terms must carry no bucket, replica terms must name the
+        /// targeted bucket.
+        TermsBucketMismatch,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -3758,6 +3762,10 @@ pub mod pallet {
             // Origin must match the owner the provider signed for.
             ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
 
+            // Primary terms must not be bound to an existing bucket — the
+            // bucket is created at redemption.
+            ensure!(terms.bucket_id.is_none(), Error::<T>::TermsBucketMismatch);
+
             // Quote must not be stale.
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
@@ -3864,6 +3872,13 @@ pub mod pallet {
         ) -> DispatchResult {
             // Origin must match the owner the provider signed for.
             ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
+
+            // The provider's signed quote must be bound to the bucket this
+            // extrinsic targets.
+            ensure!(
+                terms.bucket_id == Some(bucket_id),
+                Error::<T>::TermsBucketMismatch
+            );
 
             // Quote must not be stale.
             let current_block = frame_system::Pallet::<T>::block_number();

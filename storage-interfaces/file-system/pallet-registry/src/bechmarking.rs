@@ -107,6 +107,7 @@ fn make_primary_terms<T: Config>(owner: &T::AccountId, nonce: u64) -> AgreementT
         price_per_byte: 1u32.into(),
         valid_until: BlockNumberFor::<T>::max_value(),
         nonce,
+        bucket_id: None,
         replica_params: None,
     }
 }

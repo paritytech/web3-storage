@@ -170,6 +170,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         valid_until: u32::MAX,
         nonce,
         replica_params: None,
+        bucket_id: None,
     };
     let sig = sign_terms(&alice_keypair, &terms);
     let bucket_id = admin

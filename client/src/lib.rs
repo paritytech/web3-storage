@@ -64,6 +64,7 @@
 //!         duration: 100_000,
 //!         price_per_byte: 1_000_000,
 //!         replica_params: None,
+//!         bucket_id: None,
 //!     },
 //! ).await?;
 //!
