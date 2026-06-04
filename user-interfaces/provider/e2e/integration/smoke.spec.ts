@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures";
+import { expectBestBlockToAdvance } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
 
@@ -6,13 +7,8 @@ test("app loads and connects to local chain", async ({ localPage }) => {
   await expect(localPage.getByTestId("block-number")).toBeVisible();
 });
 
-test("block number ticks up over time", async ({ localPage }) => {
-  const badge = localPage.getByTestId("block-number");
-  const first = await badge.textContent();
-  await expect(async () => {
-    const next = await badge.textContent();
-    expect(next).not.toBe(first);
-  }).toPass({ timeout: 30_000 });
+test("chain produces blocks (best-block liveness)", async ({ localPage }) => {
+  await expectBestBlockToAdvance(localPage);
 });
 
 test("provider header shows wallet area", async ({ localPage }) => {

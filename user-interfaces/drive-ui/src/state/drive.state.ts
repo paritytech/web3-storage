@@ -16,7 +16,7 @@ import {
   type SignedTerms,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
-import { signer$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
+import { signer$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -82,8 +82,11 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-signer$$.subscribe((signer) => {
-  client.setSigner(signer, getSignerAddress());
+// Use combineLatest so the client always receives signer + address together.
+// With separate subscriptions, signer$ fires before signerAddress$ inside
+// setSigner(), leaving client.signerAddress null when refreshDrives() runs.
+combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
+  client.setSigner(signer, address);
 });
 
 export function getDriveClient(): DriveClient {
@@ -459,10 +462,15 @@ api$$.subscribe(() => {
 // when (selectedDrive, currentPath) change.
 // ─────────────────────────────────────────────────────────────────────────────
 
-combineLatest([api$$, signer$$])
-  .pipe(distinctUntilChanged())
-  .subscribe(([api, signer]) => {
-    if (api && signer) {
+combineLatest([api$$, signerAddress$$])
+  .pipe(distinctUntilChanged((a, b) => a[0] === b[0] && a[1] === b[1]))
+  .subscribe(([api, address]) => {
+    if (api && address) {
+      // Clear previous user's state before loading the new user's drives
+      drives$.next([]);
+      selectedDrive$.next(null);
+      entries$.next([]);
+      currentPath$.next("/");
       refreshDrives().catch(() => { /* swallow */ });
     } else {
       drives$.next([]);

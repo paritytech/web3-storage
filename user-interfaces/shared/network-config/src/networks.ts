@@ -65,7 +65,8 @@ export const NETWORK_LIST: NetworkConfig[] = [
   POLKADOT_NETWORK,
 ]
 
-export const DEFAULT_NETWORK_ID: NetworkId = 'previewnet'
+export const DEFAULT_NETWORK_ID: NetworkId =
+  import.meta.env?.DEV ? 'local' : 'previewnet'
 
 export function createCustomNetwork(parachainWs: string, providerHttp: string): NetworkConfig {
   return {

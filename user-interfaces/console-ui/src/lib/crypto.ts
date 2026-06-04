@@ -12,11 +12,10 @@ import {
   entropyToMiniSecret,
   mnemonicToEntropy,
 } from "@polkadot-labs/hdkd-helpers";
-import { fromBufferToBase58 } from "@polkadot-api/substrate-bindings";
 
-// System parachain `SS58_PREFIX` is 0
-const SS58_PREFIX = 0;
-export const toSs58 = fromBufferToBase58(SS58_PREFIX);
+// SS58 encoding (prefix + helper) lives in the shared PAPI package so every UI
+// renders addresses with the same, runtime-derived prefix.
+export { toSs58 } from "@web3-storage/papi";
 
 export interface Keypair {
   publicKey: Uint8Array;

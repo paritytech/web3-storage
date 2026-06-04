@@ -29,6 +29,7 @@
     "@react-rxjs/core": "^0.10.8",
     "@react-rxjs/utils": "^0.9.7",
     "@web3-storage/network-config": "workspace:*",
+    "@web3-storage/papi": "workspace:*",
     "@web3-storage/network-picker": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

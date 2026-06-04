@@ -27,6 +27,7 @@ import {
   selectAccount,
   disconnectWallet,
 } from '@/state/wallet.state'
+import { withNetworkHandoff } from '@web3-storage/network-config'
 import { NetworkPicker } from '@web3-storage/network-picker'
 import {
   useSelectedNetwork,
@@ -141,7 +142,7 @@ export function Header() {
           {/* Logo */}
           <div className="flex items-center gap-3">
             <a
-              href={LANDING_URL}
+              href={withNetworkHandoff(LANDING_URL, selectedNetwork)}
               data-testid="back-to-landing"
               title="Back to home"
               className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors"

@@ -1,0 +1,53 @@
+name: Wait for parachain blocks
+description: >-
+  Poll the parachain RPC best head until it reaches a minimum block height.
+  Uses the best head (chain_getHeader with no params), which advances
+  ~6s/block and is immune to finality lag — readiness only needs the chain to
+  be producing blocks, not finalizing them.
+
+inputs:
+  rpc-url:
+    description: Parachain HTTP RPC endpoint to poll.
+    required: false
+    default: http://127.0.0.1:2222
+  min-block:
+    description: >-
+      Minimum best-block height to wait for. Default 1 is a pure liveness gate
+      ("the chain is producing blocks"). Mortal-tx era safety is left to the
+      tests themselves (e.g. waitForMinBlock), so the gate stays minimal.
+    required: false
+    default: "1"
+  attempts:
+    description: Number of poll attempts, 5s apart (180 ≈ 15min).
+    required: false
+    default: "180"
+  log-file:
+    description: Log to cat on timeout (for post-mortem); skipped if absent.
+    required: false
+    default: /tmp/zombienet.log
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "Waiting for parachain to produce blocks (min #${{ inputs.min-block }})..."
+        for i in $(seq 1 ${{ inputs.attempts }}); do
+          HEADER=$(curl -s -H "Content-Type: application/json" \
+            -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
+            "${{ inputs.rpc-url }}" 2>/dev/null) || true
+          BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
+          if [ -n "$BLOCK_HEX" ]; then
+            BLOCK_NUM=$((BLOCK_HEX))
+            if [ "$BLOCK_NUM" -ge ${{ inputs.min-block }} ]; then
+              echo "Parachain best block: #$BLOCK_NUM (attempt $i)"
+              break
+            fi
+          fi
+          if [ "$i" -eq ${{ inputs.attempts }} ]; then
+            echo "TIMEOUT: parachain did not produce block #${{ inputs.min-block }}"
+            cat "${{ inputs.log-file }}" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 5
+        done

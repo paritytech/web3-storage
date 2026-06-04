@@ -25,6 +25,7 @@ import {
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
+import { isSameAddress } from "@web3-storage/papi";
 import type { AvailableProvider, BucketInfo, S3ObjectInfo, SignedTerms } from "@/lib/storage";
 import { negotiateTerms, parseMultiaddrToHttp } from "@/lib/storage";
 import { EncryptionKey, bytesToHex } from "@/lib/encryption";
@@ -107,13 +108,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     // The bucket owner is always Admin (the on-chain creator is added as Admin
     // in the pallet, but the member query can fail or return a format that
     // doesn't match the signer address string).
-    if (selectedBucket.owner === signerAddress) {
+    if (isSameAddress(selectedBucket.owner, signerAddress)) {
       setUserRole('Admin');
       return;
     }
     fetchBucketMembers(selectedBucket.layer0BucketId)
       .then((members) => {
-        const me = members.find((m) => m.account === signerAddress);
+        const me = members.find((m) => isSameAddress(m.account, signerAddress));
         setUserRole(me?.role ?? null);
       })
       .catch(() => setUserRole(null));
@@ -216,19 +217,24 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
 
   // Submit `create_s3_bucket` with already-negotiated signed terms. Used
   // both by the first attempt and by the retry button on a failed card.
-  const runChainSubmit = useCallback(async (itemId: string, ctx: RetryCtx) => {
-    updateCreation(itemId, { stage: "submitting", error: undefined });
+  const runChainSubmit = useCallback(async (creationId: string, ctx: RetryCtx) => {
+    updateCreation(creationId, { stage: "submitting", error: undefined });
     try {
       const bucket = await submitCreateBucket(ctx.name, ctx.provider.account, ctx.url, ctx.signed);
-      updateCreation(itemId, { stage: "ready", bucketId: bucket.layer0BucketId });
-      retryCtxRef.current.delete(itemId);
+      updateCreation(creationId, { stage: "ready", bucketId: bucket.layer0BucketId });
+      retryCtxRef.current.delete(creationId);
       setSelectedBucket(bucket);
       setShowCreateBucket(false);
       setNewBucketName("");
       toast({ title: "Success", description: `Bucket "${bucket.name}" created` });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to submit on chain";
-      updateCreation(itemId, { stage: "failed", error: msg });
+      const msg = err instanceof Error ? err.message : "Failed to create bucket";
+      let errorMsg = msg;
+      // Show friendly error for common cases
+      if (msg.includes("NoProvidersAvailable")) {
+        errorMsg = "No storage providers available. Make sure a provider is running and accepting agreements.";
+      }
+      updateCreation(creationId, { stage: "failed", error: errorMsg });
     } finally {
       setCreating(false);
     }
@@ -246,10 +252,10 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       return;
     }
 
-    const itemId = `bucket-${Date.now()}`;
+    const creationId = crypto.randomUUID();
     const name = newBucketName;
     setCreations(prev => [...prev, {
-      id: itemId,
+      id: creationId,
       name,
       type: "bucket",
       stage: "submitting",
@@ -271,7 +277,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to negotiate with provider";
-      updateCreation(itemId, { stage: "failed", error: msg });
+      updateCreation(creationId, { stage: "failed", error: msg });
       setCreateError(msg);
       setCreating(false);
       return;
@@ -280,8 +286,8 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     // Phase B: chain submit. Stash retry context first so a failure leaves
     // a retry handle attached to the CreationStatusItem.
     const ctx: RetryCtx = { name, provider, url, signed };
-    retryCtxRef.current.set(itemId, ctx);
-    await runChainSubmit(itemId, ctx);
+    retryCtxRef.current.set(creationId, ctx);
+    await runChainSubmit(creationId, ctx);
   };
 
   // Retry handler attached to failed CreationStatusItems. If we have the
@@ -500,9 +506,9 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
             )}
             <div className="flex gap-2">
               <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={creating || loading}>
-                {creating ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Submitting...</> : "Choose Provider & Create"}
+                Choose Provider & Create
               </Button>
-              <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }} disabled={creating}>Cancel</Button>
+              <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }}>Cancel</Button>
             </div>
           </CardContent>
         </Card>

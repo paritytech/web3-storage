@@ -148,10 +148,13 @@ async function httpFetch(
   throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
 }
 
-function decodeName(name: Uint8Array | undefined): string | null {
-  if (!name) return null;
+function decodeName(name: unknown): string | null {
+  if (name == null) return null;
   try {
-    return new TextDecoder().decode(name);
+    if (typeof name === "string") return name;
+    // polkadot-api Binary has asText(); fall back to TextDecoder
+    if (typeof (name as any).asText === "function") return (name as any).asText();
+    return new TextDecoder().decode(name as Uint8Array);
   } catch {
     return null;
   }

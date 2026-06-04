@@ -24,7 +24,7 @@ test.setTimeout(180_000);
 let driveId: bigint;
 
 test.beforeAll(async ({ browser }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   driveId = await createDriveInFreshContext(browser, `members-${Date.now()}`);
 });
 

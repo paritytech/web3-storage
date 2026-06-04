@@ -288,6 +288,9 @@ importers:
       '@web3-storage/network-picker':
         specifier: workspace:*
         version: link:../shared/network-picker
+      '@web3-storage/papi':
+        specifier: workspace:*
+        version: link:../shared/papi
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -397,6 +400,9 @@ importers:
       '@polkadot-api/descriptors':
         specifier: file:.papi/descriptors
         version: link:.papi/descriptors
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.30
+        version: 0.0.30
       polkadot-api:
         specifier: ^2.1.0
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
@@ -428,6 +434,9 @@ importers:
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.30
         version: 0.0.30
+      '@web3-storage/papi':
+        specifier: workspace:*
+        version: link:../papi
       polkadot-api:
         specifier: ^2.1.0
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)

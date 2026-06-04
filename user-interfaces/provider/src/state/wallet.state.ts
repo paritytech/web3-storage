@@ -24,12 +24,8 @@ import {
   mnemonicToEntropy,
 } from '@polkadot-labs/hdkd-helpers'
 import { getPolkadotSigner } from 'polkadot-api/signer'
-import { fromBufferToBase58 } from '@polkadot-api/substrate-bindings'
+import { getSs58Prefix, isSameAddress, setSs58Prefix, toSs58 } from '@web3-storage/papi'
 import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
-
-// System parachain `SS58_PREFIX` is 0
-const SS58_PREFIX = 0
-const toSs58 = fromBufferToBase58(SS58_PREFIX)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -83,6 +79,24 @@ const registrationStatusSubject = new BehaviorSubject<Map<string, boolean>>(new 
 const STORAGE_KEY_MODE = 'provider-dashboard-wallet-mode'
 const STORAGE_KEY_EXTENSION = 'provider-dashboard-wallet-extension'
 const STORAGE_KEY_ACCOUNT = 'provider-dashboard-wallet-account'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SS58 prefix update (called after chain connects)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Update the SS58 prefix from the runtime and re-encode any dev accounts.
+ * Called from chain.state after getChainProperties() resolves.
+ */
+export async function updateSs58Prefix(prefix: number): Promise<void> {
+  if (prefix === getSs58Prefix()) return
+  setSs58Prefix(prefix)
+
+  // Re-encode dev accounts with the correct prefix if in dev mode
+  if (modeSubject.getValue() === 'dev' && accountsSubject.getValue().length > 0) {
+    await connectDevAccounts()
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dev Account Creation (for local development - NO REAL MONEY)
@@ -146,8 +160,10 @@ export async function connectDevAccounts(): Promise<void> {
     // default to Alice. Mirrors the extension-mode hydration so a persisted
     // choice survives reload.
     const savedAddress = localStorage.getItem(STORAGE_KEY_ACCOUNT)
+    // Byte-level match: a persisted address may have been encoded under a
+    // different SS58 prefix than the current one.
     const savedAccount = savedAddress
-      ? devAccounts.find((a) => a.address === savedAddress)
+      ? devAccounts.find((a) => isSameAddress(a.address, savedAddress))
       : undefined
     const accountToSelect =
       savedAccount ?? devAccounts.find((a) => a.name?.includes('Alice'))
@@ -189,10 +205,11 @@ export async function connectExtension(extensionName: string): Promise<void> {
     const accounts = extension.getAccounts()
     accountsSubject.next(accounts)
 
-    // Restore previously selected account, or auto-select first
+    // Restore previously selected account, or auto-select first. Byte-level
+    // match: a persisted address may use a different SS58 prefix.
     const savedAddress = localStorage.getItem(STORAGE_KEY_ACCOUNT)
     const savedAccount = savedAddress
-      ? accounts.find((a) => a.address === savedAddress)
+      ? accounts.find((a) => isSameAddress(a.address, savedAddress))
       : undefined
 
     if (!selectedAccountSubject.getValue()) {
