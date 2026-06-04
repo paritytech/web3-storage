@@ -121,19 +121,12 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   console.log("PASSED: Provider received payment!");
 }
 
-function watchDefendedEvents(api) {
-  const events = [];
-  const sub = api.event.StorageProvider.ChallengeDefended.watch().subscribe(
-    (event) => {
-      console.log("  >> ChallengeDefended event:", {
-        deadline: event.payload.challenge_id.deadline,
-        index: event.payload.challenge_id.index,
-      });
-      events.push(event);
-    }
-  );
-  return { events, unsubscribe: () => sub.unsubscribe() };
-}
+// We used to subscribe to `api.event.StorageProvider.ChallengeDefended.watch()`,
+// but on PAPI 2.x that event watcher destabilises chainHead's pinned-block
+// state — a subsequent storage query at 2 s block times throws
+// `BlockNotPinnedError ... (getRuntimeCtx)`. `respondToChallenge` already
+// extracts the ChallengeDefended event from the extrinsic's own event list,
+// so callers can just collect those instead of watching globally.
 
 async function main() {
   const provider = makeSigner(PROVIDER_SEED);
@@ -148,7 +141,7 @@ async function main() {
   await waitForChainReady(api);
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
-  const defended = watchDefendedEvents(api);
+  const defended = [];
 
   try {
     console.log("\n=== Step 1: Setup ===");
@@ -176,7 +169,9 @@ async function main() {
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
     const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
-    await respondToChallenge(api, provider, offchainId, offchainProof);
+    defended.push(
+      await respondToChallenge(api, provider, offchainId, offchainProof)
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
@@ -206,16 +201,17 @@ async function main() {
       PROVIDER_URL,
       checkpointId
     );
-    await respondToChallenge(api, provider, checkpointId, checkpointProof);
+    defended.push(
+      await respondToChallenge(api, provider, checkpointId, checkpointProof)
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Verifying challenge results ===");
-    await new Promise((r) => setTimeout(r, 3000));
-    console.log("ChallengeDefended events: %d (expected: 2)", defended.events.length);
+    console.log("ChallengeDefended events: %d (expected: 2)", defended.length);
     assert.strictEqual(
-      defended.events.length,
+      defended.length,
       2,
-      `Expected 2 ChallengeDefended events, got ${defended.events.length}`
+      `Expected 2 ChallengeDefended events, got ${defended.length}`
     );
     console.log("PASSED: Both challenges were defended!");
 
@@ -226,7 +222,6 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
-    defended.unsubscribe();
     papi.destroy();
   }
 }

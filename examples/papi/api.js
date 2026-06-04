@@ -118,14 +118,11 @@ export async function submitClientCheckpoint(api, client, provider, bucketId, ck
   return submitTx(
     api.tx.StorageProvider.checkpoint({
       bucket_id: bucketId,
-      mmr_root: Binary.fromBytes(hexToBytes(ck.mmr_root)),
+      mmr_root: ck.mmr_root,
       start_seq: BigInt(ck.start_seq),
       leaf_count: BigInt(ck.leaf_count),
       signatures: [
-        [
-          provider.address,
-          Enum("Sr25519", Binary.fromBytes(hexToBytes(ck.provider_signature))),
-        ],
+        [provider.address, { type: "Sr25519", value: ck.provider_signature }],
       ],
     }),
     client.signer,
@@ -138,14 +135,14 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
       provider: provider.address,
-      mmr_root: Binary.fromBytes(hexToBytes(upload.mmrRoot)),
+      mmr_root: upload.mmrRoot,
       start_seq: BigInt(upload.startSeq),
       leaf_index: BigInt(upload.leafIndex),
       chunk_index: 0n,
-      provider_signature: Enum(
-        "Sr25519",
-        Binary.fromBytes(hexToBytes(upload.providerSignature))
-      ),
+      provider_signature: {
+        type: "Sr25519",
+        value: upload.providerSignature,
+      },
     }),
     client.signer,
     "challenge_offchain"
@@ -176,13 +173,18 @@ export async function challengeCheckpoint(api, client, provider, bucketId, leafI
 }
 
 export async function respondToChallenge(api, provider, challengeId, proof) {
-  return submitTx(
+  const result = await submitTx(
     api.tx.StorageProvider.respond_to_challenge({
       challenge_id: challengeId,
-      response: Enum("Proof", proof),
+      response: { type: "Proof", value: proof },
     }),
     provider.signer,
     "respond_to_challenge"
+  );
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.ChallengeDefended,
+    "ChallengeDefended"
   );
 }
 
@@ -249,15 +251,12 @@ export async function submitProviderCheckpoint(api, provider, bucketId, duty, si
   const result = await submitTx(
     api.tx.StorageProvider.provider_checkpoint({
       bucket_id: bucketId,
-      mmr_root: Binary.fromBytes(hexToBytes(duty.mmr_root)),
+      mmr_root: duty.mmr_root,
       start_seq: BigInt(duty.start_seq),
       leaf_count: BigInt(duty.leaf_count),
       window,
       signatures: [
-        [
-          provider.address,
-          Enum("Sr25519", Binary.fromBytes(hexToBytes(signature))),
-        ],
+        [provider.address, { type: "Sr25519", value: signature }],
       ],
     }),
     provider.signer,
@@ -570,21 +569,21 @@ export async function fetchChallengeProof(api, providerUrl, challengeId) {
   });
 
   return {
-    chunk_data: Binary.fromBytes(Buffer.from(chunk.chunk_data, "base64")),
+    chunk_data: new Uint8Array(Buffer.from(chunk.chunk_data, "base64")),
     mmr_proof: {
-      peaks: mmr.proof.peaks.map((h) => Binary.fromBytes(hexToBytes(h))),
+      peaks: mmr.proof.peaks,
       leaf: {
-        data_root: Binary.fromBytes(hexToBytes(mmr.leaf.data_root)),
+        data_root: mmr.leaf.data_root,
         data_size: BigInt(mmr.leaf.data_size),
         total_size: BigInt(mmr.leaf.total_size),
       },
       leaf_proof: {
-        siblings: mmr.proof.siblings.map((h) => Binary.fromBytes(hexToBytes(h))),
+        siblings: mmr.proof.siblings,
         path: mmr.proof.path,
       },
     },
     chunk_proof: {
-      siblings: chunk.proof.siblings.map((h) => Binary.fromBytes(hexToBytes(h))),
+      siblings: chunk.proof.siblings,
       path: chunk.proof.path,
     },
   };

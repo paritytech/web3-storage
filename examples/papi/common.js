@@ -5,7 +5,7 @@
  */
 
 import { createClient } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider";
+import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
@@ -166,17 +166,24 @@ export class NonceManager {
  */
 export async function waitForNextBlock(papi) {
   return new Promise((resolve) => {
+    // BehaviorSubject: fires synchronously on subscribe. Use a flag so the
+    // first callback can short-circuit before `sub` is bound.
     let initial = null;
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    let resolved = false;
+    let sub;
+    sub = papi.finalizedBlock$.subscribe((block) => {
+      if (resolved) return;
       if (initial === null) {
         initial = block.number;
         return;
       }
       if (block.number > initial) {
-        sub.unsubscribe();
+        resolved = true;
         resolve();
+        if (sub) sub.unsubscribe();
       }
     });
+    if (resolved && sub) sub.unsubscribe();
   });
 }
 
@@ -189,15 +196,24 @@ export async function waitForNextBlock(papi) {
  */
 export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
   await new Promise((resolve) => {
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    // PAPI 2.x's finalizedBlock$ is a BehaviorSubject — it replays the latest
+    // value synchronously when you subscribe, before the `subscribe()` return
+    // value is assigned. Track resolution with a flag so we can short-circuit
+    // and then unsubscribe via the handle once it's bound.
+    let resolved = false;
+    let sub;
+    sub = papi.finalizedBlock$.subscribe((block) => {
+      if (resolved) return;
       if (logEvery > 0 && block.number % logEvery === 0) {
         console.log("    head=#%d (target > %d)", block.number, target);
       }
       if (block.number > target) {
-        sub.unsubscribe();
+        resolved = true;
         resolve();
+        if (sub) sub.unsubscribe();
       }
     });
+    if (resolved && sub) sub.unsubscribe();
   });
 }
 
@@ -593,5 +609,6 @@ export function requireOneEvent(events, eventDescriptor, name) {
       `Expected exactly 1 ${name} event, got ${matched.length}`
     );
   }
-  return matched[0];
+  // PAPI 2.x wraps each event as { original, payload }; callers want the payload.
+  return matched[0].payload;
 }

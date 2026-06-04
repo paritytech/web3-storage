@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
+    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi generate",
     "demo": "node full-flow.js",
     "demo:bucket-membership": "node bucket-membership.js",
     "demo:provider-discovery": "node provider-discovery.js",
@@ -19,11 +19,11 @@
     "@polkadot-api/substrate-bindings": "^0.16.5",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "polkadot-api": "^1.23.3",
+    "polkadot-api": "^2.1.0",
     "viem": "^2.21.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@polkadot-api/cli": "^0.13.4"
+    "@polkadot-api/cli": "^0.20.4"
   }
 }
