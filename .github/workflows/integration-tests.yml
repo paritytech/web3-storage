@@ -34,16 +34,18 @@ jobs:
           echo "runtime=$TASKS" >> $GITHUB_OUTPUT
 
   # ── Build once ────────────────────────────────────────────────────────────
-  # All shared Rust compilation happens here, once, and is published as a single
-  # artifact the test jobs consume — so they don't each rebuild the runtime and
-  # provider. The artifact carries:
-  #   - the runtime wasm for every matrix runtime (zombienet's chain_spec_command
-  #     reads it at spawn, and the e2e chain-spec script reads it too),
-  #   - the provider node binary.
-  # The fs/s3 example binaries are still compiled lazily by `cargo run` in the
-  # demo job, the Solidity contracts are built in sc-integration-tests (they need
-  # solc/resolc), and e2e-integration-tests builds its own coverage-instrumented
-  # provider — none of those belong in this shared artifact.
+  # Compiles the heaviest, shared artifacts a single time and publishes them as
+  # one artifact the integration-tests and sc-integration-tests jobs download
+  # instead of each rebuilding from scratch. The artifact holds:
+  #   - target/release/storage-provider-node — the provider binary,
+  #   - the *.compact.compressed.wasm runtime per integration-tested runtime,
+  #     which the chain_spec_command scripts feed to chain-spec-builder.
+  # NOTE: this does not eliminate all compilation downstream — the test jobs
+  # still `cargo run` the fs/s3 ci_integration_test examples and the sc job
+  # still builds the Solidity contracts. Those lean on the shared Rust cache
+  # (shared-key "integration-tests-build"), not on this artifact. The
+  # e2e-integration-tests job does not use this artifact at all (it builds a
+  # coverage-instrumented provider and its runtime via the chain-spec script).
   build:
     name: Build
     runs-on: parity-large
