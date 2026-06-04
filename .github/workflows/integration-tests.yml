@@ -329,13 +329,14 @@ jobs:
       - name: Build provider with coverage instrumentation
         run: |
           cargo build --release -p storage-provider-node
-          # Verify the binary is instrumented (contains LLVM coverage symbols)
+          # Verify the binary contains LLVM coverage symbols
           if nm ./target-cov/release/storage-provider-node 2>/dev/null | grep -q "__llvm_profile"; then
             echo "Binary is coverage-instrumented"
           else
-            echo "WARNING: Binary does NOT appear to be coverage-instrumented"
-            echo "  (nm found no __llvm_profile symbols)"
+            echo "WARNING: Binary may not be coverage-instrumented"
           fi
+          # Clean up stray profraw files from build step (proc-macro, build scripts)
+          rm -f ./*.profraw ./default_*.profraw 2>/dev/null || true
         env:
           RUSTFLAGS: "-C instrument-coverage"
           CARGO_TARGET_DIR: target-cov
@@ -353,8 +354,10 @@ jobs:
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           mkdir -p /tmp/coverage
-          # Inline env var ensures LLVM_PROFILE_FILE reaches the nohup'd process
-          LLVM_PROFILE_FILE="/tmp/coverage/provider-%p.profraw" \
+          # %c = continuous mode: profraw is mmap'd and flushed in real-time,
+          # so coverage data survives even SIGKILL (process doesn't need a
+          # clean exit for atexit handlers to run).
+          LLVM_PROFILE_FILE="/tmp/coverage/provider-%p%c.profraw" \
             nohup ./target-cov/release/storage-provider-node \
               --keyfile /tmp/alice-key --storage-mode inmemory \
               --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
@@ -363,11 +366,6 @@ jobs:
           PROVIDER_PID=$!
           echo "Provider PID: $PROVIDER_PID"
           echo "PROVIDER_PID=$PROVIDER_PID" >> $GITHUB_ENV
-          # Verify the process started and has the env var
-          sleep 2
-          if [ -d "/proc/$PROVIDER_PID" ]; then
-            cat /proc/$PROVIDER_PID/environ 2>/dev/null | tr '\0' '\n' | grep LLVM || echo "  (LLVM_PROFILE_FILE not in /proc environ)"
-          fi
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -385,60 +383,79 @@ jobs:
           cd examples/papi && npx c8 report --reporter=text
           echo ""
 
+      - name: Run pallet unit tests with coverage
+        if: always()
+        run: |
+          # Pallet runs as WASM on-chain so E2E tests can't instrument it.
+          # Instead, run pallet unit tests with native coverage instrumentation.
+          rm -f /tmp/coverage/pallet-*.profraw 2>/dev/null || true
+          LLVM_PROFILE_FILE="/tmp/coverage/pallet-%p-%m.profraw" \
+            cargo test -p storage-provider-pallet --lib
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          CARGO_TARGET_DIR: target-cov
+          CARGO_INCREMENTAL: '0'
+
+      - name: Generate pallet coverage report
+        if: always()
+        run: |
+          if ls /tmp/coverage/pallet-*.profraw 1>/dev/null 2>&1; then
+            rustup component add llvm-tools 2>/dev/null || true
+            LLVM_PROFDATA=$(find $(rustc --print sysroot) -name llvm-profdata -type f | head -1)
+            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
+            if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
+              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/pallet-*.profraw -o /tmp/coverage/pallet.profdata
+              # Find the test binary (cargo test builds it under target-cov)
+              PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "storage_provider_pallet-*" -executable ! -name "*.d" | head -1)
+              if [ -n "$PALLET_TEST_BIN" ]; then
+                echo ""
+                echo "═══════════════════════════════════════════════════════════"
+                echo "  Rust Pallet Coverage (pallet/src/)"
+                echo "═══════════════════════════════════════════════════════════"
+                "$LLVM_COV" report \
+                  "$PALLET_TEST_BIN" \
+                  --instr-profile=/tmp/coverage/pallet.profdata \
+                  --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
+                  --sources pallet/src/
+                echo ""
+                mkdir -p /tmp/coverage/report
+                "$LLVM_COV" export \
+                  "$PALLET_TEST_BIN" \
+                  --instr-profile=/tmp/coverage/pallet.profdata \
+                  --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
+                  --sources pallet/src/ \
+                  --format=lcov > /tmp/coverage/report/pallet-lcov.info 2>/dev/null || true
+              else
+                echo "WARNING: Could not find pallet test binary"
+              fi
+            fi
+          else
+            echo "WARNING: No pallet profraw files found"
+          fi
+
       - name: Stop services and generate Rust coverage
         if: always()
         run: |
-          # Graceful shutdown — SIGTERM triggers atexit handler that flushes profraw
-          echo "=== Provider shutdown ==="
-          if [ -n "$PROVIDER_PID" ] && kill -0 "$PROVIDER_PID" 2>/dev/null; then
-            echo "Sending SIGTERM to provider (PID $PROVIDER_PID)..."
-            kill -TERM "$PROVIDER_PID" 2>/dev/null || true
-            # Wait for process to exit (up to 15s)
-            for i in $(seq 1 15); do
-              if ! kill -0 "$PROVIDER_PID" 2>/dev/null; then
-                echo "  Provider exited after ${i}s"
-                break
-              fi
-              sleep 1
-            done
-            # Force kill if still running
-            if kill -0 "$PROVIDER_PID" 2>/dev/null; then
-              echo "  Provider still running after 15s, sending SIGKILL..."
-              kill -9 "$PROVIDER_PID" 2>/dev/null || true
-              sleep 2
-            fi
-          else
-            echo "  Provider not running (PID: ${PROVIDER_PID:-unset})"
-            # Fallback: try pkill
-            pkill -TERM -f "storage-provider-node" 2>/dev/null || true
-            sleep 5
-          fi
+          # With %c (continuous mode), profraw is mmap'd and already contains
+          # all coverage data — we can safely SIGKILL without losing anything.
+          kill -9 "$PROVIDER_PID" 2>/dev/null || pkill -9 -f "storage-provider-node" 2>/dev/null || true
           pkill -f "polkadot-omni-node" 2>/dev/null || true
           pkill -f "polkadot" 2>/dev/null || true
+          sleep 2
 
-          echo ""
-          echo "=== Coverage file search ==="
-          echo "Contents of /tmp/coverage/:"
-          ls -la /tmp/coverage/ 2>/dev/null || echo "  (directory missing or empty)"
-          echo "Searching for .profraw files anywhere under /tmp/:"
-          find /tmp -name "*.profraw" -ls 2>/dev/null || echo "  (none found)"
-          echo "Searching for .profraw in working directory:"
-          find . -maxdepth 2 -name "*.profraw" -ls 2>/dev/null || echo "  (none found)"
+          echo "=== Provider coverage profraw ==="
+          ls -la /tmp/coverage/provider-*.profraw 2>/dev/null || echo "  (no provider profraw files)"
 
-          # Collect profraw from all found locations
-          find /tmp . -maxdepth 3 -name "*.profraw" -exec cp {} /tmp/coverage/ \; 2>/dev/null || true
-
-          echo ""
-          echo "=== Generate Rust coverage report ==="
-          if ls /tmp/coverage/*.profraw 1>/dev/null 2>&1; then
-            echo "Found profraw files:"
-            ls -la /tmp/coverage/*.profraw
+          # Generate Rust coverage report from provider profraw only
+          # (pallet profraw is handled in the earlier step)
+          find /tmp/coverage -name "provider-*.profraw" -empty -delete 2>/dev/null || true
+          if ls /tmp/coverage/provider-*.profraw 1>/dev/null 2>&1; then
             rustup component add llvm-tools 2>/dev/null || true
             LLVM_PROFDATA=$(find $(rustc --print sysroot) -name llvm-profdata -type f | head -1)
             LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
             if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
               mkdir -p /tmp/coverage/report
-              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/*.profraw -o /tmp/coverage/provider.profdata
+              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/provider-*.profraw -o /tmp/coverage/provider.profdata
               echo ""
               echo "═══════════════════════════════════════════════════════════"
               echo "  Rust Provider Coverage (provider-node/src/)"
@@ -457,18 +474,12 @@ jobs:
                 --format=lcov > /tmp/coverage/report/rust-lcov.info 2>/dev/null || true
             else
               echo "WARNING: llvm-profdata or llvm-cov not found"
-              echo "  llvm-profdata: ${LLVM_PROFDATA:-not found}"
-              echo "  llvm-cov: ${LLVM_COV:-not found}"
             fi
           else
-            echo "WARNING: No .profraw files found anywhere"
-            echo "  Possible causes:"
-            echo "  1. Binary not built with -C instrument-coverage"
-            echo "  2. LLVM_PROFILE_FILE env var not in process environment"
-            echo "  3. Process was killed before atexit handler could flush"
-            echo ""
-            echo "  Last 20 lines of provider log:"
-            tail -20 /tmp/provider.log 2>/dev/null || echo "  (no log)"
+            echo "WARNING: No non-empty provider-*.profraw files"
+            echo "  Continuous mode (%c) may not be supported by this LLVM version."
+            echo "  Last 10 lines of provider log:"
+            tail -10 /tmp/provider.log 2>/dev/null || echo "  (no log)"
           fi
 
       - name: Upload JS coverage
