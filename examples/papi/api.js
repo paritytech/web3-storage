@@ -186,12 +186,12 @@ export async function respondToChallenge(api, provider, challengeId, proof) {
   );
 }
 
-export async function endAgreement(api, client, provider, bucketId, action = "Pay") {
+export async function endAgreement(api, client, provider, bucketId, action = "Pay", actionValue) {
   return submitTx(
     api.tx.StorageProvider.end_agreement({
       bucket_id: bucketId,
       provider: provider.address,
-      action: Enum(action),
+      action: actionValue !== undefined ? Enum(action, actionValue) : Enum(action),
     }),
     client.signer,
     `end_agreement(${action})`

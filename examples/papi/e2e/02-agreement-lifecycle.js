@@ -86,18 +86,23 @@ async function main() {
     name: "2.3 Reject agreement",
     fn: async () => {
       rejectBucketId = await createBucket(api, client);
-      const balBefore = await getFree(api, client);
       await requestPrimaryAgreement(api, client, provider, rejectBucketId, {
         max_bytes: maxBytes,
         duration,
         max_payment: maxPayment,
       });
+      const balAfterRequest = await getFree(api, client);
       const result = await rejectAgreement(api, provider, rejectBucketId);
       const events = api.event.StorageProvider.AgreementRejected.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected AgreementRejected event");
-      // Payment returned (minus tx fees).
-      const balAfter = await getFree(api, client);
-      assert.ok(balAfter >= balBefore, "Balance should be restored after reject (minus fees)");
+      // Locked payment is returned after reject. Balance should increase
+      // compared to after the request (client still lost tx fees for
+      // create_bucket + request, but the reserved payment is unreserved).
+      const balAfterReject = await getFree(api, client);
+      assert.ok(
+        balAfterReject > balAfterRequest,
+        `Balance should increase after reject: ${balAfterReject} > ${balAfterRequest}`
+      );
       const req = await api.query.StorageProvider.AgreementRequests.getValue(
         rejectBucketId,
         provider.address
@@ -154,7 +159,7 @@ async function main() {
       );
       console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
       await waitForBlock(papi, Number(agreement.expires_at));
-      const result = await endAgreement(api, client, provider, burnBucketId, "Burn");
+      const result = await endAgreement(api, client, provider, burnBucketId, "Burn", { burn_percent: 100 });
       const events = api.event.StorageProvider.AgreementEnded.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected AgreementEnded event");
     },
