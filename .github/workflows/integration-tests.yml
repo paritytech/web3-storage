@@ -80,6 +80,13 @@ jobs:
       - name: Build provider
         run: just build-provider
 
+      # Upload only what the test jobs actually consume: the provider binary and
+      # the final compressed runtime wasm per runtime (the chain_spec_command
+      # scripts read target/release/wbuild/<pkg>/<pkg>.compact.compressed.wasm).
+      # The full wbuild tree is a ~900 MiB / 3400-file Cargo scratch dir — never
+      # upload it. Both listed paths sit under target/release, so the artifact's
+      # least-common-ancestor root is target/release; the download step below
+      # extracts into target/release to put the prefix back.
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -88,7 +95,7 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/storage-provider-node
-            target/release/wbuild
+            target/release/wbuild/*/*.compact.compressed.wasm
 
   # ── L0 / file-system / S3 demos ───────────────────────────────────────────
   # Runs against its OWN chain + inmemory and disk providers. Demos stay
@@ -164,11 +171,15 @@ jobs:
           shared-key: "integration-tests-build"
           save-if: false
 
+      # Extract into target/release so the artifact's target/release-rooted
+      # contents (provider binary + wbuild wasm) land back at their original
+      # paths — where the chmod step, the chain_spec_command scripts, and the
+      # demos all expect them.
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
         with:
           name: build
-          path: .
+          path: target/release
 
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
@@ -546,11 +557,13 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # Extract into target/release so the artifact's target/release-rooted
+      # contents land back at their original paths (see integration-tests job).
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
         with:
           name: build
-          path: .
+          path: target/release
 
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
