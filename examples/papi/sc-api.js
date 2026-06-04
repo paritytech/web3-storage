@@ -54,7 +54,7 @@ export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, d
     owner: owner.address,
     max_bytes: BigInt(maxBytes),
     duration,
-    price_per_byte: price_per_byte,
+    price_per_byte: pricePerByte,
     replica_params: null,
     bucket_id: null,
   });
@@ -77,9 +77,9 @@ export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, d
       hasBucketId: bucket != null,
       bucketId: BigInt(bucket ?? 0),
     },
-    // Hex SCALE-encoded MultiSignature (variant byte + raw sig) — passed
-    // through verbatim as the `bytes signature` ABI param.
-    signature: signed.signature,
+    signature: signed.signature.startsWith("0x")
+      ? signed.signature
+      : `0x${signed.signature}`,
   };
 }
 
