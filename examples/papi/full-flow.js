@@ -62,7 +62,7 @@ async function setupAgreement(api, client, provider, bucketId) {
     return;
   }
   const maxBytes = 1_073_741_824n; // 1 GiB
-  const duration = 50;
+  const duration = 15;
   console.log(
     "  Requesting agreement (%s), duration=%d blocks...",
     client.seed,
