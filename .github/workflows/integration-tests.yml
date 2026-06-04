@@ -33,11 +33,73 @@ jobs:
           TASKS=$(echo "$TASKS" | jq -c .)
           echo "runtime=$TASKS" >> $GITHUB_OUTPUT
 
+  # ── Build once ────────────────────────────────────────────────────────────
+  # All shared Rust compilation happens here, once, and is published as a single
+  # artifact the test jobs consume — so they don't each rebuild the runtime and
+  # provider. The artifact carries:
+  #   - the runtime wasm for every matrix runtime (zombienet's chain_spec_command
+  #     reads it at spawn, and the e2e chain-spec script reads it too),
+  #   - the provider node binary.
+  # The fs/s3 example binaries are still compiled lazily by `cargo run` in the
+  # demo job, the Solidity contracts are built in sc-integration-tests (they need
+  # solc/resolc), and e2e-integration-tests builds its own coverage-instrumented
+  # provider — none of those belong in this shared artifact.
+  build:
+    name: Build
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      # Build every runtime whose build_command the matrix file declares, so the
+      # single artifact carries a wasm for each runtime the test jobs fan out on.
+      - name: Build all runtimes
+        run: |
+          for cmd in $(jq -r '.[] | select(.integration_tests == true) | .build_command' scripts/runtimes-matrix.json); do
+            echo "::group::just $cmd"
+            just "$cmd"
+            echo "::endgroup::"
+          done
+
+      - name: Build provider
+        run: just build-provider
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: build
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            target/release/storage-provider-node
+            target/release/wbuild
+
+  # ── L0 / file-system / S3 demos ───────────────────────────────────────────
+  # Runs against its OWN chain + inmemory and disk providers. Demos stay
+  # sequential on the shared chain (drain-tx-pool-then between them), but the
+  # job skips the build entirely and consumes the prebuilt artifact, so it runs
+  # in parallel with e2e-integration-tests and sc-integration-tests.
   integration-tests:
     name: Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
-    timeout-minutes: 60
-    needs: [set-image, runtime-matrix]
+    timeout-minutes: 30
+    needs: [set-image, runtime-matrix, build]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     strategy:
@@ -50,12 +112,6 @@ jobs:
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-${{ matrix.runtime.name }}"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
         run: cargo install just --locked || true
@@ -98,8 +154,24 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build runtime and provider
-        run: just ${{ matrix.runtime.build_command }} && just build-provider
+      # Restored before the artifact download so the cached target/ can't clobber
+      # the freshly downloaded provider + wbuild. save-if false — only the build
+      # job writes this cache. The fs/s3 demos still `cargo run` example binaries,
+      # so the warm cache keeps that compilation fast.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: build
+          path: .
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
 
       - name: Start chain
         uses: ./.github/actions/start-zombienet
@@ -118,11 +190,6 @@ jobs:
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
 
-      - name: Wait for provider (inmemory) health
-        uses: ./.github/actions/wait-for-provider-health
-        with:
-          label: inmemory
-
       - name: Start provider (disk)
         run: |
           echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
@@ -131,6 +198,11 @@ jobs:
             --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider-disk.log 2>&1 &
+
+      - name: Wait for provider (inmemory) health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          label: inmemory
 
       - name: Wait for provider (disk) health
         uses: ./.github/actions/wait-for-provider-health
@@ -172,12 +244,14 @@ jobs:
   # E2E test suite — runs all 10 PAPI E2E workflows against a single
   # inmemory provider. Uses web3-storage-paseo only: the storage pallet
   # config is identical across runtimes so running both would just double
-  # CI time with zero extra coverage.
+  # CI time with zero extra coverage. Consumes the build artifact's runtime
+  # wasm but builds its OWN coverage-instrumented provider (the shared
+  # artifact's provider is not instrumented).
   e2e-integration-tests:
     name: E2E Integration Tests
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image]
+    needs: [set-image, build]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
@@ -222,8 +296,13 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build runtime
-        run: just build-paseo-runtime
+      # The runtime wasm comes prebuilt from the build job; this job only
+      # compiles the coverage-instrumented provider below.
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: build
+          path: .
 
       - name: Build provider with coverage instrumentation
         run: |
@@ -393,13 +472,16 @@ jobs:
             /tmp/omni-node.log
             /tmp/provider.log
 
-  # Smart-contract demos run in a parallel job with their own chain +
-  # provider. SC tests only need //Alice as a provider.
+  # ── Smart-contract demos ─────────────────────────────────────────────────────
+  # Runs against its OWN chain + inmemory provider, in parallel with
+  # integration-tests and e2e-integration-tests. The runtime wasm and provider
+  # come prebuilt in the artifact; this job only installs solc/resolc and
+  # compiles the example Solidity contracts.
   sc-integration-tests:
     name: SC Integration Tests (${{ matrix.runtime.name }})
     runs-on: parity-large
-    timeout-minutes: 60
-    needs: [set-image, runtime-matrix]
+    timeout-minutes: 30
+    needs: [set-image, runtime-matrix, build]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     strategy:
@@ -412,12 +494,6 @@ jobs:
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "sc-integration-tests-${{ matrix.runtime.name }}"
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
 
       - name: Install just
         run: cargo install just --locked || true
@@ -454,6 +530,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: build
+          path: .
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
       - name: Install solc and resolc
         run: |
           for bin_url in \
@@ -477,9 +562,6 @@ jobs:
           chmod +x /usr/local/bin/solc /usr/local/bin/resolc
           solc --version
           resolc --version
-
-      - name: Build runtime and provider
-        run: just ${{ matrix.runtime.build_command }} && just build-provider
 
       - name: Build example contracts
         run: just build-contracts
@@ -538,7 +620,7 @@ jobs:
 
   integration-tests-complete:
     name: Integration Tests
-    needs: [integration-tests, e2e-integration-tests, sc-integration-tests]
+    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
