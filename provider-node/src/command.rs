@@ -5,11 +5,11 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
     DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
 };
 use clap::Parser;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -64,6 +64,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             state.nonce_counter = Some(setup_nonce_counter(&cli, &state.provider_id).await?);
+            state.provider_info = Some(setup_provider_info(&cli, &state.provider_id).await?);
 
             Arc::new(state)
         }
@@ -204,13 +205,52 @@ async fn start_replica_sync_coordinator(
     }
 }
 
+/// Fetch the provider's on-chain registration info once and store it for
+async fn setup_provider_info(
+    cli: &Cli,
+    provider_id: &str,
+) -> Result<StateProviderInfo, Box<dyn std::error::Error>> {
+    let provider_account = sp_runtime::AccountId32::from_str(provider_id)
+        .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
+
+    let mut client = storage_client::ProviderClient::new(
+        storage_client::ClientConfig {
+            chain_ws_url: cli.rpc.chain_rpc.clone(),
+            ..Default::default()
+        },
+        provider_id.to_string(),
+    )?;
+    client.connect().await?;
+
+    let info = client
+        .get_provider_info(&provider_account)
+        .await?
+        .ok_or_else(|| {
+            format!(
+                "provider {provider_id} is not registered on chain; \
+                 register it before starting the node"
+            )
+        })?;
+
+    tracing::info!(
+        "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
+        info.price_per_byte,
+        info.min_duration,
+        info.max_duration,
+        info.max_capacity,
+        info.accepting_primary,
+    );
+
+    Ok(Arc::new(RwLock::new(info)))
+}
+
 /// Create the in-memory nonce counter and bootstrap it from the chain's
 /// `ProviderReplayState.hsn`. The chain is the source of truth, so there
 /// is nothing to persist locally.
 async fn setup_nonce_counter(
     cli: &Cli,
     provider_id: &str,
-) -> Result<Arc<NonceCounter>, Box<dyn std::error::Error>> {
+) -> Result<StateNonceCounter, Box<dyn std::error::Error>> {
     // Start the `nonce` from 1.
     let counter = NonceCounter::new(1);
 

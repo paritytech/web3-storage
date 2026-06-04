@@ -147,6 +147,7 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --storage-mode "{{MODE}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}" \
+        --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
 # Register provider on-chain (idempotent). Requires a running chain.

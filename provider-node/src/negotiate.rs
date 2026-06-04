@@ -14,13 +14,59 @@
 //! 3. Signs `blake2_256(SCALE(terms))` with the provider's existing
 //!    sr25519 checkpoint key (the same one used to sign commitments).
 
+use crate::error::Error;
 use codec::Encode;
 use sp_core::Pair;
 use sp_runtime::MultiSignature;
 use std::sync::atomic::{AtomicU64, Ordering};
+use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
 pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+
+/// Validate a negotiation request against the provider's current on-chain
+/// settings.
+///
+/// The chain treats the resulting signature as provider consent, so the
+/// node must refuse to sign terms it wouldn't accept: without this check a
+/// client could propose `price_per_byte = 0`, an out-of-range duration, or
+/// more bytes than the provider has capacity for, and the extrinsic would
+/// bind the provider to it.
+pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(), Error> {
+    match &req.replica_params {
+        None if !info.accepting_primary => return Err(Error::NotAcceptingPrimary),
+        Some(_) if info.replica_sync_price.is_none() => return Err(Error::NotAcceptingReplicas),
+        _ => {}
+    }
+
+    if req.price_per_byte < info.price_per_byte {
+        return Err(Error::PriceBelowListed {
+            proposed: req.price_per_byte,
+            listed: info.price_per_byte,
+        });
+    }
+
+    if req.duration < info.min_duration || req.duration > info.max_duration {
+        return Err(Error::DurationOutOfBounds {
+            duration: req.duration,
+            min: info.min_duration,
+            max: info.max_duration,
+        });
+    }
+
+    // `max_capacity == 0` means unlimited.
+    if info.max_capacity > 0
+        && info.committed_bytes.saturating_add(req.max_bytes) > info.max_capacity
+    {
+        return Err(Error::CapacityExceeded {
+            requested: req.max_bytes,
+            committed: info.committed_bytes,
+            max_capacity: info.max_capacity,
+        });
+    }
+
+    Ok(())
+}
 
 /// In-memory monotonic nonce counter for provider-signed terms.
 ///
@@ -93,6 +139,138 @@ pub fn sign_terms(keypair: &sp_core::sr25519::Pair, terms: &AgreementTermsOf) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sp_runtime::AccountId32;
+    use storage_client::agreement::ReplicaTermsOf;
+
+    fn provider_info() -> ProviderInfo {
+        ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            stake: 1_000_000_000_000,
+            committed_bytes: 0,
+            max_capacity: 0,
+            min_duration: 10,
+            max_duration: 100_000,
+            price_per_byte: 5,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            agreements_total: 0,
+            challenges_failed: 0,
+        }
+    }
+
+    fn request() -> NegotiateRequest {
+        NegotiateRequest {
+            owner: AccountId32::new([0u8; 32]),
+            max_bytes: 1024,
+            duration: 50,
+            price_per_byte: 5,
+            bucket_id: None,
+            replica_params: None,
+        }
+    }
+
+    #[test]
+    fn accepts_request_matching_settings() {
+        assert!(validate_request(&request(), &provider_info()).is_ok());
+    }
+
+    #[test]
+    fn rejects_price_below_listed() {
+        let mut req = request();
+        req.price_per_byte = 0;
+        let err = validate_request(&req, &provider_info()).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::PriceBelowListed {
+                proposed: 0,
+                listed: 5
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_price_above_listed() {
+        let mut req = request();
+        req.price_per_byte = 10;
+        assert!(validate_request(&req, &provider_info()).is_ok());
+    }
+
+    #[test]
+    fn rejects_duration_out_of_bounds() {
+        let mut req = request();
+        req.duration = 5;
+        assert!(matches!(
+            validate_request(&req, &provider_info()),
+            Err(Error::DurationOutOfBounds { .. })
+        ));
+        req.duration = 100_001;
+        assert!(matches!(
+            validate_request(&req, &provider_info()),
+            Err(Error::DurationOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_bytes_beyond_remaining_capacity() {
+        let mut info = provider_info();
+        info.max_capacity = 2048;
+        info.committed_bytes = 1536;
+        let err = validate_request(&request(), &info).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::CapacityExceeded {
+                requested: 1024,
+                committed: 1536,
+                max_capacity: 2048
+            }
+        ));
+    }
+
+    #[test]
+    fn zero_capacity_means_unlimited() {
+        let mut req = request();
+        req.max_bytes = u64::MAX;
+        assert!(validate_request(&req, &provider_info()).is_ok());
+    }
+
+    #[test]
+    fn rejects_primary_when_not_accepting() {
+        let mut info = provider_info();
+        info.accepting_primary = false;
+        assert!(matches!(
+            validate_request(&request(), &info),
+            Err(Error::NotAcceptingPrimary)
+        ));
+    }
+
+    #[test]
+    fn rejects_replica_without_sync_price() {
+        let mut req = request();
+        req.bucket_id = Some(1);
+        req.replica_params = Some(ReplicaTermsOf {
+            sync_balance: 1_000,
+            min_sync_interval: 10,
+        });
+        assert!(matches!(
+            validate_request(&req, &provider_info()),
+            Err(Error::NotAcceptingReplicas)
+        ));
+    }
+
+    #[test]
+    fn accepts_replica_even_when_primary_closed() {
+        let mut info = provider_info();
+        info.accepting_primary = false;
+        info.replica_sync_price = Some(7);
+        let mut req = request();
+        req.bucket_id = Some(1);
+        req.replica_params = Some(ReplicaTermsOf {
+            sync_balance: 1_000,
+            min_sync_interval: 10,
+        });
+        assert!(validate_request(&req, &info).is_ok());
+    }
 
     #[test]
     fn nonce_counter_is_monotonic() {

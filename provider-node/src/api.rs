@@ -12,6 +12,7 @@ use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
+    error_handling::HandleErrorLayer,
     extract::{DefaultBodyLimit, Query, State},
     routing::{get, post, put},
     Json, Router,
@@ -20,10 +21,18 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use sp_core::H256;
 use std::sync::Arc;
+use std::time::Duration;
 use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use tower::{buffer::BufferLayer, limit::RateLimitLayer, BoxError, ServiceBuilder};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+
+/// `/negotiate` rate limit
+const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
+/// Requests queued while the limiter is saturated; beyond this they fail
+/// fast with 429.
+const NEGOTIATE_RATE_LIMIT_BURST: usize = 16;
 
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
@@ -51,7 +60,22 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
         // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
-        .route("/negotiate", post(negotiate_terms))
+        .route(
+            "/negotiate",
+            post(negotiate_terms).layer(
+                // RateLimit isn't Clone, so it needs a Buffer in front;
+                // Buffer's BoxError is turned back into a response here.
+                ServiceBuilder::new()
+                    .layer(HandleErrorLayer::new(|_: BoxError| async {
+                        Error::RateLimited
+                    }))
+                    .layer(BufferLayer::new(NEGOTIATE_RATE_LIMIT_BURST))
+                    .layer(RateLimitLayer::new(
+                        NEGOTIATE_RATE_LIMIT_PER_SEC,
+                        Duration::from_secs(1),
+                    )),
+            ),
+        )
         // Checkpoint coordination
         .route("/checkpoint/sign", post(sign_checkpoint_proposal))
         .route("/checkpoint/duty", get(get_checkpoint_duty))
@@ -125,6 +149,10 @@ async fn health() -> Json<HealthResponse> {
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
+        provider_registration_info: state
+            .provider_info
+            .as_ref()
+            .and_then(|slot| slot.read().ok().map(|guard| guard.clone())),
     })
 }
 
@@ -747,6 +775,16 @@ async fn negotiate_terms(
     let nonce_counter = state.nonce_counter.as_ref().ok_or_else(|| {
         Error::Internal("provider node has no nonce counter; /negotiate disabled".to_string())
     })?;
+
+    // Validate against the provider's on-chain settings *before* burning a
+    // nonce or spending CPU on a signature — the chain treats the signature
+    // as provider consent to whatever the client proposed.
+    let info = state
+        .provider_info
+        .as_ref()
+        .and_then(|slot| slot.read().ok().map(|guard| guard.clone()))
+        .ok_or(Error::ProviderInfoUnavailable)?;
+    negotiate::validate_request(&req, &info)?;
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,

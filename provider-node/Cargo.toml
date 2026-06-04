@@ -12,6 +12,7 @@ storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 tokio = { workspace = true }
 axum = { workspace = true }
+tower = { workspace = true, features = ["buffer", "limit", "util"] }
 tower-http = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }

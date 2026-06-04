@@ -1,6 +1,7 @@
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
+use storage_client::discovery::ProviderInfo;
 use storage_primitives::BucketId;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,7 +247,7 @@ pub struct ListBucketsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoResponse {
     pub provider_id: String,
-    // TODO: Add more provider information
+    pub provider_registration_info: Option<ProviderInfo>,
 }
 
 /// Health check response.

@@ -69,6 +69,34 @@ pub enum Error {
 
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
+
+    #[error("Provider is not accepting new primary agreements")]
+    NotAcceptingPrimary,
+
+    #[error("Provider is not accepting replica agreements")]
+    NotAcceptingReplicas,
+
+    #[error("Proposed price_per_byte {proposed} is below the provider's listed price {listed}")]
+    PriceBelowListed { proposed: u128, listed: u128 },
+
+    #[error("Duration {duration} is outside the provider's bounds [{min}, {max}]")]
+    DurationOutOfBounds { duration: u32, min: u32, max: u32 },
+
+    #[error(
+        "Requested {requested} bytes exceeds remaining capacity \
+         ({committed} of {max_capacity} bytes committed)"
+    )]
+    CapacityExceeded {
+        requested: u64,
+        committed: u64,
+        max_capacity: u64,
+    },
+
+    #[error("Provider on-chain info unavailable; cannot validate terms")]
+    ProviderInfoUnavailable,
+
+    #[error("Too many requests")]
+    RateLimited,
 }
 
 #[derive(Serialize)]
@@ -211,6 +239,74 @@ impl IntoResponse for Error {
                         "message": "provider node has no signing key configured; \
                                     start with --keyfile to enable signing-bound endpoints"
                     })),
+                },
+            ),
+            Error::NotAcceptingPrimary => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "not_accepting_primary".to_string(),
+                    details: None,
+                },
+            ),
+            Error::NotAcceptingReplicas => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "not_accepting_replicas".to_string(),
+                    details: None,
+                },
+            ),
+            Error::PriceBelowListed { proposed, listed } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "price_below_listed".to_string(),
+                    // u128 doesn't fit serde_json numbers; send as strings.
+                    details: Some(serde_json::json!({
+                        "proposed": proposed.to_string(),
+                        "listed": listed.to_string(),
+                    })),
+                },
+            ),
+            Error::DurationOutOfBounds { duration, min, max } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "duration_out_of_bounds".to_string(),
+                    details: Some(serde_json::json!({
+                        "duration": duration,
+                        "min": min,
+                        "max": max,
+                    })),
+                },
+            ),
+            Error::CapacityExceeded {
+                requested,
+                committed,
+                max_capacity,
+            } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "capacity_exceeded".to_string(),
+                    details: Some(serde_json::json!({
+                        "requested": requested,
+                        "committed": committed,
+                        "max_capacity": max_capacity,
+                    })),
+                },
+            ),
+            Error::ProviderInfoUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "provider_info_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider's on-chain registration info is not loaded; \
+                                    cannot validate agreement terms"
+                    })),
+                },
+            ),
+            Error::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorResponse {
+                    error: "rate_limited".to_string(),
+                    details: None,
                 },
             ),
         };
