@@ -118,14 +118,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (Alice, inmemory) and wait for health
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (Alice, inmemory) and wait for health
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
               echo "Provider healthy (attempt $i)"
