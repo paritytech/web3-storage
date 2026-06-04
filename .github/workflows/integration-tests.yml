@@ -390,7 +390,7 @@ jobs:
           # Instead, run pallet unit tests with native coverage instrumentation.
           rm -f /tmp/coverage/pallet-*.profraw 2>/dev/null || true
           LLVM_PROFILE_FILE="/tmp/coverage/pallet-%p-%m.profraw" \
-            cargo test -p storage-provider-pallet --lib
+            cargo test -p pallet-storage-provider --lib
         env:
           RUSTFLAGS: "-C instrument-coverage"
           CARGO_TARGET_DIR: target-cov
@@ -406,7 +406,7 @@ jobs:
             if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
               "$LLVM_PROFDATA" merge -sparse /tmp/coverage/pallet-*.profraw -o /tmp/coverage/pallet.profdata
               # Find the test binary (cargo test builds it under target-cov)
-              PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "storage_provider_pallet-*" -executable ! -name "*.d" | head -1)
+              PALLET_TEST_BIN=$(find ./target-cov/release/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
               if [ -n "$PALLET_TEST_BIN" ]; then
                 echo ""
                 echo "═══════════════════════════════════════════════════════════"
