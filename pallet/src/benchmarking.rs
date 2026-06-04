@@ -107,7 +107,7 @@ fn sign_terms<T: Config>(
     public_key: &sp_core::sr25519::Public,
     terms: &AgreementTermsOf<T>,
 ) -> sp_runtime::MultiSignature {
-    let hash = sp_io::hashing::blake2_256(&codec::Encode::encode(terms));
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
     let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, public_key, &hash)
         .expect("benchmarking keystore signs with a key it generated");
     sp_runtime::MultiSignature::Sr25519(sig)

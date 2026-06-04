@@ -247,8 +247,8 @@ pub mod extrinsics {
     ///
     /// Bundles the SCALE-encoded provider-signed terms and signature into
     /// the dynamic call shape Layer 0 expects. The chain hashes
-    /// `blake2_256(SCALE(terms))` and verifies the signature against the
-    /// provider's registered public key.
+    /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
+    /// signature against the provider's registered public key.
     pub fn establish_storage_agreement(
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,

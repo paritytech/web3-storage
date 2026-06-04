@@ -1,15 +1,23 @@
 //! Provider-signed terms of a storage agreement.
 //!
-//! A provider quotes terms off-chain (e.g. over HTTP) and signs the SCALE
-//! encoding of an `AgreementTerms` value.
+//! A provider quotes terms off-chain (e.g. over HTTP) and signs
+//! `blake2_256(TERM_CONTEXT | SCALE(terms))`, where the context string
+//! domain-separates primary quotes from replica quotes.
 //!
 //! [`AgreementTerms`] shape covers both flavours: `replica` is
 //! `None` for primary agreements and `Some(_)` for replica agreements,
 //! carrying the per-sync funding parameters.
 
+use alloc::vec::Vec;
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use core::fmt::Debug;
 use scale_info::TypeInfo;
+
+/// Domain-separation context prefixed to the signing payload of primary terms.
+pub const PRIMARY_TERM_CONTEXT: &[u8] = b"primary-term-v1:";
+
+/// Domain-separation context prefixed to the signing payload of replica terms.
+pub const REPLICA_TERM_CONTEXT: &[u8] = b"replica-term-v1:";
 
 /// Off-chain quote signed by the provider and redeemed on-chain by the owner.
 #[derive(
@@ -40,6 +48,29 @@ pub struct AgreementTerms<AccountId, Balance, BlockNumber> {
     /// - `None` means these are primary terms;
     /// - `Some(_)` means the provider has quoted a replica agreement and the extra per-sync funding is included.
     pub replica_params: Option<ReplicaTerms<Balance, BlockNumber>>,
+}
+
+impl<AccountId: Encode, Balance: Encode, BlockNumber: Encode>
+    AgreementTerms<AccountId, Balance, BlockNumber>
+{
+    /// Domain-separation context matching this quote's flavour:
+    /// [`REPLICA_TERM_CONTEXT`] when `replica_params` is `Some(_)`,
+    /// [`PRIMARY_TERM_CONTEXT`] otherwise.
+    pub fn signing_context(&self) -> &'static [u8] {
+        if self.replica_params.is_some() {
+            REPLICA_TERM_CONTEXT
+        } else {
+            PRIMARY_TERM_CONTEXT
+        }
+    }
+
+    /// Bytes the provider hashes (blake2-256) and signs:
+    /// `signing_context() | SCALE(self)`.
+    pub fn signing_payload(&self) -> Vec<u8> {
+        let mut payload = self.signing_context().to_vec();
+        self.encode_to(&mut payload);
+        payload
+    }
 }
 
 /// Replica terms

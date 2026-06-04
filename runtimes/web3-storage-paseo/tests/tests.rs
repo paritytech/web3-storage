@@ -168,7 +168,7 @@ fn sign_primary_terms(
     provider: Sr25519Keyring,
     terms: &pallet_storage_provider::AgreementTermsOf<Runtime>,
 ) -> sp_runtime::MultiSignature {
-    let hash = sp_io::hashing::blake2_256(&terms.encode());
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
     sp_runtime::MultiSignature::Sr25519(provider.pair().sign(&hash))
 }
 

@@ -11,11 +11,12 @@
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_block + valid_until_offset`.
-//! 3. Signs `blake2_256(SCALE(terms))` with the provider's existing
-//!    sr25519 checkpoint key (the same one used to sign commitments).
+//! 3. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
+//!    existing sr25519 checkpoint key (the same one used to sign
+//!    commitments). The context is `primary-term-v1:` or
+//!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
-use codec::Encode;
 use sp_core::Pair;
 use sp_runtime::MultiSignature;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -128,10 +129,10 @@ impl NonceCounter {
 
 /// Sign agreement terms with the provider's checkpoint sr25519 key.
 ///
-/// Mirrors the on-chain verifier: SCALE-encode → blake2-256 → sr25519
-/// sign → wrap as `MultiSignature::Sr25519`.
+/// Mirrors the on-chain verifier: term context | SCALE-encode →
+/// blake2-256 → sr25519 sign → wrap as `MultiSignature::Sr25519`.
 pub fn sign_terms(keypair: &sp_core::sr25519::Pair, terms: &AgreementTermsOf) -> MultiSignature {
-    let hash = sp_core::hashing::blake2_256(&terms.encode());
+    let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
     let sig = keypair.sign(&hash);
     MultiSignature::Sr25519(sig)
 }

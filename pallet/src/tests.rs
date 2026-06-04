@@ -1,7 +1,6 @@
 //! Tests for the storage provider pallet.
 
 use crate::{mock::*, *};
-use codec::Encode;
 use frame_support::{assert_noop, assert_ok};
 use sp_core::crypto::KeyTypeId;
 use storage_primitives::{
@@ -38,7 +37,7 @@ fn sign_terms(
     public: &sp_core::sr25519::Public,
     terms: &AgreementTermsOf<Test>,
 ) -> sp_runtime::MultiSignature {
-    let hash = sp_io::hashing::blake2_256(&terms.encode());
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
     let sig = sp_io::crypto::sr25519_sign(PROVIDER_KEY_TYPE, public, &hash)
         .expect("keystore should sign with a key it generated");
     sp_runtime::MultiSignature::Sr25519(sig)

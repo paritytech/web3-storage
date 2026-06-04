@@ -2774,11 +2774,17 @@ pub mod pallet {
 
         /// Verify a provider signature over a SCALE-encoded
         /// [`AgreementTermsOf<T>`]. The signed payload is
-        /// `blake2_256(terms.encode())`.
+        /// `blake2_256(context | terms.encode())`, where `context` is the
+        /// domain-separation prefix for the redemption path
+        /// ([`storage_primitives::PRIMARY_TERM_CONTEXT`] or
+        /// [`storage_primitives::REPLICA_TERM_CONTEXT`]) — the caller, not
+        /// the terms, decides it, so a quote signed for one flavour can
+        /// never be redeemed as the other.
         fn verify_terms_signature(
             provider_info: &ProviderInfo<T>,
             terms: &AgreementTermsOf<T>,
             sig: &sp_runtime::MultiSignature,
+            context: &[u8],
         ) -> DispatchResult {
             use sp_runtime::traits::Verify;
 
@@ -2797,7 +2803,9 @@ pub mod pallet {
                 }
             };
 
-            let hash = sp_io::hashing::blake2_256(&terms.encode());
+            let mut payload = context.to_vec();
+            terms.encode_to(&mut payload);
+            let hash = sp_io::hashing::blake2_256(&payload);
             ensure!(
                 sig.verify(&hash[..], &account_id),
                 Error::<T>::InvalidProviderSignature
@@ -3772,10 +3780,16 @@ pub mod pallet {
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
 
-            // Provider lookup + signature check over blake2_256(SCALE(terms)).
+            // Provider lookup + signature check over
+            // blake2_256(PRIMARY_TERM_CONTEXT | SCALE(terms)).
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::verify_terms_signature(&provider_info, &terms, sig)?;
+            Self::verify_terms_signature(
+                &provider_info,
+                &terms,
+                sig,
+                storage_primitives::PRIMARY_TERM_CONTEXT,
+            )?;
 
             // Replay window: at most once per nonce, within the trailing 256 slots.
             ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
@@ -3905,10 +3919,16 @@ pub mod pallet {
                 .ok_or(Error::<T>::MissingReplicaTerms)?
                 .clone();
 
-            // Provider lookup + signature check over blake2_256(SCALE(terms)).
+            // Provider lookup + signature check over
+            // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::verify_terms_signature(&provider_info, &terms, sig)?;
+            Self::verify_terms_signature(
+                &provider_info,
+                &terms,
+                sig,
+                storage_primitives::REPLICA_TERM_CONTEXT,
+            )?;
 
             // Replay window: at most once per nonce, within the trailing 256 slots.
             ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {

@@ -10,11 +10,12 @@
 //!   that need to sign terms without going through the full provider
 //!   keystore.
 //!
-//! The on-chain pallet hashes `blake2_256(SCALE(terms))` and verifies the
-//! signature against the provider's registered public key, so the same
-//! encoding has to be used on both sides — `sign_terms` enforces that.
+//! The on-chain pallet hashes `blake2_256(TERM_CONTEXT | SCALE(terms))` —
+//! `primary-term-v1:` or `replica-term-v1:` depending on the redemption
+//! path — and verifies the signature against the provider's registered
+//! public key, so the same payload has to be built on both sides —
+//! `sign_terms` enforces that via [`AgreementTerms::signing_payload`].
 
-use codec::Encode;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
@@ -60,10 +61,11 @@ pub struct NegotiateRequest {
 
 /// Provider-signed agreement terms
 ///
-/// `signature` is a `MultiSignature` over `blake2_256(SCALE(terms))`,
-/// produced by the provider's registered key. We carry the signature as
-/// hex over the wire — `MultiSignature` doesn't derive serde directly,
-/// and hex keeps the JSON readable.
+/// `signature` is a `MultiSignature` over
+/// `blake2_256(TERM_CONTEXT | SCALE(terms))`, produced by the provider's
+/// registered key. We carry the signature as hex over the wire —
+/// `MultiSignature` doesn't derive serde directly, and hex keeps the JSON
+/// readable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTerms {
     pub terms: AgreementTermsOf,
@@ -73,14 +75,15 @@ pub struct SignedTerms {
 
 /// Sign already-built terms with a provider keypair.
 ///
-/// Mirror of the on-chain `verify_terms_signature`: SCALE-encode, hash
-/// with blake2-256, then sign. The runtime accepts `MultiSignature`, so
-/// callers wrap the raw sr25519 signature with `MultiSignature::Sr25519`.
+/// Mirror of the on-chain `verify_terms_signature`: prefix the matching
+/// term context, SCALE-encode, hash with blake2-256, then sign. The
+/// runtime accepts `MultiSignature`, so callers wrap the raw sr25519
+/// signature with `MultiSignature::Sr25519`.
 pub fn sign_terms(
     keypair: &subxt_signer::sr25519::Keypair,
     terms: &AgreementTermsOf,
 ) -> MultiSignature {
-    let hash = blake2_256(&terms.encode());
+    let hash = blake2_256(&terms.signing_payload());
     let raw = keypair.sign(&hash);
     MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(raw.0))
 }
