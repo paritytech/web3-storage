@@ -56,8 +56,8 @@ use std::time::Duration;
 use storage_client::discovery::ProviderInfo;
 use tokio::sync::mpsc;
 
-pub type StateNonceCounter = Arc<NonceCounter>;
-pub type StateProviderInfo = Arc<RwLock<ProviderInfo>>;
+pub type StateNonceCounter = Option<Arc<NonceCounter>>;
+pub type StateProviderInfo = Option<Arc<RwLock<ProviderInfo>>>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -81,9 +81,9 @@ pub struct ProviderState {
     pub auth_max_skew: Duration,
     /// Monotonic nonce counter used by `/negotiate` to allocate fresh
     /// nonces for provider-signed `AgreementTerms`.
-    pub nonce_counter: Option<StateNonceCounter>,
+    pub nonce_counter: StateNonceCounter,
     /// On-chain provider registration info.
-    pub provider_info: Option<StateProviderInfo>,
+    pub provider_info: StateProviderInfo,
 }
 
 impl ProviderState {

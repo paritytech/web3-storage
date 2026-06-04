@@ -764,21 +764,20 @@ async fn get_historical_roots(
 ///
 /// TODO: Request are automatically accepted, implement advance features to let providers determine
 ///
-/// Returns `503` if the node has no signing key (no `--keyfile`) or no
+/// Returns `503` if
+///     - The node has no signing key (no `--keyfile`) or no
+///     - The node fails to fetch provider registration info
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
-    let keypair = state.keypair.as_ref().ok_or_else(|| {
-        Error::Internal("provider node has no signing key; /negotiate disabled".to_string())
-    })?;
-    let nonce_counter = state.nonce_counter.as_ref().ok_or_else(|| {
-        Error::Internal("provider node has no nonce counter; /negotiate disabled".to_string())
-    })?;
+    let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+    let nonce_counter = state
+        .nonce_counter
+        .as_ref()
+        .ok_or(Error::SigningUnavailable)?;
 
-    // Validate against the provider's on-chain settings *before* burning a
-    // nonce or spending CPU on a signature — the chain treats the signature
-    // as provider consent to whatever the client proposed.
+    // Validate against the provider's on-chain settings
     let info = state
         .provider_info
         .as_ref()

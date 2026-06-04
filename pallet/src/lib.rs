@@ -877,6 +877,7 @@ pub mod pallet {
             };
 
             Providers::<T>::insert(&who, provider_info);
+            ProviderReplayStates::<T>::insert(&who, ReplayWindow::default());
 
             Self::deposit_event(Event::ProviderRegistered {
                 provider: who,
@@ -1014,6 +1015,7 @@ pub mod pallet {
 
             T::Currency::unreserve(&who, provider.stake);
             Providers::<T>::remove(&who);
+            ProviderReplayStates::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
                 provider: who,

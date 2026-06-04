@@ -63,8 +63,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            state.nonce_counter = Some(setup_nonce_counter(&cli, &state.provider_id).await?);
-            state.provider_info = Some(setup_provider_info(&cli, &state.provider_id).await?);
+            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await?;
+            state.provider_info = setup_provider_info(&cli, &state.provider_id).await?;
 
             Arc::new(state)
         }
@@ -241,7 +241,7 @@ async fn setup_provider_info(
         info.accepting_primary,
     );
 
-    Ok(Arc::new(RwLock::new(info)))
+    Ok(Some(Arc::new(RwLock::new(info))))
 }
 
 /// Create the in-memory nonce counter and bootstrap it from the chain's
@@ -251,12 +251,8 @@ async fn setup_nonce_counter(
     cli: &Cli,
     provider_id: &str,
 ) -> Result<StateNonceCounter, Box<dyn std::error::Error>> {
-    // Start the `nonce` from 1.
-    let counter = NonceCounter::new(1);
-
     // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
-    // reachable yet, start from 0 — the on-chain replay window will
-    // reject any out-of-range reissues anyway.
+    // reachable yet, set to None
     let provider_account = sp_runtime::AccountId32::from_str(provider_id)
         .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
     match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
@@ -268,23 +264,19 @@ async fn setup_nonce_counter(
                 hsn,
                 provider_id,
             );
+            let counter = NonceCounter::new(1);
             counter.bootstrap_from_hsn(hsn);
+            Ok(Some(Arc::new(counter)))
         }
         Ok(None) => {
-            tracing::info!(
-                "No on-chain replay state for provider {} yet; starting nonce counter from 0",
-                provider_id,
-            );
+            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
+            Ok(None)
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to bootstrap nonce counter from chain: {}; starting nonce counter from 0",
-                e,
-            );
+            tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
+            Ok(None)
         }
     }
-
-    Ok(Arc::new(counter))
 }
 
 /// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string (e.g. "/ip4/127.0.0.1/tcp/3333").
