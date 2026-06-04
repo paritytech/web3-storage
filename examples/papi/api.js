@@ -3,8 +3,10 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   hexToBytes,
   providerFetch,
+  READ_OPTS,
   requireOneEvent,
   submitTx,
+  submitTxFinalized,
   toHex,
 } from "./common.js";
 
@@ -134,7 +136,9 @@ export async function submitClientCheckpoint(api, client, provider, bucketId, ck
 }
 
 export async function challengeOffchain(api, client, provider, bucketId, upload) {
-  const result = await submitTx(
+  // Finalized: the challenge_id must survive to the respond that references it
+  // (a best-block reorg would invalidate it -> ChallengeNotFound).
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
       provider: provider.address,
@@ -158,7 +162,8 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
 }
 
 export async function challengeCheckpoint(api, client, provider, bucketId, leafIndex) {
-  const result = await submitTx(
+  // Finalized: see challengeOffchain.
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
       provider: provider.address,
@@ -547,8 +552,10 @@ export async function signCheckpointProposal(providerUrl, bucketId, duty, window
  * from chain state and fetching MMR + chunk proofs from the provider node.
  */
 export async function fetchChallengeProof(api, providerUrl, challengeId) {
+  // Best block: a finalized read would lag the just-created challenge.
   const challenges = await api.query.StorageProvider.Challenges.getValue(
-    challengeId.deadline
+    challengeId.deadline,
+    READ_OPTS
   );
   if (!challenges)
     throw new Error("No challenges at deadline " + challengeId.deadline);

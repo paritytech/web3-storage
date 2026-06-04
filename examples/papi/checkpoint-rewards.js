@@ -37,6 +37,7 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
   waitForBlock,
@@ -70,7 +71,7 @@ async function runProviderCheckpoint(api, papi, provider, bucketId) {
   // the call fails with InvalidCheckpointWindow. Require enough headroom
   // (a few blocks for inclusion under load) before submitting.
   const HEADROOM_BLOCKS = 15;
-  let currentBlock = Number(await api.query.System.Number.getValue());
+  let currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
   let windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
   let nextWindowStart = (windowNum + 1) * WINDOW_INTERVAL;
   if (nextWindowStart - currentBlock < HEADROOM_BLOCKS) {
@@ -81,7 +82,7 @@ async function runProviderCheckpoint(api, papi, provider, bucketId) {
       windowNum + 1
     );
     await waitForBlock(papi, nextWindowStart - 1);
-    currentBlock = Number(await api.query.System.Number.getValue());
+    currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
     windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
   }
   const window = BigInt(windowNum);
@@ -128,7 +129,8 @@ async function claimAndVerify(api, provider, bucketId, expectedReward) {
   // can drain a provider's pending rewards without scanning every bucket.
   const pending = await api.query.StorageProvider.CheckpointRewards.getValue(
     provider.address,
-    bucketId
+    bucketId,
+    READ_OPTS
   );
   console.log("  Pending rewards before claim: %s", pending.toString());
   assert.strictEqual(
@@ -147,7 +149,8 @@ async function claimAndVerify(api, provider, bucketId, expectedReward) {
 
   const after = await api.query.StorageProvider.CheckpointRewards.getValue(
     provider.address,
-    bucketId
+    bucketId,
+    READ_OPTS
   );
   assert.strictEqual(
     after,
@@ -190,7 +193,10 @@ async function main() {
     await waitForAgreementAcceptance(api, provider.address, bucketId);
     console.log("  Agreement accepted (auto by provider node)");
 
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+    const bucket = await api.query.StorageProvider.Buckets.getValue(
+      bucketId,
+      READ_OPTS
+    );
     assert.ok(
       bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
       "Provider should be in primary_providers after agreement"
@@ -224,7 +230,8 @@ async function main() {
       fundEvent.amount.toString()
     );
     const balance = await api.query.StorageProvider.CheckpointPool.getValue(
-      bucketId
+      bucketId,
+      READ_OPTS
     );
     console.log("  CheckpointPool[%s] = %s", bucketId, balance.toString());
     assert.ok(

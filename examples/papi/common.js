@@ -113,7 +113,7 @@ export async function waitForBlockProduction(api, { timeoutSec = 300 } = {}) {
   const deadline = Date.now() + timeoutSec * 1_000;
   while (Date.now() < deadline) {
     try {
-      const n = await api.query.System.Number.getValue();
+      const n = await api.query.System.Number.getValue(READ_OPTS);
       const blockNumber = typeof n === "bigint" ? Number(n) : Number(n);
       if (blockNumber > 0) {
         console.log(`✅ Chain producing blocks (head=#${blockNumber})`);
@@ -149,7 +149,8 @@ export class NonceManager {
   }
   /** Read the on-chain nonce for `address` and build a manager from it. */
   static async forAccount(api, address) {
-    const account = await api.query.System.Account.getValue(address);
+    // Best block: a finalized read lags and returns a stale (too-low) nonce.
+    const account = await api.query.System.Account.getValue(address, READ_OPTS);
     return new NonceManager(account.nonce);
   }
 }
@@ -208,6 +209,14 @@ export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
  * like a missing event downstream.
  */
 export const DEFAULT_TX_TIMEOUT_MS = 180_000;
+
+/**
+ * Options for storage reads (`getValue` / `getEntries`). `submitTx` returns at
+ * in-block inclusion, so reads must target the best block to see a just-written
+ * value (the default finalized head lags by ~6 blocks). Single switch for the
+ * suite: flip to "finalized" here to trade read-your-writes for reorg-safety.
+ */
+export const READ_OPTS = { at: "best" };
 
 /**
  * Transaction "doneness" thresholds for `waitForTransaction`. Pick the
@@ -334,16 +343,14 @@ export async function waitForTransaction(
 }
 
 /**
- * Sign + submit a transaction, assert it dispatched successfully, and return
- * the PAPI result (`{ ok, events, block, ... }`).
+ * Sign + submit a tx, assert it dispatched OK, return the in-block event
+ * (`{ ok, events, ... }`). Resolves at inclusion, not finalization — ~6x faster
+ * per tx, and the demos read what they need from the events. PAPI doesn't throw
+ * on a dispatch error (only on an invalid tx), so the `ok === false` check in
+ * `waitForTransaction` is what surfaces failures here.
  *
- * PAPI's bare `signAndSubmit` resolves with `{ ok, events, dispatchError }`
- * and does NOT throw when dispatch fails — only when the tx is invalid (bad
- * signature, low nonce, etc). Without this helper, a failed extrinsic looks
- * indistinguishable from a successful one with no events, and the failure
- * surfaces later as a confusing "Expected exactly 1 X event, got 0".
- *
- * Bounded by `timeoutMs` so a stuck mempool can't hang the example.
+ * Best blocks can be reorged, so for a tx whose effect a LATER tx references by
+ * id (e.g. create a challenge, then respond to it) use `submitTxFinalized`.
  */
 export async function submitTx(
   tx,
@@ -351,28 +358,28 @@ export async function submitTx(
   label,
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
-  let timer;
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new Error(`${label}: signAndSubmit timed out after ${timeoutMs}ms`)
-        ),
-      timeoutMs
-    );
-  });
-  let result;
-  try {
-    result = await Promise.race([tx.signAndSubmit(signer), timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!result.ok) {
-    throw new Error(
-      `${label} dispatch failed: ${formatDispatchError(result.dispatchError)}`
-    );
-  }
-  return result;
+  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+}
+
+/**
+ * Like `submitTx` but waits for FINALIZATION (~6 blocks slower). Use only when
+ * a later tx references this one's effect by id: a challenge id embeds its
+ * creation block, so an in-block creation that gets reorged makes the response
+ * fail with `ChallengeNotFound`. Finalizing pins the id.
+ */
+export async function submitTxFinalized(
+  tx,
+  signer,
+  label,
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS
+) {
+  return waitForTransaction(
+    tx,
+    signer,
+    label,
+    TX_MODE_FINALIZED_BLOCK,
+    timeoutMs
+  );
 }
 
 export async function providerFetch(providerUrl, path, opts = {}) {
@@ -404,7 +411,8 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   // modules finish initialization before this function ever runs.
   const { registerProvider, updateProviderSettings } = await import("./api.js");
   const existing = await api.query.StorageProvider.Providers.getValue(
-    provider.address
+    provider.address,
+    READ_OPTS
   );
   if (!existing) {
     console.log("  Registering provider", provider.address);
@@ -468,7 +476,8 @@ export async function waitForAgreementAcceptance(
   while (Date.now() < deadline) {
     const req = await api.query.StorageProvider.AgreementRequests.getValue(
       bucketId,
-      providerAddress
+      providerAddress,
+      READ_OPTS
     );
     if (!req) return;
     await new Promise((r) => setTimeout(r, pollMs));
@@ -481,7 +490,10 @@ export async function waitForAgreementAcceptance(
 }
 
 export async function printBucketMembers(api, bucketId, label = "members") {
-  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  const bucket = await api.query.StorageProvider.Buckets.getValue(
+    bucketId,
+    READ_OPTS
+  );
   console.log(`  [${label}] bucket ${bucketId}:`);
   for (const m of bucket.members) {
     console.log(`    - ${m.account}  role=${fmtRole(m.role)}`);
@@ -549,7 +561,7 @@ const KNOWN_DEV_SEEDS = [
  */
 export async function ensureSoleAcceptingProvider(api, keep) {
   const toggled = [];
-  const others = await api.query.StorageProvider.Providers.getEntries();
+  const others = await api.query.StorageProvider.Providers.getEntries(READ_OPTS);
   for (const { keyArgs, value: info } of others) {
     const account = keyArgs[0];
     if (sameAddress(account, keep.address)) continue;

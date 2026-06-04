@@ -22,6 +22,7 @@ import {
   connect,
   makeSigner,
   printBucketMembers,
+  READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -34,7 +35,8 @@ const READER_SEED = process.argv[5] || "//Charlie";
 
 async function verifyReverseIndex(api, member, bucketId, shouldContain) {
   const buckets = await api.query.StorageProvider.MemberBuckets.getValue(
-    member.address
+    member.address,
+    READ_OPTS
   );
   console.log("  MemberBuckets[%s] = %o", member.address, buckets);
   const has = buckets.some((id) => id === bucketId);

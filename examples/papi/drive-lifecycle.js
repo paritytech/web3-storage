@@ -29,6 +29,7 @@ import {
   fmtRole,
   makeSigner,
   printBucketMembers,
+  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
   waitForBlockProduction,
@@ -43,7 +44,7 @@ const OWNER_SEED = process.argv[5] || "//Bob";
 const MEMBER_SEED = process.argv[6] || "//Charlie";
 
 async function printDriveInfo(api, owner, driveId, bucketId) {
-  const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
+  const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
   console.log("  owner          =", drive.owner);
   console.log("  name           =", drive.name ? drive.name.asText() : "(none)");
   console.log("  max_capacity   =", drive.max_capacity);
@@ -52,7 +53,8 @@ async function printDriveInfo(api, owner, driveId, bucketId) {
   console.log("  payment locked =", drive.payment);
 
   const userDrives = await api.query.DriveRegistry.UserDrives.getValue(
-    owner.address
+    owner.address,
+    READ_OPTS
   );
   console.log("  UserDrives[owner] =", userDrives);
   assert.ok(
@@ -61,7 +63,8 @@ async function printDriveInfo(api, owner, driveId, bucketId) {
   );
 
   const driveIdForBucket = await api.query.DriveRegistry.BucketToDrive.getValue(
-    bucketId
+    bucketId,
+    READ_OPTS
   );
   assert.strictEqual(
     driveIdForBucket,
@@ -71,7 +74,7 @@ async function printDriveInfo(api, owner, driveId, bucketId) {
 }
 
 async function getFree(api, who) {
-  const acc = await api.query.System.Account.getValue(who.address);
+  const acc = await api.query.System.Account.getValue(who.address, READ_OPTS);
   return acc.data.free;
 }
 
@@ -159,7 +162,10 @@ async function main() {
     console.log("  owner free delta    =", ownerAfter - ownerBefore);
     console.log("  provider free delta =", providerAfter - providerBefore);
 
-    const driveAfter = await api.query.DriveRegistry.Drives.getValue(driveId);
+    const driveAfter = await api.query.DriveRegistry.Drives.getValue(
+      driveId,
+      READ_OPTS
+    );
     assert.strictEqual(driveAfter, undefined, "Drive should be gone after delete");
     console.log("PASSED: drive lifecycle complete");
   } catch (err) {
