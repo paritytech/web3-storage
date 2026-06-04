@@ -146,11 +146,18 @@ async function main() {
   tests.push({
     name: "2.6 End agreement (Burn)",
     fn: async () => {
+      // Use larger max_bytes so payment_locked (= price_per_byte × max_bytes × duration)
+      // exceeds the existential deposit. With price_per_byte=1 and duration=10:
+      //   1 × 1_073_741_824 × 10 = 10,737,418,240 > ED (1,000,000,000)
+      // Otherwise the treasury transfer fails with Token::BelowMinimum when the
+      // treasury account doesn't exist yet.
+      const burnMaxBytes = 1_073_741_824n; // 1 GiB
+      const burnMaxPayment = burnMaxBytes * BigInt(duration) * 10n;
       burnBucketId = await createBucket(api, client);
       await requestPrimaryAgreement(api, client, provider, burnBucketId, {
-        max_bytes: maxBytes,
+        max_bytes: burnMaxBytes,
         duration,
-        max_payment: maxPayment,
+        max_payment: burnMaxPayment,
       });
       await waitForAgreementAcceptance(api, provider.address, burnBucketId);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(

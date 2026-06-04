@@ -26,7 +26,6 @@ import {
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
   makeSigner,
-  sameAddress,
   toHex,
   waitForAgreementAcceptance,
   waitForBlock,
@@ -39,7 +38,6 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 async function main() {
   const provider = makeSigner("//Alice");
   const bob = makeSigner("//Bob");
-  const charlie = makeSigner("//Charlie");
   const dave = makeSigner("//Dave");
   const eve = makeSigner("//Eve");
 
@@ -86,7 +84,6 @@ async function main() {
       // price_per_byte=1 must be large enough to dwarf the withdraw tx fee.
       const longDuration = 10_000;
       const longMaxPayment = maxBytes * BigInt(longDuration) * 10n;
-      const balBefore = await getFree(api, bob);
       const bucketId = await createBucket(api, bob);
       await requestPrimaryAgreement(api, bob, provider, bucketId, {
         max_bytes: maxBytes,
