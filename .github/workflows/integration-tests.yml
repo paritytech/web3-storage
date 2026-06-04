@@ -240,17 +240,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Start provider (inmemory, coverage-instrumented)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           mkdir -p /tmp/coverage
+          export LLVM_PROFILE_FILE="/tmp/coverage/provider-%p-%m.profraw"
+          echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE"
           nohup ./target-cov/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-        env:
-          LLVM_PROFILE_FILE: /tmp/coverage/provider-%p-%m.profraw
+          echo "Provider PID: $!"
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -272,10 +273,21 @@ jobs:
         if: always()
         run: |
           # Graceful shutdown — SIGTERM lets provider flush profraw
-          pkill -TERM -f "storage-provider-node" 2>/dev/null || true
+          echo "Provider processes:"
+          ps aux | grep storage-provider-node | grep -v grep || echo "  (none running)"
+          pkill -TERM -f "storage-provider-node" 2>/dev/null || echo "  pkill: no process found"
           sleep 5
+          # Verify process exited
+          if pgrep -f "storage-provider-node" >/dev/null 2>&1; then
+            echo "  Provider still running after SIGTERM, sending SIGKILL..."
+            pkill -KILL -f "storage-provider-node" 2>/dev/null || true
+            sleep 2
+          fi
           pkill -f "polkadot-omni-node" 2>/dev/null || true
           pkill -f "polkadot" 2>/dev/null || true
+
+          echo "Coverage files in /tmp/coverage/:"
+          ls -la /tmp/coverage/ 2>/dev/null || echo "  (directory missing)"
 
           # Generate Rust coverage report
           if ls /tmp/coverage/*.profraw 1>/dev/null 2>&1; then
@@ -301,7 +313,15 @@ jobs:
                 --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
                 --sources provider-node/src/ \
                 --format=lcov > /tmp/coverage/report/rust-lcov.info 2>/dev/null || true
+            else
+              echo "WARNING: llvm-profdata or llvm-cov not found"
+              echo "  llvm-profdata: ${LLVM_PROFDATA:-not found}"
+              echo "  llvm-cov: ${LLVM_COV:-not found}"
             fi
+          else
+            echo "WARNING: No .profraw files found in /tmp/coverage/"
+            echo "  Provider may not have been built with -C instrument-coverage,"
+            echo "  or LLVM_PROFILE_FILE was not set in the provider's environment."
           fi
 
       - name: Upload JS coverage
