@@ -81,7 +81,7 @@ pub use pallet_storage_provider;
 use constants::{
     consensus::{
         async_backing::UNINCLUDED_SEGMENT_CAPACITY, BLOCK_PROCESSING_VELOCITY,
-        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, SLOT_DURATION,
+        MAXIMUM_BLOCK_WEIGHT, RELAY_CHAIN_SLOT_DURATION_MILLIS, RELAY_PARENT_OFFSET, SLOT_DURATION,
     },
     currency::{EXISTENTIAL_DEPOSIT, MICROUNIT},
     system::{AVERAGE_ON_INITIALIZE_RATIO, NORMAL_DISPATCH_RATIO},
@@ -183,7 +183,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 1,
+    spec_version: 2,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -346,7 +346,7 @@ impl cumulus_pallet_parachain_system::Config for Runtime {
     type CheckAssociatedRelayNumber = RelayNumberMonotonicallyIncreases;
     type ConsensusHook = ConsensusHook;
     type WeightInfo = weights::cumulus_pallet_parachain_system::WeightInfo<Runtime>;
-    type RelayParentOffset = ConstU32<0>;
+    type RelayParentOffset = ConstU32<RELAY_PARENT_OFFSET>;
 }
 
 impl parachain_info::Config for Runtime {}
@@ -739,7 +739,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
     impl cumulus_primitives_core::RelayParentOffsetApi<Block> for Runtime {
         fn relay_parent_offset() -> u32 {
-            0
+            RELAY_PARENT_OFFSET
         }
     }
 

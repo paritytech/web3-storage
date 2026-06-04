@@ -8,7 +8,10 @@ use frame_support::{
 use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
-    constants::{currency::UNIT, time::HOURS},
+    constants::{
+        currency::UNIT,
+        time::{HOURS, MINUTES},
+    },
     AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
@@ -19,8 +22,8 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
-    pub const DefaultCheckpointInterval: BlockNumber = 100;
-    pub const DefaultCheckpointGrace: BlockNumber = 20;
+    pub const DefaultCheckpointInterval: BlockNumber = 10 * MINUTES;
+    pub const DefaultCheckpointGrace: BlockNumber = 2 * MINUTES;
     pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
     pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `>= ChallengeTimeout` so any challenge created up to the

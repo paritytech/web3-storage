@@ -8,6 +8,13 @@ default_command = "{{PROJECT_ROOT}}/.bin/polkadot"
 chain = "westend-local"
 default_args = ["-lruntime=info"]
 
+[relaychain.genesis.runtimeGenesis.patch.configuration.config.scheduler_params]
+num_cores = 3
+
+[relaychain.genesis.runtimeGenesis.patch.configuration.config.async_backing_params]
+allowed_ancestry_len = 6
+max_candidate_depth = 6
+
 [[relaychain.nodes]]
 name = "alice"
 validator = true
@@ -18,9 +25,26 @@ name = "bob"
 validator = true
 rpc_port = 9901
 
+[[relaychain.nodes]]
+name = "charlie"
+validator = true
+
+[[relaychain.nodes]]
+name = "dave"
+validator = true
+
+[[relaychain.nodes]]
+name = "eve"
+validator = true
+
+[[relaychain.nodes]]
+name = "ferdie"
+validator = true
+
 [[parachains]]
 id = 4000
 cumulus_based = true
+num_cores = 3
 chain_spec_command = "{{PROJECT_ROOT}}/scripts/build-chain-spec.sh"
 
 [[parachains.collators]]
@@ -28,4 +52,10 @@ name = "alice"
 validator = true
 command = "{{PROJECT_ROOT}}/.bin/polkadot-omni-node"
 rpc_port = 2222
-args = ["--collator", "-lruntime=info"]
+args = ["--authoring=slot-based", "--collator", "-lruntime=info"]
+
+[[parachains.collators]]
+name = "bob"
+validator = true
+command = "{{PROJECT_ROOT}}/.bin/polkadot-omni-node"
+args = ["--authoring=slot-based", "--collator", "-lruntime=info"]

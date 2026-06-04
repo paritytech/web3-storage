@@ -16,20 +16,25 @@ pub use paseo_runtime_constants::system_parachain;
 pub mod consensus {
     use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, Weight};
 
-    /// How many parachain blocks are processed by the relay chain per parent. Limits the
-    /// number of blocks authored per slot.
-    pub const BLOCK_PROCESSING_VELOCITY: u32 = 1;
-    /// Relay chain slot duration, in milliseconds.
+    /// How many parachain blocks are processed by the relay chain per parent. With 3 cores
+    /// assigned to the parachain and 2 s parachain blocks against a 6 s relay slot, each relay
+    /// slot includes 3 parachain candidates.
+    pub const BLOCK_PROCESSING_VELOCITY: u32 = 3;
+    /// Relay chain slot duration, in milliseconds. The relay chain is independent of the
+    /// parachain block time and continues to produce a slot every 6 s.
     pub const RELAY_CHAIN_SLOT_DURATION_MILLIS: u32 = 6000;
 
     /// Average expected block time targeted by the parachain. Picked up by `pallet_timestamp` and
     /// `pallet_aura`.
-    pub const MILLISECS_PER_BLOCK: u64 = 6000;
+    pub const MILLISECS_PER_BLOCK: u64 = 2000;
 
     /// Slot duration equals block time for this runtime.
     pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
 
-    /// 2 seconds of compute with a 6 second average block.
+    /// Required by slot-based authoring with elastic scaling.
+    pub const RELAY_PARENT_OFFSET: u32 = 1;
+
+    /// 2 seconds of compute per parachain block (one relay-chain core).
     pub const MAXIMUM_BLOCK_WEIGHT: Weight = Weight::from_parts(
         WEIGHT_REF_TIME_PER_SECOND.saturating_mul(2),
         cumulus_primitives_core::relay_chain::MAX_POV_SIZE as u64,
@@ -37,9 +42,12 @@ pub mod consensus {
 
     /// Parameters enabling async backing functionality.
     pub mod async_backing {
+        use super::{BLOCK_PROCESSING_VELOCITY, RELAY_PARENT_OFFSET};
+
         /// Maximum number of blocks simultaneously accepted by the Runtime, not yet included
         /// into the relay chain.
-        pub const UNINCLUDED_SEGMENT_CAPACITY: u32 = 3;
+        pub const UNINCLUDED_SEGMENT_CAPACITY: u32 =
+            (3 + RELAY_PARENT_OFFSET) * BLOCK_PROCESSING_VELOCITY;
     }
 }
 
