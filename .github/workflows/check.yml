@@ -181,7 +181,9 @@ jobs:
 
           # Discover available integration test targets
           TEST_FLAGS=""
-          for t in api_integration auth_integration disk_integration fs_integration s3_integration; do
+          for t in api_integration auth_integration disk_integration fs_integration s3_integration \
+                   agreement_coordinator_integration challenge_responder_integration \
+                   checkpoint_coordinator_integration replica_sync_coordinator_integration; do
             if [ -f "provider-node/tests/${t}.rs" ]; then
               TEST_FLAGS="$TEST_FLAGS --test $t"
             fi
@@ -215,7 +217,9 @@ jobs:
 
           # Discover available integration test targets on the base branch
           TEST_FLAGS=""
-          for t in api_integration auth_integration disk_integration fs_integration s3_integration; do
+          for t in api_integration auth_integration disk_integration fs_integration s3_integration \
+                   agreement_coordinator_integration challenge_responder_integration \
+                   checkpoint_coordinator_integration replica_sync_coordinator_integration; do
             if [ -f "provider-node/tests/${t}.rs" ]; then
               TEST_FLAGS="$TEST_FLAGS --test $t"
             fi
