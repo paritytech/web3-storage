@@ -27,23 +27,24 @@ pub mod storage;
 pub mod types;
 
 pub use agreement_coordinator::{
-    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+    AgreementChainClient, AgreementCoordinator, AgreementCoordinatorConfig,
+    AgreementCoordinatorHandle,
 };
 pub use api::create_router;
 pub use challenge_responder::{
-    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use checkpoint_coordinator::{
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
-    CheckpointDuty, CheckpointResult, CoordinatorCommand,
+    CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, CheckpointDuty, CheckpointResult, CoordinatorCommand,
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
-    SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use s3_index::S3IndexManager;
 pub use storage::{

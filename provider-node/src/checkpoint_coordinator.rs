@@ -7,39 +7,31 @@
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{crypto::Ss58Codec, Pair, H256};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, CheckpointProposal};
-use subxt::dynamic::At;
-use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::Keypair;
 use tokio::sync::mpsc;
 
 /// Configuration for the checkpoint coordinator.
 #[derive(Clone, Debug)]
 pub struct CheckpointCoordinatorConfig {
-    /// WebSocket URL for the parachain.
-    pub chain_ws_url: String,
     /// How often to poll for checkpoint duties.
     pub poll_interval: Duration,
     /// Timeout for collecting signatures from peers.
     pub signature_timeout: Duration,
     /// Whether to automatically submit checkpoints when leader.
     pub auto_submit: bool,
-    /// Seed phrase or derivation path for signing (e.g., "//Alice").
-    /// Used to create the subxt signer directly (avoids key conversion issues).
-    pub seed: Option<String>,
 }
 
 impl Default for CheckpointCoordinatorConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(6), // ~1 block
             signature_timeout: Duration::from_secs(30),
             auto_submit: true,
-            seed: None,
         }
     }
 }
@@ -94,6 +86,175 @@ pub enum CheckpointResult {
     NotLeader { bucket_id: BucketId, window: u64 },
     /// Checkpoint already submitted for this window.
     AlreadySubmitted { bucket_id: BucketId, window: u64 },
+}
+
+/// Trait abstracting chain interactions for the checkpoint coordinator.
+#[allow(clippy::type_complexity)]
+pub trait CheckpointChainClient: Send + Sync {
+    /// Get the current block number.
+    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>>;
+
+    /// Fetch checkpoint config (interval, grace_period) for a bucket.
+    /// Returns `None` if no config exists on chain.
+    fn fetch_checkpoint_config(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>>;
+
+    /// Submit a checkpoint transaction with collected signatures.
+    fn submit_checkpoint(
+        &self,
+        duty: &CheckpointDuty,
+        signatures: Vec<(String, String)>,
+    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>>;
+}
+
+/// Production implementation that talks to the chain via subxt.
+pub struct SubxtCheckpointChainClient {
+    api: subxt::OnlineClient<subxt::PolkadotConfig>,
+    signer: subxt_signer::sr25519::Keypair,
+}
+
+impl SubxtCheckpointChainClient {
+    /// Connect to the chain and create a signer from the seed URI.
+    pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {
+        let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+
+        let uri: subxt_signer::SecretUri = seed
+            .parse()
+            .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
+        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
+            .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+
+        tracing::info!(
+            "Checkpoint coordinator signer: {}",
+            sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
+        );
+        tracing::info!("Checkpoint coordinator connected to {}", chain_ws_url);
+
+        Ok(Self { api, signer })
+    }
+}
+
+impl CheckpointChainClient for SubxtCheckpointChainClient {
+    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
+        Box::pin(async move {
+            let block = self
+                .api
+                .blocks()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
+            Ok(block.number() as u64)
+        })
+    }
+
+    fn fetch_checkpoint_config(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>> {
+        Box::pin(async move {
+            use subxt::dynamic::At;
+
+            let config_query = subxt::dynamic::storage(
+                "StorageProvider",
+                "CheckpointConfigs",
+                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            );
+            let storage = self
+                .api
+                .storage()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+            match storage
+                .fetch(&config_query)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
+            {
+                Some(val) => {
+                    let decoded = val
+                        .to_value()
+                        .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
+                    let interval = decoded
+                        .at("interval")
+                        .and_then(|v| v.as_u128())
+                        .unwrap_or(100) as u32;
+                    let grace_period = decoded
+                        .at("grace_period")
+                        .and_then(|v| v.as_u128())
+                        .unwrap_or(20) as u32;
+                    Ok(Some((interval, grace_period)))
+                }
+                None => Ok(None),
+            }
+        })
+    }
+
+    fn submit_checkpoint(
+        &self,
+        duty: &CheckpointDuty,
+        signatures: Vec<(String, String)>,
+    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
+        let bucket_id = duty.bucket_id;
+        let mmr_root = duty.mmr_root;
+        let start_seq = duty.start_seq;
+        let leaf_count = duty.leaf_count;
+        let window = duty.window;
+
+        Box::pin(async move {
+            // Build signature tuples for the extrinsic
+            let mut sig_values = Vec::with_capacity(signatures.len());
+            for (account, sig) in &signatures {
+                let account_id: sp_core::crypto::AccountId32 =
+                    sp_core::crypto::Ss58Codec::from_ss58check(account).map_err(|e| {
+                        Error::Internal(format!("Invalid SS58 account '{account}': {e:?}"))
+                    })?;
+                let account_bytes: [u8; 32] = account_id.into();
+
+                let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
+                    .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
+
+                sig_values.push(subxt::dynamic::Value::unnamed_composite(vec![
+                    subxt::dynamic::Value::from_bytes(account_bytes),
+                    subxt::dynamic::Value::unnamed_variant(
+                        "Sr25519",
+                        vec![subxt::dynamic::Value::from_bytes(sig_bytes)],
+                    ),
+                ]));
+            }
+
+            let tx = subxt::dynamic::tx(
+                "StorageProvider",
+                "provider_checkpoint",
+                vec![
+                    subxt::dynamic::Value::u128(bucket_id as u128),
+                    subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
+                    subxt::dynamic::Value::u128(start_seq as u128),
+                    subxt::dynamic::Value::u128(leaf_count as u128),
+                    subxt::dynamic::Value::u128(window as u128),
+                    subxt::dynamic::Value::unnamed_composite(sig_values),
+                ],
+            );
+
+            let tx_progress = self
+                .api
+                .tx()
+                .sign_and_submit_then_watch_default(&tx, &self.signer)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
+
+            let _events = tx_progress
+                .wait_for_finalized_success()
+                .await
+                .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+
+            Ok(H256::zero())
+        })
+    }
 }
 
 /// Commands for controlling the coordinator.
@@ -163,19 +324,21 @@ impl CheckpointCoordinatorHandle {
 pub struct CheckpointCoordinator {
     config: CheckpointCoordinatorConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
-    signer: Option<Keypair>,
+    chain_client: Box<dyn CheckpointChainClient>,
     http_client: reqwest::Client,
 }
 
 impl CheckpointCoordinator {
     /// Create a new checkpoint coordinator.
-    pub fn new(config: CheckpointCoordinatorConfig, state: Arc<ProviderState>) -> Self {
+    pub fn new(
+        config: CheckpointCoordinatorConfig,
+        state: Arc<ProviderState>,
+        chain_client: Box<dyn CheckpointChainClient>,
+    ) -> Self {
         Self {
             config,
             state,
-            api: None,
-            signer: None,
+            chain_client,
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
@@ -183,56 +346,18 @@ impl CheckpointCoordinator {
         }
     }
 
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
-        // This avoids key conversion issues between sp_core and subxt_signer.
-        if let Some(ref seed) = self.config.seed {
-            let uri: subxt_signer::SecretUri = seed
-                .parse()
-                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-            let signer = Keypair::from_uri(&uri)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            tracing::info!(
-                "Checkpoint coordinator signer: {}",
-                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
-            );
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Checkpoint coordinator connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
-    }
-
     /// Start the checkpoint coordinator background service.
     pub async fn start(
         self,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) -> Result<CheckpointCoordinatorHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
-
         let (command_tx, command_rx) = mpsc::channel::<CoordinatorCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
 
-        let coordinator = self;
-
         let running_exit = running.clone();
         tokio::spawn(async move {
-            coordinator
-                .run_loop(command_rx, running_clone, callback)
-                .await;
+            self.run_loop(command_rx, running_clone, callback).await;
             tracing::error!("Checkpoint coordinator run_loop exited unexpectedly!");
             running_exit.store(false, Ordering::SeqCst);
         });
@@ -333,9 +458,6 @@ impl CheckpointCoordinator {
     }
 
     /// Get checkpoint duty for a specific bucket.
-    ///
-    /// Queries the chain for the current block and checkpoint config,
-    /// then builds a duty from local storage state.
     async fn get_checkpoint_duty(
         &self,
         bucket_id: BucketId,
@@ -354,53 +476,13 @@ impl CheckpointCoordinator {
             return Ok(None);
         }
 
-        // Query chain for current block number and checkpoint config
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let current_block = self.chain_client.get_current_block().await?;
 
-        let current_block = {
-            let block = api
-                .blocks()
-                .at_latest()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-            block.number() as u64
-        };
-
-        // Query checkpoint config from chain storage
-        let config_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "CheckpointConfigs",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        );
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-        let (interval, grace_period) = match storage
-            .fetch(&config_query)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
-        {
-            Some(val) => {
-                let decoded = val
-                    .to_value()
-                    .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
-                let interval = decoded
-                    .at("interval")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(100) as u32;
-                let grace_period = decoded
-                    .at("grace_period")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(20) as u32;
-                (interval, grace_period)
-            }
-            None => (100u32, 20u32), // defaults
-        };
+        let (interval, grace_period) = self
+            .chain_client
+            .fetch_checkpoint_config(bucket_id)
+            .await?
+            .unwrap_or((100u32, 20u32));
 
         let window = if interval > 0 {
             current_block / interval as u64
@@ -497,7 +579,7 @@ impl CheckpointCoordinator {
 
         // Step 5: Submit the checkpoint
         let signers: Vec<String> = signatures.iter().map(|(s, _)| s.clone()).collect();
-        match self.submit_checkpoint(duty, signatures).await {
+        match self.chain_client.submit_checkpoint(duty, signatures).await {
             Ok(_) => CheckpointResult::Success {
                 bucket_id: duty.bucket_id,
                 window: duty.window,
@@ -557,82 +639,6 @@ impl CheckpointCoordinator {
             .await
             .map_err(|e| Error::Internal(format!("Failed to parse response: {e}")))
     }
-
-    /// Submit the checkpoint to the chain.
-    async fn submit_checkpoint(
-        &self,
-        duty: &CheckpointDuty,
-        signatures: Vec<(String, String)>,
-    ) -> Result<H256, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
-
-        let signer = self
-            .signer
-            .as_ref()
-            .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
-
-        // Build signature tuples for the extrinsic
-        let mut sig_values = Vec::with_capacity(signatures.len());
-        for (account, sig) in &signatures {
-            // Account is SS58 — decode to raw 32-byte AccountId
-            let account_id: sp_core::crypto::AccountId32 =
-                sp_core::crypto::Ss58Codec::from_ss58check(account).map_err(|e| {
-                    Error::Internal(format!("Invalid SS58 account '{account}': {e:?}"))
-                })?;
-            let account_bytes: [u8; 32] = account_id.into();
-
-            // Signature is hex-encoded with 0x prefix
-            let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
-
-            sig_values.push(subxt::dynamic::Value::unnamed_composite(vec![
-                // AccountId32
-                subxt::dynamic::Value::from_bytes(account_bytes),
-                // MultiSignature::Sr25519(signature)
-                subxt::dynamic::Value::unnamed_variant(
-                    "Sr25519",
-                    vec![subxt::dynamic::Value::from_bytes(sig_bytes)],
-                ),
-            ]));
-        }
-
-        // Build the extrinsic
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "provider_checkpoint",
-            vec![
-                // bucket_id
-                subxt::dynamic::Value::u128(duty.bucket_id as u128),
-                // mmr_root
-                subxt::dynamic::Value::from_bytes(duty.mmr_root.as_bytes()),
-                // start_seq
-                subxt::dynamic::Value::u128(duty.start_seq as u128),
-                // leaf_count
-                subxt::dynamic::Value::u128(duty.leaf_count as u128),
-                // window
-                subxt::dynamic::Value::u128(duty.window as u128),
-                // signatures
-                subxt::dynamic::Value::unnamed_composite(sig_values),
-            ],
-        );
-
-        // Submit and wait for finalization
-        let tx_progress = api
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
-
-        Ok(H256::zero())
-    }
 }
 
 /// Request to sign a checkpoint proposal.
@@ -677,11 +683,114 @@ pub struct CheckpointDutyResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Mutex;
+
+    struct MockCheckpointChainClient {
+        block_number: Mutex<u64>,
+        config: Mutex<Option<(u32, u32)>>,
+        submitted: Mutex<Vec<(BucketId, u64)>>,
+        submit_result: Mutex<Result<H256, Error>>,
+    }
+
+    impl MockCheckpointChainClient {
+        fn new(block: u64) -> Self {
+            Self {
+                block_number: Mutex::new(block),
+                config: Mutex::new(Some((100, 20))),
+                submitted: Mutex::new(Vec::new()),
+                submit_result: Mutex::new(Ok(H256::zero())),
+            }
+        }
+
+        fn with_submit_error(self, err: Error) -> Self {
+            Self {
+                submit_result: Mutex::new(Err(err)),
+                ..self
+            }
+        }
+    }
+
+    impl CheckpointChainClient for MockCheckpointChainClient {
+        fn get_current_block(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
+            Box::pin(async { Ok(*self.block_number.lock().await) })
+        }
+
+        fn fetch_checkpoint_config(
+            &self,
+            _bucket_id: BucketId,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>> {
+            Box::pin(async { Ok(*self.config.lock().await) })
+        }
+
+        fn submit_checkpoint(
+            &self,
+            duty: &CheckpointDuty,
+            _signatures: Vec<(String, String)>,
+        ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
+            let bucket_id = duty.bucket_id;
+            let window = duty.window;
+            Box::pin(async move {
+                self.submitted.lock().await.push((bucket_id, window));
+                let mut result = self.submit_result.lock().await;
+                // Clone the result so we can return it and preserve the original
+                match &*result {
+                    Ok(h) => Ok(*h),
+                    Err(e) => {
+                        let err = Error::Internal(e.to_string());
+                        // Reset to Ok so subsequent calls don't fail
+                        *result = Ok(H256::zero());
+                        Err(err)
+                    }
+                }
+            })
+        }
+    }
+
+    impl CheckpointChainClient for Arc<MockCheckpointChainClient> {
+        fn get_current_block(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
+            (**self).get_current_block()
+        }
+
+        fn fetch_checkpoint_config(
+            &self,
+            bucket_id: BucketId,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>> {
+            (**self).fetch_checkpoint_config(bucket_id)
+        }
+
+        fn submit_checkpoint(
+            &self,
+            duty: &CheckpointDuty,
+            signatures: Vec<(String, String)>,
+        ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
+            (**self).submit_checkpoint(duty, signatures)
+        }
+    }
+
+    fn test_state_with_seed() -> Arc<ProviderState> {
+        let storage = Arc::new(crate::Storage::new());
+        Arc::new(crate::ProviderState::with_seed(storage, "//Alice").unwrap())
+    }
+
+    fn test_state_with_bucket(bucket_id: BucketId) -> Arc<ProviderState> {
+        let storage = Arc::new(crate::Storage::new());
+        // Init bucket and store some data so the bucket has content
+        storage.init_bucket(bucket_id, 1024 * 1024);
+        let data = b"test data".to_vec();
+        let hash = sp_core::hashing::blake2_256(&data);
+        let data_root = H256::from(hash);
+        let _ = storage.store_node(bucket_id, data_root, data, None);
+        storage.commit(bucket_id, vec![data_root]).unwrap();
+        Arc::new(crate::ProviderState::with_seed(storage, "//Alice").unwrap())
+    }
 
     #[test]
     fn test_config_default() {
         let config = CheckpointCoordinatorConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(6));
         assert!(config.auto_submit);
     }
@@ -722,5 +831,96 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("bucket_id"));
         assert!(json.contains("mmr_root"));
+    }
+
+    #[tokio::test]
+    async fn test_no_bucket_data() {
+        let mock = MockCheckpointChainClient::new(500);
+        let state = test_state_with_seed();
+        let config = CheckpointCoordinatorConfig::default();
+        let coordinator = CheckpointCoordinator::new(config, state, Box::new(mock));
+
+        // No bucket exists => None
+        let duty = coordinator.get_checkpoint_duty(99).await.unwrap();
+        assert!(duty.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_duty_found_submit_ok() {
+        let mock = Arc::new(MockCheckpointChainClient::new(500));
+        let state = test_state_with_bucket(1);
+        let config = CheckpointCoordinatorConfig::default();
+        let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+        let duty = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+        assert_eq!(duty.bucket_id, 1);
+        assert_eq!(duty.window, 5); // 500 / 100
+
+        let result = coordinator.coordinate_checkpoint(&duty).await;
+        assert!(matches!(result, CheckpointResult::Success { .. }));
+
+        let submitted = mock.submitted.lock().await;
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0], (1, 5));
+    }
+
+    #[tokio::test]
+    async fn test_submit_fails() {
+        let mock = Arc::new(
+            MockCheckpointChainClient::new(500)
+                .with_submit_error(Error::Internal("tx failed".to_string())),
+        );
+        let state = test_state_with_bucket(1);
+        let config = CheckpointCoordinatorConfig::default();
+        let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+        let duty = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+        let result = coordinator.coordinate_checkpoint(&duty).await;
+        assert!(matches!(result, CheckpointResult::SubmissionFailed { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_pause_resume() {
+        let mock = MockCheckpointChainClient::new(500);
+        let state = test_state_with_seed();
+        let config = CheckpointCoordinatorConfig {
+            poll_interval: Duration::from_millis(50),
+            ..Default::default()
+        };
+        let coordinator = CheckpointCoordinator::new(config, state, Box::new(mock));
+
+        let handle = coordinator.start(None).await.unwrap();
+        assert!(handle.is_running());
+
+        handle.pause().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        handle.resume().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        handle.stop().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_force_checkpoint() {
+        let mock = Arc::new(MockCheckpointChainClient::new(500));
+        let state = test_state_with_bucket(1);
+        let config = CheckpointCoordinatorConfig {
+            poll_interval: Duration::from_secs(60), // Long interval so auto doesn't trigger
+            ..Default::default()
+        };
+        let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+        let handle = coordinator.start(None).await.unwrap();
+
+        handle.force_checkpoint(1).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let submitted = mock.submitted.lock().await;
+        assert_eq!(submitted.len(), 1);
+
+        handle.stop().await.unwrap();
     }
 }

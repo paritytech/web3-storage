@@ -1,9 +1,13 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
+    agreement_coordinator::SubxtAgreementChainClient,
     auth::{ChainMembershipResolver, MembershipCache},
+    checkpoint_coordinator::SubxtCheckpointChainClient,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+    create_router,
+    replica_sync_coordinator::SubxtReplicaSyncChainClient,
+    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
     ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
@@ -142,19 +146,18 @@ async fn start_checkpoint_coordinator(
         }
     };
 
-    let config = CheckpointCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        seed: Some(seed),
-        ..Default::default()
+    let chain_client = match SubxtCheckpointChainClient::connect(&cli.rpc.chain_rpc, &seed).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to connect checkpoint coordinator: {}", e);
+            return None;
+        }
     };
-
-    let mut coordinator = CheckpointCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-        return None;
-    }
     tracing::info!("Checkpoint coordinator connected to chain");
+
+    let config = CheckpointCoordinatorConfig::default();
+
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -176,21 +179,32 @@ async fn start_replica_sync_coordinator(
         return None;
     }
 
+    let keypair = match state.keypair.as_ref() {
+        Some(kp) => kp,
+        None => {
+            tracing::error!("Replica sync coordinator requires a signing keypair. Skipping.");
+            return None;
+        }
+    };
+
+    let chain_client = match SubxtReplicaSyncChainClient::connect(&cli.rpc.chain_rpc, keypair).await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to connect replica sync coordinator: {}", e);
+            return None;
+        }
+    };
+    tracing::info!("Replica sync coordinator connected to chain");
+
     let config = ReplicaSyncCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
         poll_interval: Duration::from_secs(cli.replica_sync.replica_poll_interval),
         sync_timeout: Duration::from_secs(cli.replica_sync.replica_sync_timeout),
         max_concurrent_syncs: cli.replica_sync.replica_max_concurrent,
         auto_confirm: true,
     };
 
-    let mut coordinator = ReplicaSyncCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect replica sync coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Replica sync coordinator connected to chain");
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -221,20 +235,21 @@ async fn start_agreement_coordinator(
         }
     };
 
+    let chain_client = match SubxtAgreementChainClient::connect(&cli.rpc.chain_rpc, &seed).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to connect agreement coordinator: {}", e);
+            return None;
+        }
+    };
+    tracing::info!("Agreement coordinator connected to chain");
+
     let config = AgreementCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
         poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
         auto_accept: true,
-        seed: Some(seed),
     };
 
-    let mut coordinator = AgreementCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect agreement coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Agreement coordinator connected to chain");
+    let coordinator = AgreementCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start().await {
         Ok(handle) => {

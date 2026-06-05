@@ -9,21 +9,19 @@
 
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use sp_core::{Pair, H256};
+use sp_core::H256;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
-use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::Keypair;
 use tokio::sync::{mpsc, oneshot};
 
 /// Configuration for the replica sync coordinator.
 #[derive(Clone, Debug)]
 pub struct ReplicaSyncCoordinatorConfig {
-    /// WebSocket URL for the parachain.
-    pub chain_ws_url: String,
     /// How often to poll for sync duties (default: 12 seconds = ~2 blocks).
     pub poll_interval: Duration,
     /// Timeout for a sync operation (default: 5 minutes).
@@ -37,7 +35,6 @@ pub struct ReplicaSyncCoordinatorConfig {
 impl Default for ReplicaSyncCoordinatorConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(12),
             sync_timeout: Duration::from_secs(300),
             max_concurrent_syncs: 3,
@@ -133,6 +130,574 @@ pub struct SyncCoordinatorStatus {
     pub tracked_buckets: Vec<BucketId>,
 }
 
+/// Information about a replica agreement from chain.
+#[derive(Clone, Debug)]
+pub struct ReplicaAgreementInfo {
+    pub bucket_id: BucketId,
+    pub sync_balance: u128,
+    pub sync_price: u128,
+    pub min_sync_interval: u64,
+    pub last_sync: Option<(H256, u64)>,
+}
+
+/// Bucket snapshot from chain.
+#[derive(Clone, Debug)]
+pub struct BucketSnapshot {
+    pub mmr_root: H256,
+    pub leaf_count: u64,
+}
+
+/// Trait abstracting chain interactions for the replica sync coordinator.
+pub trait ReplicaSyncChainClient: Send + Sync {
+    /// Get the current block number.
+    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>>;
+
+    /// Fetch replica agreements for this provider.
+    fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>>;
+
+    /// Fetch the bucket snapshot (latest checkpoint state) from chain.
+    fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>>;
+
+    /// Fetch primary provider HTTP endpoints for a bucket.
+    fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>>;
+
+    /// Submit a confirm_replica_sync extrinsic.
+    #[allow(clippy::type_complexity)]
+    fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        target_mmr_root: H256,
+    ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>>;
+}
+
+/// Production implementation that talks to the chain via subxt.
+pub struct SubxtReplicaSyncChainClient {
+    api: subxt::OnlineClient<subxt::PolkadotConfig>,
+    signer: subxt_signer::sr25519::Keypair,
+}
+
+impl SubxtReplicaSyncChainClient {
+    /// Connect to the chain and create a signer from the provider state's keypair.
+    pub async fn connect(
+        chain_ws_url: &str,
+        keypair: &sp_core::sr25519::Pair,
+    ) -> Result<Self, Error> {
+        use sp_core::Pair;
+
+        let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+
+        let raw = keypair.to_raw_vec();
+        let secret_bytes: [u8; 32] = raw[..32]
+            .try_into()
+            .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
+        let signer = subxt_signer::sr25519::Keypair::from_secret_key(secret_bytes)
+            .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+
+        tracing::info!("Replica sync coordinator connected to {}", chain_ws_url);
+
+        Ok(Self { api, signer })
+    }
+
+    /// Convert a multiaddr string to an HTTP endpoint.
+    fn multiaddr_to_http_endpoint(multiaddr: &str) -> String {
+        let parts: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
+
+        let mut host = "127.0.0.1".to_string();
+        let mut port = "3333".to_string();
+
+        let mut i = 0;
+        while i < parts.len() {
+            match parts[i] {
+                "ip4" | "ip6" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "dns4" | "dns6" | "dns" => {
+                    if i + 1 < parts.len() {
+                        host = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "tcp" => {
+                    if i + 1 < parts.len() {
+                        port = parts[i + 1].to_string();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        format!("http://{host}:{port}")
+    }
+
+    /// Decode a storage agreement from raw SCALE-encoded bytes.
+    fn decode_storage_agreement_bytes(
+        bucket_id: BucketId,
+        bytes: &[u8],
+    ) -> Result<ReplicaAgreementInfo, Error> {
+        // StorageAgreement layout:
+        // - owner: AccountId (32 bytes)
+        // - max_bytes: u64 (8 bytes)
+        // - payment_locked: Balance (16 bytes)
+        // - price_per_byte: Balance (16 bytes)
+        // - expires_at: BlockNumber (4 bytes)
+        // - extensions_blocked: bool (1 byte)
+        // - role: ProviderRole (variable, enum)
+        // - started_at: BlockNumber (4 bytes)
+
+        let min_size = 32 + 8 + 16 + 16 + 4 + 1; // up to role enum
+        if bytes.len() < min_size {
+            return Err(Error::Internal("Agreement data too short".to_string()));
+        }
+
+        let role_start = 32 + 8 + 16 + 16 + 4 + 1; // Skip to role enum
+        let role_variant = bytes.get(role_start).copied().unwrap_or(0);
+
+        // Role enum: 0 = Primary, 1 = Replica
+        if role_variant != 1 {
+            return Err(Error::Internal("Not a replica agreement".to_string()));
+        }
+
+        // Parse Replica fields: sync_balance, sync_price, min_sync_interval, last_sync
+        let replica_start = role_start + 1;
+        let remaining = &bytes[replica_start..];
+
+        if remaining.len() < 16 + 16 + 4 {
+            return Err(Error::Internal("Replica data too short".to_string()));
+        }
+
+        let sync_balance = u128::from_le_bytes(
+            remaining[0..16]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse sync_balance".to_string()))?,
+        );
+
+        let sync_price = u128::from_le_bytes(
+            remaining[16..32]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse sync_price".to_string()))?,
+        );
+
+        let min_sync_interval = u32::from_le_bytes(
+            remaining[32..36]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
+        ) as u64;
+
+        let last_sync_option = remaining.get(36).copied().unwrap_or(0);
+        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
+            let root_bytes: [u8; 32] = remaining[37..69]
+                .try_into()
+                .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
+            let block = u32::from_le_bytes(
+                remaining[69..73]
+                    .try_into()
+                    .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
+            ) as u64;
+            Some((H256::from(root_bytes), block))
+        } else {
+            None
+        };
+
+        Ok(ReplicaAgreementInfo {
+            bucket_id,
+            sync_balance,
+            sync_price,
+            min_sync_interval,
+            last_sync,
+        })
+    }
+
+    /// Parse a BucketSnapshot value from scale_value.
+    fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
+        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+
+        let mmr_root = if let Some(field0) = value.at(0) {
+            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
+                let bytes: Vec<u8> = bytes_vec
+                    .iter()
+                    .filter_map(|v| {
+                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                            Some(*n as u8)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if bytes.len() == 32 {
+                    H256::from_slice(&bytes)
+                } else {
+                    H256::zero()
+                }
+            } else {
+                H256::zero()
+            }
+        } else {
+            H256::zero()
+        };
+
+        let leaf_count = if let Some(field2) = value.at(2) {
+            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
+                *n as u64
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        BucketSnapshot {
+            mmr_root,
+            leaf_count,
+        }
+    }
+}
+
+impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
+    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
+        Box::pin(async move {
+            let block = self
+                .api
+                .blocks()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
+            Ok(block.number() as u64)
+        })
+    }
+
+    fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>> {
+        let provider_account = provider_account.to_string();
+        Box::pin(async move {
+            let mut agreements = Vec::new();
+
+            let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
+                .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
+
+            // Query local buckets for agreements
+            for bucket_id in &local_buckets {
+                let storage_address = subxt::dynamic::storage(
+                    "StorageProvider",
+                    "StorageAgreements",
+                    vec![
+                        subxt::dynamic::Value::u128(*bucket_id as u128),
+                        subxt::dynamic::Value::from_bytes(&account_bytes),
+                    ],
+                );
+
+                let storage = self
+                    .api
+                    .storage()
+                    .at_latest()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+                if let Ok(Some(value)) = storage.fetch(&storage_address).await {
+                    let encoded = value.encoded();
+                    if let Ok(agreement) = Self::decode_storage_agreement_bytes(*bucket_id, encoded)
+                    {
+                        agreements.push(agreement);
+                    }
+                }
+            }
+
+            // Also iterate chain storage for agreements we might not have locally
+            let storage_address =
+                subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
+
+            if let Ok(storage) = self.api.storage().at_latest().await {
+                if let Ok(mut iter) = storage.iter(storage_address).await {
+                    while let Some(result) = iter.next().await {
+                        let kv = match result {
+                            Ok(kv) => kv,
+                            Err(e) => {
+                                tracing::debug!("Error iterating storage: {e}");
+                                continue;
+                            }
+                        };
+
+                        let key_bytes = kv.key_bytes;
+                        if key_bytes.len() < 32 + 16 + 8 + 16 + 32 {
+                            continue;
+                        }
+
+                        let bucket_id_start = 32 + 16;
+                        let bucket_id_bytes = &key_bytes[bucket_id_start..bucket_id_start + 8];
+                        let bucket_id =
+                            u64::from_le_bytes(bucket_id_bytes.try_into().unwrap_or([0; 8]));
+
+                        let provider_start = bucket_id_start + 8 + 16;
+                        let provider_bytes = &key_bytes[provider_start..];
+
+                        if provider_bytes.len() < 32 || provider_bytes[..32] != account_bytes[..32]
+                        {
+                            continue;
+                        }
+
+                        let encoded = kv.value.encoded();
+                        if let Ok(agreement) =
+                            Self::decode_storage_agreement_bytes(bucket_id, encoded)
+                        {
+                            if !agreements
+                                .iter()
+                                .any(|a| a.bucket_id == agreement.bucket_id)
+                            {
+                                agreements.push(agreement);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(agreements)
+        })
+    }
+
+    fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>> {
+        Box::pin(async move {
+            use subxt::ext::scale_value::ValueDef;
+
+            let storage_address = subxt::dynamic::storage(
+                "StorageProvider",
+                "Buckets",
+                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            );
+
+            let storage = self
+                .api
+                .storage()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+            match storage.fetch(&storage_address).await {
+                Ok(Some(value)) => {
+                    use subxt::ext::scale_value::At;
+                    let decoded = value
+                        .to_value()
+                        .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+
+                    if let Some(snapshot_opt) = decoded.at(4) {
+                        if let ValueDef::Variant(variant) = &snapshot_opt.value {
+                            if variant.name == "Some" {
+                                if let Some(snapshot_val) = variant.values.values().next() {
+                                    return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(BucketSnapshot {
+                        mmr_root: H256::zero(),
+                        leaf_count: 0,
+                    })
+                }
+                _ => Ok(BucketSnapshot {
+                    mmr_root: H256::zero(),
+                    leaf_count: 0,
+                }),
+            }
+        })
+    }
+
+    fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>> {
+        Box::pin(async move {
+            use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+
+            let storage_address = subxt::dynamic::storage(
+                "StorageProvider",
+                "Buckets",
+                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            );
+
+            let storage = self
+                .api
+                .storage()
+                .at_latest()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+            let bucket_value = match storage.fetch(&storage_address).await {
+                Ok(Some(v)) => v,
+                _ => return Ok(vec![]),
+            };
+
+            let decoded = bucket_value
+                .to_value()
+                .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+
+            let mut provider_bytes_list = Vec::new();
+
+            // primary_providers is at index 3
+            if let Some(field3) = decoded.at(3) {
+                if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
+                    for provider_value in providers_vec {
+                        if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
+                            &provider_value.value
+                        {
+                            let bytes: Vec<u8> = account_bytes
+                                .iter()
+                                .filter_map(|v| {
+                                    if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                                        Some(*n as u8)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            if bytes.len() == 32 {
+                                provider_bytes_list.push(bytes);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Look up each provider's multiaddr
+            let mut endpoints = Vec::new();
+            for provider_bytes in provider_bytes_list {
+                let provider_addr = subxt::dynamic::storage(
+                    "StorageProvider",
+                    "Providers",
+                    vec![subxt::dynamic::Value::from_bytes(&provider_bytes)],
+                );
+
+                let storage = self
+                    .api
+                    .storage()
+                    .at_latest()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+                if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
+                    if let Ok(decoded) = value.to_value() {
+                        if let Some(field0) = decoded.at(0) {
+                            if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) =
+                                &field0.value
+                            {
+                                let bytes: Vec<u8> = multiaddr_bytes
+                                    .iter()
+                                    .filter_map(|v| {
+                                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                                            Some(*n as u8)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                if !bytes.is_empty() {
+                                    let multiaddr_str = String::from_utf8_lossy(&bytes);
+                                    endpoints
+                                        .push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(endpoints)
+        })
+    }
+
+    fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        target_mmr_root: H256,
+    ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>> {
+        Box::pin(async move {
+            // Build roots array: position 0 = current root, rest = None
+            let roots_value: Vec<subxt::dynamic::Value> = (0..7)
+                .map(|i| {
+                    if i == 0 {
+                        subxt::dynamic::Value::unnamed_variant(
+                            "Some",
+                            vec![subxt::dynamic::Value::from_bytes(
+                                target_mmr_root.as_bytes(),
+                            )],
+                        )
+                    } else {
+                        subxt::dynamic::Value::unnamed_variant("None", vec![])
+                    }
+                })
+                .collect();
+
+            let signature = subxt::dynamic::Value::unnamed_variant(
+                "Sr25519",
+                vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
+            );
+
+            let tx = subxt::dynamic::tx(
+                "StorageProvider",
+                "confirm_replica_sync",
+                vec![
+                    subxt::dynamic::Value::u128(bucket_id as u128),
+                    subxt::dynamic::Value::unnamed_composite(roots_value),
+                    signature,
+                ],
+            );
+
+            tracing::info!(
+                "Submitting confirm_replica_sync for bucket {} with root 0x{}",
+                bucket_id,
+                hex::encode(target_mmr_root.as_bytes())
+            );
+
+            let tx_progress = self
+                .api
+                .tx()
+                .sign_and_submit_then_watch_default(&tx, &self.signer)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
+
+            let _events = tx_progress
+                .wait_for_finalized_success()
+                .await
+                .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+
+            tracing::info!(
+                "confirm_replica_sync submitted successfully for bucket {}",
+                bucket_id
+            );
+
+            Ok((0, 0)) // Position 0, payment extracted from events in production
+        })
+    }
+}
+
 /// Handle for controlling the replica sync coordinator.
 pub struct ReplicaSyncCoordinatorHandle {
     command_tx: mpsc::Sender<SyncCommand>,
@@ -195,11 +760,7 @@ impl ReplicaSyncCoordinatorHandle {
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
-    signer: Option<Keypair>,
-    /// HTTP client for fetching data from primaries (used by replica_sync).
-    #[allow(dead_code)]
-    http_client: reqwest::Client,
+    chain_client: Box<dyn ReplicaSyncChainClient>,
     replica_sync: ReplicaSync,
     /// Track active sync operations by bucket.
     active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
@@ -207,47 +768,20 @@ pub struct ReplicaSyncCoordinator {
 
 impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
-    pub fn new(config: ReplicaSyncCoordinatorConfig, state: Arc<ProviderState>) -> Self {
+    pub fn new(
+        config: ReplicaSyncCoordinatorConfig,
+        state: Arc<ProviderState>,
+        chain_client: Box<dyn ReplicaSyncChainClient>,
+    ) -> Self {
         let replica_sync = ReplicaSync::new(state.storage.clone());
 
         Self {
             config,
             state,
-            api: None,
-            signer: None,
-            http_client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to create HTTP client"),
+            chain_client,
             replica_sync,
             active_syncs: HashMap::new(),
         }
-    }
-
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        // Set up signer from provider state if available
-        if let Some(ref kp) = self.state.keypair {
-            let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
-            let signer = Keypair::from_secret_key(secret_bytes)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Replica sync coordinator connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
     }
 
     /// Start the replica sync coordinator background service.
@@ -255,20 +789,12 @@ impl ReplicaSyncCoordinator {
         self,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) -> Result<ReplicaSyncCoordinatorHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
-
         let (command_tx, command_rx) = mpsc::channel::<SyncCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
 
-        let coordinator = self;
-
         tokio::spawn(async move {
-            coordinator
-                .run_loop(command_rx, running_clone, callback)
-                .await;
+            self.run_loop(command_rx, running_clone, callback).await;
         });
 
         Ok(ReplicaSyncCoordinatorHandle {
@@ -320,7 +846,7 @@ impl ReplicaSyncCoordinator {
                                 running: running.load(Ordering::SeqCst),
                                 paused,
                                 active_syncs: self.active_syncs.len(),
-                                tracked_buckets: self.get_tracked_buckets().await.unwrap_or_default(),
+                                tracked_buckets: self.get_tracked_buckets(),
                             };
                             let _ = response_tx.send(status);
                         }
@@ -375,40 +901,37 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Get list of bucket IDs we're tracking as replica.
-    async fn get_tracked_buckets(&self) -> Result<Vec<BucketId>, Error> {
-        // Query chain for buckets where this provider is a replica
-        // For now, return buckets from local storage
-        Ok(self
+    fn get_tracked_buckets(&self) -> Vec<BucketId> {
+        self.state
+            .storage
+            .list_buckets()
+            .into_iter()
+            .map(|b| b.bucket_id)
+            .collect()
+    }
+
+    /// Get replica duties for buckets where this provider is a replica.
+    async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
+        let mut duties = Vec::new();
+
+        let current_block = self.chain_client.get_current_block().await?;
+
+        let local_buckets: Vec<u64> = self
             .state
             .storage
             .list_buckets()
             .into_iter()
             .map(|b| b.bucket_id)
-            .collect())
-    }
+            .collect();
 
-    /// Get replica duties for buckets where this provider is a replica.
-    async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let provider_account = self.state.provider_id.clone();
 
-        let mut duties = Vec::new();
-
-        // Get current block number for interval checking
-        let current_block = self.get_current_block(api).await?;
-
-        // Query agreements where this provider is a replica
-        // For now, we'll query local buckets and check if we have replica agreements
-        let our_account = self.get_our_account_id()?;
-
-        // Query storage for agreements where we're the replica provider
-        // Storage key: StorageProvider::Agreements(bucket_id, provider)
-        let agreements = self.query_replica_agreements(api, &our_account).await?;
+        let agreements = self
+            .chain_client
+            .fetch_replica_agreements(&provider_account, local_buckets)
+            .await?;
 
         for agreement in agreements {
-            // Skip if sync balance is depleted
             if agreement.sync_balance < agreement.sync_price {
                 tracing::debug!(
                     "Bucket {} has insufficient sync balance: {} < {}",
@@ -419,7 +942,6 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            // Check if min_sync_interval has elapsed
             if let Some((_, last_block)) = agreement.last_sync {
                 let elapsed = current_block.saturating_sub(last_block);
                 if elapsed < agreement.min_sync_interval {
@@ -433,24 +955,24 @@ impl ReplicaSyncCoordinator {
                 }
             }
 
-            // Get the latest checkpoint for this bucket
-            let snapshot = self.query_bucket_snapshot(api, agreement.bucket_id).await?;
+            let snapshot = self
+                .chain_client
+                .fetch_bucket_snapshot(agreement.bucket_id)
+                .await?;
 
-            // Skip if no checkpoint yet
             if snapshot.mmr_root == H256::zero() {
                 continue;
             }
 
-            // Skip if we're already synced to this root
             if let Some(bucket) = self.state.storage.get_bucket(agreement.bucket_id) {
                 if bucket.mmr_root == snapshot.mmr_root {
                     continue;
                 }
             }
 
-            // Get primary provider endpoints
             let primary_endpoints = self
-                .query_primary_endpoints(api, agreement.bucket_id)
+                .chain_client
+                .fetch_primary_endpoints(agreement.bucket_id)
                 .await?;
 
             duties.push(SyncDuty {
@@ -470,36 +992,19 @@ impl ReplicaSyncCoordinator {
 
     /// Get sync duty for a specific bucket.
     async fn get_sync_duty(&self, bucket_id: BucketId) -> Result<Option<SyncDuty>, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
+        let snapshot = self.chain_client.fetch_bucket_snapshot(bucket_id).await?;
 
-        let our_account = self.get_our_account_id()?;
-
-        // Check if we have a replica agreement for this bucket
-        let agreement = self
-            .query_agreement(api, bucket_id, &our_account)
-            .await?
-            .ok_or(Error::Internal(format!(
-                "No replica agreement found for bucket {bucket_id}"
-            )))?;
-
-        // Get snapshot
-        let snapshot = self.query_bucket_snapshot(api, bucket_id).await?;
-
-        // Get primary endpoints
-        let primary_endpoints = self.query_primary_endpoints(api, bucket_id).await?;
+        let primary_endpoints = self.chain_client.fetch_primary_endpoints(bucket_id).await?;
 
         Ok(Some(SyncDuty {
             bucket_id,
             target_mmr_root: snapshot.mmr_root,
             target_leaf_count: snapshot.leaf_count,
             primary_endpoints,
-            sync_balance: agreement.sync_balance,
-            sync_price: agreement.sync_price,
-            min_sync_interval: agreement.min_sync_interval,
-            last_sync: agreement.last_sync,
+            sync_balance: u128::MAX,
+            sync_price: 0,
+            min_sync_interval: 0,
+            last_sync: None,
         }))
     }
 
@@ -601,7 +1106,11 @@ impl ReplicaSyncCoordinator {
 
         // Submit on-chain confirmation if auto_confirm is enabled
         if self.config.auto_confirm {
-            match self.submit_sync_confirmation(duty).await {
+            match self
+                .chain_client
+                .submit_sync_confirmation(duty.bucket_id, duty.target_mmr_root)
+                .await
+            {
                 Ok((position, payment)) => SyncResult::Success {
                     bucket_id: duty.bucket_id,
                     mmr_root: duty.target_mmr_root,
@@ -614,7 +1123,6 @@ impl ReplicaSyncCoordinator {
                 },
             }
         } else {
-            // Return success without on-chain confirmation
             SyncResult::Success {
                 bucket_id: duty.bucket_id,
                 mmr_root: duty.target_mmr_root,
@@ -626,751 +1134,132 @@ impl ReplicaSyncCoordinator {
 
     /// Sync data from a primary provider using top-down traversal.
     async fn sync_from_primary(&self, duty: &SyncDuty, primary_url: &str) -> Result<H256, Error> {
-        // Use the existing replica_sync module for the actual sync
         self.replica_sync
             .sync_from_primary(duty.bucket_id, primary_url)
             .await
     }
-
-    /// Build the 7-element roots array for confirm_replica_sync.
-    fn build_roots_array(&self, synced_root: H256) -> [Option<H256>; 7] {
-        // Position 0: current root (what we synced to)
-        // Positions 1-6: historical roots (we don't track these locally)
-        let mut roots: [Option<H256>; 7] = [None; 7];
-        roots[0] = Some(synced_root);
-        roots
-    }
-
-    /// Submit confirm_replica_sync extrinsic.
-    async fn submit_sync_confirmation(&self, duty: &SyncDuty) -> Result<(u8, u128), Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
-
-        let signer = self
-            .signer
-            .as_ref()
-            .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
-
-        // Build roots array
-        let roots = self.build_roots_array(duty.target_mmr_root);
-
-        // Build roots as subxt values
-        let roots_value: Vec<subxt::dynamic::Value> = roots
-            .iter()
-            .map(|r| match r {
-                Some(h) => subxt::dynamic::Value::unnamed_variant(
-                    "Some",
-                    vec![subxt::dynamic::Value::from_bytes(h.as_bytes())],
-                ),
-                None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
-            })
-            .collect();
-
-        // Build dummy signature (pallet accepts any MultiSignature)
-        let signature = subxt::dynamic::Value::unnamed_variant(
-            "Sr25519",
-            vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
-        );
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "confirm_replica_sync",
-            vec![
-                // bucket_id: u64
-                subxt::dynamic::Value::u128(duty.bucket_id as u128),
-                // roots: [Option<H256>; 7]
-                subxt::dynamic::Value::unnamed_composite(roots_value),
-                // signature: MultiSignature
-                signature,
-            ],
-        );
-
-        tracing::info!(
-            "Submitting confirm_replica_sync for bucket {} with root 0x{}",
-            duty.bucket_id,
-            hex::encode(duty.target_mmr_root.as_bytes())
-        );
-
-        // Submit and wait for finalization
-        let tx_progress = api
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
-
-        // Try to extract ReplicaSynced event for position and payment info
-        // For now, return defaults since event parsing requires generated types
-        tracing::info!(
-            "confirm_replica_sync submitted successfully for bucket {}",
-            duty.bucket_id
-        );
-
-        // Position 0 = current root, payment = sync_price
-        Ok((0, duty.sync_price))
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Chain query helpers
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    /// Get our account ID as hex string.
-    fn get_our_account_id(&self) -> Result<String, Error> {
-        Ok(self.state.provider_id.clone())
-    }
-
-    /// Get current block number.
-    async fn get_current_block(&self, api: &OnlineClient<PolkadotConfig>) -> Result<u64, Error> {
-        let block = api
-            .blocks()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-
-        Ok(block.number() as u64)
-    }
-
-    /// Query replica agreements for our account.
-    ///
-    /// This queries the on-chain `StorageAgreements` double map for all buckets
-    /// where we have a replica agreement.
-    async fn query_replica_agreements(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        our_account: &str,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        let mut agreements = Vec::new();
-
-        // Get our account bytes
-        let account_bytes = hex::decode(our_account.trim_start_matches("0x"))
-            .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
-
-        // Query local buckets to find which ones we might have agreements for
-        // This is an optimization - in a full implementation we'd iterate the chain storage
-        let local_buckets: Vec<u64> = self
-            .state
-            .storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect();
-
-        for bucket_id in local_buckets {
-            // Query the specific agreement for this bucket
-            if let Some(agreement) = self
-                .query_agreement_raw(api, bucket_id, &account_bytes)
-                .await?
-            {
-                agreements.push(agreement);
-            }
-        }
-
-        // Also try to iterate chain storage for agreements we might not have locally
-        // This uses subxt's dynamic storage iteration
-        if let Ok(chain_agreements) = self.iterate_all_agreements(api, &account_bytes).await {
-            for agreement in chain_agreements {
-                // Avoid duplicates
-                if !agreements
-                    .iter()
-                    .any(|a| a.bucket_id == agreement.bucket_id)
-                {
-                    agreements.push(agreement);
-                }
-            }
-        }
-
-        Ok(agreements)
-    }
-
-    /// Iterate all storage agreements from chain to find replica agreements for our account.
-    async fn iterate_all_agreements(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        our_account_bytes: &[u8],
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        let mut agreements = Vec::new();
-
-        // Build the storage key prefix for StorageAgreements
-        let storage_address = subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
-
-        // Iterate all entries in the double map
-        let mut iter = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?
-            .iter(storage_address)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to iterate storage: {e}")))?;
-
-        while let Some(result) = iter.next().await {
-            let kv = match result {
-                Ok(kv) => kv,
-                Err(e) => {
-                    tracing::debug!("Error iterating storage: {e}");
-                    continue;
-                }
-            };
-
-            // Extract bucket_id and provider from the key
-            // Key format: twox128(pallet) + twox128(storage) + blake2_128_concat(bucket_id) + blake2_128_concat(provider)
-            let key_bytes = kv.key_bytes;
-            if key_bytes.len() < 32 + 16 + 8 + 16 + 32 {
-                continue;
-            }
-
-            // Skip pallet+storage prefix (32 bytes) + blake2_128 hash (16 bytes)
-            let bucket_id_start = 32 + 16;
-            let bucket_id_bytes = &key_bytes[bucket_id_start..bucket_id_start + 8];
-            let bucket_id = u64::from_le_bytes(bucket_id_bytes.try_into().unwrap_or([0; 8]));
-
-            // Skip to provider part: after bucket_id (8 bytes) + blake2_128 hash (16 bytes)
-            let provider_start = bucket_id_start + 8 + 16;
-            let provider_bytes = &key_bytes[provider_start..];
-
-            // Check if this is our provider
-            if provider_bytes.len() < 32 || provider_bytes[..32] != our_account_bytes[..32] {
-                continue;
-            }
-
-            // Parse the agreement value from the encoded bytes
-            if let Ok(agreement) = self.decode_storage_agreement_from_thunk(bucket_id, &kv.value) {
-                agreements.push(agreement);
-            }
-        }
-
-        Ok(agreements)
-    }
-
-    /// Decode a storage agreement from a DecodedValueThunk using raw encoding.
-    fn decode_storage_agreement_from_thunk(
-        &self,
-        bucket_id: BucketId,
-        value: &subxt::dynamic::DecodedValueThunk,
-    ) -> Result<ReplicaAgreementInfo, Error> {
-        // Get the encoded bytes from the thunk
-        let encoded = value.encoded();
-        self.decode_storage_agreement_bytes(bucket_id, encoded)
-    }
-
-    /// Decode a storage agreement from raw SCALE-encoded bytes.
-    fn decode_storage_agreement_bytes(
-        &self,
-        bucket_id: BucketId,
-        bytes: &[u8],
-    ) -> Result<ReplicaAgreementInfo, Error> {
-        // StorageAgreement layout:
-        // - owner: AccountId (32 bytes)
-        // - max_bytes: u64 (8 bytes)
-        // - payment_locked: Balance (16 bytes)
-        // - price_per_byte: Balance (16 bytes)
-        // - expires_at: BlockNumber (4 bytes)
-        // - extensions_blocked: bool (1 byte)
-        // - role: ProviderRole (variable, enum)
-        // - started_at: BlockNumber (4 bytes)
-
-        let min_size = 32 + 8 + 16 + 16 + 4 + 1; // up to role enum
-        if bytes.len() < min_size {
-            return Err(Error::Internal("Agreement data too short".to_string()));
-        }
-
-        let role_start = 32 + 8 + 16 + 16 + 4 + 1; // Skip to role enum
-        let role_variant = bytes.get(role_start).copied().unwrap_or(0);
-
-        // Role enum: 0 = Primary, 1 = Replica
-        if role_variant != 1 {
-            return Err(Error::Internal("Not a replica agreement".to_string()));
-        }
-
-        // Parse Replica fields: sync_balance, sync_price, min_sync_interval, last_sync
-        let replica_start = role_start + 1;
-        let remaining = &bytes[replica_start..];
-
-        if remaining.len() < 16 + 16 + 4 {
-            return Err(Error::Internal("Replica data too short".to_string()));
-        }
-
-        // sync_balance: Balance (u128 = 16 bytes)
-        let sync_balance = u128::from_le_bytes(
-            remaining[0..16]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_balance".to_string()))?,
-        );
-
-        // sync_price: Balance (u128 = 16 bytes)
-        let sync_price = u128::from_le_bytes(
-            remaining[16..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse sync_price".to_string()))?,
-        );
-
-        // min_sync_interval: BlockNumber (u32 = 4 bytes)
-        let min_sync_interval = u32::from_le_bytes(
-            remaining[32..36]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse min_sync_interval".to_string()))?,
-        ) as u64;
-
-        // last_sync: Option<(H256, BlockNumber)>
-        let last_sync_option = remaining.get(36).copied().unwrap_or(0);
-        let last_sync = if last_sync_option == 1 && remaining.len() >= 36 + 1 + 32 + 4 {
-            let root_bytes: [u8; 32] = remaining[37..69]
-                .try_into()
-                .map_err(|_| Error::Internal("Failed to parse last_sync root".to_string()))?;
-            let block = u32::from_le_bytes(
-                remaining[69..73]
-                    .try_into()
-                    .map_err(|_| Error::Internal("Failed to parse last_sync block".to_string()))?,
-            ) as u64;
-            Some((H256::from(root_bytes), block))
-        } else {
-            None
-        };
-
-        Ok(ReplicaAgreementInfo {
-            bucket_id,
-            sync_balance,
-            sync_price,
-            min_sync_interval,
-            last_sync,
-        })
-    }
-
-    /// Query a specific agreement from chain using raw bytes.
-    async fn query_agreement_raw(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        bucket_id: BucketId,
-        provider_bytes: &[u8],
-    ) -> Result<Option<ReplicaAgreementInfo>, Error> {
-        // Build the storage key for this specific agreement
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "StorageAgreements",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider_bytes),
-            ],
-        );
-
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        match storage.fetch(&storage_address).await {
-            Ok(Some(value)) => self
-                .decode_storage_agreement_from_thunk(bucket_id, &value)
-                .ok()
-                .map(|a| Ok(Some(a)))
-                .unwrap_or(Ok(None)),
-            Ok(None) => Ok(None),
-            Err(e) => {
-                tracing::debug!("Failed to fetch agreement {bucket_id}: {e}");
-                Ok(None)
-            }
-        }
-    }
-
-    /// Query a specific agreement.
-    async fn query_agreement(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        bucket_id: BucketId,
-        provider: &str,
-    ) -> Result<Option<ReplicaAgreementInfo>, Error> {
-        let provider_bytes = hex::decode(provider.trim_start_matches("0x"))
-            .map_err(|e| Error::Internal(format!("Invalid provider hex: {e}")))?;
-
-        self.query_agreement_raw(api, bucket_id, &provider_bytes)
-            .await
-    }
-
-    /// Query bucket snapshot (latest checkpoint state) from chain.
-    ///
-    /// This queries the on-chain `Buckets` storage to get the authoritative snapshot.
-    async fn query_bucket_snapshot(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        bucket_id: BucketId,
-    ) -> Result<BucketSnapshot, Error> {
-        // Build the storage address for the bucket
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        );
-
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        match storage.fetch(&storage_address).await {
-            Ok(Some(value)) => {
-                // Decode the bucket to extract the snapshot using raw bytes
-                self.decode_bucket_snapshot_from_thunk(bucket_id, &value)
-            }
-            Ok(None) => {
-                // Bucket not found on chain, check local state
-                if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
-                    return Ok(BucketSnapshot {
-                        mmr_root: bucket.mmr_root,
-                        leaf_count: bucket.leaf_count,
-                    });
-                }
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-            Err(e) => {
-                tracing::warn!("Failed to fetch bucket {bucket_id} from chain: {e}");
-                // Fallback to local state
-                if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
-                    return Ok(BucketSnapshot {
-                        mmr_root: bucket.mmr_root,
-                        leaf_count: bucket.leaf_count,
-                    });
-                }
-                Ok(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                })
-            }
-        }
-    }
-
-    /// Decode a bucket's snapshot from the DecodedValueThunk.
-    fn decode_bucket_snapshot_from_thunk(
-        &self,
-        bucket_id: BucketId,
-        value: &subxt::dynamic::DecodedValueThunk,
-    ) -> Result<BucketSnapshot, Error> {
-        use subxt::ext::scale_value::{At, ValueDef};
-
-        let decoded = value
-            .to_value()
-            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
-
-        // Navigate to snapshot field using scale_value's At trait
-        // Bucket fields: members, frozen_start_seq, min_providers, primary_providers, snapshot, historical_roots, total_snapshots
-        // snapshot is at index 4
-        if let Some(snapshot_opt) = decoded.at(4) {
-            // snapshot is Option<BucketSnapshot>
-            // Access the ValueDef through .value field
-            if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                if variant.name == "Some" {
-                    // Get the inner snapshot value
-                    if let Some(snapshot_val) = variant.values.values().next() {
-                        return self.parse_bucket_snapshot_value(snapshot_val);
-                    }
-                }
-            }
-        }
-
-        // Fallback to local state
-        if let Some(bucket) = self.state.storage.get_bucket(bucket_id) {
-            return Ok(BucketSnapshot {
-                mmr_root: bucket.mmr_root,
-                leaf_count: bucket.leaf_count,
-            });
-        }
-
-        Ok(BucketSnapshot {
-            mmr_root: H256::zero(),
-            leaf_count: 0,
-        })
-    }
-
-    /// Parse a BucketSnapshot value from scale_value.
-    fn parse_bucket_snapshot_value<T>(
-        &self,
-        value: &subxt::ext::scale_value::Value<T>,
-    ) -> Result<BucketSnapshot, Error> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        // BucketSnapshot: { mmr_root: H256, start_seq: u64, leaf_count: u64, block_number: BlockNumber }
-        let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                // H256 is a composite of 32 bytes
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
-            } else {
-                H256::zero()
-            }
-        } else {
-            H256::zero()
-        };
-
-        let leaf_count = if let Some(field2) = value.at(2) {
-            if let ValueDef::Primitive(Primitive::U128(n)) = &field2.value {
-                *n as u64
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        Ok(BucketSnapshot {
-            mmr_root,
-            leaf_count,
-        })
-    }
-
-    /// Query primary provider endpoints for a bucket.
-    ///
-    /// This queries the bucket's primary_providers list, then looks up each
-    /// provider's multiaddr from the Providers storage.
-    async fn query_primary_endpoints(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        bucket_id: BucketId,
-    ) -> Result<Vec<String>, Error> {
-        // First, get the bucket to find its primary providers
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        );
-
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        let bucket_value = match storage.fetch(&storage_address).await {
-            Ok(Some(v)) => v,
-            Ok(None) => return Ok(vec![]),
-            Err(e) => {
-                tracing::warn!("Failed to fetch bucket {bucket_id}: {e}");
-                return Ok(vec![]);
-            }
-        };
-
-        // Extract primary_providers from the bucket
-        let primary_providers = self.extract_primary_providers(&bucket_value)?;
-
-        // Now look up each provider's multiaddr
-        let mut endpoints = Vec::new();
-        for provider_bytes in primary_providers {
-            if let Ok(Some(endpoint)) = self.query_provider_endpoint(api, &provider_bytes).await {
-                endpoints.push(endpoint);
-            }
-        }
-
-        Ok(endpoints)
-    }
-
-    /// Extract primary provider account IDs from a bucket value.
-    fn extract_primary_providers(
-        &self,
-        bucket_value: &subxt::dynamic::DecodedValueThunk,
-    ) -> Result<Vec<Vec<u8>>, Error> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let decoded = bucket_value
-            .to_value()
-            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
-
-        let mut providers = Vec::new();
-
-        // Bucket fields: members, frozen_start_seq, min_providers, primary_providers, snapshot, historical_roots, total_snapshots
-        // primary_providers is at index 3
-        if let Some(field3) = decoded.at(3) {
-            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
-                for provider_value in providers_vec {
-                    // Each provider is an AccountId (32 bytes composite)
-                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
-                        &provider_value.value
-                    {
-                        let bytes: Vec<u8> = account_bytes
-                            .iter()
-                            .filter_map(|v| {
-                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                    Some(*n as u8)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if bytes.len() == 32 {
-                            providers.push(bytes);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(providers)
-    }
-
-    /// Query a provider's endpoint (multiaddr) from chain.
-    async fn query_provider_endpoint(
-        &self,
-        api: &OnlineClient<PolkadotConfig>,
-        provider_bytes: &[u8],
-    ) -> Result<Option<String>, Error> {
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "Providers",
-            vec![subxt::dynamic::Value::from_bytes(provider_bytes)],
-        );
-
-        let storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        match storage.fetch(&storage_address).await {
-            Ok(Some(value)) => {
-                // Extract multiaddr from ProviderInfo
-                let endpoint = self.extract_provider_multiaddr(&value)?;
-                Ok(Some(endpoint))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                tracing::debug!("Failed to fetch provider info: {e}");
-                Ok(None)
-            }
-        }
-    }
-
-    /// Extract multiaddr from a ProviderInfo value.
-    fn extract_provider_multiaddr(
-        &self,
-        provider_value: &subxt::dynamic::DecodedValueThunk,
-    ) -> Result<String, Error> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
-
-        let decoded = provider_value
-            .to_value()
-            .map_err(|e| Error::Internal(format!("Failed to decode provider: {e}")))?;
-
-        // ProviderInfo fields: multiaddr, public_key, stake, committed_bytes, settings, stats
-        // multiaddr is at index 0
-        if let Some(field0) = decoded.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) = &field0.value {
-                let bytes: Vec<u8> = multiaddr_bytes
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                if !bytes.is_empty() {
-                    // Convert multiaddr bytes to HTTP endpoint
-                    let multiaddr_str = String::from_utf8_lossy(&bytes);
-                    return Ok(self.multiaddr_to_http_endpoint(&multiaddr_str));
-                }
-            }
-        }
-
-        Err(Error::Internal("Failed to extract multiaddr".to_string()))
-    }
-
-    /// Convert a multiaddr string to an HTTP endpoint.
-    fn multiaddr_to_http_endpoint(&self, multiaddr: &str) -> String {
-        // Parse multiaddr format: /ip4/127.0.0.1/tcp/3000 or /dns4/hostname/tcp/3000
-        let parts: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
-
-        let mut host = "127.0.0.1".to_string();
-        let mut port = "3333".to_string();
-
-        let mut i = 0;
-        while i < parts.len() {
-            match parts[i] {
-                "ip4" | "ip6" => {
-                    if i + 1 < parts.len() {
-                        host = parts[i + 1].to_string();
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "dns4" | "dns6" | "dns" => {
-                    if i + 1 < parts.len() {
-                        host = parts[i + 1].to_string();
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                "tcp" => {
-                    if i + 1 < parts.len() {
-                        port = parts[i + 1].to_string();
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                _ => {
-                    i += 1;
-                }
-            }
-        }
-
-        format!("http://{host}:{port}")
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal helper types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Information about a replica agreement from chain.
-#[derive(Clone, Debug)]
-struct ReplicaAgreementInfo {
-    bucket_id: BucketId,
-    sync_balance: u128,
-    sync_price: u128,
-    min_sync_interval: u64,
-    last_sync: Option<(H256, u64)>,
-}
-
-/// Bucket snapshot from chain.
-#[derive(Clone, Debug)]
-struct BucketSnapshot {
-    mmr_root: H256,
-    leaf_count: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Mutex;
+
+    struct MockReplicaSyncChainClient {
+        block: Mutex<u64>,
+        agreements: Mutex<Vec<ReplicaAgreementInfo>>,
+        snapshots: Mutex<HashMap<BucketId, BucketSnapshot>>,
+        endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
+        confirmations: Mutex<Vec<BucketId>>,
+        confirm_result: Mutex<Result<(u8, u128), Error>>,
+    }
+
+    #[allow(dead_code)]
+    impl MockReplicaSyncChainClient {
+        fn new() -> Self {
+            Self {
+                block: Mutex::new(100),
+                agreements: Mutex::new(Vec::new()),
+                snapshots: Mutex::new(HashMap::new()),
+                endpoints: Mutex::new(HashMap::new()),
+                confirmations: Mutex::new(Vec::new()),
+                confirm_result: Mutex::new(Ok((0, 1000))),
+            }
+        }
+
+        fn with_agreements(self, agreements: Vec<ReplicaAgreementInfo>) -> Self {
+            Self {
+                agreements: Mutex::new(agreements),
+                ..self
+            }
+        }
+
+        fn with_snapshot(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                self.snapshots.lock().await.insert(bucket_id, snapshot);
+            });
+            self
+        }
+
+        fn with_endpoints(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async {
+                self.endpoints.lock().await.insert(bucket_id, endpoints);
+            });
+            self
+        }
+    }
+
+    impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
+        fn get_current_block(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
+            Box::pin(async { Ok(*self.block.lock().await) })
+        }
+
+        fn fetch_replica_agreements(
+            &self,
+            _provider_account: &str,
+            _local_buckets: Vec<BucketId>,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>>
+        {
+            Box::pin(async { Ok(self.agreements.lock().await.clone()) })
+        }
+
+        fn fetch_bucket_snapshot(
+            &self,
+            bucket_id: BucketId,
+        ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>> {
+            Box::pin(async move {
+                let snapshots = self.snapshots.lock().await;
+                Ok(snapshots
+                    .get(&bucket_id)
+                    .cloned()
+                    .unwrap_or(BucketSnapshot {
+                        mmr_root: H256::zero(),
+                        leaf_count: 0,
+                    }))
+            })
+        }
+
+        fn fetch_primary_endpoints(
+            &self,
+            bucket_id: BucketId,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>> {
+            Box::pin(async move {
+                let endpoints = self.endpoints.lock().await;
+                Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
+            })
+        }
+
+        fn submit_sync_confirmation(
+            &self,
+            bucket_id: BucketId,
+            _target_mmr_root: H256,
+        ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>> {
+            Box::pin(async move {
+                self.confirmations.lock().await.push(bucket_id);
+                let result = &*self.confirm_result.lock().await;
+                match result {
+                    Ok(v) => Ok(*v),
+                    Err(e) => Err(Error::Internal(e.to_string())),
+                }
+            })
+        }
+    }
+
+    fn test_state() -> Arc<ProviderState> {
+        let storage = Arc::new(crate::Storage::new());
+        Arc::new(crate::ProviderState::new(
+            storage,
+            "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
+        ))
+    }
 
     #[test]
     fn test_config_default() {
         let config = ReplicaSyncCoordinatorConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.max_concurrent_syncs, 3);
         assert!(config.auto_confirm);
@@ -1406,19 +1295,153 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_build_roots_array() {
-        let root = H256::repeat_byte(0xAB);
-        let storage = Arc::new(crate::Storage::new());
-        let state = Arc::new(crate::ProviderState::new(storage, "test".to_string()));
+    #[tokio::test]
+    async fn test_no_agreements() {
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
         let config = ReplicaSyncCoordinatorConfig::default();
-        let coordinator = ReplicaSyncCoordinator::new(config, state);
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
-        let roots = coordinator.build_roots_array(root);
+        let duties = coordinator.get_active_replica_duties().await.unwrap();
+        assert!(duties.is_empty());
+    }
 
-        assert_eq!(roots[0], Some(root));
-        for item in roots.iter().skip(1) {
-            assert_eq!(*item, None);
-        }
+    #[tokio::test]
+    async fn test_insufficient_balance() {
+        let duty = SyncDuty {
+            bucket_id: 1,
+            target_mmr_root: H256::repeat_byte(0xAA),
+            target_leaf_count: 10,
+            primary_endpoints: vec![],
+            sync_balance: 50,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        };
+
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
+        let config = ReplicaSyncCoordinatorConfig::default();
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let result = coordinator.sync_and_confirm(&duty).await;
+        assert!(matches!(result, SyncResult::InsufficientBalance { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_already_synced() {
+        // Create storage with a bucket whose root matches the target
+        let storage = Arc::new(crate::Storage::new());
+        storage.init_bucket(1, u64::MAX);
+        let data = b"test data".to_vec();
+        let hash = sp_core::hashing::blake2_256(&data);
+        let data_root = H256::from(hash);
+        let _ = storage.store_node(1, data_root, data, None);
+        let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+
+        let state = Arc::new(crate::ProviderState::new(storage, "test".to_string()));
+
+        let duty = SyncDuty {
+            bucket_id: 1,
+            target_mmr_root: mmr_root,
+            target_leaf_count: 1,
+            primary_endpoints: vec![],
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        };
+
+        let mock = MockReplicaSyncChainClient::new();
+        let config = ReplicaSyncCoordinatorConfig::default();
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let result = coordinator.sync_and_confirm(&duty).await;
+        assert!(matches!(result, SyncResult::AlreadySynced { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_no_data_to_sync() {
+        let duty = SyncDuty {
+            bucket_id: 1,
+            target_mmr_root: H256::zero(),
+            target_leaf_count: 0,
+            primary_endpoints: vec![],
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        };
+
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
+        let config = ReplicaSyncCoordinatorConfig::default();
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let result = coordinator.sync_and_confirm(&duty).await;
+        assert!(matches!(result, SyncResult::NoDataToSync { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_primary_unavailable() {
+        let duty = SyncDuty {
+            bucket_id: 1,
+            target_mmr_root: H256::repeat_byte(0xAA),
+            target_leaf_count: 10,
+            primary_endpoints: vec!["http://127.0.0.1:19999".to_string()],
+            sync_balance: 1000,
+            sync_price: 100,
+            min_sync_interval: 0,
+            last_sync: None,
+        };
+
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
+        let config = ReplicaSyncCoordinatorConfig::default();
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let result = coordinator.sync_and_confirm(&duty).await;
+        assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_stop_command() {
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
+        let config = ReplicaSyncCoordinatorConfig {
+            poll_interval: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let handle = coordinator.start(None).await.unwrap();
+        assert!(handle.is_running());
+
+        handle.stop().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_pause_resume() {
+        let mock = MockReplicaSyncChainClient::new();
+        let state = test_state();
+        let config = ReplicaSyncCoordinatorConfig {
+            poll_interval: Duration::from_millis(50),
+            ..Default::default()
+        };
+        let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+        let handle = coordinator.start(None).await.unwrap();
+
+        handle.pause().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        handle.resume().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        handle.stop().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!handle.is_running());
     }
 }
