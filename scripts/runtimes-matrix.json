@@ -10,8 +10,8 @@
     ],
     "integration_tests": true,
     "try_runtime": {
-        "spec_name_check": "--disable-spec-name-check",
-        "extra_flags": "--blocktime 24000 --disable-spec-version-check"
+      "spec_name_check": "--disable-spec-name-check",
+      "extra_flags": "--blocktime 24000 --disable-spec-version-check"
     },
     "benchmarks_templates": {
       "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",
@@ -25,12 +25,12 @@
     "build_command": "build-runtime",
     "zombienet_config": "zombienet.toml",
     "uris": [
-      "TODO: update WSS"
+      "wss://previewnet.substrate.dev/web3-storage"
     ],
     "integration_tests": true,
     "try_runtime": {
-        "spec_name_check": "--disable-spec-name-check",
-        "extra_flags": "--blocktime 24000 --disable-spec-version-check"
+      "spec_name_check": "--disable-spec-name-check",
+      "extra_flags": "--blocktime 24000 --disable-spec-version-check"
     },
     "benchmarks_templates": {
       "pallet_xcm_benchmarks::generic": "templates/xcm-bench-template.hbs",

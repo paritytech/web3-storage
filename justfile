@@ -9,6 +9,8 @@
 polkadot_version := "polkadot-stable2603"
 # Zombienet version
 zombienet_version := "v0.4.11"
+# try-runtime CLI version (for runtime migration checks)
+try_runtime_version := "v0.10.1"
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -18,6 +20,8 @@ arch := `uname -m`
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-musl" }
+try_runtime_base := "https://github.com/paritytech/try-runtime-cli/releases/download/" + try_runtime_version + "/"
+try_runtime_asset := if os == "darwin" { "try-runtime-aarch64-apple-darwin" } else { "try-runtime-x86_64-unknown-linux-musl" }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -87,6 +91,9 @@ download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombie
 
 # Download frame-omni-bencher (for benchmarks / `/cmd bench`)
 download-frame-omni-bencher: (_download "frame-omni-bencher" polkadot_sdk_base + "frame-omni-bencher" + darwin_suffix)
+
+# Download try-runtime CLI (for runtime migration checks)
+download-try-runtime: (_download "try-runtime" try_runtime_base + try_runtime_asset)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
