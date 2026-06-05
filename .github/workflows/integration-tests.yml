@@ -231,8 +231,9 @@ jobs:
 
   # ── E2E test suite ──────────────────────────────────────────────────────────
   # All PAPI E2E workflows against a single inmemory provider (web3-storage-paseo
-  # only). Self-contained: builds a coverage-instrumented provider here, skips
-  # the shared build artifact, and runs in parallel with it.
+  # only). Self-contained: builds its own provider, skips the shared build
+  # artifact, and runs in parallel with it. JS coverage (c8) is collected here;
+  # Rust coverage (pallet + provider) is handled by the coverage job in check.yml.
   e2e-integration-tests:
     name: E2E Integration Tests
     runs-on: parity-large
@@ -247,9 +248,6 @@ jobs:
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      # Single-source the chain-spec script from the matrix so it can't drift
-      # from the rest of the runtime config. The E2E suite runs on
-      # web3-storage-paseo (see job comment above).
       - name: Resolve chain-spec script from matrix
         run: |
           RUNTIME=web3-storage-paseo
@@ -296,21 +294,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build provider with coverage instrumentation
-        run: |
-          cargo build --release -p storage-provider-node
-          # Verify the binary contains LLVM coverage symbols
-          if nm ./target-cov/release/storage-provider-node 2>/dev/null | grep -q "__llvm_profile"; then
-            echo "Binary is coverage-instrumented"
-          else
-            echo "WARNING: Binary may not be coverage-instrumented"
-          fi
-          # Clean up stray profraw files from build step (proc-macro, build scripts)
-          rm -f ./*.profraw ./default_*.profraw 2>/dev/null || true
-        env:
-          RUSTFLAGS: "-C instrument-coverage"
-          CARGO_TARGET_DIR: target-cov
-          CARGO_INCREMENTAL: '0'
+      - name: Build provider
+        run: cargo build --release -p storage-provider-node
 
       - name: Start chain (dev mode, 2s blocks)
         uses: ./.github/actions/start-e2e-chain
@@ -320,22 +305,14 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory, coverage-instrumented)
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
-          mkdir -p /tmp/coverage
-          # %c = continuous mode: profraw is mmap'd and flushed in real-time,
-          # so coverage data survives even SIGKILL (process doesn't need a
-          # clean exit for atexit handlers to run).
-          LLVM_PROFILE_FILE="/tmp/coverage/provider-%p%c.profraw" \
-            nohup ./target-cov/release/storage-provider-node \
-              --keyfile /tmp/alice-key --storage-mode inmemory \
-              --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-              --enable-agreement-coordinator --enable-checkpoint-coordinator \
-              > /tmp/provider.log 2>&1 &
-          PROVIDER_PID=$!
-          echo "Provider PID: $PROVIDER_PID"
-          echo "PROVIDER_PID=$PROVIDER_PID" >> $GITHUB_ENV
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/alice-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
+            > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -348,180 +325,38 @@ jobs:
         run: |
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "  JS Coverage (api.js, common.js)"
+          echo "  JS Coverage (E2E test helpers)"
           echo "═══════════════════════════════════════════════════════════"
           cd examples/papi && npx c8 report --reporter=text
           echo ""
 
-      - name: Run pallet unit tests with coverage
-        if: always()
-        run: |
-          # Pallet runs as WASM on-chain so E2E tests can't instrument it.
-          # Instead, run pallet unit tests with native coverage instrumentation.
-          rm -f /tmp/coverage/pallet-*.profraw 2>/dev/null || true
-          LLVM_PROFILE_FILE="/tmp/coverage/pallet-%p-%m.profraw" \
-            cargo test -p pallet-storage-provider --lib
-        env:
-          RUSTFLAGS: "-C instrument-coverage"
-          CARGO_TARGET_DIR: target-cov
-          CARGO_INCREMENTAL: '0'
-
-      - name: Generate pallet coverage report
-        if: always()
-        run: |
-          if ls /tmp/coverage/pallet-*.profraw 1>/dev/null 2>&1; then
-            rustup component add llvm-tools 2>/dev/null || true
-            LLVM_PROFDATA=$(find $(rustc --print sysroot) -name llvm-profdata -type f | head -1)
-            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
-            if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
-              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/pallet-*.profraw -o /tmp/coverage/pallet.profdata
-              # Find the test binary — cargo test (no --release) builds under debug/
-              PALLET_TEST_BIN=$(find ./target-cov/debug/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
-              if [ -n "$PALLET_TEST_BIN" ]; then
-                echo ""
-                echo "═══════════════════════════════════════════════════════════"
-                echo "  Rust Pallet Coverage (pallet/src/)"
-                echo "═══════════════════════════════════════════════════════════"
-                "$LLVM_COV" report \
-                  "$PALLET_TEST_BIN" \
-                  --instr-profile=/tmp/coverage/pallet.profdata \
-                  --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
-                  --sources pallet/src/
-                echo ""
-                mkdir -p /tmp/coverage/report
-                "$LLVM_COV" export \
-                  "$PALLET_TEST_BIN" \
-                  --instr-profile=/tmp/coverage/pallet.profdata \
-                  --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
-                  --sources pallet/src/ \
-                  --format=lcov > /tmp/coverage/report/pallet-lcov.info 2>/dev/null || true
-              else
-                echo "WARNING: Could not find pallet test binary"
-              fi
-            fi
-          else
-            echo "WARNING: No pallet profraw files found"
-          fi
-
-      - name: Stop services and generate Rust coverage
-        if: always()
-        run: |
-          # SIGTERM first so the LLVM atexit handler can flush profraw
-          # (continuous mode %c may not be supported on all LLVM versions).
-          # Fall back to SIGKILL after a grace period.
-          kill "$PROVIDER_PID" 2>/dev/null || pkill -f "storage-provider-node" 2>/dev/null || true
-          sleep 5
-          kill -9 "$PROVIDER_PID" 2>/dev/null || pkill -9 -f "storage-provider-node" 2>/dev/null || true
-          pkill -f "polkadot-omni-node" 2>/dev/null || true
-          pkill -f "polkadot" 2>/dev/null || true
-          sleep 2
-
-          echo "=== Provider coverage profraw ==="
-          ls -la /tmp/coverage/provider-*.profraw 2>/dev/null || echo "  (no provider profraw files)"
-
-          # Generate Rust coverage report from provider profraw only
-          # (pallet profraw is handled in the earlier step)
-          find /tmp/coverage -name "provider-*.profraw" -empty -delete 2>/dev/null || true
-          if ls /tmp/coverage/provider-*.profraw 1>/dev/null 2>&1; then
-            rustup component add llvm-tools 2>/dev/null || true
-            LLVM_PROFDATA=$(find $(rustc --print sysroot) -name llvm-profdata -type f | head -1)
-            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
-            if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
-              mkdir -p /tmp/coverage/report
-              "$LLVM_PROFDATA" merge -sparse /tmp/coverage/provider-*.profraw -o /tmp/coverage/provider.profdata
-              echo ""
-              echo "═══════════════════════════════════════════════════════════"
-              echo "  Rust Provider Coverage (provider-node/src/)"
-              echo "═══════════════════════════════════════════════════════════"
-              "$LLVM_COV" report \
-                ./target-cov/release/storage-provider-node \
-                --instr-profile=/tmp/coverage/provider.profdata \
-                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
-                --sources provider-node/src/
-              echo ""
-              "$LLVM_COV" export \
-                ./target-cov/release/storage-provider-node \
-                --instr-profile=/tmp/coverage/provider.profdata \
-                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
-                --sources provider-node/src/ \
-                --format=lcov > /tmp/coverage/report/rust-lcov.info 2>/dev/null || true
-            else
-              echo "WARNING: llvm-profdata or llvm-cov not found"
-            fi
-          else
-            echo "WARNING: No non-empty provider-*.profraw files"
-            echo "  Continuous mode (%c) may not be supported by this LLVM version."
-            echo "  Last 10 lines of provider log:"
-            tail -10 /tmp/provider.log 2>/dev/null || echo "  (no log)"
-          fi
-
-      - name: Extract coverage summary
+      - name: Extract JS coverage summary
         if: always()
         run: |
           mkdir -p /tmp/coverage/report
-
-          # ── Pallet line coverage ──
-          PALLET_COV="0"
-          if [ -f /tmp/coverage/pallet.profdata ]; then
-            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
-            PALLET_TEST_BIN=$(find ./target-cov/debug/deps -name "pallet_storage_provider-*" -executable ! -name "*.d" | head -1)
-            if [ -n "$LLVM_COV" ] && [ -n "$PALLET_TEST_BIN" ]; then
-              PALLET_COV=$("$LLVM_COV" report "$PALLET_TEST_BIN" \
-                --instr-profile=/tmp/coverage/pallet.profdata \
-                --ignore-filename-regex='(\.cargo|rustc|target-cov|weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
-                --sources pallet/src/ 2>/dev/null \
-                | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-            fi
-          fi
-
-          # ── Provider line coverage ──
-          PROVIDER_COV="0"
-          if [ -f /tmp/coverage/provider.profdata ]; then
-            LLVM_COV=$(find $(rustc --print sysroot) -name llvm-cov -type f | head -1)
-            if [ -n "$LLVM_COV" ]; then
-              PROVIDER_COV=$("$LLVM_COV" report ./target-cov/release/storage-provider-node \
-                --instr-profile=/tmp/coverage/provider.profdata \
-                --ignore-filename-regex='(\.cargo|rustc|target-cov)' \
-                --sources provider-node/src/ 2>/dev/null \
-                | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-            fi
-          fi
-
-          # ── JS line coverage ──
           JS_COV="0"
           if [ -f examples/papi/coverage/coverage-final.json ]; then
             JS_COV=$(cd examples/papi && npx c8 report --reporter=text 2>/dev/null \
               | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
           fi
+          echo "{\"js\": ${JS_COV:-0}}" > /tmp/coverage/report/coverage-summary.json
+          echo "JS line coverage: ${JS_COV}%"
 
-          echo "{\"pallet\": ${PALLET_COV:-0}, \"provider\": ${PROVIDER_COV:-0}, \"js\": ${JS_COV:-0}}" \
-            > /tmp/coverage/report/coverage-summary.json
-
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "  Coverage Summary"
-          echo "═══════════════════════════════════════════════════════════"
-          cat /tmp/coverage/report/coverage-summary.json | python3 -m json.tool
-          echo ""
-
-      - name: Cache coverage baseline (main/dev only)
+      - name: Cache JS coverage baseline (main/dev only)
         if: always() && github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: /tmp/coverage/report/coverage-summary.json
           key: coverage-baseline-${{ github.sha }}
 
-      # Overwrite the well-known key so PRs always restore the latest baseline.
-      # actions/cache is immutable per key, so we delete-then-save to update.
-      - name: Update latest coverage baseline (main/dev only)
+      - name: Update latest JS coverage baseline (main/dev only)
         if: always() && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Delete the previous "latest" cache entry if it exists
           gh cache delete "coverage-baseline-latest" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
-        # Save is a separate step so the action handles the upload
-      - name: Save latest coverage baseline (main/dev only)
+
+      - name: Save latest JS coverage baseline (main/dev only)
         if: always() && github.event_name == 'push'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -532,15 +367,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: js-coverage
-          path: examples/papi/coverage/
+          name: e2e-coverage
+          path: |
+            examples/papi/coverage/
+            /tmp/coverage/report/coverage-summary.json
 
-      - name: Upload Rust coverage
+      - name: Stop services
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: rust-coverage
-          path: /tmp/coverage/report/
+        run: |
+          pkill -f "storage-provider-node" 2>/dev/null || true
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
 
       - name: Upload logs (on failure)
         if: always()
@@ -699,9 +536,8 @@ jobs:
             /tmp/zombie-*/*-raw.json
 
   # ── Coverage gate ─────────────────────────────────────────────────────────
-  # On PRs: restores the cached baseline from main/dev, downloads the PR's
-  # coverage summary from the e2e job artifact, and fails if any metric
-  # (pallet, provider, JS) decreased.
+  # On PRs: restores the cached JS coverage baseline from main/dev, downloads
+  # the PR's summary, and fails if JS coverage decreased.
   coverage-gate:
     name: Coverage gate
     runs-on: ubuntu-latest
@@ -719,52 +555,32 @@ jobs:
       - name: Download PR coverage artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
         with:
-          name: rust-coverage
+          name: e2e-coverage
           path: /tmp/pr-coverage
 
-      - name: Compare coverage
+      - name: Compare JS coverage
         run: |
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "  Coverage Comparison (base → PR)"
+          echo "  JS Coverage Comparison (base → PR)"
           echo "═══════════════════════════════════════════════════════════"
 
-          # If no baseline exists yet (first run on main), skip the gate
           if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
             echo "No baseline found (first run?) — skipping comparison."
-            echo ""
-            echo "PR coverage:"
-            cat /tmp/pr-coverage/coverage-summary.json | python3 -m json.tool
+            cat /tmp/pr-coverage/coverage-summary.json 2>/dev/null || true
             exit 0
           fi
 
-          BASE=/tmp/coverage/report/coverage-summary.json
-          PR=/tmp/pr-coverage/coverage-summary.json
+          BASE_JS=$(python3 -c "import json; print(json.load(open('/tmp/coverage/report/coverage-summary.json')).get('js', 0))")
+          PR_JS=$(python3 -c "import json; print(json.load(open('/tmp/pr-coverage/coverage-summary.json')).get('js', 0))")
 
-          echo "Base: $(cat $BASE)"
-          echo "PR:   $(cat $PR)"
-          echo ""
-
-          FAILED=0
-          for METRIC in pallet provider js; do
-            BASE_VAL=$(python3 -c "import json; d=json.load(open('$BASE')); print(d.get('$METRIC', 0))")
-            PR_VAL=$(python3 -c "import json; d=json.load(open('$PR')); print(d.get('$METRIC', 0))")
-
-            DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
-            if [ "$DECREASED" = "1" ]; then
-              echo "FAIL: $METRIC coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"
-              FAILED=1
-            else
-              echo "PASS: $METRIC coverage: ${BASE_VAL}% → ${PR_VAL}%"
-            fi
-          done
-
-          echo ""
-          if [ "$FAILED" = "1" ]; then
-            echo "Coverage decreased — add tests to cover new or modified code."
+          DECREASED=$(awk "BEGIN { print ($PR_JS < $BASE_JS) ? 1 : 0 }")
+          if [ "$DECREASED" = "1" ]; then
+            echo "FAIL: JS coverage decreased: ${BASE_JS}% → ${PR_JS}%"
+            echo "Add tests to cover new or modified code."
             exit 1
           else
-            echo "All coverage metrics maintained or improved."
+            echo "PASS: JS coverage: ${BASE_JS}% → ${PR_JS}%"
           fi
 
   integration-tests-complete:
