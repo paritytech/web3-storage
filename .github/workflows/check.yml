@@ -179,7 +179,13 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          PROVIDER_COV=$(cargo llvm-cov --tests -p storage-provider-node \
+          PROVIDER_COV=$(cargo llvm-cov \
+            --test api_integration \
+            --test auth_integration \
+            --test disk_integration \
+            --test fs_integration \
+            --test s3_integration \
+            -p storage-provider-node \
             --ignore-filename-regex='(\.cargo|rustc)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
@@ -204,7 +210,13 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PROVIDER_COV=$(cargo llvm-cov --tests -p storage-provider-node \
+          BASE_PROVIDER_COV=$(cargo llvm-cov \
+            --test api_integration \
+            --test auth_integration \
+            --test disk_integration \
+            --test fs_integration \
+            --test s3_integration \
+            -p storage-provider-node \
             --ignore-filename-regex='(\.cargo|rustc)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
