@@ -1,15 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { listAvailableProviders } from "@/state";
-import type { AvailableProvider } from "@/lib/drive-client";
+import type { AvailableProvider, MatchingProviders } from "@/lib/drive-client";
 import { formatBytes, truncateHash, formatTokens } from "@/lib/utils";
-
+import { queryMatchingProviders } from "@/state/drive.state";
 interface ProviderPickerPanelProps {
   onSelect: (provider: AvailableProvider) => void;
   requiredCapacity: bigint;
   requiredDuration: number;
-  /** Disable all Select buttons (e.g. while a submission is in flight). */
+  requiredPricePerByte: bigint;
   disabled?: boolean;
 }
 
@@ -26,9 +25,10 @@ export default function ProviderPickerPanel({
   onSelect,
   requiredCapacity,
   requiredDuration,
+  requiredPricePerByte,
   disabled = false,
 }: ProviderPickerPanelProps) {
-  const [providers, setProviders] = useState<AvailableProvider[]>([]);
+  const [providers, setProviders] = useState<MatchingProviders[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,16 +36,36 @@ export default function ProviderPickerPanel({
     loadProviders();
   }, []);
 
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const list = await listAvailableProviders();
+      const list = await queryMatchingProviders({
+        primaryOnly: true,
+        maxPricePerByte: requiredPricePerByte,
+        bytesNeeded: requiredCapacity,
+        minDuration: requiredDuration,
+      });
       setProviders(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load providers");
     } finally {
       setLoading(false);
+    }
+  }, [requiredCapacity, requiredDuration, requiredPricePerByte]);
+
+  const humanizeReason = (reason: string): string => {
+    switch (reason) {
+      case "PriceTooHigh":
+        return "Price above your max";
+      case "InsufficientCapacity":
+        return "Limited capacity";
+      case "DurationMismatch":
+        return "Duration mismatch";
+      case "NotAccepting":
+        return "Not accepting primary";
+      default:
+        return reason;
     }
   };
 
@@ -98,9 +118,11 @@ export default function ProviderPickerPanel({
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="px-3 py-2 text-left text-xs font-medium">Account</th>
+                <th className="px-3 py-2 text-left text-xs font-medium">Match</th>
                 <th className="px-3 py-2 text-left text-xs font-medium">Available</th>
                 <th className="px-3 py-2 text-left text-xs font-medium">Price/byte</th>
                 <th className="px-3 py-2 text-left text-xs font-medium">Duration</th>
+                <th className="px-3 py-2 text-left text-xs font-medium">Reputation</th>
                 <th className="px-3 py-2 text-right text-xs font-medium w-24">Action</th>
               </tr>
             </thead>
@@ -127,6 +149,16 @@ export default function ProviderPickerPanel({
                       </span>
                     </td>
                     <td className="px-3 py-2">
+                      <div className="text-xs font-medium">{p.matchScore}/100</div>
+                      {p.partialReason ? (
+                        <div className="text-xs text-amber-600">
+                          {humanizeReason(p.partialReason)}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">Best fit</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
                       {unlimited ? (
                         <span className="text-xs text-muted-foreground">Unlimited</span>
                       ) : (
@@ -148,6 +180,18 @@ export default function ProviderPickerPanel({
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {p.minDuration}–{p.maxDuration || "∞"}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <div>{p.agreementsTotal} agreements</div>
+                      <div
+                        className={
+                          p.challengesFailed > 0
+                            ? "text-red-500"
+                            : "text-muted-foreground"
+                        }
+                      >
+                        {p.challengesFailed}/{p.challengesReceived} challenges failed
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-right">
                       {rowDisabled ? (

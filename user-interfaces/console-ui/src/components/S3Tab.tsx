@@ -532,6 +532,7 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
           onSelect={handleProviderSelect}
           requiredCapacity={BigInt(bucketCapacity)}
           requiredDuration={parseInt(bucketDuration, 10)}
+          requiredPricePerByte={BigInt(bucketPricePerByte || "0")}
         />
       )}
 

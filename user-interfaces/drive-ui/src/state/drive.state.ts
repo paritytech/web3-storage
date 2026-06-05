@@ -10,6 +10,8 @@ import { BehaviorSubject, combineLatest, distinctUntilChanged, Subscription } fr
 import { bind } from "@react-rxjs/core";
 import {
   DriveClient,
+  MatchingProviders,
+  QueryMatchingProvidersParams,
   type AvailableProvider,
   type DriveInfo,
   type FsEntry,
@@ -367,14 +369,17 @@ export async function retryCreation(id: string): Promise<DriveInfo | null> {
   return runChainSubmit(id, ctx);
 }
 
-/**
- * Walk on-chain provider state and return the list of registered
- * providers. The picker dialog consumes this before negotiation.
- */
 export async function listAvailableProviders(): Promise<AvailableProvider[]> {
   if (!client.hasApi()) return [];
   return client.listAvailableProviders();
 }
+
+const DEFAULT_PROVIDER_LIMIT = 10;
+export async function queryMatchingProviders(query: QueryMatchingProvidersParams['query'], limit: QueryMatchingProvidersParams['limit'] = DEFAULT_PROVIDER_LIMIT): Promise<MatchingProviders[]> {
+   if (!client.hasApi()) return [];
+    return client.queryMatchingProviders(query, limit);
+}
+
 
 export async function deleteDrive(driveId: bigint): Promise<void> {
   if (!client.hasApi() || !client.hasSigner()) return;

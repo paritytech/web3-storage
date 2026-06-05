@@ -9,21 +9,18 @@ import { Alice, cleanupBuckets } from "@web3-storage/test-helpers";
 import { createBucketInFreshContext } from "../helpers/createBucketViaUi";
 
 test.describe.configure({ mode: "serial" });
-test.setTimeout(120_000);
+test.setTimeout(180_000);
 
 let bucketName: string;
 
 test.beforeAll(async ({ browser }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   bucketName = `enc-${Date.now()}`;
   await createBucketInFreshContext(browser, bucketName);
 });
 
 test.afterAll(async () => {
-  // cleanupBuckets awaits finalization per bucket (~12-24s) and Alice may
-  // have accumulated buckets when an earlier spec's afterAll missed —
-  // give it room rather than the playwright default of 30s.
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await cleanupBuckets(Alice);
 });
 

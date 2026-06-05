@@ -15,13 +15,13 @@ test.setTimeout(180_000);
 let bucketName: string;
 
 test.beforeAll(async ({ browser }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   bucketName = `members-${Date.now()}`;
   await createBucketInFreshContext(browser, bucketName);
 });
 
 test.afterAll(async () => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await cleanupBuckets(Alice);
 });
 

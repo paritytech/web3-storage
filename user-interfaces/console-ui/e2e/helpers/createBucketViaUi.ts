@@ -21,6 +21,7 @@ export async function createBucketViaUi(page: Page, name: string): Promise<void>
   await expect(page.getByTestId("s3-create-bucket-form")).toBeVisible();
 
   await page.getByTestId("s3-bucket-name-input").fill(name);
+  await page.getByTestId("s3-bucket-price-input").fill("100");
   await page.getByTestId("s3-create-submit").click();
 
   await expect(page.getByTestId("provider-picker")).toBeVisible({ timeout: 30_000 });
@@ -42,10 +43,10 @@ export async function createBucketInFreshContext(
   name: string,
 ): Promise<void> {
   const context = await browser.newContext();
-  await context.addInitScript(() => {
+  const page = await context.newPage();
+  await page.addInitScript(() => {
     localStorage.setItem("web3-storage-selected-network", "local");
   });
-  const page = await context.newPage();
   try {
     await page.goto("/");
     await expect(page.getByTestId("block-number")).toBeVisible({ timeout: 30_000 });

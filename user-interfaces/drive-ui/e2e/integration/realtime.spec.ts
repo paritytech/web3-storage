@@ -19,6 +19,7 @@ test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 test.afterEach(async () => {
+  test.setTimeout(180_000);
   await cleanupDrives(Bob);
 });
 

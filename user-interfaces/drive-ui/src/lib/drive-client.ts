@@ -7,7 +7,7 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint } from "@web3-storage/papi";
+import { resolveProviderEndpoint, toSs58 } from "@web3-storage/papi";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
@@ -68,6 +68,26 @@ export interface AvailableProvider {
   agreementsTotal: number;
 }
 
+export interface MatchingProviders extends AvailableProvider {
+  matchScore: number;
+  partialReason: string;
+  stake: bigint,
+  committedBytes: bigint;
+  minDuration: number;
+  maxDuration: number;
+  acceptingPrimary: boolean;
+  replicaSyncPrice?: bigint;
+  acceptingExtensions: boolean;
+  registeredAt: number;
+  agreementsTotal: number;
+  agreementsExtended: number;
+  agreementsNotExtended: number;
+  agreementsBurned: number;
+  challengesReceived: number;
+  challengesFailed: number;
+  maxCapacity: bigint;
+}
+
 export interface FsEntry {
   name: string;
   path: string;
@@ -109,6 +129,16 @@ export interface CheckpointDuty {
 export interface UploadOptions {
   contentType?: string;
   signal?: AbortSignal;
+}
+
+export interface QueryMatchingProvidersParams {
+  query: {
+    bytesNeeded: bigint,
+    minDuration: number,
+    maxPricePerByte: bigint,
+    primaryOnly: boolean,
+  },
+  limit: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -162,8 +192,7 @@ function decodeName(name: unknown): string | null {
 
 /**
  * POST a `NegotiateRequest` to the provider's `/negotiate` endpoint and
- * return the provider-signed terms bundle. Mirrors
- * `console-ui/src/lib/storage.ts::negotiateTerms`.
+ * return the provider-signed terms bundle.
  */
 export async function negotiateTerms(
   providerUrl: string,
@@ -388,6 +417,53 @@ export class DriveClient {
 
     return providers;
   }
+
+  async queryMatchingProviders(
+    query: QueryMatchingProvidersParams['query'],
+    limit: QueryMatchingProvidersParams['limit'],
+  ): Promise<MatchingProviders[]> {
+    const api = this.requireApi();
+    const matches = await api.apis.StorageProviderApi.find_matching_providers({
+      bytes_needed: query.bytesNeeded,
+      min_duration: query.minDuration,
+      max_price_per_byte: query.maxPricePerByte,
+      primary_only: query.primaryOnly,
+    }, limit);
+
+    return matches.map((match) => {
+      const info = match.info;
+      const maxCapacity = BigInt(info.max_capacity ?? 0);
+      const committedBytes = BigInt(info.committed_bytes ?? 0);
+      const availableCapacity =
+        maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+      return {
+        account: toSs58(match.account),
+        multiaddr: new TextDecoder().decode(info.multiaddr),
+        stake: BigInt(info.stake ?? 0),
+        availableCapacity,
+        maxCapacity,
+        committedBytes,
+        pricePerByte: BigInt(info.price_per_byte ?? 0),
+        minDuration: info.min_duration ?? 0,
+        maxDuration: info.max_duration ?? 0,
+        acceptingPrimary: info.accepting_primary ?? false,
+        replicaSyncPrice:
+          info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+        acceptingExtensions: info.accepting_extensions ?? false,
+        registeredAt: Number(info.registered_at ?? 0),
+        agreementsTotal: info.agreements_total ?? 0,
+        agreementsExtended: info.agreements_extended ?? 0,
+        agreementsNotExtended: info.agreements_not_extended ?? 0,
+        agreementsBurned: info.agreements_burned ?? 0,
+        challengesReceived: info.challenges_received ?? 0,
+        challengesFailed: info.challenges_failed ?? 0,
+        matchScore: match.match_score,
+        partialReason: match.partial_reason?.type ?? "",
+      };
+    }).sort((a, b) => b.matchScore - a.matchScore);
+  }
+
 
   // ── Account ───────────────────────────────────────────────────────────────
 

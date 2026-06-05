@@ -21,6 +21,7 @@ interface NegotiateRequest {
   duration: number;
   price_per_byte: number | bigint;
   replica_params: unknown | null;
+  bucket_id: bigint | null;
 }
 
 interface SignedTerms {
@@ -32,6 +33,7 @@ interface SignedTerms {
     valid_until: number;
     nonce: number | bigint;
     replica_params: unknown | null;
+    bucket_id: bigint | null;
   };
   signature: string;
 }
@@ -99,6 +101,7 @@ function buildSignedTermsArgs(providerAccount: string, signed: SignedTerms) {
     nonce: BigInt(t.nonce),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     replica_params: (t.replica_params ?? undefined) as any,
+    bucket_id: t.bucket_id ?? undefined,
   };
   return { provider: providerAccount, terms, sig };
 }
@@ -139,6 +142,7 @@ export async function createBucketViaApi(
     duration: opts.duration ?? 10_000,
     price_per_byte: opts.pricePerByte ?? 0n,
     replica_params: null,
+    bucket_id: null,
   });
 
   const result = await submitExtrinsic(
@@ -237,6 +241,7 @@ export async function createDriveViaApi(
     duration: opts.storagePeriod ?? 10_000,
     price_per_byte: opts.pricePerByte ?? 0n,
     replica_params: null,
+    bucket_id: null,
   });
 
   const nameBytes = opts.name ? Binary.fromText(opts.name) : undefined;

@@ -107,6 +107,7 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   const [pricePerByte, setPricePerByte] = useState("0");
   const [submitting, setSubmitting] = useState(false);
   const [negotiateError, setNegotiateError] = useState<string | null>(null);
+  const [isShowProviderPicker, setIsShowProviderPicker] = useState<boolean>(false);
 
   /**
    * Clicking a provider's Select button IS the submit action. Negotiate
@@ -167,7 +168,7 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-xl" data-testid="new-drive-dialog">
+        <DialogContent className="sm:max-w-3xl" data-testid="new-drive-dialog">
           <DialogHeader>
             <DialogTitle>Create New Drive</DialogTitle>
             <DialogDescription>
@@ -219,12 +220,21 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
               </div>
             </div>
 
-            <ProviderPickerPanel
-              onSelect={handleProviderSelect}
-              requiredCapacity={BigInt(capacity || "0")}
-              requiredDuration={parseInt(duration, 10) || 0}
-              disabled={submitting}
-            />
+            {
+              isShowProviderPicker ? (
+                <ProviderPickerPanel
+                  onSelect={handleProviderSelect}
+                  requiredCapacity={BigInt(capacity || "0")}
+                  requiredDuration={parseInt(duration, 10) || 0}
+                  requiredPricePerByte={BigInt(pricePerByte || "0")}
+                  disabled={submitting}
+                />
+              ) : (
+                <Button data-testid="find-matching-providers" onClick={() => setIsShowProviderPicker(true)}>
+                  Find matching Providers
+                </Button>
+              )
+            }
 
             {negotiateError && (
               <p data-testid="negotiate-error" className="text-sm text-red-600">

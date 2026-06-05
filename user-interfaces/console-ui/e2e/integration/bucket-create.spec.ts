@@ -23,7 +23,7 @@ test.setTimeout(180_000);
 // per-spec beforeAll registration needed.
 
 test.afterAll(async () => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await cleanupBuckets(Alice);
 });
 
@@ -37,7 +37,8 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
 
   const name = `bucket-create-${Date.now()}`;
   await localPage.getByTestId("s3-bucket-name-input").fill(name);
-  // Defaults for capacity / duration / price-per-byte are set in the component.
+  await localPage.getByTestId("s3-bucket-price-input").fill("100");
+  // Defaults for capacity / duration are set in the component.
   await localPage.getByTestId("s3-create-submit").click();
 
   // Step 1 of the new flow: the picker opens with the list of available
@@ -46,6 +47,28 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
   await expect(localPage.getByTestId("provider-picker")).toBeVisible({
     timeout: 30_000,
   });
+
+  // Subscribe to S3BucketCreated BEFORE triggering the on-chain submit so we
+  // don't miss the block. Resolve with the s3_bucket_id of the event whose
+  // name + owner match this test's bucket. test-helpers' getApi is a separate
+  // ws connection, so subscribing here is the reliable way to observe the
+  // event the UI's own (separate) connection submits.
+  const api = getApi();
+  const createdBucketId = new Promise<bigint>((resolve, reject) => {
+    const sub = api.event.S3Registry.S3BucketCreated.watch().subscribe({
+      next: ({ events }) => {
+        for (const { payload } of events) {
+          const eventName = new TextDecoder().decode(payload.name);
+          if (eventName === name) {
+            sub.unsubscribe();
+            resolve(payload.s3_bucket_id);
+          }
+        }
+      },
+      error: reject,
+    });
+  });
+
   await localPage.getByTestId("provider-picker-select").first().click();
 
   // Step 2 runs automatically (HTTP negotiate → on-chain submit). Wait for
@@ -55,22 +78,15 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
     timeout: 90_000,
   });
 
-  // Verify on chain. The UI submits at best-block, but test-helpers' getApi
-  // is a separate ws connection — finalization can lag, so poll instead of
-  // doing an immediate getValue.
-  const api = getApi();
-  await expect.poll(
-    async () => {
-      const ids = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
-      return ids?.length ?? 0;
-    },
-    { timeout: 60_000, intervals: [1000, 2000, 3000] },
-  ).toBeGreaterThan(0);
-
-  const userBuckets = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
-  const latestId = userBuckets![userBuckets!.length - 1];
-  const bucket = await api.query.S3Registry.S3Buckets.getValue(latestId);
+  // The event subscriber gives us the authoritative s3_bucket_id minted by the
+  // runtime. Verify the matching on-chain record carries our bucket name.
+  const s3BucketId = await createdBucketId;
+  const bucket = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
   expect(bucket).toBeTruthy();
   const bucketName = new TextDecoder().decode(bucket!.name);
   expect(bucketName).toBe(name);
+
+  // And that it's tracked under the owner's bucket list.
+  const userBuckets = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
+  expect(userBuckets?.map((id) => id.toString())).toContain(s3BucketId.toString());
 });

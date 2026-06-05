@@ -12,6 +12,8 @@ import {
   type BucketMember,
   type ProviderEndpointInfo,
   type AvailableProvider,
+  type MatchingProviders,
+  type QueryMatchingProvidersParams,
   type SignedTerms,
   type UploadResult,
   type PutObjectOptions,
@@ -53,6 +55,10 @@ interface StorageState {
   // Provider
   checkProviderHealth: (bucketId: bigint) => Promise<boolean>;
   listAvailableProviders: () => Promise<AvailableProvider[]>;
+  queryMatchingProviders: (
+    query: QueryMatchingProvidersParams["query"],
+    limit?: QueryMatchingProvidersParams["limit"],
+  ) => Promise<MatchingProviders[]>;
 
   // Bucket Members & Permissions
   fetchBucketMembers: (bucketId: bigint) => Promise<BucketMember[]>;
@@ -308,6 +314,14 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     return client.listAvailableProviders();
   }, [client]);
 
+  const queryMatchingProviders = useCallback(async (
+    query: QueryMatchingProvidersParams["query"],
+    limit?: QueryMatchingProvidersParams["limit"],
+  ): Promise<MatchingProviders[]> => {
+    if (!client) throw new Error("Client not connected");
+    return client.queryMatchingProviders(query, limit);
+  }, [client]);
+
   // --- Bucket Members & Permissions ---
 
   const fetchBucketMembers = useCallback(async (bucketId: bigint): Promise<BucketMember[]> => {
@@ -451,6 +465,7 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         deleteObject,
         checkProviderHealth,
         listAvailableProviders,
+        queryMatchingProviders,
         fetchBucketMembers,
         addBucketMember,
         removeBucketMember,

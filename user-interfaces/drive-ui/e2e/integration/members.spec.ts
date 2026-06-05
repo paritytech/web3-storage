@@ -11,11 +11,7 @@
  * still the sole member when the duplicate-check test runs.
  */
 import { test, expect } from "../fixtures";
-import {
-  Bob,
-  Charlie,
-  cleanupDrives,
-} from "@web3-storage/test-helpers";
+import { Bob, Charlie, cleanupDrives } from "@web3-storage/test-helpers";
 import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });

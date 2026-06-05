@@ -1,5 +1,5 @@
 import { expect, type Browser, type Page } from "@playwright/test";
-import { Bob, getApi } from "@web3-storage/test-helpers";
+import { getApi } from "@web3-storage/test-helpers";
 
 /**
  * Drive the drive-ui through the real user create-drive flow:
@@ -19,11 +19,17 @@ export async function createDriveViaUi(page: Page, name: string): Promise<bigint
   await page.getByTestId("new-drive-button").click();
   await expect(page.getByTestId("new-drive-dialog")).toBeVisible();
   await page.getByTestId("new-drive-name").fill(name);
-  // Capacity / duration / price-per-byte defaults are set in the component.
+  await page.getByTestId("new-drive-price").fill("100");
+  await page.getByTestId("find-matching-providers").click();
+  // Capacity / duration defaults are set in the component.
   await expect(page.getByTestId("provider-picker")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("provider-picker-select").first().click();
 
-  return waitForLatestDriveId();
+  // Subscribe BEFORE the submit click so we can't miss the event. `.watch()`
+  // only surfaces events in blocks from now on, so the first DriveCreated by
+  // Bob is the one this flow triggers.
+  const driveId = waitForLatestDriveId();
+  await page.getByTestId("provider-picker-select").first().click();
+  return driveId;
 }
 
 /**
@@ -40,38 +46,35 @@ export async function createDriveInFreshContext(
   name: string,
 ): Promise<bigint> {
   const context = await browser.newContext();
-  await context.addInitScript(() => {
+  const page = await context.newPage();
+  await page.addInitScript(() => {
     localStorage.setItem("web3-storage-selected-network", "local");
     localStorage.setItem("drive-ui-account-name", "Bob");
   });
-  const page = await context.newPage();
   try {
     await page.goto("/");
     await expect(page.getByTestId("block-number")).toBeVisible({ timeout: 30_000 });
-    return await createDriveViaUi(page, name);
+    return createDriveViaUi(page, name);
   } finally {
     await context.close();
   }
 }
 
 /**
- * Poll `DriveRegistry.UserDrives[Bob]` until it has at least one entry,
- * then return the latest id. Used after the UI flow signals completion
- * to bridge the UI's optimistic state and the chain's finalized state.
+ * Resolve with the `drive_id` of the next `DriveRegistry.DriveCreated` event.
+ * Only Bob creates drives in the test, so the first one is ours. Call this
+ * BEFORE triggering the create so `.watch()` (forward-only) catches the block.
  */
-async function waitForLatestDriveId(): Promise<bigint> {
+export async function waitForLatestDriveId(): Promise<bigint> {
   const api = getApi();
-  let length = 0;
-  await expect
-    .poll(
-      async () => {
-        const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
-        length = ids.length;
-        return length;
+  return new Promise<bigint>((resolve, reject) => {
+    const sub = api.event.DriveRegistry.DriveCreated.watch().subscribe({
+      next: ({ events }) => {
+        if (events.length === 0) return;
+        sub.unsubscribe();
+        resolve(events[0].payload.drive_id);
       },
-      { timeout: 120_000, intervals: [1000, 2000, 3000] },
-    )
-    .toBeGreaterThan(0);
-  const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
-  return ids[ids.length - 1];
+      error: reject,
+    });
+  });
 }

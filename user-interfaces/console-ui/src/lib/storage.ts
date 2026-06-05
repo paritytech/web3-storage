@@ -216,6 +216,30 @@ export interface AvailableProvider {
   agreementsTotal: number;
 }
 
+export interface MatchingProviders extends AvailableProvider {
+  matchScore: number;
+  partialReason: string;
+  committedBytes: bigint;
+  replicaSyncPrice?: bigint;
+  acceptingExtensions: boolean;
+  registeredAt: number;
+  agreementsExtended: number;
+  agreementsNotExtended: number;
+  agreementsBurned: number;
+  challengesReceived: number;
+  challengesFailed: number;
+}
+
+export interface QueryMatchingProvidersParams {
+  query: {
+    bytesNeeded: bigint;
+    minDuration: number;
+    maxPricePerByte: bigint;
+    primaryOnly: boolean;
+  };
+  limit: number;
+}
+
 export interface PutObjectOptions {
   contentType?: string;
   metadata?: Record<string, string>;
@@ -1089,6 +1113,65 @@ export class StorageClient {
     });
 
     return providers;
+  }
+
+  /**
+   * Score registered providers against the given storage requirements using
+   * the `find_matching_providers` runtime API. Unlike `listAvailableProviders`
+   * (a raw storage sweep), this returns a `matchScore` and `partialReason` per
+   * provider so the picker can surface "best fit" vs near-misses. Sorted by
+   * score descending.
+   */
+  async queryMatchingProviders(
+    query: QueryMatchingProvidersParams["query"],
+    limit: QueryMatchingProvidersParams["limit"] = 10,
+  ): Promise<MatchingProviders[]> {
+    if (!this.api) throw new Error("Not connected. Call connect() first.");
+
+    const matches = await this.api.apis.StorageProviderApi.find_matching_providers(
+      {
+        bytes_needed: query.bytesNeeded,
+        min_duration: query.minDuration,
+        max_price_per_byte: query.maxPricePerByte,
+        primary_only: query.primaryOnly,
+      },
+      limit,
+    );
+
+    return matches
+      .map((match) => {
+        const info = match.info;
+        const maxCapacity = BigInt(info.max_capacity ?? 0);
+        const committedBytes = BigInt(info.committed_bytes ?? 0);
+        const availableCapacity =
+          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+        return {
+          account: toSs58(match.account),
+          multiaddr: new TextDecoder().decode(info.multiaddr),
+          stake: BigInt(info.stake ?? 0),
+          availableCapacity,
+          maxCapacity,
+          committedBytes,
+          pricePerByte: BigInt(info.price_per_byte ?? 0),
+          minDuration: info.min_duration ?? 0,
+          maxDuration: info.max_duration ?? 0,
+          acceptingPrimary: info.accepting_primary ?? false,
+          replicaSyncPrice:
+            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+          acceptingExtensions: info.accepting_extensions ?? false,
+          registeredAt: Number(info.registered_at ?? 0),
+          agreementsTotal: info.agreements_total ?? 0,
+          agreementsExtended: info.agreements_extended ?? 0,
+          agreementsNotExtended: info.agreements_not_extended ?? 0,
+          agreementsBurned: info.agreements_burned ?? 0,
+          challengesReceived: info.challenges_received ?? 0,
+          challengesFailed: info.challenges_failed ?? 0,
+          matchScore: match.match_score,
+          partialReason: match.partial_reason?.type ?? "",
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore);
   }
 
 
