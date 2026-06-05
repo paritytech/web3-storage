@@ -32,6 +32,7 @@ import {
   hexToBytes,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   requireOneEvent,
   toHex,
   waitForBlockProduction,
@@ -112,7 +113,7 @@ async function main() {
     // Bucket name: 3-63 chars, lowercase alphanumeric + hyphens. Append the
     // block number so the name is unique across reruns on the same chain
     // (`pallet_s3_registry` enforces global name uniqueness).
-    const blockHead = await api.query.System.Number.getValue();
+    const blockHead = await api.query.System.Number.getValue(READ_OPTS);
     const bucketName = `cov-bucket-${Number(blockHead)}`;
     console.log(`\n[2/6] initialize{value: 5 UNIT}('${bucketName}', provider, terms[1MiB×50], sig)`);
     const contractAccount = h160ToSubstrate(deployed.addressBytes);

@@ -1,0 +1,41 @@
+name: Wait for provider health
+description: >-
+  Poll a storage-provider-node /health endpoint until it responds with a valid
+  JSON status, or time out.
+
+inputs:
+  url:
+    description: Provider HTTP base URL to poll.
+    required: false
+    default: http://127.0.0.1:3333
+  attempts:
+    description: Number of poll attempts, 2s apart (60 ≈ 2min).
+    required: false
+    default: "60"
+  label:
+    description: Human label for log messages (e.g. "inmemory", "disk").
+    required: false
+    default: Provider
+  log-file:
+    description: Log to cat on timeout (for post-mortem); skipped if absent.
+    required: false
+    default: /tmp/provider.log
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "Waiting for ${{ inputs.label }} provider (${{ inputs.url }})..."
+        for i in $(seq 1 ${{ inputs.attempts }}); do
+          if curl -s "${{ inputs.url }}/health" | jq -e '.status' > /dev/null 2>&1; then
+            echo "${{ inputs.label }} provider is healthy (attempt $i)"
+            break
+          fi
+          if [ "$i" -eq ${{ inputs.attempts }} ]; then
+            echo "Timeout: ${{ inputs.label }} provider did not become healthy"
+            cat "${{ inputs.log-file }}" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 2
+        done

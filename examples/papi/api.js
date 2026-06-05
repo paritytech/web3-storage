@@ -3,8 +3,10 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   hexToBytes,
   providerFetch,
+  READ_OPTS,
   requireOneEvent,
   submitTx,
+  submitTxFinalized,
   toHex,
 } from "./common.js";
 
@@ -156,7 +158,9 @@ export async function submitClientCheckpoint(api, client, provider, bucketId, ck
 }
 
 export async function challengeOffchain(api, client, provider, bucketId, upload) {
-  const result = await submitTx(
+  // Finalized: the challenge_id must survive to the respond that references it
+  // (a best-block reorg would invalidate it -> ChallengeNotFound).
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
       provider: provider.address,
@@ -180,7 +184,8 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
 }
 
 export async function challengeCheckpoint(api, client, provider, bucketId, leafIndex) {
-  const result = await submitTx(
+  // Finalized: see challengeOffchain.
+  const result = await submitTxFinalized(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
       provider: provider.address,
@@ -208,15 +213,136 @@ export async function respondToChallenge(api, provider, challengeId, proof) {
   );
 }
 
-export async function endAgreement(api, client, provider, bucketId, action = "Pay") {
+export async function endAgreement(api, client, provider, bucketId, action = "Pay", actionValue) {
   return submitTx(
     api.tx.StorageProvider.end_agreement({
       bucket_id: bucketId,
       provider: provider.address,
-      action: Enum(action),
+      action: actionValue !== undefined ? Enum(action, actionValue) : Enum(action),
     }),
     client.signer,
     `end_agreement(${action})`
+  );
+}
+
+export async function addStake(api, provider, amount) {
+  return submitTx(
+    api.tx.StorageProvider.add_stake({ amount }),
+    provider.signer,
+    "add_stake"
+  );
+}
+
+export async function deregisterProvider(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.deregister_provider(),
+    provider.signer,
+    "deregister_provider"
+  );
+}
+
+export async function completeDeregister(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.complete_deregister(),
+    provider.signer,
+    "complete_deregister"
+  );
+}
+
+export async function cancelDeregister(api, provider) {
+  return submitTx(
+    api.tx.StorageProvider.cancel_deregister(),
+    provider.signer,
+    "cancel_deregister"
+  );
+}
+
+export async function updateProviderMultiaddr(api, provider, multiaddr) {
+  const bytes = typeof multiaddr === "string"
+    ? new TextEncoder().encode(multiaddr)
+    : multiaddr;
+  return submitTx(
+    api.tx.StorageProvider.update_provider_multiaddr({
+      multiaddr: Binary.fromBytes(bytes),
+    }),
+    provider.signer,
+    "update_provider_multiaddr"
+  );
+}
+
+export async function setMinProviders(api, admin, bucketId, minProviders) {
+  return submitTx(
+    api.tx.StorageProvider.set_min_providers({
+      bucket_id: bucketId,
+      min_providers: minProviders,
+    }),
+    admin.signer,
+    "set_min_providers"
+  );
+}
+
+export async function rejectAgreement(api, provider, bucketId) {
+  return submitTx(
+    api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
+    provider.signer,
+    "reject_agreement"
+  );
+}
+
+export async function withdrawAgreementRequest(api, client, bucketId, provider) {
+  return submitTx(
+    api.tx.StorageProvider.withdraw_agreement_request({
+      bucket_id: bucketId,
+      provider: provider.address,
+    }),
+    client.signer,
+    "withdraw_agreement_request"
+  );
+}
+
+export async function claimExpiredAgreement(api, caller, bucketId, provider) {
+  return submitTx(
+    api.tx.StorageProvider.claim_expired_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+    }),
+    caller.signer,
+    "claim_expired_agreement"
+  );
+}
+
+export async function extendAgreement(api, client, bucketId, provider, params) {
+  return submitTx(
+    api.tx.StorageProvider.extend_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+      ...params,
+    }),
+    client.signer,
+    "extend_agreement"
+  );
+}
+
+export async function topUpAgreement(api, client, bucketId, provider, params) {
+  return submitTx(
+    api.tx.StorageProvider.top_up_agreement({
+      bucket_id: bucketId,
+      provider: provider.address,
+      ...params,
+    }),
+    client.signer,
+    "top_up_agreement"
+  );
+}
+
+export async function setExtensionsBlocked(api, provider, bucketId, blocked) {
+  return submitTx(
+    api.tx.StorageProvider.set_extensions_blocked({
+      bucket_id: bucketId,
+      blocked,
+    }),
+    provider.signer,
+    "set_extensions_blocked"
   );
 }
 
@@ -573,8 +699,10 @@ export async function signCheckpointProposal(providerUrl, bucketId, duty, window
  * from chain state and fetching MMR + chunk proofs from the provider node.
  */
 export async function fetchChallengeProof(api, providerUrl, challengeId) {
+  // Best block: a finalized read would lag the just-created challenge.
   const challenges = await api.query.StorageProvider.Challenges.getValue(
-    challengeId.deadline
+    challengeId.deadline,
+    READ_OPTS
   );
   if (!challenges)
     throw new Error("No challenges at deadline " + challengeId.deadline);

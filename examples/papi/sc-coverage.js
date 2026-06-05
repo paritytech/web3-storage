@@ -37,6 +37,7 @@ import {
   hexToBytes,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   sameAddress,
   toHex,
   waitForBlockProduction,
@@ -151,7 +152,10 @@ async function main() {
       1, // Writer
     ]);
     assertEvent(r.events, "StorageProvider", "MemberSet", "setMember");
-    let bucket = await api.query.StorageProvider.Buckets.getValue(bucketA);
+    let bucket = await api.query.StorageProvider.Buckets.getValue(
+      bucketA,
+      READ_OPTS
+    );
     assert.ok(
       bucket.members.some((m) => sameAddress(m.account, member.address)),
       "Charlie should be in bucket members after setMember"

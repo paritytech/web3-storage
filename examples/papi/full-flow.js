@@ -35,6 +35,8 @@ import {
   ensureProviderRegistered,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
+  requireOneEvent,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -55,7 +57,7 @@ const {
  */
 async function setupAgreement(api, providerUrl, client, provider) {
   const maxBytes = 1_073_741_824n; // 1 GiB
-  const duration = 50;
+  const duration = 15;
   console.log(
     "  Negotiating signed terms with provider (max_bytes=%s, duration=%d)...",
     maxBytes,
@@ -103,21 +105,24 @@ async function uploadAndVerify(bucketId) {
 async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
-    provider.address
+    provider.address,
+    READ_OPTS
   );
   const expiresAt = Number(agreement.expires_at);
   console.log("  Agreement expires at block:", expiresAt);
 
-  const freeBefore = (await api.query.System.Account.getValue(provider.address))
-    .data.free;
+  const freeBefore = (
+    await api.query.System.Account.getValue(provider.address, READ_OPTS)
+  ).data.free;
   console.log("  Provider balance before:", freeBefore.toString());
 
   console.log("  Waiting for agreement to expire...");
   await waitForBlock(papi, expiresAt);
   await endAgreement(api, client, provider, bucketId, "Pay");
 
-  const freeAfter = (await api.query.System.Account.getValue(provider.address))
-    .data.free;
+  const freeAfter = (
+    await api.query.System.Account.getValue(provider.address, READ_OPTS)
+  ).data.free;
   const earned = freeAfter - freeBefore;
   console.log("  Provider balance after:", freeAfter.toString());
   console.log("  Earned from agreement:", earned.toString());
@@ -125,18 +130,20 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
   console.log("PASSED: Provider received payment!");
 }
 
-function watchDefendedEvents(api) {
-  const events = [];
-  const sub = api.event.StorageProvider.ChallengeDefended.watch().subscribe(
-    (event) => {
-      console.log("  >> ChallengeDefended event:", {
-        deadline: event.payload.challenge_id.deadline,
-        index: event.payload.challenge_id.index,
-      });
-      events.push(event);
-    }
+// Read ChallengeDefended from the respond tx's own in-block events. A
+// background `api.event...watch()` only sees finalized blocks, so a count taken
+// right after responding would read 0.
+function recordDefended(api, result, label) {
+  const event = requireOneEvent(
+    result.events,
+    api.event.StorageProvider.ChallengeDefended,
+    label
   );
-  return { events, unsubscribe: () => sub.unsubscribe() };
+  console.log("  >> ChallengeDefended event:", {
+    deadline: event.challenge_id.deadline,
+    index: event.challenge_id.index,
+  });
+  return event;
 }
 
 async function main() {
@@ -152,7 +159,7 @@ async function main() {
   await waitForChainReady(api);
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
-  const defended = watchDefendedEvents(api);
+  const defendedEvents = [];
 
   try {
     console.log("\n=== Step 1: Setup ===");
@@ -178,7 +185,15 @@ async function main() {
 
     console.log("\n=== Step 4: Respond to off-chain challenge ===");
     const offchainProof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
-    await respondToChallenge(api, provider, offchainId, offchainProof);
+    const offchainResp = await respondToChallenge(
+      api,
+      provider,
+      offchainId,
+      offchainProof
+    );
+    defendedEvents.push(
+      recordDefended(api, offchainResp, "ChallengeDefended (offchain)")
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
@@ -208,16 +223,26 @@ async function main() {
       PROVIDER_URL,
       checkpointId
     );
-    await respondToChallenge(api, provider, checkpointId, checkpointProof);
+    const checkpointResp = await respondToChallenge(
+      api,
+      provider,
+      checkpointId,
+      checkpointProof
+    );
+    defendedEvents.push(
+      recordDefended(api, checkpointResp, "ChallengeDefended (checkpoint)")
+    );
     console.log("  Challenge defended");
 
     console.log("\n=== Verifying challenge results ===");
-    await new Promise((r) => setTimeout(r, 3000));
-    console.log("ChallengeDefended events: %d (expected: 2)", defended.events.length);
+    console.log(
+      "ChallengeDefended events: %d (expected: 2)",
+      defendedEvents.length
+    );
     assert.strictEqual(
-      defended.events.length,
+      defendedEvents.length,
       2,
-      `Expected 2 ChallengeDefended events, got ${defended.events.length}`
+      `Expected 2 ChallengeDefended events, got ${defendedEvents.length}`
     );
     console.log("PASSED: Both challenges were defended!");
 
@@ -228,7 +253,6 @@ async function main() {
     if (err.stack) console.error(err.stack);
     process.exitCode = 1;
   } finally {
-    defended.unsubscribe();
     papi.destroy();
   }
 }

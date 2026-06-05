@@ -1,24 +1,13 @@
 name: UI E2E
 
+# No top-level `paths:` filter: the required gate must always report. The
+# expensive e2e job skips (via `changes`) when nothing relevant is touched; a
+# workflow-level filter would instead leave the required check pending forever.
 on:
   push:
     branches: [main, dev]
-    paths:
-      - "user-interfaces/**"
-      - "pallet/**"
-      - "runtime/**"
-      - "storage-interfaces/**"
-      - "provider-node/**"
-      - ".github/workflows/ui-e2e.yml"
   pull_request:
     branches: [main, dev]
-    paths:
-      - "user-interfaces/**"
-      - "pallet/**"
-      - "runtime/**"
-      - "storage-interfaces/**"
-      - "provider-node/**"
-      - ".github/workflows/ui-e2e.yml"
   workflow_dispatch:
 
 concurrency:
@@ -26,14 +15,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect e2e-relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.filter.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        id: filter
+        with:
+          filters: |
+            e2e:
+              - 'user-interfaces/**'
+              - 'pallet/**'
+              - 'runtime/**'
+              - 'storage-interfaces/**'
+              - 'provider-node/**'
+              - '.github/workflows/ui-e2e.yml'
+
   set-image:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     uses: ./.github/workflows/set-image.yml
 
   ui-e2e:
-    name: UI E2E Tests (chain + provider + UIs)
+    name: UI E2E run
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image]
+    needs: [changes, set-image]
+    if: needs.changes.outputs.e2e == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
@@ -191,3 +202,17 @@ jobs:
             /tmp/provider.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
+
+  # Aggregate gate — the check to require in branch protection. Always reports:
+  # green when the e2e job is skipped, red on real failure/cancellation.
+  ui-e2e-gate:
+    name: UI E2E Tests (chain + provider + UIs)
+    needs: [changes, set-image, ui-e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "UI E2E failed or was cancelled"
+          exit 1
