@@ -162,21 +162,14 @@ jobs:
         run: chmod +x target/release/storage-provider-node
 
       - name: Start chain
-        run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ matrix.runtime.zombienet_config }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory) and wait for health
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
@@ -184,21 +177,8 @@ jobs:
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-          echo "Waiting for provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
 
-      - name: Start provider (disk) and wait for health
+      - name: Start provider (disk)
         run: |
           echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
           nohup ./target/release/storage-provider-node \
@@ -206,37 +186,27 @@ jobs:
             --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider-disk.log 2>&1 &
-          echo "Waiting for disk provider HTTP server..."
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3334/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Disk provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: disk provider did not become healthy"
-              cat /tmp/provider-disk.log || true
-              exit 1
-            fi
-            sleep 2
-          done
 
-      - name: Run L0 demo (inmemory provider)
-        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+      - name: Wait for provider (inmemory) health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          label: inmemory
+
+      - name: Wait for provider (disk) health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          url: http://127.0.0.1:3334
+          label: disk
+          log-file: /tmp/provider-disk.log
 
       - name: Run L0 demo (disk provider)
-        run: just drain-tx-pool-then demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
         run: just drain-tx-pool-then fs-demo-ci
 
       - name: Run S3 integration test
         run: just drain-tx-pool-then s3-demo-ci
-
-      - name: Run PAPI s3-lifecycle demo
-        run: just drain-tx-pool-then papi-s3-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob"
-
-      - name: Run PAPI drive-lifecycle demo
-        run: just drain-tx-pool-then papi-drive-lifecycle "http://127.0.0.1:3333" "//Alice" "//Bob" "//Ferdie"
 
       - name: Stop services
         if: always()
@@ -258,6 +228,165 @@ jobs:
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
+
+  # ── E2E test suite ──────────────────────────────────────────────────────────
+  # All PAPI E2E workflows against a single inmemory provider (web3-storage-paseo
+  # only). Self-contained: builds its own provider, skips the shared build
+  # artifact, and runs in parallel with it. JS coverage (c8) is collected here;
+  # Rust coverage (pallet + provider) is handled by the coverage job in check.yml.
+  e2e-integration-tests:
+    name: E2E Integration Tests
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Resolve chain-spec script from matrix
+        run: |
+          RUNTIME=web3-storage-paseo
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "e2e-integration-tests"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+
+      - name: Log binary versions
+        run: |
+          .bin/polkadot-omni-node --version
+          .bin/chain-spec-builder --version 2>/dev/null || true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build provider
+        run: cargo build --release -p storage-provider-node
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.E2E_CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (inmemory)
+        run: |
+          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/alice-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
+            > /tmp/provider.log 2>&1 &
+
+      - name: Wait for provider health
+        uses: ./.github/actions/wait-for-provider-health
+
+      - name: Run E2E test suite
+        run: just e2e "http://127.0.0.1:3333"
+
+      - name: Print JS coverage
+        if: always()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  JS Coverage (E2E test helpers)"
+          echo "═══════════════════════════════════════════════════════════"
+          cd examples/papi && npx c8 report --reporter=text
+          echo ""
+
+      - name: Extract JS coverage summary
+        if: always()
+        run: |
+          mkdir -p /tmp/coverage/report
+          JS_COV="0"
+          if [ -f examples/papi/coverage/coverage-final.json ]; then
+            JS_COV=$(cd examples/papi && npx c8 report --reporter=text 2>/dev/null \
+              | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
+          fi
+          echo "{\"js\": ${JS_COV:-0}}" > /tmp/coverage/report/coverage-summary.json
+          echo "JS line coverage: ${JS_COV}%"
+
+      - name: Cache JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-${{ github.sha }}
+
+      - name: Update latest JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache delete "coverage-baseline-latest" -R "$GITHUB_REPOSITORY" 2>/dev/null || true
+
+      - name: Save latest JS coverage baseline (main/dev only)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
+      - name: Upload JS coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-coverage
+          path: |
+            examples/papi/coverage/
+            /tmp/coverage/report/coverage-summary.json
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "storage-provider-node" 2>/dev/null || true
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+
+      - name: Upload logs (on failure)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider.log
 
   # ── Smart-contract demos ─────────────────────────────────────────────────────
   # Own chain + inmemory provider, parallel with integration-tests off the
@@ -355,21 +484,14 @@ jobs:
         run: just build-contracts
 
       - name: Start chain
-        run: |
-          nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ matrix.runtime.zombienet_config }} > /tmp/zombienet.log 2>&1 &
-          ZOMBIE_PID=$!
-          echo "Waiting for zombienet to set up nodes..."
-          sleep 15
-          if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
-            echo "ERROR: zombienet exited early"
-            cat /tmp/zombienet.log || true
-            exit 1
-          fi
+        uses: ./.github/actions/start-zombienet
+        with:
+          config: ${{ matrix.runtime.zombienet_config }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory) and wait for health
+      - name: Start provider (inmemory)
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
@@ -377,18 +499,9 @@ jobs:
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
-          for i in $(seq 1 60); do
-            if curl -s http://127.0.0.1:3333/health | jq -e '.status' > /dev/null 2>&1; then
-              echo "Provider is healthy (attempt $i)"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timeout: provider did not become healthy"
-              cat /tmp/provider.log || true
-              exit 1
-            fi
-            sleep 2
-          done
+
+      - name: Wait for provider health
+        uses: ./.github/actions/wait-for-provider-health
 
       - name: Run smart-contract end-to-end demo
         run: just sc-demo "http://127.0.0.1:3333" "//Alice" "//Bob"
@@ -422,9 +535,57 @@ jobs:
             /tmp/zombie-*/*-plain.json
             /tmp/zombie-*/*-raw.json
 
+  # ── Coverage gate ─────────────────────────────────────────────────────────
+  # On PRs: restores the cached JS coverage baseline from main/dev, downloads
+  # the PR's summary, and fails if JS coverage decreased.
+  coverage-gate:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [e2e-integration-tests]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Restore coverage baseline
+        id: baseline
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: /tmp/coverage/report/coverage-summary.json
+          key: coverage-baseline-latest
+
+      - name: Download PR coverage artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: e2e-coverage
+          path: /tmp/pr-coverage
+
+      - name: Compare JS coverage
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  JS Coverage Comparison (base → PR)"
+          echo "═══════════════════════════════════════════════════════════"
+
+          if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
+            echo "No baseline found (first run?) — skipping comparison."
+            cat /tmp/pr-coverage/coverage-summary.json 2>/dev/null || true
+            exit 0
+          fi
+
+          BASE_JS=$(python3 -c "import json; print(json.load(open('/tmp/coverage/report/coverage-summary.json')).get('js', 0))")
+          PR_JS=$(python3 -c "import json; print(json.load(open('/tmp/pr-coverage/coverage-summary.json')).get('js', 0))")
+
+          DECREASED=$(awk "BEGIN { print ($PR_JS < $BASE_JS) ? 1 : 0 }")
+          if [ "$DECREASED" = "1" ]; then
+            echo "FAIL: JS coverage decreased: ${BASE_JS}% → ${PR_JS}%"
+            echo "Add tests to cover new or modified code."
+            exit 1
+          else
+            echo "PASS: JS coverage: ${BASE_JS}% → ${PR_JS}%"
+          fi
+
   integration-tests-complete:
     name: Integration Tests
-    needs: [build, integration-tests, sc-integration-tests]
+    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests, coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     steps:
