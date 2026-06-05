@@ -179,6 +179,8 @@ jobs:
 
       - name: Measure base branch coverage
         run: |
+          # Container user differs from repo owner; allow git operations
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # Stash any workspace changes, switch to base branch
           git stash --include-untracked 2>/dev/null || true
           git checkout ${{ github.event.pull_request.base.sha }}
