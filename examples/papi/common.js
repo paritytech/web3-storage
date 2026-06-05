@@ -156,7 +156,7 @@ export class NonceManager {
 }
 
 /**
- * Wait until the chain advances to a new finalized block.
+ * Wait until the chain advances to a new best block.
  *
  * Run this once at the top of every example before submitting any extrinsic.
  * The provider node runs background coordinators (agreement auto-accept,
@@ -168,13 +168,15 @@ export class NonceManager {
 export async function waitForNextBlock(papi) {
   return new Promise((resolve) => {
     let initial = null;
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    let sub;
+    sub = papi.bestBlocks$.subscribe((blocks) => {
+      const block = blocks[blocks.length - 1];
       if (initial === null) {
         initial = block.number;
         return;
       }
       if (block.number > initial) {
-        sub.unsubscribe();
+        sub?.unsubscribe();
         resolve();
       }
     });
@@ -182,7 +184,7 @@ export async function waitForNextBlock(papi) {
 }
 
 /**
- * Wait until the chain's finalized head is strictly greater than `target`.
+ * Wait until the chain's best head is strictly greater than `target`.
  *
  * Examples that need to land an extrinsic at a specific block window (e.g.
  * `provider_checkpoint`, `report_missed_checkpoint`) use this to time their
@@ -190,12 +192,14 @@ export async function waitForNextBlock(papi) {
  */
 export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
   await new Promise((resolve) => {
-    const sub = papi.finalizedBlock$.subscribe((block) => {
+    let sub;
+    sub = papi.bestBlocks$.subscribe((blocks) => {
+      const block = blocks[blocks.length - 1];
       if (logEvery > 0 && block.number % logEvery === 0) {
         console.log("    head=#%d (target > %d)", block.number, target);
       }
       if (block.number > target) {
-        sub.unsubscribe();
+        sub?.unsubscribe();
         resolve();
       }
     });
