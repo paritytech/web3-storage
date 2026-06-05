@@ -204,7 +204,10 @@ async function main() {
     // comfortably above ED.
     console.log("\n[7] IWeb3Storage.establishStorageAgreement(provider, terms[1MiB×100k], sig)  [burn-sized]");
     const signedB = await negotiateAbiTerms(client, { maxBytes: 1n << 20n, duration: 100_000, pricePerByte: PRICE_PER_BYTE });
-    nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
+    // sometimes the rpc return old data. 
+    // plus, the tests are ran sequentially
+    // use this approach for safety check
+    nextBucketBefore+=1n;
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
       toHex(providerBytes32),
       signedB.terms,
@@ -231,7 +234,10 @@ async function main() {
     // happens through chain-driven expiry, not this test.
     console.log("\n[9] IWeb3Storage.establishStorageAgreement(provider, terms[2KiB×100], sig)  [freeze/challenge target]");
     const signedC = await negotiateAbiTerms(client, { maxBytes: 2048n, duration: 100, pricePerByte: PRICE_PER_BYTE });
-    nextBucketBefore = await api.query.StorageProvider.NextBucketId.getValue();
+    // sometimes the rpc return old data. 
+    // plus, the tests are ran sequentially
+    // use this approach for safety check
+    nextBucketBefore+=1n;
     r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
       toHex(providerBytes32),
       signedC.terms,

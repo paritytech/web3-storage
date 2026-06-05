@@ -206,9 +206,6 @@ jobs:
           label: disk
           log-file: /tmp/provider.log
 
-      - name: Run L0 demo (disk provider)
-        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
-
       - name: Run L0 demo (inmemory provider)
         run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
@@ -315,9 +312,14 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (inmemory)
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
