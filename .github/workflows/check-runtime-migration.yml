@@ -35,14 +35,18 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - id: runtime
+        shell: bash
         run: |
-          # Run a migration check for every runtime that declares a live `uris`
-          # endpoint; runtimes with an empty `uris` are skipped.
-          TASKS=$(jq '[.[] | select((.uris // []) | length > 0)]' scripts/runtimes-matrix.json)
-          SKIPPED_TASKS=$(jq '[.[] | select(((.uris // []) | length) == 0)]' scripts/runtimes-matrix.json)
+          # Run a migration check for every runtime that declares a live `ws://`
+          # / `wss://` endpoint in `uris`. Runtimes with no real endpoint (empty
+          # `uris` or a `TODO:` placeholder) are skipped.
+          FILTER='[.[] | select(([.uris[]? | select(startswith("ws"))] | length) > 0)]'
+          SKIP_FILTER='[.[] | select(([.uris[]? | select(startswith("ws"))] | length) == 0)]'
+          TASKS=$(jq "$FILTER" scripts/runtimes-matrix.json)
+          SKIPPED_TASKS=$(jq "$SKIP_FILTER" scripts/runtimes-matrix.json)
           echo "--- Running the following tasks ---"
           echo "$TASKS"
-          echo "--- Skipping runtimes with no uris ---"
+          echo "--- Skipping runtimes with no live ws(s) endpoint ---"
           echo "$SKIPPED_TASKS"
           TASKS=$(echo "$TASKS" | jq -c .)
           echo "runtime=$TASKS" >> $GITHUB_OUTPUT
@@ -100,6 +104,7 @@ jobs:
 
       - name: Generate snapshot for ${{ matrix.runtime.name }}
         if: steps.cache-restore.outputs.cache-matched-key == ''
+        shell: bash
         env:
           RUNTIME_NAME: ${{ matrix.runtime.name }}
           RUNTIME_URIS_JSON: ${{ toJSON(matrix.runtime.uris) }}
@@ -109,7 +114,7 @@ jobs:
           URI_ARGS=()
           while IFS= read -r uri; do
             URI_ARGS+=(--uri "$uri")
-          done < <(echo "$RUNTIME_URIS_JSON" | jq -r '.[]')
+          done < <(echo "$RUNTIME_URIS_JSON" | jq -r '.[] | select(startswith("ws"))')
           echo "Using URIs: ${URI_ARGS[*]}"
 
           for i in {1..10}; do
@@ -189,6 +194,7 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Run ${{ matrix.runtime.name }} Runtime Checks
+        shell: bash
         env:
           PACKAGE_NAME: ${{ matrix.runtime.package }}
           TRY_RUNTIME_SPEC_NAME_CHECK: ${{ matrix.runtime.try_runtime.spec_name_check }}
