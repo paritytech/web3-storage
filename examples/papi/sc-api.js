@@ -123,10 +123,8 @@ export async function callContract(
     value = 0n,
     gasLimit = DEFAULT_GAS_LIMIT,
     storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT,
-    // Set when a later tx references this call's on-chain effect by id (e.g. a
-    // precompile that creates a challenge, before respond_to_challenge). Waits
-    // for finalization so a best-block reorg can't roll the id out from under
-    // the dependent tx. See submitTxFinalized.
+    // Wait for finalization when a later tx references this call's effect by id
+    // (e.g. a precompile that creates a challenge). See submitTxFinalized.
     finalized = false,
   } = {}
 ) {
