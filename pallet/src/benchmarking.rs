@@ -114,10 +114,6 @@ fn sign_terms<T: Config>(
 }
 
 /// Open a primary agreement for the provider, atomically creating the bucket.
-///
-/// Replaces the legacy `request_primary_agreement` + `accept_agreement` pair:
-/// generates an sr25519 key for the provider, signs primary terms, and calls
-/// `establish_storage_agreement_internal`. Returns the new bucket id.
 fn setup_primary_agreement<T: Config>(
     admin: &T::AccountId,
     provider: &T::AccountId,

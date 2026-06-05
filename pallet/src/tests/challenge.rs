@@ -72,19 +72,9 @@ fn challenge_checkpoint_fails_provider_not_signed() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Add second provider
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            200,
-            10000
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id
-        ));
+        // Add second provider (no extrinsic grows a bucket's primary
+        // set, so the shape is synthesized directly)
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // Insert snapshot where only provider at index 0 (account 2) signed
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
@@ -111,7 +101,7 @@ fn challenge_checkpoint_fails_provider_not_signed() {
 fn challenge_offchain_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::challenge_offchain(

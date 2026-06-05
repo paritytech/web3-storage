@@ -27,7 +27,7 @@ fn insert_snapshot(bucket_id: u64, providers: &[u64]) {
 fn configure_checkpoint_window_works() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_ok!(StorageProvider::configure_checkpoint_window(
             RuntimeOrigin::signed(1),
@@ -47,7 +47,7 @@ fn configure_checkpoint_window_works() {
 #[test]
 fn configure_checkpoint_window_fails_not_admin() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::configure_checkpoint_window(RuntimeOrigin::signed(3), 0, 20, 10, true),
@@ -75,7 +75,7 @@ fn configure_checkpoint_window_fails_no_bucket() {
 #[test]
 fn fund_checkpoint_pool_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         let free_before = Balances::free_balance(1);
 
@@ -131,7 +131,7 @@ fn claim_checkpoint_rewards_fails_no_rewards() {
 #[test]
 fn checkpoint_fails_not_writer() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         // Account 3 is not a member
         assert_noop!(
@@ -169,7 +169,7 @@ fn checkpoint_fails_no_bucket() {
 fn checkpoint_works_with_zero_min_providers() {
     new_test_ext().execute_with(|| {
         // With min_providers = 0, no signatures needed
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
@@ -190,7 +190,7 @@ fn checkpoint_works_with_zero_min_providers() {
 #[test]
 fn extend_checkpoint_fails_no_snapshot() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         assert_noop!(
             StorageProvider::extend_checkpoint(RuntimeOrigin::signed(1), 0, Default::default(),),
@@ -202,7 +202,7 @@ fn extend_checkpoint_fails_no_snapshot() {
 #[test]
 fn extend_checkpoint_works_after_initial_checkpoint() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         // First, create a snapshot with zero sigs (min_providers = 0)
         assert_ok!(StorageProvider::checkpoint(

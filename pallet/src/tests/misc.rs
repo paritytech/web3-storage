@@ -104,7 +104,7 @@ fn remove_slashed_fails_not_slashed() {
 fn remove_slashed_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Zero out stake
         Providers::<Test>::mutate(2, |maybe_provider| {
@@ -127,7 +127,7 @@ fn remove_slashed_fails_no_agreement() {
 #[test]
 fn remove_slashed_fails_provider_not_found() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::remove_slashed(RuntimeOrigin::signed(3), 0, 99),
@@ -140,7 +140,7 @@ fn remove_slashed_fails_provider_not_found() {
 fn set_extensions_blocked_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::set_extensions_blocked(RuntimeOrigin::signed(2), 0, true),

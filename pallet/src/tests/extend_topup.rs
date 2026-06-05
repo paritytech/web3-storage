@@ -128,7 +128,7 @@ fn extend_agreement_fails_duration_too_short() {
 fn extend_agreement_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::extend_agreement(RuntimeOrigin::signed(1), 0, 2, 50, 10000),

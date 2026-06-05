@@ -69,6 +69,7 @@ async function setupAgreement(api, providerUrl, client, provider) {
     duration,
     price_per_byte: 1n,
     replica_params: null,
+    bucket_id: null,
   });
   console.log(
     "  Provider signed terms: nonce=%s, valid_until=%s",

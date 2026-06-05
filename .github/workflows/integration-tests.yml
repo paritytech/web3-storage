@@ -190,21 +190,26 @@ jobs:
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/charlie-key --storage-mode disk --storage-path /tmp/provider-data \
             --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider-disk.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider (inmemory) health
         uses: ./.github/actions/wait-for-provider-health
         with:
+          url: http://127.0.0.1:3333
           label: inmemory
+          log-file: /tmp/provider.log
 
       - name: Wait for provider (disk) health
         uses: ./.github/actions/wait-for-provider-health
         with:
           url: http://127.0.0.1:3334
           label: disk
-          log-file: /tmp/provider-disk.log
+          log-file: /tmp/provider.log
 
       - name: Run L0 demo (disk provider)
+        run: just demo "http://127.0.0.1:3333" "//Alice" "//Bob"
+
+      - name: Run L0 demo (inmemory provider)
         run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
 
       - name: Run file system integration test
@@ -228,7 +233,7 @@ jobs:
           path: |
             /tmp/zombienet.log
             /tmp/provider-inmemory.log
-            /tmp/provider-disk.log
+            /tmp/provider.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
             /tmp/zombie-*/*-plain.json
