@@ -1,12 +1,12 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    agreement_coordinator::SubxtAgreementChainClient,
+    agreement_coordinator_subxt::SubxtAgreementChainClient,
     auth::{ChainMembershipResolver, MembershipCache},
-    checkpoint_coordinator::SubxtCheckpointChainClient,
+    checkpoint_coordinator_subxt::SubxtCheckpointChainClient,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
-    replica_sync_coordinator::SubxtReplicaSyncChainClient,
+    replica_sync_coordinator_subxt::SubxtReplicaSyncChainClient,
     AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
     ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
