@@ -7,6 +7,7 @@
 
 import { formatDispatchError } from "./format.js";
 import { READ_OPTS } from "../common.js";
+import { establishStorageAgreement, negotiateTerms } from "../api.js";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -159,4 +160,59 @@ export async function setupChain(chainWs) {
 export async function getFree(api, who) {
   const acc = await api.query.System.Account.getValue(who.address, READ_OPTS);
   return acc.data.free;
+}
+
+// ── Signed-terms agreement flow ──────────────────────────────────────────────
+//
+// `create_bucket`, `request_primary_agreement`, and `accept_agreement` were
+// removed: an agreement is now opened atomically by redeeming provider-signed
+// terms via `establish_storage_agreement`. The owner asks the provider node
+// for a signed quote over HTTP (`/negotiate`), then submits it on-chain. The
+// bucket is created as part of that single extrinsic — there's no separate
+// create step and no acceptance to wait for.
+
+/**
+ * Negotiate provider-signed terms over HTTP. Reads the provider's listed
+ * `price_per_byte` from chain so the quote is never rejected as underpriced.
+ * Returns the `SignedTerms` bundle ready to redeem on-chain.
+ */
+export async function negotiateSigned(
+  api,
+  providerUrl,
+  owner,
+  provider,
+  { maxBytes, duration, bucketId = null, replicaParams = null, pricePerByte = null }
+) {
+  let p = pricePerByte;
+  if (!p) {
+    const info = await api.query.StorageProvider.Providers.getValue(
+      provider.address,
+      READ_OPTS
+    );
+    p = info?.settings?.price_per_byte ?? 1n;
+  }
+  return negotiateTerms(providerUrl, {
+    owner: owner.address,
+    max_bytes: maxBytes,
+    duration,
+    price_per_byte: p,
+    replica_params: replicaParams,
+    bucket_id: bucketId,
+  });
+}
+
+/**
+ * Negotiate signed terms and redeem them, opening a bucket + primary
+ * agreement in one extrinsic. Returns `{ bucketId, signed }`.
+ */
+export async function negotiateAndEstablish(
+  api,
+  providerUrl,
+  owner,
+  provider,
+  opts
+) {
+  const signed = await negotiateSigned(api, providerUrl, owner, provider, opts);
+  const bucketId = await establishStorageAgreement(api, owner, provider, signed);
+  return { bucketId, signed };
 }

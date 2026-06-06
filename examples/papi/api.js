@@ -71,9 +71,9 @@ const MULTI_SIGNATURE_VARIANT = Object.freeze({
 });
 
 /**
- * Build the agreement terms and sign it
+  * Build the agreement terms and sign it
  */
-function buildSignedTermsArgs(provider, signed) {
+export function buildSignedTermsArgs(provider, signed) {
   const sigBytes = hexToBytes(signed.signature);
   if (sigBytes.length < 1) {
     throw new Error("signature too short to contain a MultiSignature variant byte");
@@ -278,25 +278,6 @@ export async function setMinProviders(api, admin, bucketId, minProviders) {
     }),
     admin.signer,
     "set_min_providers"
-  );
-}
-
-export async function rejectAgreement(api, provider, bucketId) {
-  return submitTx(
-    api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    "reject_agreement"
-  );
-}
-
-export async function withdrawAgreementRequest(api, client, bucketId, provider) {
-  return submitTx(
-    api.tx.StorageProvider.withdraw_agreement_request({
-      bucket_id: bucketId,
-      provider: provider.address,
-    }),
-    client.signer,
-    "withdraw_agreement_request"
   );
 }
 
