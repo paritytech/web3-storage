@@ -1181,6 +1181,215 @@ async fn test_delete_happy_path() {
         .starts_with("0x"));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Error path tests: invalid hex, invalid base64, missing data
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_get_node_invalid_hex() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .get(server.url("/node?hash=not_hex_at_all"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn test_get_node_not_found() {
+    let server = TestServer::new().await;
+
+    let valid_but_absent = "0x0000000000000000000000000000000000000000000000000000000000000099";
+    let resp = server
+        .client
+        .get(server.url(&format!("/node?hash={valid_but_absent}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+}
+
+#[tokio::test]
+async fn test_upload_node_invalid_base64() {
+    let server = TestServer::new().await;
+
+    let hash = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": hash,
+            "data": "!!!not_base64!!!",
+            "children": null
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "serialization_error");
+}
+
+#[tokio::test]
+async fn test_upload_node_invalid_hex_children() {
+    let server = TestServer::new().await;
+
+    let data = b"child test data";
+    let hash = storage_primitives::blake2_256(data);
+    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": hash_hex,
+            "data": BASE64.encode(data),
+            "children": ["zzz_invalid_hex"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn test_commit_invalid_hex_data_root() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": ["not_hex"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn test_commit_without_signing_key() {
+    let server = TestServer::new_unsigned().await;
+
+    // Upload a valid node first (upload doesn't need signing)
+    let data = b"commit-no-key";
+    let hash = storage_primitives::blake2_256(data);
+    let hash_hex = format!("0x{}", hex_encode(hash.as_bytes()));
+
+    server
+        .client
+        .put(server.url("/node"))
+        .json(&json!({
+            "bucket_id": 1,
+            "hash": hash_hex,
+            "data": BASE64.encode(data),
+            "children": null,
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = server
+        .client
+        .post(server.url("/commit"))
+        .json(&json!({
+            "bucket_id": 1,
+            "data_roots": [hash_hex]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "signing_unavailable");
+}
+
+#[tokio::test]
+async fn test_read_chunks_invalid_hex() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .get(server.url("/read?data_root=not_hex&offset=0&length=100"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn test_read_chunks_nonexistent_root() {
+    let server = TestServer::new().await;
+
+    let valid_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let resp = server
+        .client
+        .get(server.url(&format!("/read?data_root={valid_hex}&offset=0&length=100")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // No chunks found for nonexistent root → empty chunks array
+    let body: Value = resp.json().await.unwrap();
+    let chunks = body["chunks"].as_array().unwrap();
+    assert!(chunks.is_empty());
+}
+
+#[tokio::test]
+async fn test_chunk_proof_invalid_hex() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .get(server.url("/chunk_proof?data_root=not_hex&chunk_index=0"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_hash");
+}
+
+#[tokio::test]
+async fn test_checkpoint_trigger_unknown_bucket() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .post(server.url("/checkpoint/trigger?bucket_id=9999"))
+        .send()
+        .await
+        .unwrap();
+    // Should fail: bucket doesn't exist or no coordinator running
+    assert!(resp.status().is_server_error());
+}
+
 // Helper functions
 
 fn hex_encode(bytes: &[u8]) -> String {

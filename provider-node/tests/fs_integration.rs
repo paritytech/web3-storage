@@ -464,3 +464,131 @@ async fn test_fs_get_directory_returns_error() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "not_a_file");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edge cases: empty path, empty body, mkdir validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_fs_put_empty_body() {
+    let server = TestServer::new().await;
+
+    // PUT with empty body should succeed (zero-size file)
+    let resp = server
+        .client
+        .put(server.url("/fs/1/file?path=/empty.bin"))
+        .body("")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["size"], 0);
+
+    // GET should return empty body
+    let resp = server
+        .client
+        .get(server.url("/fs/1/file?path=/empty.bin"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data = resp.bytes().await.unwrap();
+    assert!(data.is_empty());
+}
+
+#[tokio::test]
+async fn test_fs_mkdir_no_leading_slash() {
+    let server = TestServer::new().await;
+
+    let resp = server
+        .client
+        .post(server.url("/fs/1/mkdir?path=noslash"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_path");
+}
+
+#[tokio::test]
+async fn test_fs_delete_file_then_list() {
+    let server = TestServer::new().await;
+
+    // Upload two files
+    server
+        .client
+        .put(server.url("/fs/1/file?path=/a.txt"))
+        .body("aaa")
+        .send()
+        .await
+        .unwrap();
+    server
+        .client
+        .put(server.url("/fs/1/file?path=/b.txt"))
+        .body("bbb")
+        .send()
+        .await
+        .unwrap();
+
+    // Delete one
+    let resp = server
+        .client
+        .delete(server.url("/fs/1/file?path=/a.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // List should show only 1 file
+    let resp = server
+        .client
+        .get(server.url("/fs/1/ls?path=/"))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["file_count"], 1);
+}
+
+#[tokio::test]
+async fn test_fs_nested_mkdir_and_file() {
+    let server = TestServer::new().await;
+
+    // Create nested dir
+    server
+        .client
+        .post(server.url("/fs/1/mkdir?path=/a"))
+        .send()
+        .await
+        .unwrap();
+    server
+        .client
+        .post(server.url("/fs/1/mkdir?path=/a/b"))
+        .send()
+        .await
+        .unwrap();
+
+    // Put file in nested dir
+    let resp = server
+        .client
+        .put(server.url("/fs/1/file?path=/a/b/deep.txt"))
+        .body("deep")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET from nested path
+    let resp = server
+        .client
+        .get(server.url("/fs/1/file?path=/a/b/deep.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.text().await.unwrap(), "deep");
+}

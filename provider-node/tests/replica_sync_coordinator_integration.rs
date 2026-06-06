@@ -51,12 +51,32 @@ impl MockReplicaSyncChainClient {
         self
     }
 
+    fn with_snapshot_sync(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
+        // Synchronous version: constructs a new Mutex with the snapshot pre-inserted.
+        // Safe to call from inside an async runtime (unlike with_snapshot which uses block_on).
+        let mut map = self.snapshots.into_inner();
+        map.insert(bucket_id, snapshot);
+        Self {
+            snapshots: Mutex::new(map),
+            ..self
+        }
+    }
+
     fn with_endpoints(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
             self.endpoints.lock().await.insert(bucket_id, endpoints);
         });
         self
+    }
+
+    fn with_endpoints_sync(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
+        let mut map = self.endpoints.into_inner();
+        map.insert(bucket_id, endpoints);
+        Self {
+            endpoints: Mutex::new(map),
+            ..self
+        }
     }
 }
 
@@ -309,4 +329,221 @@ async fn test_pause_resume() {
     handle.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!handle.is_running());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_active_replica_duties filter paths
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_duties_filter_insufficient_balance() {
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 1,
+        sync_balance: 50,
+        sync_price: 100, // balance < price → should be skipped
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot_sync(
+            1,
+            BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xAA),
+                leaf_count: 5,
+            },
+        );
+
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert!(duties.is_empty(), "insufficient balance should be filtered");
+}
+
+#[tokio::test]
+async fn test_duties_filter_sync_interval_not_elapsed() {
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 1,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 200,
+        last_sync: Some((H256::repeat_byte(0xBB), 50)), // last sync at block 50, current=100, elapsed=50 < 200
+    };
+
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot_sync(
+            1,
+            BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xAA),
+                leaf_count: 5,
+            },
+        );
+
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert!(
+        duties.is_empty(),
+        "sync interval not elapsed should be filtered"
+    );
+}
+
+#[tokio::test]
+async fn test_duties_filter_zero_snapshot_root() {
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 1,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    // Snapshot with zero root → no data to sync
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot_sync(
+            1,
+            BucketSnapshot {
+                mmr_root: H256::zero(),
+                leaf_count: 0,
+            },
+        );
+
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert!(duties.is_empty(), "zero snapshot root should be filtered");
+}
+
+#[tokio::test]
+async fn test_duties_filter_already_synced() {
+    // Set up local storage with the same root as the snapshot
+    let storage = Arc::new(Storage::new());
+    storage.init_bucket(1, u64::MAX);
+
+    let data = b"synced data".to_vec();
+    let hash = sp_core::hashing::blake2_256(&data);
+    let data_root = H256::from(hash);
+    storage.store_node(1, data_root, data, None).unwrap();
+    let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+
+    let state = Arc::new(ProviderState::new(
+        storage,
+        "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
+    ));
+
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 1,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot_sync(
+            1,
+            BucketSnapshot {
+                mmr_root, // same as local
+                leaf_count: 1,
+            },
+        );
+
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert!(duties.is_empty(), "already synced should be filtered");
+}
+
+#[tokio::test]
+async fn test_duties_happy_path_returns_duty() {
+    let agreement = ReplicaAgreementInfo {
+        bucket_id: 42,
+        sync_balance: 1000,
+        sync_price: 100,
+        min_sync_interval: 0,
+        last_sync: None,
+    };
+
+    let target_root = H256::repeat_byte(0xCC);
+    let mock = MockReplicaSyncChainClient::new()
+        .with_agreements(vec![agreement])
+        .with_snapshot_sync(
+            42,
+            BucketSnapshot {
+                mmr_root: target_root,
+                leaf_count: 10,
+            },
+        )
+        .with_endpoints_sync(42, vec!["http://primary:3333".to_string()]);
+
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig::default();
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let duties = coordinator.get_active_replica_duties().await.unwrap();
+    assert_eq!(duties.len(), 1);
+
+    let duty = &duties[0];
+    assert_eq!(duty.bucket_id, 42);
+    assert_eq!(duty.target_mmr_root, target_root);
+    assert_eq!(duty.target_leaf_count, 10);
+    assert_eq!(duty.primary_endpoints, vec!["http://primary:3333"]);
+    assert_eq!(duty.sync_balance, 1000);
+    assert_eq!(duty.sync_price, 100);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handle commands: force_sync, status
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_status_command() {
+    let mock = MockReplicaSyncChainClient::new();
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::from_secs(60),
+        ..Default::default()
+    };
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let handle = coordinator.start(None).await.unwrap();
+
+    let status = handle.status().await.unwrap();
+    assert!(status.running);
+    assert!(!status.paused);
+    assert_eq!(status.active_syncs, 0);
+
+    handle.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn test_force_sync_command() {
+    let mock = MockReplicaSyncChainClient::new();
+    let state = test_state();
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::from_secs(60),
+        ..Default::default()
+    };
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+
+    let handle = coordinator.start(None).await.unwrap();
+
+    // force_sync should succeed (sends command, doesn't wait for completion)
+    let result = handle.force_sync(999).await;
+    assert!(result.is_ok());
+
+    handle.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 }
