@@ -268,3 +268,397 @@ fn challenge_slashes_provider_on_timeout() {
         assert_eq!(provider.stats.challenges_failed, 1);
     });
 }
+
+#[test]
+fn respond_to_challenge_superseded_fails_leaf_beyond_canonical() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Challenge at leaf_index 10 against snapshot with leaf_count=10, start_seq=0
+        // challenged_seq = 0 + 10 = 10, canonical_end = 0 + 10 = 10
+        // 10 < 10 is false → LeafBeyondCanonical
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            10, // leaf_index at boundary
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        assert_noop!(
+            StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                challenge_id,
+                crate::ChallengeResponse::Superseded,
+            ),
+            Error::<Test>::LeafBeyondCanonical
+        );
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_cost_split_block_1() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let challenger_balance_before = Balances::free_balance(3);
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 2 → response_time = 2 - (101-100) = 2 - 1 = 1
+        run_to_block(2);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // Block 1: challenger 90%, provider 10%
+        // deposit = 100, challenger_cost = 90, provider_cost = 10
+        // Challenger gets unreserved (100 - 90) = 10 back
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 90);
+
+        // Provider stake decreased by 10
+        let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
+        assert_eq!(provider_stake_after, provider_stake_before - 10);
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_cost_split_block_5() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let challenger_balance_before = Balances::free_balance(3);
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 6 → response_time = 6 - 1 = 5
+        // Blocks 2-5: challenger 80%, provider 20%
+        run_to_block(6);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // challenger_cost = 80, provider_cost = 20
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 80);
+        let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
+        assert_eq!(provider_stake_after, provider_stake_before - 20);
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_cost_split_block_24() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let challenger_balance_before = Balances::free_balance(3);
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 25 → response_time = 25 - 1 = 24
+        // Blocks 6-24: challenger 70%, provider 30%
+        run_to_block(25);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // challenger_cost = 70, provider_cost = 30
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 70);
+        let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
+        assert_eq!(provider_stake_after, provider_stake_before - 30);
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_cost_split_block_95() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let challenger_balance_before = Balances::free_balance(3);
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 96 → response_time = 96 - 1 = 95
+        // Blocks 25-95: challenger 60%, provider 40%
+        run_to_block(96);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // challenger_cost = 60, provider_cost = 40
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 60);
+        let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
+        assert_eq!(provider_stake_after, provider_stake_before - 40);
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_cost_split_block_96_plus() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let challenger_balance_before = Balances::free_balance(3);
+        let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 100 → response_time = 100 - 1 = 99
+        // Blocks 96+: challenger 50%, provider 50%
+        run_to_block(100);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // challenger_cost = 50, provider_cost = 50
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 50);
+        let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
+        assert_eq!(provider_stake_after, provider_stake_before - 50);
+    });
+}
+
+#[test]
+fn challenge_slashes_multiple_challenges_on_finalize() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+
+        // Setup two providers with agreements
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+
+        // Add second provider to same bucket
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            50,
+            200,
+            10000,
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+        ));
+
+        // Insert snapshot where both providers signed
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            if let Some(bucket) = maybe_bucket {
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                    checkpoint_block: 1,
+                    primary_signers: vec![0x03], // bits 0 and 1 set
+                });
+            }
+        });
+
+        // Challenge both providers — both expire at same deadline
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            3,
+            0,
+            0,
+        ));
+
+        // Both challenges at deadline 101
+        let challenges = Challenges::<Test>::get(101).unwrap();
+        assert_eq!(challenges.len(), 2);
+
+        // Advance to deadline and finalize
+        run_to_block(101);
+        <StorageProvider as frame_support::traits::Hooks<u64>>::on_finalize(101);
+
+        // Both providers should be slashed
+        let provider2 = Providers::<Test>::get(2).unwrap();
+        assert_eq!(provider2.stake, 0);
+        assert_eq!(provider2.stats.challenges_failed, 1);
+
+        let provider3 = Providers::<Test>::get(3).unwrap();
+        assert_eq!(provider3.stake, 0);
+        assert_eq!(provider3.stats.challenges_failed, 1);
+
+        // Challenges should be removed
+        assert!(Challenges::<Test>::get(101).is_none());
+    });
+}
+
+#[test]
+fn challenge_slashes_emits_event_and_rewards_challenger() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let provider_stake = Providers::<Test>::get(2).unwrap().stake;
+        let challenger_balance_before = Balances::free_balance(3);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        // Challenger deposit (100) was reserved
+        assert_eq!(Balances::free_balance(3), challenger_balance_before - 100);
+
+        run_to_block(101);
+        <StorageProvider as frame_support::traits::Hooks<u64>>::on_finalize(101);
+
+        // Challenger gets deposit back + 10% of slashed amount
+        let challenger_reward = provider_stake / 10;
+        assert_eq!(
+            Balances::free_balance(3),
+            challenger_balance_before + challenger_reward
+        );
+
+        // Verify ChallengeSlashed event
+        let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
+            challenge_id: ChallengeId {
+                deadline: 101,
+                index: 0,
+            },
+            provider: 2,
+            slashed_amount: provider_stake,
+            challenger_reward,
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected_event));
+    });
+}
+
+#[test]
+fn respond_to_challenge_superseded_emits_defended_event() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Respond at block 2 → response_time = 1
+        run_to_block(2);
+
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // Verify ChallengeDefended event
+        let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeDefended {
+            challenge_id,
+            provider: 2,
+            response_time_blocks: 1,
+            challenger_cost: 90,
+            provider_cost: 10,
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected_event));
+    });
+}
