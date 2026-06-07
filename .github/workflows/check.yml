@@ -170,8 +170,11 @@ jobs:
 
       - name: Measure PR coverage
         run: |
-          PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
           echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
@@ -206,8 +209,11 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          BASE_PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
           echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
