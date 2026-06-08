@@ -43,14 +43,6 @@ impl MockReplicaSyncChainClient {
         }
     }
 
-    fn with_snapshot(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            self.snapshots.lock().await.insert(bucket_id, snapshot);
-        });
-        self
-    }
-
     fn with_snapshot_sync(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
         // Synchronous version: constructs a new Mutex with the snapshot pre-inserted.
         // Safe to call from inside an async runtime (unlike with_snapshot which uses block_on).
@@ -60,14 +52,6 @@ impl MockReplicaSyncChainClient {
             snapshots: Mutex::new(map),
             ..self
         }
-    }
-
-    fn with_endpoints(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            self.endpoints.lock().await.insert(bucket_id, endpoints);
-        });
-        self
     }
 
     fn with_endpoints_sync(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {

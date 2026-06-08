@@ -144,6 +144,11 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
 }
 
 /// Run to a specific block number.
+///
+/// **WARNING**: This only calls `System` hooks, NOT `StorageProvider::on_finalize`.
+/// This means challenge expirations and slashing will NOT be processed automatically.
+/// If your test needs to trigger challenge timeout slashing, call the pallet hook
+/// manually: `<StorageProvider as Hooks<u64>>::on_finalize(block_number);`
 #[allow(dead_code)]
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {

@@ -400,7 +400,13 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
             return;
         }
     };
-    let signer = subxt_signer::sr25519::Keypair::from_uri(&uri).expect("valid keypair from seed");
+    let signer = match subxt_signer::sr25519::Keypair::from_uri(&uri) {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("Failed to create keypair for multiaddr update: {:?}", e);
+            return;
+        }
+    };
 
     let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
     let tx = subxt::dynamic::tx(

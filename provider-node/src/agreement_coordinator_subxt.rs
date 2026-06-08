@@ -88,11 +88,13 @@ impl AgreementChainClient for SubxtAgreementChainClient {
                 }
 
                 // Bucket ID at offset 48 (32 prefix + 16 blake2 hash)
-                let bucket_id = u64::from_le_bytes(
-                    key_bytes[48..56]
-                        .try_into()
-                        .expect("slice is exactly 8 bytes"),
-                );
+                let bucket_id = match key_bytes[48..56].try_into() {
+                    Ok(bytes) => u64::from_le_bytes(bytes),
+                    Err(_) => {
+                        tracing::warn!("Failed to parse bucket ID from key bytes, skipping");
+                        continue;
+                    }
+                };
 
                 tracing::info!(
                     "Found pending agreement request for us: bucket {}",

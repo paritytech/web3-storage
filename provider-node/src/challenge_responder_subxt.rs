@@ -8,11 +8,14 @@ use std::future::Future;
 use std::pin::Pin;
 
 /// Production implementation that talks to the chain via subxt.
+/// Not yet wired into command.rs — scaffolding for when poll_challenges is implemented.
+#[allow(dead_code)]
 pub struct SubxtChallengeChainClient {
     api: subxt::OnlineClient<subxt::PolkadotConfig>,
     signer: subxt_signer::sr25519::Keypair,
 }
 
+#[allow(dead_code)]
 impl SubxtChallengeChainClient {
     /// Connect to the chain and create a signer from the seed URI.
     pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {

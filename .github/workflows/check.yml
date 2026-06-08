@@ -177,6 +177,10 @@ jobs:
             --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$PALLET_COV" ]; then
+            echo "ERROR: Failed to measure pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
           echo "PR pallet coverage: ${PALLET_COV}%"
 
@@ -190,11 +194,15 @@ jobs:
             TEST_FLAGS="$TEST_FLAGS --test $t"
           done
 
-          PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
-            -p storage-provider-node \
-            --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -n "$TEST_FLAGS" ]; then
+            PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
+              -p storage-provider-node \
+              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --summary-only 2>&1 \
+              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          else
+            PROVIDER_COV=0
+          fi
           echo "PR_PROVIDER_COV=$PROVIDER_COV" >> $GITHUB_ENV
           echo "PR provider coverage: ${PROVIDER_COV}%"
 
@@ -214,6 +222,10 @@ jobs:
             --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$BASE_PALLET_COV" ]; then
+            echo "ERROR: Failed to measure base pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
           echo "Base pallet coverage: ${BASE_PALLET_COV}%"
 

@@ -44,20 +44,15 @@ fn remove_slashed_works() {
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Slash provider's stake to zero by directly manipulating storage
+        // Slash provider's entire reserved stake (mirrors production slash_provider_for_failed_challenge)
         Providers::<Test>::mutate(2, |maybe_provider| {
             if let Some(provider) = maybe_provider {
-                // Unreserve existing stake and zero it out
-                <Balances as frame_support::traits::ReservableCurrency<u64>>::unreserve(
-                    &2,
-                    provider.stake,
-                );
-                // Slash from free balance by reserving and slashing
-                let _ =
+                let stake = provider.stake;
+                let (_, remaining) =
                     <Balances as frame_support::traits::ReservableCurrency<u64>>::slash_reserved(
-                        &2,
-                        provider.stake,
+                        &2, stake,
                     );
+                assert_eq!(remaining, 0, "entire stake should have been slashed");
                 provider.stake = 0;
             }
         });
