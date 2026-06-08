@@ -265,11 +265,19 @@ async fn test_successful_challenge_response() {
     let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
     let handle = responder.start(None).await.unwrap();
 
-    // Wait for the poll to process the challenge
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Poll until the challenge is processed (with generous timeout for CI)
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !mock.submitted.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for challenge submission");
 
     let submitted = mock.submitted.lock().await;
-    assert!(!submitted.is_empty(), "expected at least one submission");
     assert_eq!(submitted[0], (1000, 0));
 
     handle.stop().await.unwrap();
@@ -311,7 +319,16 @@ async fn test_proof_generation_failed_no_bucket() {
     let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if result.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for callback");
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -350,7 +367,16 @@ async fn test_data_not_found_bad_chunk_index() {
     let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if result.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for callback");
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -388,7 +414,16 @@ async fn test_submission_failed() {
     let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if result.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for callback");
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -422,7 +457,16 @@ async fn test_callback_invoked_on_success() {
     let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if result.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for callback");
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -458,11 +502,16 @@ async fn test_resume_after_pause() {
 
     // Resume — should process the challenge
     handle.resume().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !mock.submitted.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for submission after resume");
 
-    assert!(
-        !mock.submitted.lock().await.is_empty(),
-        "expected submission after resume"
-    );
     handle.stop().await.unwrap();
 }

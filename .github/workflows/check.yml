@@ -182,14 +182,12 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          # Discover available integration test targets
+          # Discover available integration test targets from filesystem
           TEST_FLAGS=""
-          for t in api_integration auth_integration disk_integration fs_integration s3_integration \
-                   agreement_coordinator_integration challenge_responder_integration \
-                   checkpoint_coordinator_integration replica_sync_coordinator_integration; do
-            if [ -f "provider-node/tests/${t}.rs" ]; then
-              TEST_FLAGS="$TEST_FLAGS --test $t"
-            fi
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
           done
 
           PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
@@ -221,14 +219,12 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          # Discover available integration test targets on the base branch
+          # Discover available integration test targets from filesystem
           TEST_FLAGS=""
-          for t in api_integration auth_integration disk_integration fs_integration s3_integration \
-                   agreement_coordinator_integration challenge_responder_integration \
-                   checkpoint_coordinator_integration replica_sync_coordinator_integration; do
-            if [ -f "provider-node/tests/${t}.rs" ]; then
-              TEST_FLAGS="$TEST_FLAGS --test $t"
-            fi
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
           done
 
           if [ -n "$TEST_FLAGS" ]; then

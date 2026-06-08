@@ -503,7 +503,7 @@ fn provider_checkpoint_non_leader_rejected_during_grace() {
 fn provider_checkpoint_fallback_after_grace() {
     new_test_ext().execute_with(|| {
         let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
-        let pair3 = register_provider_with_keypair(3, 200);
+        let _pair3 = register_provider_with_keypair(3, 200);
 
         // Add second provider
         assert_ok!(StorageProvider::request_primary_agreement(
@@ -525,11 +525,9 @@ fn provider_checkpoint_fallback_after_grace() {
 
         let sig2 =
             sign_checkpoint_proposal(&pair2, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
-        let sig3 =
-            sign_checkpoint_proposal(&pair3, 3, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
 
-        // Both should succeed after grace — try provider 2, if ok verify snapshot
-        let result_2 = StorageProvider::provider_checkpoint(
+        // After grace, any primary provider can submit — provider 2 must succeed
+        assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
             H256::repeat_byte(0xAA),
@@ -537,24 +535,9 @@ fn provider_checkpoint_fallback_after_grace() {
             10,
             0,
             vec![sig2].try_into().unwrap(),
-        );
-
-        if result_2.is_ok() {
-            let bucket = Buckets::<Test>::get(bucket_id).unwrap();
-            assert_eq!(bucket.snapshot.unwrap().mmr_root, H256::repeat_byte(0xAA));
-        } else {
-            // Provider 2 failed (shouldn't happen after grace for a primary provider)
-            // but if it does, try provider 3
-            assert_ok!(StorageProvider::provider_checkpoint(
-                RuntimeOrigin::signed(3),
-                bucket_id,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
-                0,
-                vec![sig3].try_into().unwrap(),
-            ));
-        }
+        ));
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.snapshot.unwrap().mmr_root, H256::repeat_byte(0xAA));
     });
 }
 

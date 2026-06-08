@@ -241,7 +241,16 @@ async fn test_force_checkpoint() {
     let handle = coordinator.start(None).await.unwrap();
 
     handle.force_checkpoint(1).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if !mock.submitted.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for checkpoint submission");
 
     let submitted = mock.submitted.lock().await;
     assert_eq!(submitted.len(), 1);
