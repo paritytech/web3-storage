@@ -76,11 +76,6 @@ pub struct SignedTerms {
 }
 
 /// Sign already-built terms with a provider keypair.
-///
-/// Mirror of the on-chain `verify_terms_signature`: prefix the matching
-/// term context, SCALE-encode, hash with blake2-256, then sign. The
-/// runtime accepts `MultiSignature`, so callers wrap the raw sr25519
-/// signature with `MultiSignature::Sr25519`.
 pub fn sign_terms(
     keypair: &subxt_signer::sr25519::Keypair,
     terms: &AgreementTermsOf,

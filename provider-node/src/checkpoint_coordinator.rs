@@ -6,7 +6,7 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::{crypto::Ss58Codec, Pair, H256};
+use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -191,19 +191,13 @@ impl CheckpointCoordinator {
 
         self.api = Some(api);
 
-        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
-        // This avoids key conversion issues between sp_core and subxt_signer.
-        if let Some(ref seed) = self.config.seed {
-            let uri: subxt_signer::SecretUri = seed
-                .parse()
-                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-            let signer = Keypair::from_uri(&uri)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
+        // Set up signer from provider state if available
+        if let Some(ref kp) = self.state.keypair {
+            self.signer = Some(kp.clone());
             tracing::info!(
                 "Checkpoint coordinator signer: {}",
-                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
+                kp.public_key().to_account_id().to_string()
             );
-            self.signer = Some(signer);
         }
 
         tracing::info!(

@@ -9,7 +9,7 @@
 
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
-use sp_core::{Pair, H256};
+use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -234,13 +234,11 @@ impl ReplicaSyncCoordinator {
 
         // Set up signer from provider state if available
         if let Some(ref kp) = self.state.keypair {
-            let raw = kp.to_raw_vec();
-            let secret_bytes: [u8; 32] = raw[..32]
-                .try_into()
-                .map_err(|_| Error::Internal("Invalid secret key length".to_string()))?;
-            let signer = Keypair::from_secret_key(secret_bytes)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            self.signer = Some(signer);
+            self.signer = Some(kp.clone());
+            tracing::info!(
+                "Replica sync coordinator signer: {}",
+                kp.public_key().to_account_id().to_string()
+            );
         }
 
         tracing::info!(

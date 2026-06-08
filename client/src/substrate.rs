@@ -746,26 +746,6 @@ pub mod storage {
         )
     }
 
-    /// Query all pending agreement requests for a provider (prefix iteration over DoubleMap).
-    ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(provider)=16][provider=32]
-    /// → per entry appends [blake2_128(bucket_id)=16][bucket_id=8]; bucket_id at offset 96.
-    pub fn agreement_requests_for_provider(
-        provider: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "AgreementRequests",
-            vec![subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8])],
-        )
-    }
-
     /// Query all storage agreements for a specific bucket (prefix iteration).
     ///
     /// Key layout after prefix: [blake2_128(provider)=16][provider=32]; provider at offset 72 in full key.

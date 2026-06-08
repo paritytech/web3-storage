@@ -796,7 +796,7 @@ async fn negotiate_terms(
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    let signature = negotiate::sign_terms(keypair, &terms);
+    let signature = storage_client::sign_terms(keypair, &terms);
 
     Ok(Json(SignedTerms { terms, signature }))
 }

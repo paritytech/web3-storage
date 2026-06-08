@@ -17,8 +17,6 @@
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
-use sp_core::Pair;
-use sp_runtime::MultiSignature;
 use std::sync::atomic::{AtomicU64, Ordering};
 use storage_client::discovery::ProviderInfo;
 
@@ -125,16 +123,6 @@ impl NonceCounter {
     pub fn next(&self) -> u64 {
         self.counter.fetch_add(1, Ordering::SeqCst)
     }
-}
-
-/// Sign agreement terms with the provider's checkpoint sr25519 key.
-///
-/// Mirrors the on-chain verifier: term context | SCALE-encode →
-/// blake2-256 → sr25519 sign → wrap as `MultiSignature::Sr25519`.
-pub fn sign_terms(keypair: &sp_core::sr25519::Pair, terms: &AgreementTermsOf) -> MultiSignature {
-    let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
-    let sig = keypair.sign(&hash);
-    MultiSignature::Sr25519(sig)
 }
 
 #[cfg(test)]
