@@ -1,4 +1,5 @@
 import { expect, type Browser, type Page } from "@playwright/test";
+import { getApi, getBestBlockNumber } from "@web3-storage/test-helpers";
 
 /**
  * Drive the console-ui through the real user create-bucket flow:
@@ -27,6 +28,9 @@ export async function createBucketViaUi(page: Page, name: string): Promise<void>
   await expect(page.getByTestId("provider-picker")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("provider-picker-select").first().click();
 
+  const currentBlockNumber = await getBestBlockNumber();
+  await waitForLatestBucketId(currentBlockNumber);
+
   await expect(page.getByTestId("s3-bucket-selector")).toContainText(name, {
     timeout: 90_000,
   });
@@ -54,4 +58,19 @@ export async function createBucketInFreshContext(
   } finally {
     await context.close();
   }
+}
+
+export async function waitForLatestBucketId(currentBlock: number): Promise<bigint> {
+  const api = getApi();
+  return new Promise<bigint>((resolve, reject) => {
+    const sub = api.event.S3Registry.S3BucketCreated.watch().subscribe({
+      next: ({ block, events }) => {
+        if (block.number <= currentBlock) return;
+        if (events.length === 0) return;
+        sub.unsubscribe();
+        resolve(events[0].payload.s3_bucket_id);
+      },
+      error: reject,
+    });
+  });
 }

@@ -1,5 +1,5 @@
 import { expect, type Browser, type Page } from "@playwright/test";
-import { getApi } from "@web3-storage/test-helpers";
+import { getApi, getBestBlockNumber } from "@web3-storage/test-helpers";
 
 /**
  * Drive the drive-ui through the real user create-drive flow:
@@ -24,12 +24,9 @@ export async function createDriveViaUi(page: Page, name: string): Promise<bigint
   // Capacity / duration defaults are set in the component.
   await expect(page.getByTestId("provider-picker")).toBeVisible({ timeout: 30_000 });
 
-  // Subscribe BEFORE the submit click so we can't miss the event. `.watch()`
-  // only surfaces events in blocks from now on, so the first DriveCreated by
-  // Bob is the one this flow triggers.
-  const driveId = waitForLatestDriveId();
+  const currentBlock = await getBestBlockNumber();
   await page.getByTestId("provider-picker-select").first().click();
-  return driveId;
+  return waitForLatestDriveId(currentBlock);
 }
 
 /**
@@ -54,22 +51,18 @@ export async function createDriveInFreshContext(
   try {
     await page.goto("/");
     await expect(page.getByTestId("block-number")).toBeVisible({ timeout: 30_000 });
-    return createDriveViaUi(page, name);
+    return await createDriveViaUi(page, name);
   } finally {
     await context.close();
   }
 }
 
-/**
- * Resolve with the `drive_id` of the next `DriveRegistry.DriveCreated` event.
- * Only Bob creates drives in the test, so the first one is ours. Call this
- * BEFORE triggering the create so `.watch()` (forward-only) catches the block.
- */
-export async function waitForLatestDriveId(): Promise<bigint> {
+export async function waitForLatestDriveId(currentBlock: number): Promise<bigint> {
   const api = getApi();
   return new Promise<bigint>((resolve, reject) => {
     const sub = api.event.DriveRegistry.DriveCreated.watch().subscribe({
-      next: ({ events }) => {
+      next: ({ block, events }) => {
+        if (block.number <= currentBlock) return;
         if (events.length === 0) return;
         sub.unsubscribe();
         resolve(events[0].payload.drive_id);

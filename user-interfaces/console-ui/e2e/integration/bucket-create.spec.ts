@@ -14,7 +14,9 @@ import {
   Alice,
   cleanupBuckets,
   getApi,
+  getBestBlockNumber,
 } from "@web3-storage/test-helpers";
+import { waitForLatestBucketId } from "../helpers/createBucketViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -48,28 +50,9 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
     timeout: 30_000,
   });
 
-  // Subscribe to S3BucketCreated BEFORE triggering the on-chain submit so we
-  // don't miss the block. Resolve with the s3_bucket_id of the event whose
-  // name + owner match this test's bucket. test-helpers' getApi is a separate
-  // ws connection, so subscribing here is the reliable way to observe the
-  // event the UI's own (separate) connection submits.
-  const api = getApi();
-  const createdBucketId = new Promise<bigint>((resolve, reject) => {
-    const sub = api.event.S3Registry.S3BucketCreated.watch().subscribe({
-      next: ({ events }) => {
-        for (const { payload } of events) {
-          const eventName = new TextDecoder().decode(payload.name);
-          if (eventName === name) {
-            sub.unsubscribe();
-            resolve(payload.s3_bucket_id);
-          }
-        }
-      },
-      error: reject,
-    });
-  });
-
+  const currentBlockNumber = await getBestBlockNumber();
   await localPage.getByTestId("provider-picker-select").first().click();
+  const s3BucketId = await waitForLatestBucketId(currentBlockNumber);
 
   // Step 2 runs automatically (HTTP negotiate → on-chain submit). Wait for
   // the new bucket to appear in the selector — the UI auto-selects it on
@@ -77,10 +60,8 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
   await expect(localPage.getByTestId("s3-bucket-selector")).toContainText(name, {
     timeout: 90_000,
   });
-
-  // The event subscriber gives us the authoritative s3_bucket_id minted by the
-  // runtime. Verify the matching on-chain record carries our bucket name.
-  const s3BucketId = await createdBucketId;
+  
+  const api = getApi();
   const bucket = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
   expect(bucket).toBeTruthy();
   const bucketName = new TextDecoder().decode(bucket!.name);
