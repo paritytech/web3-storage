@@ -222,7 +222,7 @@ async function main() {
             owner: client.address,
             max_bytes: maxBytes,
             duration,
-            pricePerByte: 0n,
+            price_per_byte: 0n,
             replica_params: null,
             bucket_id: null,
           }),
