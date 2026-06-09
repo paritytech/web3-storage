@@ -29,8 +29,8 @@ hex = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { workspace = true }
 codec = { workspace = true, features = ["std"] }
+async-trait = "0.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 serde_json = { workspace = true }
-tempfile = "3"

@@ -6,8 +6,6 @@
 
 use crate::{Error, ProviderState};
 use sp_core::H256;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,20 +83,19 @@ pub enum ChallengeResponseResult {
 }
 
 /// Trait abstracting chain interactions for the challenge responder.
+#[async_trait::async_trait]
 pub trait ChallengeChainClient: Send + Sync {
     /// Poll the chain for active challenges targeting this provider.
-    fn poll_challenges(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<DetectedChallenge>, Error>> + Send + '_>>;
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
 
     /// Submit a challenge response transaction.
-    fn submit_response(
+    async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: storage_primitives::MmrProof,
         chunk_proof: storage_primitives::MerkleProof,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>>;
+    ) -> Result<H256, Error>;
 }
 
 /// Commands for controlling the responder.

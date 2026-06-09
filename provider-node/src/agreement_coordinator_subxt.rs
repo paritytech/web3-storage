@@ -2,8 +2,6 @@
 
 use crate::agreement_coordinator::AgreementChainClient;
 use crate::Error;
-use std::future::Future;
-use std::pin::Pin;
 use storage_primitives::BucketId;
 
 /// Production implementation that talks to the chain via subxt.
@@ -35,13 +33,14 @@ impl SubxtAgreementChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl AgreementChainClient for SubxtAgreementChainClient {
-    fn fetch_pending_requests(
+    async fn fetch_pending_requests(
         &self,
         provider_account: &[u8; 32],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BucketId>, Error>> + Send + '_>> {
+    ) -> Result<Vec<BucketId>, Error> {
         let our_bytes = *provider_account;
-        Box::pin(async move {
+        {
             // Iterate ALL AgreementRequests entries on chain.
             // Storage layout: DoubleMap<Blake2_128Concat(BucketId), Blake2_128Concat(AccountId), Request>
             // Key bytes: [16 pallet_hash][16 storage_hash][16 blake2_hash + 8 bucket_id][16 blake2_hash + 32 account]
@@ -112,42 +111,37 @@ impl AgreementChainClient for SubxtAgreementChainClient {
             }
 
             Ok(bucket_ids)
-        })
+        }
     }
 
-    fn accept_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>> {
-        Box::pin(async move {
-            let tx = subxt::dynamic::tx(
-                "StorageProvider",
-                "accept_agreement",
-                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-            );
+    async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error> {
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "accept_agreement",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
 
-            let progress = self
-                .api
-                .tx()
-                .sign_and_submit_then_watch_default(&tx, &self.signer)
-                .await
-                .map_err(|e| {
-                    Error::Internal(format!(
-                        "Failed to submit accept_agreement for bucket {bucket_id}: {e}"
-                    ))
-                })?;
-
-            progress.wait_for_finalized_success().await.map_err(|e| {
+        let progress = self
+            .api
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
+            .await
+            .map_err(|e| {
                 Error::Internal(format!(
-                    "accept_agreement tx failed for bucket {bucket_id}: {e}"
+                    "Failed to submit accept_agreement for bucket {bucket_id}: {e}"
                 ))
             })?;
 
-            tracing::info!(
-                "Auto-accepted agreement for bucket {} (finalized)",
-                bucket_id
-            );
-            Ok(())
-        })
+        progress.wait_for_finalized_success().await.map_err(|e| {
+            Error::Internal(format!(
+                "accept_agreement tx failed for bucket {bucket_id}: {e}"
+            ))
+        })?;
+
+        tracing::info!(
+            "Auto-accepted agreement for bucket {} (finalized)",
+            bucket_id
+        );
+        Ok(())
     }
 }
