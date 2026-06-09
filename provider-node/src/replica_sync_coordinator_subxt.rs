@@ -5,8 +5,6 @@ use crate::replica_sync_coordinator::{
 };
 use crate::Error;
 use sp_core::H256;
-use std::future::Future;
-use std::pin::Pin;
 use storage_primitives::BucketId;
 
 /// Production implementation that talks to the chain via subxt.
@@ -205,26 +203,25 @@ impl SubxtReplicaSyncChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
-        Box::pin(async move {
-            let block = self
-                .api
-                .blocks()
-                .at_latest()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-            Ok(block.number() as u64)
-        })
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        let block = self
+            .api
+            .blocks()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
+        Ok(block.number() as u64)
     }
 
-    fn fetch_replica_agreements(
+    async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
         let provider_account = provider_account.to_string();
-        Box::pin(async move {
+        {
             let mut agreements = Vec::new();
 
             let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
@@ -306,70 +303,113 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
             }
 
             Ok(agreements)
-        })
+        }
     }
 
-    fn fetch_bucket_snapshot(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>> {
-        Box::pin(async move {
-            use subxt::ext::scale_value::ValueDef;
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+        use subxt::ext::scale_value::ValueDef;
 
-            let storage_address = subxt::dynamic::storage(
-                "StorageProvider",
-                "Buckets",
-                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-            );
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "Buckets",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
 
-            let storage = self
-                .api
-                .storage()
-                .at_latest()
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let storage = self
+            .api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-            match storage.fetch(&storage_address).await {
-                Ok(Some(value)) => {
-                    use subxt::ext::scale_value::At;
-                    let decoded = value
-                        .to_value()
-                        .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+        match storage.fetch(&storage_address).await {
+            Ok(Some(value)) => {
+                use subxt::ext::scale_value::At;
+                let decoded = value
+                    .to_value()
+                    .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
 
-                    if let Some(snapshot_opt) = decoded.at(4) {
-                        if let ValueDef::Variant(variant) = &snapshot_opt.value {
-                            if variant.name == "Some" {
-                                if let Some(snapshot_val) = variant.values.values().next() {
-                                    return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
-                                }
+                if let Some(snapshot_opt) = decoded.at(4) {
+                    if let ValueDef::Variant(variant) = &snapshot_opt.value {
+                        if variant.name == "Some" {
+                            if let Some(snapshot_val) = variant.values.values().next() {
+                                return Ok(Self::parse_bucket_snapshot_value(snapshot_val));
                             }
                         }
                     }
-
-                    Ok(BucketSnapshot {
-                        mmr_root: H256::zero(),
-                        leaf_count: 0,
-                    })
                 }
-                _ => Ok(BucketSnapshot {
+
+                Ok(BucketSnapshot {
                     mmr_root: H256::zero(),
                     leaf_count: 0,
-                }),
+                })
             }
-        })
+            _ => Ok(BucketSnapshot {
+                mmr_root: H256::zero(),
+                leaf_count: 0,
+            }),
+        }
     }
 
-    fn fetch_primary_endpoints(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>> {
-        Box::pin(async move {
-            use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
-            let storage_address = subxt::dynamic::storage(
+        let storage_address = subxt::dynamic::storage(
+            "StorageProvider",
+            "Buckets",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        );
+
+        let storage = self
+            .api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let bucket_value = match storage.fetch(&storage_address).await {
+            Ok(Some(v)) => v,
+            _ => return Ok(vec![]),
+        };
+
+        let decoded = bucket_value
+            .to_value()
+            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+
+        let mut provider_bytes_list = Vec::new();
+
+        // primary_providers is at index 3
+        if let Some(field3) = decoded.at(3) {
+            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
+                for provider_value in providers_vec {
+                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
+                        &provider_value.value
+                    {
+                        let bytes: Vec<u8> = account_bytes
+                            .iter()
+                            .filter_map(|v| {
+                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
+                                    Some(*n as u8)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if bytes.len() == 32 {
+                            provider_bytes_list.push(bytes);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Look up each provider's multiaddr
+        let mut endpoints = Vec::new();
+        for provider_bytes in provider_bytes_list {
+            let provider_addr = subxt::dynamic::storage(
                 "StorageProvider",
-                "Buckets",
-                vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+                "Providers",
+                vec![subxt::dynamic::Value::from_bytes(&provider_bytes)],
             );
 
             let storage = self
@@ -379,25 +419,13 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-            let bucket_value = match storage.fetch(&storage_address).await {
-                Ok(Some(v)) => v,
-                _ => return Ok(vec![]),
-            };
-
-            let decoded = bucket_value
-                .to_value()
-                .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
-
-            let mut provider_bytes_list = Vec::new();
-
-            // primary_providers is at index 3
-            if let Some(field3) = decoded.at(3) {
-                if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
-                    for provider_value in providers_vec {
-                        if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
-                            &provider_value.value
+            if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
+                if let Ok(decoded) = value.to_value() {
+                    if let Some(field0) = decoded.at(0) {
+                        if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) =
+                            &field0.value
                         {
-                            let bytes: Vec<u8> = account_bytes
+                            let bytes: Vec<u8> = multiaddr_bytes
                                 .iter()
                                 .filter_map(|v| {
                                     if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
@@ -407,122 +435,78 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
                                     }
                                 })
                                 .collect();
-                            if bytes.len() == 32 {
-                                provider_bytes_list.push(bytes);
+                            if !bytes.is_empty() {
+                                let multiaddr_str = String::from_utf8_lossy(&bytes);
+                                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
                             }
                         }
                     }
                 }
             }
+        }
 
-            // Look up each provider's multiaddr
-            let mut endpoints = Vec::new();
-            for provider_bytes in provider_bytes_list {
-                let provider_addr = subxt::dynamic::storage(
-                    "StorageProvider",
-                    "Providers",
-                    vec![subxt::dynamic::Value::from_bytes(&provider_bytes)],
-                );
-
-                let storage = self
-                    .api
-                    .storage()
-                    .at_latest()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-                if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
-                    if let Ok(decoded) = value.to_value() {
-                        if let Some(field0) = decoded.at(0) {
-                            if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) =
-                                &field0.value
-                            {
-                                let bytes: Vec<u8> = multiaddr_bytes
-                                    .iter()
-                                    .filter_map(|v| {
-                                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                            Some(*n as u8)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                if !bytes.is_empty() {
-                                    let multiaddr_str = String::from_utf8_lossy(&bytes);
-                                    endpoints
-                                        .push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(endpoints)
-        })
+        Ok(endpoints)
     }
 
-    fn submit_sync_confirmation(
+    async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         target_mmr_root: H256,
-    ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>> {
-        Box::pin(async move {
-            // Build roots array: position 0 = current root, rest = None
-            let roots_value: Vec<subxt::dynamic::Value> = (0..7)
-                .map(|i| {
-                    if i == 0 {
-                        subxt::dynamic::Value::unnamed_variant(
-                            "Some",
-                            vec![subxt::dynamic::Value::from_bytes(
-                                target_mmr_root.as_bytes(),
-                            )],
-                        )
-                    } else {
-                        subxt::dynamic::Value::unnamed_variant("None", vec![])
-                    }
-                })
-                .collect();
+    ) -> Result<(u8, u128), Error> {
+        // Build roots array: position 0 = current root, rest = None
+        let roots_value: Vec<subxt::dynamic::Value> = (0..7)
+            .map(|i| {
+                if i == 0 {
+                    subxt::dynamic::Value::unnamed_variant(
+                        "Some",
+                        vec![subxt::dynamic::Value::from_bytes(
+                            target_mmr_root.as_bytes(),
+                        )],
+                    )
+                } else {
+                    subxt::dynamic::Value::unnamed_variant("None", vec![])
+                }
+            })
+            .collect();
 
-            let signature = subxt::dynamic::Value::unnamed_variant(
-                "Sr25519",
-                vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
-            );
+        let signature = subxt::dynamic::Value::unnamed_variant(
+            "Sr25519",
+            vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
+        );
 
-            let tx = subxt::dynamic::tx(
-                "StorageProvider",
-                "confirm_replica_sync",
-                vec![
-                    subxt::dynamic::Value::u128(bucket_id as u128),
-                    subxt::dynamic::Value::unnamed_composite(roots_value),
-                    signature,
-                ],
-            );
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "confirm_replica_sync",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::unnamed_composite(roots_value),
+                signature,
+            ],
+        );
 
-            tracing::info!(
-                "Submitting confirm_replica_sync for bucket {} with root 0x{}",
-                bucket_id,
-                hex::encode(target_mmr_root.as_bytes())
-            );
+        tracing::info!(
+            "Submitting confirm_replica_sync for bucket {} with root 0x{}",
+            bucket_id,
+            hex::encode(target_mmr_root.as_bytes())
+        );
 
-            let tx_progress = self
-                .api
-                .tx()
-                .sign_and_submit_then_watch_default(&tx, &self.signer)
-                .await
-                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
+        let tx_progress = self
+            .api
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 
-            let _events = tx_progress
-                .wait_for_finalized_success()
-                .await
-                .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        let _events = tx_progress
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
 
-            tracing::info!(
-                "confirm_replica_sync submitted successfully for bucket {}",
-                bucket_id
-            );
+        tracing::info!(
+            "confirm_replica_sync submitted successfully for bucket {}",
+            bucket_id
+        );
 
-            Ok((0, 0)) // Position 0, payment extracted from events in production
-        })
+        Ok((0, 0)) // Position 0, payment extracted from events in production
     }
 }

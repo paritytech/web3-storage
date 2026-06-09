@@ -11,8 +11,6 @@ use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
 use sp_core::H256;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -148,36 +146,30 @@ pub struct BucketSnapshot {
 }
 
 /// Trait abstracting chain interactions for the replica sync coordinator.
+#[async_trait::async_trait]
 pub trait ReplicaSyncChainClient: Send + Sync {
     /// Get the current block number.
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>>;
+    async fn get_current_block(&self) -> Result<u64, Error>;
 
     /// Fetch replica agreements for this provider.
-    fn fetch_replica_agreements(
+    async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>>;
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error>;
 
     /// Fetch the bucket snapshot (latest checkpoint state) from chain.
-    fn fetch_bucket_snapshot(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>>;
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error>;
 
     /// Fetch primary provider HTTP endpoints for a bucket.
-    fn fetch_primary_endpoints(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>>;
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error>;
 
     /// Submit a confirm_replica_sync extrinsic.
-    #[allow(clippy::type_complexity)]
-    fn submit_sync_confirmation(
+    async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         target_mmr_root: H256,
-    ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>>;
+    ) -> Result<(u8, u128), Error>;
 }
 
 /// Handle for controlling the replica sync coordinator.
