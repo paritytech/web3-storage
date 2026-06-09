@@ -5,8 +5,6 @@
 //! of the provider.
 
 use crate::{Error, ProviderState};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,21 +13,18 @@ use tokio::sync::mpsc;
 
 /// Trait abstracting chain interactions for the agreement coordinator.
 ///
-/// Follows the same pattern as [`crate::auth::MembershipResolver`]: a trait
-/// with `Pin<Box<dyn Future>>` return types, stored as `Box<dyn AgreementChainClient>`,
-/// enabling mock-based testing without a live chain.
+/// Stored as `Box<dyn AgreementChainClient>`, enabling mock-based testing
+/// without a live chain.
+#[async_trait::async_trait]
 pub trait AgreementChainClient: Send + Sync {
     /// Fetch bucket IDs with pending agreement requests for this provider.
-    fn fetch_pending_requests(
+    async fn fetch_pending_requests(
         &self,
         provider_account: &[u8; 32],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BucketId>, Error>> + Send + '_>>;
+    ) -> Result<Vec<BucketId>, Error>;
 
     /// Accept a pending agreement request for the given bucket.
-    fn accept_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>>;
+    async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error>;
 }
 
 /// Configuration for the agreement coordinator.

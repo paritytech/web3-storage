@@ -7,8 +7,6 @@
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{Pair, H256};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -89,24 +87,24 @@ pub enum CheckpointResult {
 }
 
 /// Trait abstracting chain interactions for the checkpoint coordinator.
-#[allow(clippy::type_complexity)]
+#[async_trait::async_trait]
 pub trait CheckpointChainClient: Send + Sync {
     /// Get the current block number.
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>>;
+    async fn get_current_block(&self) -> Result<u64, Error>;
 
     /// Fetch checkpoint config (interval, grace_period) for a bucket.
     /// Returns `None` if no config exists on chain.
-    fn fetch_checkpoint_config(
+    async fn fetch_checkpoint_config(
         &self,
         bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>>;
+    ) -> Result<Option<(u32, u32)>, Error>;
 
     /// Submit a checkpoint transaction with collected signatures.
-    fn submit_checkpoint(
+    async fn submit_checkpoint(
         &self,
         duty: &CheckpointDuty,
         signatures: Vec<(String, String)>,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>>;
+    ) -> Result<H256, Error>;
 }
 
 /// Commands for controlling the coordinator.
