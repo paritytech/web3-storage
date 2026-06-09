@@ -349,10 +349,9 @@ export async function waitForTransaction(
 // Retry budget for `Invalid::Stale` (nonce too low). Stale happens two ways on
 // these dev chains: a fresh PAPI client whose nonce view trails the chain, and
 // the provider account racing the provider node's coordinators, which sign from
-// the same key. Contract calls pass an explicit best-block nonce to avoid the
-// first case deterministically; this retry is the backstop for the race, which
-// no pre-read can fully prevent. On retry we drop any explicit nonce so PAPI
-// re-reads a fresh one; re-submitting the same stale nonce would just fail.
+// the same key. On retry we wait ~a block for the chain to advance and drop any
+// explicit nonce so PAPI re-reads a fresh one; re-submitting the same stale
+// nonce would just fail again.
 const STALE_RETRIES = 3;
 const STALE_RETRY_DELAY_MS = 6_500; // ~3 blocks at 2s
 

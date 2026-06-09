@@ -15,30 +15,11 @@ import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 
 import {
   hexToBytes,
-  READ_OPTS,
   requireOneEvent,
   submitTx,
   submitTxFinalized,
   toHex,
 } from "./common.js";
-
-/**
- * Read `signer`'s nonce from the BEST block and return it as PAPI `txOpts`.
- *
- * A fresh PAPI client's internal nonce view can trail the chain when
- * back-to-back CI tests reuse the same signing account, so its first submit is
- * rejected as `Invalid::Stale` (nonce too low). Reading the nonce ourselves
- * from the best block (a finalized read lags ~6 blocks and is itself stale)
- * and passing it explicitly sidesteps that cache. Contract calls await
- * in-block before returning, so the next read already sees the bump.
- */
-async function bestBlockNonceOpts(api, signer) {
-  const account = await api.query.System.Account.getValue(
-    signer.address,
-    READ_OPTS
-  );
-  return { nonce: account.nonce };
-}
 
 /**
  * Compute the EVM-side H160 of a substrate account via `AccountId32Mapper`'s
@@ -79,9 +60,7 @@ export async function ensureAccountMapped(api, signer) {
     await submitTx(
       api.tx.Revive.map_account(),
       signer.signer,
-      `Revive.map_account(${signer.seed})`,
-      undefined,
-      await bestBlockNonceOpts(api, signer)
+      `Revive.map_account(${signer.seed})`
     );
   } catch (e) {
     const msg = String(e?.message ?? e);
@@ -116,13 +95,7 @@ export async function deployContract(
     salt: salt ? Binary.fromBytes(salt) : undefined,
   });
 
-  const result = await submitTx(
-    tx,
-    deployer.signer,
-    "Revive.instantiate_with_code",
-    undefined,
-    await bestBlockNonceOpts(api, deployer)
-  );
+  const result = await submitTx(tx, deployer.signer, "Revive.instantiate_with_code");
   const instantiated = requireOneEvent(
     result.events,
     api.event.Revive.Instantiated,
@@ -163,13 +136,7 @@ export async function callContract(
     data: Binary.fromBytes(data),
   });
   const submit = finalized ? submitTxFinalized : submitTx;
-  return submit(
-    tx,
-    signer.signer,
-    "Revive.call",
-    undefined,
-    await bestBlockNonceOpts(api, signer)
-  );
+  return submit(tx, signer.signer, "Revive.call");
 }
 
 /**
