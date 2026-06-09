@@ -1,8 +1,6 @@
 //! Integration tests for the challenge responder (moved from unit tests for CI coverage).
 
 use sp_core::H256;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
@@ -43,49 +41,46 @@ impl MockChallengeChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeChainClient {
-    fn poll_challenges(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<DetectedChallenge>, Error>> + Send + '_>> {
-        Box::pin(async { Ok(self.challenges.lock().await.clone()) })
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        Ok(self.challenges.lock().await.clone())
     }
 
-    fn submit_response(
+    async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         _chunk_data: Vec<u8>,
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
-        Box::pin(async move {
-            self.submitted.lock().await.push(challenge_id);
-            if let Some(err) = self.submit_error.lock().await.as_ref() {
-                return Err(Error::Internal(err.clone()));
-            }
-            Ok(H256::zero())
-        })
+    ) -> Result<H256, Error> {
+        self.submitted.lock().await.push(challenge_id);
+        if let Some(err) = self.submit_error.lock().await.as_ref() {
+            return Err(Error::Internal(err.clone()));
+        }
+        Ok(H256::zero())
     }
 }
 
 /// Newtype wrapper to satisfy orphan rules when impl'ing the trait for shared mock access.
 struct SharedMock(Arc<MockChallengeChainClient>);
 
+#[async_trait::async_trait]
 impl ChallengeChainClient for SharedMock {
-    fn poll_challenges(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<DetectedChallenge>, Error>> + Send + '_>> {
-        self.0.poll_challenges()
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        self.0.poll_challenges().await
     }
 
-    fn submit_response(
+    async fn submit_response(
         &self,
         challenge_id: (u32, u16),
         chunk_data: Vec<u8>,
         mmr_proof: storage_primitives::MmrProof,
         chunk_proof: storage_primitives::MerkleProof,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
+    ) -> Result<H256, Error> {
         self.0
             .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
     }
 }
 

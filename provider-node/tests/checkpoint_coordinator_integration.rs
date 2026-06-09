@@ -1,8 +1,6 @@
 //! Integration tests for the checkpoint coordinator (moved from unit tests for CI coverage).
 
 use sp_core::H256;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -38,61 +36,61 @@ impl MockCheckpointChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl CheckpointChainClient for MockCheckpointChainClient {
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
-        Box::pin(async { Ok(*self.block_number.lock().await) })
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        Ok(*self.block_number.lock().await)
     }
 
-    fn fetch_checkpoint_config(
+    async fn fetch_checkpoint_config(
         &self,
         _bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>> {
-        Box::pin(async { Ok(*self.config.lock().await) })
+    ) -> Result<Option<(u32, u32)>, Error> {
+        Ok(*self.config.lock().await)
     }
 
-    fn submit_checkpoint(
+    async fn submit_checkpoint(
         &self,
         duty: &CheckpointDuty,
         _signatures: Vec<(String, String)>,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
+    ) -> Result<H256, Error> {
         let bucket_id = duty.bucket_id;
         let window = duty.window;
-        Box::pin(async move {
-            self.submitted.lock().await.push((bucket_id, window));
-            let mut result = self.submit_result.lock().await;
-            match &*result {
-                Ok(h) => Ok(*h),
-                Err(e) => {
-                    let err = Error::Internal(e.to_string());
-                    *result = Ok(H256::zero());
-                    Err(err)
-                }
+        self.submitted.lock().await.push((bucket_id, window));
+        let mut result = self.submit_result.lock().await;
+        match &*result {
+            Ok(h) => Ok(*h),
+            Err(e) => {
+                let err = Error::Internal(e.to_string());
+                *result = Ok(H256::zero());
+                Err(err)
             }
-        })
+        }
     }
 }
 
 /// Newtype wrapper to satisfy orphan rules when impl'ing the trait for shared mock access.
 struct SharedMock(Arc<MockCheckpointChainClient>);
 
+#[async_trait::async_trait]
 impl CheckpointChainClient for SharedMock {
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
-        self.0.get_current_block()
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        self.0.get_current_block().await
     }
 
-    fn fetch_checkpoint_config(
+    async fn fetch_checkpoint_config(
         &self,
         bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<(u32, u32)>, Error>> + Send + '_>> {
-        self.0.fetch_checkpoint_config(bucket_id)
+    ) -> Result<Option<(u32, u32)>, Error> {
+        self.0.fetch_checkpoint_config(bucket_id).await
     }
 
-    fn submit_checkpoint(
+    async fn submit_checkpoint(
         &self,
         duty: &CheckpointDuty,
         signatures: Vec<(String, String)>,
-    ) -> Pin<Box<dyn Future<Output = Result<H256, Error>> + Send + '_>> {
-        self.0.submit_checkpoint(duty, signatures)
+    ) -> Result<H256, Error> {
+        self.0.submit_checkpoint(duty, signatures).await
     }
 }
 

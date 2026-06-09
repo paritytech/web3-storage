@@ -2,8 +2,6 @@
 
 use sp_core::H256;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -64,58 +62,47 @@ impl MockReplicaSyncChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
-    fn get_current_block(&self) -> Pin<Box<dyn Future<Output = Result<u64, Error>> + Send + '_>> {
-        Box::pin(async { Ok(*self.block.lock().await) })
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        Ok(*self.block.lock().await)
     }
 
-    fn fetch_replica_agreements(
+    async fn fetch_replica_agreements(
         &self,
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ReplicaAgreementInfo>, Error>> + Send + '_>> {
-        Box::pin(async { Ok(self.agreements.lock().await.clone()) })
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+        Ok(self.agreements.lock().await.clone())
     }
 
-    fn fetch_bucket_snapshot(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<BucketSnapshot, Error>> + Send + '_>> {
-        Box::pin(async move {
-            let snapshots = self.snapshots.lock().await;
-            Ok(snapshots
-                .get(&bucket_id)
-                .cloned()
-                .unwrap_or(BucketSnapshot {
-                    mmr_root: H256::zero(),
-                    leaf_count: 0,
-                }))
-        })
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+        let snapshots = self.snapshots.lock().await;
+        Ok(snapshots
+            .get(&bucket_id)
+            .cloned()
+            .unwrap_or(BucketSnapshot {
+                mmr_root: H256::zero(),
+                leaf_count: 0,
+            }))
     }
 
-    fn fetch_primary_endpoints(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, Error>> + Send + '_>> {
-        Box::pin(async move {
-            let endpoints = self.endpoints.lock().await;
-            Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
-        })
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        let endpoints = self.endpoints.lock().await;
+        Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
 
-    fn submit_sync_confirmation(
+    async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
         _target_mmr_root: H256,
-    ) -> Pin<Box<dyn Future<Output = Result<(u8, u128), Error>> + Send + '_>> {
-        Box::pin(async move {
-            self.confirmations.lock().await.push(bucket_id);
-            let result = &*self.confirm_result.lock().await;
-            match result {
-                Ok(v) => Ok(*v),
-                Err(e) => Err(Error::Internal(e.to_string())),
-            }
-        })
+    ) -> Result<(u8, u128), Error> {
+        self.confirmations.lock().await.push(bucket_id);
+        let result = &*self.confirm_result.lock().await;
+        match result {
+            Ok(v) => Ok(*v),
+            Err(e) => Err(Error::Internal(e.to_string())),
+        }
     }
 }
 

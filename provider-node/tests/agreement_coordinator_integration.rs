@@ -1,7 +1,5 @@
 //! Integration tests for the agreement coordinator (moved from unit tests for CI coverage).
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -32,45 +30,39 @@ impl MockAgreementChainClient {
     }
 }
 
+#[async_trait::async_trait]
 impl AgreementChainClient for MockAgreementChainClient {
-    fn fetch_pending_requests(
+    async fn fetch_pending_requests(
         &self,
         _provider_account: &[u8; 32],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BucketId>, Error>> + Send + '_>> {
-        Box::pin(async { Ok(self.pending.lock().await.clone()) })
+    ) -> Result<Vec<BucketId>, Error> {
+        Ok(self.pending.lock().await.clone())
     }
 
-    fn accept_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>> {
-        Box::pin(async move {
-            let err = self.accept_error.lock().await.take();
-            if let Some(e) = err {
-                return Err(e);
-            }
-            self.accepted.lock().await.push(bucket_id);
-            Ok(())
-        })
+    async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error> {
+        let err = self.accept_error.lock().await.take();
+        if let Some(e) = err {
+            return Err(e);
+        }
+        self.accepted.lock().await.push(bucket_id);
+        Ok(())
     }
 }
 
 /// Newtype wrapper to satisfy orphan rules when impl'ing the trait for shared mock access.
 struct SharedMock(Arc<MockAgreementChainClient>);
 
+#[async_trait::async_trait]
 impl AgreementChainClient for SharedMock {
-    fn fetch_pending_requests(
+    async fn fetch_pending_requests(
         &self,
         provider_account: &[u8; 32],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<BucketId>, Error>> + Send + '_>> {
-        self.0.fetch_pending_requests(provider_account)
+    ) -> Result<Vec<BucketId>, Error> {
+        self.0.fetch_pending_requests(provider_account).await
     }
 
-    fn accept_agreement(
-        &self,
-        bucket_id: BucketId,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + '_>> {
-        self.0.accept_agreement(bucket_id)
+    async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error> {
+        self.0.accept_agreement(bucket_id).await
     }
 }
 
