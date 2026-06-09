@@ -346,6 +346,41 @@ export async function waitForTransaction(
   });
 }
 
+// Retry budget for `Invalid::Stale` (nonce too low). Stale happens two ways on
+// these dev chains: a fresh PAPI client whose nonce view trails the chain, and
+// the provider account racing the provider node's coordinators, which sign from
+// the same key. Contract calls pass an explicit best-block nonce to avoid the
+// first case deterministically; this retry is the backstop for the race, which
+// no pre-read can fully prevent. On retry we drop any explicit nonce so PAPI
+// re-reads a fresh one; re-submitting the same stale nonce would just fail.
+const STALE_RETRIES = 3;
+const STALE_RETRY_DELAY_MS = 6_500; // ~3 blocks at 2s
+
+async function submitWithStaleRetry(txMode, tx, signer, label, timeoutMs, txOpts) {
+  for (let attempt = 1; attempt <= STALE_RETRIES; attempt++) {
+    const opts = attempt === 1 ? txOpts : { ...txOpts, nonce: undefined };
+    try {
+      return await waitForTransaction(
+        tx,
+        signer,
+        label,
+        txMode,
+        timeoutMs,
+        null,
+        opts
+      );
+    } catch (err) {
+      const isStale = /\bStale\b/i.test(String(err?.message ?? err));
+      if (!isStale || attempt === STALE_RETRIES) throw err;
+      console.warn(
+        `  ⚠ ${label}: stale nonce (attempt ${attempt}/${STALE_RETRIES}), ` +
+          `retrying in ${STALE_RETRY_DELAY_MS}ms with a fresh nonce…`
+      );
+      await new Promise((r) => setTimeout(r, STALE_RETRY_DELAY_MS));
+    }
+  }
+}
+
 /**
  * Sign + submit a tx, assert it dispatched OK, return the in-block event
  * (`{ ok, events, ... }`). Resolves at inclusion, not finalization — ~6x faster
@@ -363,13 +398,12 @@ export async function submitTx(
   timeoutMs = DEFAULT_TX_TIMEOUT_MS,
   txOpts = {}
 ) {
-  return waitForTransaction(
+  return submitWithStaleRetry(
+    TX_MODE_IN_BLOCK,
     tx,
     signer,
     label,
-    TX_MODE_IN_BLOCK,
     timeoutMs,
-    null,
     txOpts
   );
 }
@@ -387,13 +421,12 @@ export async function submitTxFinalized(
   timeoutMs = DEFAULT_TX_TIMEOUT_MS,
   txOpts = {}
 ) {
-  return waitForTransaction(
+  return submitWithStaleRetry(
+    TX_MODE_FINALIZED_BLOCK,
     tx,
     signer,
     label,
-    TX_MODE_FINALIZED_BLOCK,
     timeoutMs,
-    null,
     txOpts
   );
 }
