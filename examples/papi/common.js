@@ -360,9 +360,18 @@ export async function submitTx(
   tx,
   signer,
   label,
-  timeoutMs = DEFAULT_TX_TIMEOUT_MS
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS,
+  txOpts = {}
 ) {
-  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+  return waitForTransaction(
+    tx,
+    signer,
+    label,
+    TX_MODE_IN_BLOCK,
+    timeoutMs,
+    null,
+    txOpts
+  );
 }
 
 /**
@@ -375,14 +384,17 @@ export async function submitTxFinalized(
   tx,
   signer,
   label,
-  timeoutMs = DEFAULT_TX_TIMEOUT_MS
+  timeoutMs = DEFAULT_TX_TIMEOUT_MS,
+  txOpts = {}
 ) {
   return waitForTransaction(
     tx,
     signer,
     label,
     TX_MODE_FINALIZED_BLOCK,
-    timeoutMs
+    timeoutMs,
+    null,
+    txOpts
   );
 }
 
