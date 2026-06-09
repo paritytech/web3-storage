@@ -4,6 +4,8 @@ use crate::challenge_responder::ChallengeChainClient;
 use crate::challenge_responder::DetectedChallenge;
 use crate::Error;
 use sp_core::H256;
+use subxt::dynamic::Value;
+use subxt::ext::scale_value::value;
 
 /// Production implementation that talks to the chain via subxt.
 /// Not yet wired into command.rs — scaffolding for when poll_challenges is implemented.
@@ -59,106 +61,74 @@ impl ChallengeChainClient for SubxtChallengeChainClient {
         mmr_proof: storage_primitives::MmrProof,
         chunk_proof: storage_primitives::MerkleProof,
     ) -> Result<H256, Error> {
-        // Build ChallengeId
-        let challenge_id_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "deadline",
-                subxt::dynamic::Value::u128(challenge_id.0 as u128),
-            ),
-            ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
-        ]);
+        let challenge_id_val = value!({
+            deadline: challenge_id.0 as u128,
+            index: challenge_id.1 as u128
+        });
 
-        // Build MmrProof value
-        let mmr_proof_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "peaks",
-                subxt::dynamic::Value::unnamed_composite(
-                    mmr_proof
-                        .peaks
-                        .iter()
-                        .map(|p| subxt::dynamic::Value::from_bytes(p.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "leaf",
-                subxt::dynamic::Value::named_composite(vec![
-                    (
-                        "data_root",
-                        subxt::dynamic::Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
-                    ),
-                    (
-                        "data_size",
-                        subxt::dynamic::Value::u128(mmr_proof.leaf.data_size as u128),
-                    ),
-                    (
-                        "total_size",
-                        subxt::dynamic::Value::u128(mmr_proof.leaf.total_size as u128),
-                    ),
-                ]),
-            ),
-            (
-                "leaf_proof",
-                subxt::dynamic::Value::named_composite(vec![
-                    (
-                        "siblings",
-                        subxt::dynamic::Value::unnamed_composite(
-                            mmr_proof
-                                .leaf_proof
-                                .siblings
-                                .iter()
-                                .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                    (
-                        "path",
-                        subxt::dynamic::Value::unnamed_composite(
-                            mmr_proof
-                                .leaf_proof
-                                .path
-                                .iter()
-                                .map(|b| subxt::dynamic::Value::bool(*b))
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                ]),
-            ),
-        ]);
-
-        // Build chunk proof value
-        let chunk_proof_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "siblings",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .siblings
-                        .iter()
-                        .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "path",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .path
-                        .iter()
-                        .map(|b| subxt::dynamic::Value::bool(*b))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        ]);
-
-        // Build ChallengeResponse::Proof variant
-        let response_val = subxt::dynamic::Value::named_variant(
-            "Proof",
-            vec![
-                ("chunk_data", subxt::dynamic::Value::from_bytes(&chunk_data)),
-                ("mmr_proof", mmr_proof_val),
-                ("chunk_proof", chunk_proof_val),
-            ],
+        // Dynamic arrays built from iterators, then embedded in the macro
+        let peaks = Value::unnamed_composite(
+            mmr_proof
+                .peaks
+                .iter()
+                .map(|p| Value::from_bytes(p.as_bytes()))
+                .collect::<Vec<_>>(),
         );
+        let mmr_siblings = Value::unnamed_composite(
+            mmr_proof
+                .leaf_proof
+                .siblings
+                .iter()
+                .map(|s| Value::from_bytes(s.as_bytes()))
+                .collect::<Vec<_>>(),
+        );
+        let mmr_path = Value::unnamed_composite(
+            mmr_proof
+                .leaf_proof
+                .path
+                .iter()
+                .map(|b| Value::bool(*b))
+                .collect::<Vec<_>>(),
+        );
+
+        let mmr_proof_val = value!({
+            peaks: peaks,
+            leaf: {
+                data_root: Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
+                data_size: mmr_proof.leaf.data_size as u128,
+                total_size: mmr_proof.leaf.total_size as u128
+            },
+            leaf_proof: {
+                siblings: mmr_siblings,
+                path: mmr_path
+            }
+        });
+
+        let chunk_siblings = Value::unnamed_composite(
+            chunk_proof
+                .siblings
+                .iter()
+                .map(|s| Value::from_bytes(s.as_bytes()))
+                .collect::<Vec<_>>(),
+        );
+        let chunk_path = Value::unnamed_composite(
+            chunk_proof
+                .path
+                .iter()
+                .map(|b| Value::bool(*b))
+                .collect::<Vec<_>>(),
+        );
+
+        let chunk_proof_val = value!({
+            siblings: chunk_siblings,
+            path: chunk_path
+        });
+
+        let response_val = value!(Proof {
+            chunk_data: Value::from_bytes(&chunk_data),
+            mmr_proof: mmr_proof_val,
+            chunk_proof: chunk_proof_val
+        });
 
         let tx = subxt::dynamic::tx(
             "StorageProvider",

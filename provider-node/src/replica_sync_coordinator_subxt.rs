@@ -6,6 +6,8 @@ use crate::replica_sync_coordinator::{
 use crate::Error;
 use sp_core::H256;
 use storage_primitives::BucketId;
+use subxt::dynamic::Value;
+use subxt::ext::scale_value::value;
 
 /// Production implementation that talks to the chain via subxt.
 pub struct SubxtReplicaSyncChainClient {
@@ -233,8 +235,8 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
                     "StorageProvider",
                     "StorageAgreements",
                     vec![
-                        subxt::dynamic::Value::u128(*bucket_id as u128),
-                        subxt::dynamic::Value::from_bytes(&account_bytes),
+                        Value::u128(*bucket_id as u128),
+                        Value::from_bytes(&account_bytes),
                     ],
                 );
 
@@ -312,7 +314,7 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
         let storage_address = subxt::dynamic::storage(
             "StorageProvider",
             "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            vec![Value::u128(bucket_id as u128)],
         );
 
         let storage = self
@@ -357,7 +359,7 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
         let storage_address = subxt::dynamic::storage(
             "StorageProvider",
             "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            vec![Value::u128(bucket_id as u128)],
         );
 
         let storage = self
@@ -409,7 +411,7 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
             let provider_addr = subxt::dynamic::storage(
                 "StorageProvider",
                 "Providers",
-                vec![subxt::dynamic::Value::from_bytes(&provider_bytes)],
+                vec![Value::from_bytes(&provider_bytes)],
             );
 
             let storage = self
@@ -454,32 +456,24 @@ impl ReplicaSyncChainClient for SubxtReplicaSyncChainClient {
         target_mmr_root: H256,
     ) -> Result<(u8, u128), Error> {
         // Build roots array: position 0 = current root, rest = None
-        let roots_value: Vec<subxt::dynamic::Value> = (0..7)
+        let roots_value: Vec<Value> = (0..7)
             .map(|i| {
                 if i == 0 {
-                    subxt::dynamic::Value::unnamed_variant(
-                        "Some",
-                        vec![subxt::dynamic::Value::from_bytes(
-                            target_mmr_root.as_bytes(),
-                        )],
-                    )
+                    value!(Some(Value::from_bytes(target_mmr_root.as_bytes())))
                 } else {
-                    subxt::dynamic::Value::unnamed_variant("None", vec![])
+                    value!(None())
                 }
             })
             .collect();
 
-        let signature = subxt::dynamic::Value::unnamed_variant(
-            "Sr25519",
-            vec![subxt::dynamic::Value::from_bytes([0u8; 64])],
-        );
+        let signature = value!(Sr25519(Value::from_bytes([0u8; 64])));
 
         let tx = subxt::dynamic::tx(
             "StorageProvider",
             "confirm_replica_sync",
             vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::unnamed_composite(roots_value),
+                Value::u128(bucket_id as u128),
+                Value::unnamed_composite(roots_value),
                 signature,
             ],
         );
