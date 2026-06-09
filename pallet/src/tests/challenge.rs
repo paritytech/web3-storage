@@ -175,40 +175,6 @@ fn respond_to_challenge_fails_not_provider() {
 }
 
 #[test]
-fn respond_to_challenge_fails_expired() {
-    new_test_ext().execute_with(|| {
-        frame_system::Pallet::<Test>::set_block_number(1);
-        let bucket_id = setup_with_snapshot(2, 1);
-
-        assert_ok!(StorageProvider::challenge_checkpoint(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-            2,
-            0,
-            0,
-        ));
-
-        let challenge_id = ChallengeId {
-            deadline: 101,
-            index: 0,
-        };
-
-        // Advance past deadline (run_to_block only calls System hooks,
-        // not the pallet's on_finalize, so the challenge still exists)
-        run_to_block(102);
-
-        assert_noop!(
-            StorageProvider::respond_to_challenge(
-                RuntimeOrigin::signed(2),
-                challenge_id,
-                crate::ChallengeResponse::Superseded,
-            ),
-            Error::<Test>::ChallengeExpired
-        );
-    });
-}
-
-#[test]
 fn respond_to_challenge_superseded_works() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
@@ -258,9 +224,8 @@ fn challenge_slashes_provider_on_timeout() {
         ));
 
         // Challenge deadline = block 1 + ChallengeTimeout(100) = 101
-        // run_to_block only calls System hooks, so manually call pallet on_finalize
-        run_to_block(101);
-        <StorageProvider as frame_support::traits::Hooks<u64>>::on_finalize(101);
+        // run_to_block(102) finalises block 101, triggering pallet on_finalize
+        run_to_block(102);
 
         // Provider should be slashed
         let provider = Providers::<Test>::get(2).unwrap();
@@ -557,9 +522,8 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
         let challenges = Challenges::<Test>::get(101).unwrap();
         assert_eq!(challenges.len(), 2);
 
-        // Advance to deadline and finalize
-        run_to_block(101);
-        <StorageProvider as frame_support::traits::Hooks<u64>>::on_finalize(101);
+        // Advance past deadline — run_to_block(102) finalises block 101
+        run_to_block(102);
 
         // Both providers should be slashed
         let provider2 = Providers::<Test>::get(2).unwrap();
@@ -595,8 +559,8 @@ fn challenge_slashes_emits_event_and_rewards_challenger() {
         // Challenger deposit (100) was reserved
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 100);
 
-        run_to_block(101);
-        <StorageProvider as frame_support::traits::Hooks<u64>>::on_finalize(101);
+        // run_to_block(102) finalises block 101, triggering slash
+        run_to_block(102);
 
         // Challenger gets deposit back + 10% of slashed amount
         let challenger_reward = provider_stake / 10;
