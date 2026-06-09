@@ -4,6 +4,8 @@ use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
+use subxt::dynamic::Value;
+use subxt::ext::scale_value::value;
 
 /// Production implementation that talks to the chain via subxt.
 pub struct SubxtCheckpointChainClient {
@@ -55,7 +57,7 @@ impl CheckpointChainClient for SubxtCheckpointChainClient {
         let config_query = subxt::dynamic::storage(
             "StorageProvider",
             "CheckpointConfigs",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            vec![Value::u128(bucket_id as u128)],
         );
         let storage = self
             .api
@@ -110,25 +112,22 @@ impl CheckpointChainClient for SubxtCheckpointChainClient {
             let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
                 .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
 
-            sig_values.push(subxt::dynamic::Value::unnamed_composite(vec![
-                subxt::dynamic::Value::from_bytes(account_bytes),
-                subxt::dynamic::Value::unnamed_variant(
-                    "Sr25519",
-                    vec![subxt::dynamic::Value::from_bytes(sig_bytes)],
-                ),
-            ]));
+            sig_values.push(value!((
+                Value::from_bytes(account_bytes),
+                Sr25519(Value::from_bytes(sig_bytes))
+            )));
         }
 
         let tx = subxt::dynamic::tx(
             "StorageProvider",
             "provider_checkpoint",
             vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_count as u128),
-                subxt::dynamic::Value::u128(window as u128),
-                subxt::dynamic::Value::unnamed_composite(sig_values),
+                Value::u128(bucket_id as u128),
+                Value::from_bytes(mmr_root.as_bytes()),
+                Value::u128(start_seq as u128),
+                Value::u128(leaf_count as u128),
+                Value::u128(window as u128),
+                Value::unnamed_composite(sig_values),
             ],
         );
 

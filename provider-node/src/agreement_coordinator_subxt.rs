@@ -3,6 +3,7 @@
 use crate::agreement_coordinator::AgreementChainClient;
 use crate::Error;
 use storage_primitives::BucketId;
+use subxt::dynamic::Value;
 
 /// Production implementation that talks to the chain via subxt.
 pub struct SubxtAgreementChainClient {
@@ -118,7 +119,7 @@ impl AgreementChainClient for SubxtAgreementChainClient {
         let tx = subxt::dynamic::tx(
             "StorageProvider",
             "accept_agreement",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+            vec![Value::u128(bucket_id as u128)],
         );
 
         let progress = self
