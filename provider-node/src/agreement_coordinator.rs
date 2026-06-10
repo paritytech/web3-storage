@@ -27,6 +27,20 @@ pub trait AgreementChainClient: Send + Sync {
     async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error>;
 }
 
+#[async_trait::async_trait]
+impl<T: AgreementChainClient> AgreementChainClient for Arc<T> {
+    async fn fetch_pending_requests(
+        &self,
+        provider_account: &[u8; 32],
+    ) -> Result<Vec<BucketId>, Error> {
+        self.as_ref().fetch_pending_requests(provider_account).await
+    }
+
+    async fn accept_agreement(&self, bucket_id: BucketId) -> Result<(), Error> {
+        self.as_ref().accept_agreement(bucket_id).await
+    }
+}
+
 /// Configuration for the agreement coordinator.
 #[derive(Clone, Debug)]
 pub struct AgreementCoordinatorConfig {

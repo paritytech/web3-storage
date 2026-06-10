@@ -107,6 +107,28 @@ pub trait CheckpointChainClient: Send + Sync {
     ) -> Result<H256, Error>;
 }
 
+#[async_trait::async_trait]
+impl<T: CheckpointChainClient> CheckpointChainClient for Arc<T> {
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        self.as_ref().get_current_block().await
+    }
+
+    async fn fetch_checkpoint_config(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Option<(u32, u32)>, Error> {
+        self.as_ref().fetch_checkpoint_config(bucket_id).await
+    }
+
+    async fn submit_checkpoint(
+        &self,
+        duty: &CheckpointDuty,
+        signatures: Vec<(String, String)>,
+    ) -> Result<H256, Error> {
+        self.as_ref().submit_checkpoint(duty, signatures).await
+    }
+}
+
 /// Commands for controlling the coordinator.
 #[derive(Debug)]
 pub enum CoordinatorCommand {
