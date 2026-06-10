@@ -163,13 +163,6 @@ export async function getFree(api, who) {
 }
 
 // ── Signed-terms agreement flow ──────────────────────────────────────────────
-//
-// `create_bucket`, `request_primary_agreement`, and `accept_agreement` were
-// removed: an agreement is now opened atomically by redeeming provider-signed
-// terms via `establish_storage_agreement`. The owner asks the provider node
-// for a signed quote over HTTP (`/negotiate`), then submits it on-chain. The
-// bucket is created as part of that single extrinsic — there's no separate
-// create step and no acceptance to wait for.
 
 /**
  * Negotiate provider-signed terms over HTTP. Reads the provider's listed

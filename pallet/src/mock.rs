@@ -130,6 +130,7 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 }
 
 /// Build test externalities with custom balances.
+#[allow(dead_code)]
 pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()

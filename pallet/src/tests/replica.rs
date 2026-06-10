@@ -372,23 +372,19 @@ fn setup_replica_with_snapshot() -> u64 {
         }
     });
 
-    // Request and accept replica agreement for provider 2
-    assert_ok!(StorageProvider::request_agreement(
-        RuntimeOrigin::signed(1),
-        bucket_id,
+    // Establish a replica agreement for provider 2 via provider-signed terms.
+    setup_replica_agreement(
         2,
+        1,
+        bucket_id,
         50,
         200,
-        10000,
-        ReplicaRequestParams {
+        ReplicaTerms {
             sync_balance: 500,
             min_sync_interval: 10,
-        }
-    ));
-    assert_ok!(StorageProvider::accept_agreement(
-        RuntimeOrigin::signed(2),
-        bucket_id,
-    ));
+            sync_price: 10,
+        },
+    );
 
     bucket_id
 }
@@ -498,23 +494,19 @@ fn confirm_replica_sync_fails_insufficient_balance() {
             }
         });
 
-        // Request replica with sync_balance < sync_price
-        assert_ok!(StorageProvider::request_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
+        // Establish replica with sync_balance < sync_price
+        setup_replica_agreement(
             2,
+            1,
+            bucket_id,
             50,
             200,
-            10000,
-            ReplicaRequestParams {
+            ReplicaTerms {
                 sync_balance: 5, // Less than sync_price (10)
                 min_sync_interval: 10,
-            }
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-        ));
+                sync_price: 10,
+            },
+        );
 
         let mut roots = [None; 7];
         roots[0] = Some(sp_core::H256::repeat_byte(0xAB));

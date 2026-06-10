@@ -465,19 +465,9 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
 
-        // Add second provider to same bucket
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            200,
-            10000,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-        ));
+        // Add second provider to same bucket (establish_storage_agreement always
+        // creates a fresh single-primary bucket, so the shape is synthesized).
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // Insert snapshot where both providers signed
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {

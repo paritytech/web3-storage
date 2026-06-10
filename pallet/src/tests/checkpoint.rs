@@ -3,23 +3,6 @@ use codec::Encode;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::BucketSnapshot;
 
-/// Register a provider using a real Sr25519 keypair so signatures can be verified on-chain.
-/// Returns the keypair for later use in signing.
-fn register_provider_with_keypair(who: u64, stake: u64) -> sr25519::Pair {
-    use frame_support::assert_ok;
-    let (pair, _) = sr25519::Pair::generate();
-    let public_key: frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> =
-        pair.public().0.to_vec().try_into().unwrap();
-    let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-    assert_ok!(StorageProvider::register_provider(
-        RuntimeOrigin::signed(who),
-        multiaddr.try_into().unwrap(),
-        public_key,
-        stake,
-    ));
-    pair
-}
-
 /// Create a signed checkpoint proposal for use in provider_checkpoint calls.
 fn sign_checkpoint_proposal(
     pair: &sr25519::Pair,
@@ -42,34 +25,19 @@ fn sign_checkpoint_proposal(
 }
 
 /// Setup agreement with a keypair-registered provider. Returns (bucket_id, keypair).
+///
+/// `setup_agreement` redeems provider-signed terms via `establish_storage_agreement`,
+/// and `provider_signer` stamps the deterministic Sr25519 keypair into the provider's
+/// on-chain `public_key`, so the returned pair signs checkpoints that verify on-chain.
 fn setup_agreement_with_keypair(
     provider: u64,
     client: u64,
     max_bytes: u64,
     duration: u64,
 ) -> (u64, sr25519::Pair) {
-    let pair = register_provider_with_keypair(provider, 200);
-    let bucket_id = {
-        use frame_support::assert_ok;
-        assert_ok!(StorageProvider::create_bucket(
-            RuntimeOrigin::signed(client),
-            1
-        ));
-        let bucket_id = crate::NextBucketId::<Test>::get() - 1;
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(client),
-            bucket_id,
-            provider,
-            max_bytes,
-            duration,
-            max_bytes * duration,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(provider),
-            bucket_id,
-        ));
-        bucket_id
-    };
+    register_provider(provider, 200);
+    let bucket_id = setup_agreement(provider, client, max_bytes, duration);
+    let pair = provider_signer(provider);
     (bucket_id, pair)
 }
 
@@ -436,21 +404,12 @@ fn provider_checkpoint_leader_within_grace_period() {
 fn provider_checkpoint_non_leader_rejected_during_grace() {
     new_test_ext().execute_with(|| {
         let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
-        let pair3 = register_provider_with_keypair(3, 200);
+        register_provider(3, 200);
+        let pair3 = provider_signer(3);
 
-        // Add second provider
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            500,
-            25000,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-        ));
+        // Add second provider (establish_storage_agreement always creates a
+        // fresh single-primary bucket, so the multi-primary shape is synthesized).
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // Within grace period, only leader can submit.
         // Determine the leader deterministically and only try the non-leader.
@@ -503,21 +462,12 @@ fn provider_checkpoint_non_leader_rejected_during_grace() {
 fn provider_checkpoint_fallback_after_grace() {
     new_test_ext().execute_with(|| {
         let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
-        let _pair3 = register_provider_with_keypair(3, 200);
+        register_provider(3, 200);
+        let _pair3 = provider_signer(3);
 
-        // Add second provider
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            500,
-            25000,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-        ));
+        // Add second provider (establish_storage_agreement always creates a
+        // fresh single-primary bucket, so the multi-primary shape is synthesized).
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // After grace period (block > window_start + grace = 0 + 5 = 5)
         // Any primary provider can submit (fallback)
