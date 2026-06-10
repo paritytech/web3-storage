@@ -456,6 +456,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # Before the download so the cached target/ can't clobber it. save-if
+      # false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
