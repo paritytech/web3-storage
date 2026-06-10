@@ -95,6 +95,9 @@ pub enum Error {
     #[error("Provider on-chain info unavailable; cannot validate terms")]
     ProviderInfoUnavailable,
 
+    #[error("Storage agreement requested 0 byte")]
+    InvalidMaxBytesRequest,
+
     #[error("Too many requests")]
     RateLimited,
 }
@@ -290,6 +293,13 @@ impl IntoResponse for Error {
                         "committed": committed,
                         "max_capacity": max_capacity,
                     })),
+                },
+            ),
+            Error::InvalidMaxBytesRequest => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "invalid_max_bytes_request".to_string(),
+                    details: None,
                 },
             ),
             Error::ProviderInfoUnavailable => (

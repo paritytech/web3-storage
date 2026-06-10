@@ -53,6 +53,14 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         });
     }
 
+    if req.max_bytes == 0 {
+        return Err(Error::CapacityExceeded {
+            requested: req.max_bytes,
+            committed: info.committed_bytes,
+            max_capacity: info.max_capacity,
+        });
+    }
+
     // `max_capacity == 0` means unlimited.
     if info.max_capacity > 0
         && info.committed_bytes.saturating_add(req.max_bytes) > info.max_capacity

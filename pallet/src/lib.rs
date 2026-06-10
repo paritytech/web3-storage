@@ -44,7 +44,7 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Verify, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
         ProviderRole, RemovalReason, ReplayError, ReplayWindow, Role, HISTORICAL_ROOT_PRIMES,
@@ -814,6 +814,8 @@ pub mod pallet {
         /// primary terms must carry no bucket, replica terms must name the
         /// targeted bucket.
         TermsBucketMismatch,
+        /// Storage agreement requested 0 byte
+        InvalidMaxBytesRequest,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2786,8 +2788,6 @@ pub mod pallet {
             sig: &sp_runtime::MultiSignature,
             context: &[u8],
         ) -> DispatchResult {
-            use sp_runtime::traits::Verify;
-
             let public_key_bytes = provider_info.public_key.as_slice();
             let account_id = match sig {
                 sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
@@ -3776,6 +3776,9 @@ pub mod pallet {
             // bucket is created at redemption.
             ensure!(terms.bucket_id.is_none(), Error::<T>::TermsBucketMismatch);
 
+            // Request's terms.max_bytes must greater than 0
+            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
+
             // Quote must not be stale.
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
@@ -3820,7 +3823,7 @@ pub mod pallet {
             }
 
             {
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let bytes_as_balance: BalanceOf<T> = new_committed.clone().saturated_into();
                 let required_stake = T::MinStakePerByte::get()
                     .checked_mul(&bytes_as_balance)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -3854,8 +3857,12 @@ pub mod pallet {
 
             Providers::<T>::mutate(provider, |maybe_provider| {
                 if let Some(p) = maybe_provider {
-                    p.committed_bytes = p.committed_bytes.saturating_add(terms.max_bytes);
+                    p.committed_bytes = new_committed;
                     p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                    p.stats.total_bytes_committed = p
+                        .stats
+                        .total_bytes_committed
+                        .saturating_add(terms.max_bytes);
                 }
             });
             StorageAgreements::<T>::insert(bucket_id, provider, agreement);
@@ -3918,6 +3925,9 @@ pub mod pallet {
                 .as_ref()
                 .ok_or(Error::<T>::MissingReplicaTerms)?
                 .clone();
+            // The `sync_price` in the agreement comes from the provider's current on-chain setting.
+            // The provider can change their `replica_sync_price` between signing and redemption.
+            // TODO(Tung)
 
             // Provider lookup + signature check over
             // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
@@ -3959,7 +3969,7 @@ pub mod pallet {
             }
 
             {
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let bytes_as_balance: BalanceOf<T> = new_committed.clone().saturated_into();
                 let required_stake = T::MinStakePerByte::get()
                     .checked_mul(&bytes_as_balance)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -3996,8 +4006,12 @@ pub mod pallet {
 
             Providers::<T>::mutate(provider, |maybe_provider| {
                 if let Some(p) = maybe_provider {
-                    p.committed_bytes = p.committed_bytes.saturating_add(terms.max_bytes);
+                    p.committed_bytes = new_committed;
                     p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                    p.stats.total_bytes_committed = p
+                        .stats
+                        .total_bytes_committed
+                        .saturating_add(terms.max_bytes);
                 }
             });
             StorageAgreements::<T>::insert(bucket_id, provider, agreement);
