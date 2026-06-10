@@ -98,6 +98,25 @@ pub trait ChallengeChainClient: Send + Sync {
     ) -> Result<H256, Error>;
 }
 
+#[async_trait::async_trait]
+impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        self.as_ref().poll_challenges().await
+    }
+
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: storage_primitives::MmrProof,
+        chunk_proof: storage_primitives::MerkleProof,
+    ) -> Result<H256, Error> {
+        self.as_ref()
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
+}
+
 /// Commands for controlling the responder.
 #[derive(Debug)]
 pub enum ResponderCommand {
