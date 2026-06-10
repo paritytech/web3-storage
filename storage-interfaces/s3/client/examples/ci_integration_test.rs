@@ -39,8 +39,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Step 1: Create the S3 client
+    // Use //Bob (not //Alice) to avoid nonce contention with the provider node,
+    // which also runs as //Alice and submits background transactions
+    // (accept_agreement, checkpoints) via its coordinators.
     println!("Step 1: Creating S3 client...");
-    let client = S3Client::new(chain_ws, provider_url, "//Alice").await?;
+    let client = S3Client::new(chain_ws, provider_url, "//Bob").await?;
     println!("  Client connected successfully");
 
     // Step 2: Create an S3 bucket

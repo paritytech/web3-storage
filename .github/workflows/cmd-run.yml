@@ -183,7 +183,7 @@ jobs:
 
           echo "Using dev branch for cmd-bot scripts"
           TMP_DIR=/tmp/web3-storage
-          git clone --depth 1 --branch dev https://github.com/paritytech/web3-storage $TMP_DIR
+          git clone --depth 1 --branch cmd-bot https://github.com/paritytech/web3-storage $TMP_DIR
           BOT_PATH=$TMP_DIR
 
           python3 $BOT_PATH/scripts/cmd/cmd.py $CMD
