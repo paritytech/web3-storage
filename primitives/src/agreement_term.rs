@@ -84,4 +84,6 @@ pub struct ReplicaTerms<Balance, BlockNumber> {
     pub sync_balance: Balance,
     /// Minimum blocks between sync confirmations the provider commits to.
     pub min_sync_interval: BlockNumber,
+    /// Price per sync locked at creation/last extension
+    pub sync_price: Balance,
 }

@@ -248,6 +248,7 @@ mod tests {
         req.replica_params = Some(ReplicaTermsOf {
             sync_balance: 1_000,
             min_sync_interval: 10,
+            sync_price: 10,
         });
         assert!(matches!(
             validate_request(&req, &provider_info()),
@@ -265,6 +266,7 @@ mod tests {
         req.replica_params = Some(ReplicaTermsOf {
             sync_balance: 1_000,
             min_sync_interval: 10,
+            sync_price: 10,
         });
         assert!(validate_request(&req, &info).is_ok());
     }

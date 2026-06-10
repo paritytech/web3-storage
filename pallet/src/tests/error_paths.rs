@@ -106,6 +106,7 @@ fn end_agreement_cannot_terminate_replica_early() {
             storage_primitives::ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
 

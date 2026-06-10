@@ -3823,7 +3823,7 @@ pub mod pallet {
             }
 
             {
-                let bytes_as_balance: BalanceOf<T> = new_committed.clone().saturated_into();
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
                 let required_stake = T::MinStakePerByte::get()
                     .checked_mul(&bytes_as_balance)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -3925,9 +3925,6 @@ pub mod pallet {
                 .as_ref()
                 .ok_or(Error::<T>::MissingReplicaTerms)?
                 .clone();
-            // The `sync_price` in the agreement comes from the provider's current on-chain setting.
-            // The provider can change their `replica_sync_price` between signing and redemption.
-            // TODO(Tung)
 
             // Provider lookup + signature check over
             // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
@@ -3951,7 +3948,8 @@ pub mod pallet {
 
             // Validate on-chain provider's state.
             Self::ensure_provider_active(&provider_info)?;
-            let sync_price = provider_info
+            // Provider is no longer accept replica node
+            let _ = provider_info
                 .settings
                 .replica_sync_price
                 .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
@@ -3969,7 +3967,7 @@ pub mod pallet {
             }
 
             {
-                let bytes_as_balance: BalanceOf<T> = new_committed.clone().saturated_into();
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
                 let required_stake = T::MinStakePerByte::get()
                     .checked_mul(&bytes_as_balance)
                     .ok_or(Error::<T>::ArithmeticOverflow)?;
@@ -3997,7 +3995,7 @@ pub mod pallet {
                 extensions_blocked: false,
                 role: ProviderRole::Replica {
                     sync_balance: replica_terms.sync_balance,
-                    sync_price,
+                    sync_price: replica_terms.sync_price,
                     min_sync_interval: replica_terms.min_sync_interval,
                     last_sync: None,
                 },

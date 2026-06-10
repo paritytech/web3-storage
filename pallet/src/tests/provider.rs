@@ -298,6 +298,7 @@ fn agreement_entry_points_reject_deregistering_provider() {
             storage_primitives::ReplicaTerms {
                 sync_balance: 0,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_err!(

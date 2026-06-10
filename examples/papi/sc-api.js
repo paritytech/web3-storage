@@ -79,6 +79,7 @@ export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, d
       replicaParams: {
         syncBalance: BigInt(rp?.sync_balance ?? 0),
         minSyncInterval: Number(rp?.min_sync_interval ?? 0),
+        syncPrice: BigInt(rp?.sync_price ?? 0),
       },
       hasBucketId: bucket != null,
       bucketId: BigInt(bucket ?? 0),

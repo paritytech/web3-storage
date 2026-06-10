@@ -21,7 +21,7 @@ test.setTimeout(180_000);
 // node's auto-coordinator) so the Buckets / Agreements pages have a row.
 test.beforeAll(async () => {
   test.setTimeout(120_000);
-  await createBucketViaApi(Bob, { name: `display-${Date.now()}` });
+  await createBucketViaApi(Bob, { name: `display-${Date.now()}`, pricePerByte: 1000n });
 });
 
 test.afterAll(async () => {

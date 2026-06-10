@@ -98,6 +98,7 @@ fn build_replica_terms<T: Config>(
         replica_params: Some(ReplicaTerms {
             sync_balance: BalanceOf::<T>::max_value() / 20u32.into(),
             min_sync_interval: 10u32.into(),
+            sync_price: 10u32.into(),
         }),
     }
 }

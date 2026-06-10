@@ -30,6 +30,7 @@ fn establish_replica_agreement_works() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
 
@@ -61,6 +62,7 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_err!(
@@ -96,6 +98,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_err!(
@@ -126,6 +129,7 @@ fn establish_replica_agreement_fails_duplicate() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
 
@@ -140,6 +144,7 @@ fn establish_replica_agreement_fails_duplicate() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_noop!(
@@ -169,6 +174,7 @@ fn establish_replica_agreement_fails_bucket_not_found() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_noop!(
@@ -201,6 +207,7 @@ fn establish_replica_agreement_fails_terms_bucket_mismatch() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
         assert_noop!(
@@ -295,6 +302,7 @@ fn top_up_replica_sync_balance_works() {
             ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
+                sync_price: 10,
             },
         );
 

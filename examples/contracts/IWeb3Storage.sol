@@ -16,6 +16,8 @@ interface IWeb3Storage {
         uint128 syncBalance;
         /// Minimum blocks between sync confirmations the provider commits to.
         uint32 minSyncInterval;
+        /// Price per sync locked at creation/last extension
+        uint128 syncPrice;
     }
 
     struct PrimitiveAgreementTerms {

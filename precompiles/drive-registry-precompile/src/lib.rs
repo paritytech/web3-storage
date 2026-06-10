@@ -72,6 +72,7 @@ where
             .then(|| storage_primitives::ReplicaTerms {
                 sync_balance: BalanceOf::<T>::from(terms.replicaParams.syncBalance),
                 min_sync_interval: BlockNumberFor::<T>::from(terms.replicaParams.minSyncInterval),
+                sync_price: BalanceOf::<T>::from(terms.replicaParams.syncPrice),
             }),
     })
 }
