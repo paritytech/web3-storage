@@ -393,6 +393,17 @@ jobs:
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
 
+      - name: Resolve chain-spec script
+        run: |
+          RUNTIME=web3-storage-paseo
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
@@ -447,7 +458,7 @@ jobs:
       - name: Start chain (dev mode, 2s blocks)
         uses: ./.github/actions/start-e2e-chain
         with:
-          chain-spec-script: ${{ matrix.runtime.chain_spec_script }}
+          chain-spec-script: ${{ env.CHAIN_SPEC_SCRIPT }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
