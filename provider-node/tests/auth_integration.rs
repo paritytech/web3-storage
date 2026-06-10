@@ -35,15 +35,10 @@ impl MockResolver {
     }
 }
 
+#[async_trait::async_trait]
 impl MembershipResolver for MockResolver {
-    fn fetch_members(
-        &self,
-        _bucket_id: u64,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<(AccountId32, Role)>, String>> + Send + '_>,
-    > {
-        let members = self.members.lock().unwrap().clone();
-        Box::pin(async move { Ok(members) })
+    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        Ok(self.members.lock().unwrap().clone())
     }
 }
 
