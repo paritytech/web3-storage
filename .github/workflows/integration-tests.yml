@@ -15,24 +15,6 @@ jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
 
-  runtime-matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      runtime: ${{ steps.runtime.outputs.runtime }}
-    name: Extract tasks from matrix
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - id: runtime
-        run: |
-          TASKS=$(jq '[.[] | select(.integration_tests == true)]' scripts/runtimes-matrix.json)
-          SKIPPED=$(jq '[.[] | select(.integration_tests != true)]' scripts/runtimes-matrix.json)
-          echo "--- Running integration tests for ---"
-          echo "$TASKS"
-          echo "--- Skipping integration tests for ---"
-          echo "$SKIPPED"
-          TASKS=$(echo "$TASKS" | jq -c .)
-          echo "runtime=$TASKS" >> $GITHUB_OUTPUT
-
   # ── Build once ────────────────────────────────────────────────────────────
   # Build the shared artifacts once (provider binary + one compressed wasm per
   # tested runtime) so both test jobs download instead of rebuilding. The test
@@ -86,20 +68,17 @@ jobs:
             target/release/storage-provider-node
             target/release/wbuild/*/*.compact.compressed.wasm
 
-  # ── L0 / file-system / S3 / PAPI demos ──────────────────────────────────────
-  # Own chain + inmemory/disk providers; demos sequential on the shared chain.
-  # Runs in parallel with sc-integration-tests off the prebuilt artifact.
+  # ── Zombienet smoke test (FS + S3) ────────────────────────────────────────
+  # Runs Layer 1 FS and S3 demos on a real relay-chain + parachain (zombienet)
+  # to validate production-like topology. Single runtime (web3-storage-paseo).
+  # Layer 0 coverage is handled comprehensively by e2e-integration-tests.
   integration-tests:
-    name: Integration Tests (${{ matrix.runtime.name }})
+    name: Zombienet Smoke Test
     runs-on: parity-large
     timeout-minutes: 30
-    needs: [set-image, runtime-matrix, build]
+    needs: [set-image, build]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -164,7 +143,7 @@ jobs:
       - name: Start chain
         uses: ./.github/actions/start-zombienet
         with:
-          config: ${{ matrix.runtime.zombienet_config }}
+          config: zombienet/storage-paseo-local.toml
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
@@ -178,29 +157,11 @@ jobs:
             --enable-agreement-coordinator --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
 
-      - name: Start provider (disk)
-        run: |
-          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
-          nohup ./target/release/storage-provider-node \
-            --keyfile /tmp/charlie-key --storage-mode disk --storage-path /tmp/provider-data \
-            --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider-disk.log 2>&1 &
-
-      - name: Wait for provider (inmemory) health
+      - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
-        with:
-          label: inmemory
 
-      - name: Wait for provider (disk) health
-        uses: ./.github/actions/wait-for-provider-health
-        with:
-          url: http://127.0.0.1:3334
-          label: disk
-          log-file: /tmp/provider-disk.log
-
-      - name: Run L0 demo (disk provider)
-        run: just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"
+      - name: Run L0 demo
+        run: just demo
 
       - name: Run file system integration test
         run: just drain-tx-pool-then fs-demo-ci
@@ -219,15 +180,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: integration-test-logs-${{ matrix.runtime.name }}
+          name: zombienet-smoke-test-logs
           path: |
             /tmp/zombienet.log
             /tmp/provider.log
-            /tmp/provider-disk.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
-            /tmp/zombie-*/*-plain.json
-            /tmp/zombie-*/*-raw.json
 
   # ── E2E test suite ──────────────────────────────────────────────────────────
   # All PAPI E2E workflows against a single inmemory provider (web3-storage-paseo
@@ -399,21 +357,16 @@ jobs:
             /tmp/omni-node.log
             /tmp/provider.log
 
-  # ── Smart-contract demos ─────────────────────────────────────────────────────
-  # Own chain + inmemory provider, parallel with integration-tests off the
-  # prebuilt artifact. Still installs solc/resolc and builds the example
-  # contracts here (cheap, not in the shared artifact).
+  # ── Smart-contract demos (dev mode) ──────────────────────────────────────────
+  # Runs all SC demos on a fast dev-mode chain (2s blocks, instant finality).
+  # Single runtime (web3-storage-paseo). Parallel with zombienet smoke test.
   sc-integration-tests:
-    name: SC Integration Tests (${{ matrix.runtime.name }})
+    name: SC Integration Tests
     runs-on: parity-large
     timeout-minutes: 30
-    needs: [set-image, runtime-matrix, build]
+    needs: [set-image, build]
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -439,6 +392,17 @@ jobs:
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+
+      - name: Resolve chain-spec script
+        run: |
+          RUNTIME=web3-storage-paseo
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -494,10 +458,12 @@ jobs:
       - name: Start chain (dev mode, 2s blocks)
         uses: ./.github/actions/start-e2e-chain
         with:
-          chain-spec-script: ${{ matrix.runtime.chain_spec_script }}
+          chain-spec-script: ${{ env.CHAIN_SPEC_SCRIPT }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
+        with:
+          log-file: /tmp/omni-node.log
 
       - name: Start provider (inmemory)
         run: |
@@ -534,7 +500,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: sc-integration-test-logs-${{ matrix.runtime.name }}
+          name: sc-integration-test-logs
           path: |
             /tmp/omni-node.log
             /tmp/provider.log

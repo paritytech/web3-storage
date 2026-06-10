@@ -9699,6 +9699,7 @@ dependencies = [
 name = "storage-provider-node"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "axum",
  "base64",
  "bincode",
