@@ -12,30 +12,40 @@ use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
-    error_handling::HandleErrorLayer,
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
+    middleware::{from_fn_with_state, Next},
+    response::Response,
     routing::{get, post, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use sp_core::H256;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
-use tower::{buffer::BufferLayer, limit::RateLimitLayer, BoxError, ServiceBuilder};
+use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-/// `/negotiate` rate limit
+/// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
 const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
-/// Requests queued while the limiter is saturated; beyond this they fail
-/// fast with 429.
-const NEGOTIATE_RATE_LIMIT_BURST: usize = 16;
+/// Per-IP token-bucket capacity: a single client may burst up to this many
+/// `/negotiate` requests before being throttled to the refill rate.
+const NEGOTIATE_RATE_LIMIT_BURST: u64 = 16;
 
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
+    // Per-IP token-bucket limiter for `/negotiate`.
+    let negotiate_limiter = Arc::new(
+        RateLimiter::builder()
+            .requests_per_second(NEGOTIATE_RATE_LIMIT_PER_SEC)
+            .burst(NEGOTIATE_RATE_LIMIT_BURST)
+            .build()
+            .expect("static `/negotiate` rate-limit config is valid"),
+    );
+
     Router::new()
         // Health and info
         .route("/health", get(health))
@@ -62,19 +72,10 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
         .route(
             "/negotiate",
-            post(negotiate_terms).layer(
-                // RateLimit isn't Clone, so it needs a Buffer in front;
-                // Buffer's BoxError is turned back into a response here.
-                ServiceBuilder::new()
-                    .layer(HandleErrorLayer::new(|_: BoxError| async {
-                        Error::RateLimited
-                    }))
-                    .layer(BufferLayer::new(NEGOTIATE_RATE_LIMIT_BURST))
-                    .layer(RateLimitLayer::new(
-                        NEGOTIATE_RATE_LIMIT_PER_SEC,
-                        Duration::from_secs(1),
-                    )),
-            ),
+            post(negotiate_terms).layer(from_fn_with_state(
+                negotiate_limiter,
+                rate_limit_by_ip_middleware,
+            )),
         )
         // Checkpoint coordination
         .route("/checkpoint/sign", post(sign_checkpoint_proposal))
@@ -107,6 +108,26 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+async fn rate_limit_by_ip_middleware(
+    State(limiter): State<Arc<RateLimiter>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    let ip = addr.ip().to_string();
+    match limiter.check(&ip).await {
+        Ok(decision) if decision.permitted => Ok(next.run(request).await),
+        Ok(_) => Err(Error::RateLimited),
+        // Fail closed: a limiter-internal error rejects the request rather than
+        // letting unbounded traffic through, which could overwhelm the node and
+        // hide detail error from client.
+        Err(err) => {
+            tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
+            Err(Error::Internal("RateLimited".to_string()))
+        }
+    }
 }
 
 /// Extract the Authorization header value from a header map.
@@ -790,7 +811,7 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: req.price_per_byte,
-        // TODO: lookup current block and use a bounded offset.
+        // TODO: current_block + StorageProvider::RequestTimeout
         valid_until: u32::MAX,
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
