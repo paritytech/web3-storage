@@ -505,6 +505,176 @@ jobs:
             /tmp/omni-node.log
             /tmp/provider.log
 
+  # ── UI Playwright e2e ─────────────────────────────────────────────────────
+  # Drive / console / provider UIs (Vite dev servers) exercised against a
+  # standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + a
+  # single inmemory provider. Like the integration-tests job, it consumes the
+  # prebuilt `build` artifact (provider binary + runtime wasm) instead of
+  # rebuilding: the chain-spec script's `cargo build` becomes a near-no-op
+  # against the warm integration-tests-build cache. The UIs are served by Vite
+  # dev servers (Playwright `webServer`), so no UI build is needed. Runs in
+  # parallel with the other artifact-consuming test jobs.
+  ui-integration-tests:
+    name: UI E2E run
+    runs-on: parity-large
+    timeout-minutes: 60
+    needs: [set-image, build]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Resolve chain-spec script from matrix
+        run: |
+          RUNTIME=web3-storage-paseo
+          SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using chain-spec script: $SCRIPT"
+          echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache Polkadot SDK binaries
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        id: sdk-cache
+        with:
+          path: |
+            .bin/polkadot
+            .bin/polkadot-execute-worker
+            .bin/polkadot-prepare-worker
+            .bin/polkadot-omni-node
+            .bin/chain-spec-builder
+          key: polkadot-sdk-${{ env.POLKADOT_SDK_VERSION }}
+
+      - name: Download Polkadot SDK binaries
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+
+      # Restored before the artifact download so the cached target/ can't clobber
+      # the freshly downloaded provider + wbuild. save-if false — only the build
+      # job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
+      # Extract into target/release so the artifact's target/release-rooted
+      # contents land back at their original paths (provider binary + per-runtime
+      # wbuild wasm consumed by the chain-spec script).
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: build
+          path: target/release
+
+      - name: Restore executable bits
+        run: chmod +x target/release/storage-provider-node
+
+      # The CI container ships an older Node (~14) that pnpm/action-setup@v6
+      # rejects (`import.meta.resolve` requires ≥20.6). Install Node 22 first,
+      # then pnpm against that Node, then re-run setup-node to wire the
+      # pnpm-store cache (which needs `pnpm store path` available).
+      - name: Setup Node.js (for pnpm install)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+        with:
+          version: 10
+
+      - name: Setup Node.js (with pnpm cache)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: user-interfaces/pnpm-lock.yaml
+
+      - name: Install workspace deps
+        working-directory: user-interfaces
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: user-interfaces
+        run: pnpm --filter @web3-storage/drive-ui exec playwright install --with-deps chromium
+
+      - name: Start chain (dev mode, 2s blocks)
+        uses: ./.github/actions/start-e2e-chain
+        with:
+          chain-spec-script: ${{ env.E2E_CHAIN_SPEC_SCRIPT }}
+
+      - name: Wait for parachain blocks
+        uses: ./.github/actions/wait-for-parachain
+
+      - name: Start provider (Alice, inmemory)
+        run: |
+          echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/alice-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-agreement-coordinator --enable-checkpoint-coordinator \
+            > /tmp/provider.log 2>&1 &
+
+      - name: Wait for provider health
+        uses: ./.github/actions/wait-for-provider-health
+
+      - name: drive-ui e2e
+        working-directory: user-interfaces
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:drive-ui
+
+      - name: console-ui e2e
+        working-directory: user-interfaces
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:console-ui
+
+      - name: provider e2e
+        working-directory: user-interfaces
+        env:
+          CI: "true"
+        run: pnpm run test:e2e:provider
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "polkadot-omni-node" 2>/dev/null || true
+          pkill -f "polkadot" 2>/dev/null || true
+          pkill -f "storage-provider-node" 2>/dev/null || true
+
+      - name: Upload Playwright reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-reports
+          path: |
+            user-interfaces/drive-ui/playwright-report
+            user-interfaces/drive-ui/test-results
+            user-interfaces/console-ui/playwright-report
+            user-interfaces/console-ui/test-results
+            user-interfaces/provider/playwright-report
+            user-interfaces/provider/test-results
+
+      - name: Upload chain + provider logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ui-integration-test-logs
+          path: |
+            /tmp/omni-node.log
+            /tmp/provider.log
+
   # ── Coverage gate ─────────────────────────────────────────────────────────
   # On PRs: restores the cached JS coverage baseline from main/dev, downloads
   # the PR's summary, and fails if JS coverage decreased.
@@ -555,7 +725,7 @@ jobs:
 
   integration-tests-complete:
     name: Integration Tests
-    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests, coverage-gate]
+    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     steps:
