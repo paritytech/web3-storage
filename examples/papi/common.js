@@ -355,14 +355,33 @@ export async function waitForTransaction(
  *
  * Best blocks can be reorged, so for a tx whose effect a LATER tx references by
  * id (e.g. create a challenge, then respond to it) use `submitTxFinalized`.
+ *
+ * Retries up to `STALE_RETRIES` times on `Invalid::Stale` (nonce too low).
+ * This happens when back-to-back CI tests reuse the same signing account and
+ * the PAPI client's nonce view lags behind the chain's best block.
  */
+const STALE_RETRIES = 3;
+const STALE_RETRY_DELAY_MS = 6_500; // ~1 block time
+
 export async function submitTx(
   tx,
   signer,
   label,
   timeoutMs = DEFAULT_TX_TIMEOUT_MS
 ) {
-  return waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+  for (let attempt = 1; attempt <= STALE_RETRIES; attempt++) {
+    try {
+      return await waitForTransaction(tx, signer, label, TX_MODE_IN_BLOCK, timeoutMs);
+    } catch (err) {
+      const isStale = /Invalid.*Stale|Stale.*nonce/i.test(err.message);
+      if (!isStale || attempt === STALE_RETRIES) throw err;
+      console.warn(
+        `  ⚠ ${label}: stale nonce (attempt ${attempt}/${STALE_RETRIES}), ` +
+        `waiting ${STALE_RETRY_DELAY_MS}ms for next block…`
+      );
+      await new Promise((r) => setTimeout(r, STALE_RETRY_DELAY_MS));
+    }
+  }
 }
 
 /**
