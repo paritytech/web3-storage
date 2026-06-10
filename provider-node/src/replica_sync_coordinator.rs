@@ -172,6 +172,41 @@ pub trait ReplicaSyncChainClient: Send + Sync {
     ) -> Result<(u8, u128), Error>;
 }
 
+#[async_trait::async_trait]
+impl<T: ReplicaSyncChainClient> ReplicaSyncChainClient for Arc<T> {
+    async fn get_current_block(&self) -> Result<u64, Error> {
+        self.as_ref().get_current_block().await
+    }
+
+    async fn fetch_replica_agreements(
+        &self,
+        provider_account: &str,
+        local_buckets: Vec<BucketId>,
+    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+        self.as_ref()
+            .fetch_replica_agreements(provider_account, local_buckets)
+            .await
+    }
+
+    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+        self.as_ref().fetch_bucket_snapshot(bucket_id).await
+    }
+
+    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+        self.as_ref().fetch_primary_endpoints(bucket_id).await
+    }
+
+    async fn submit_sync_confirmation(
+        &self,
+        bucket_id: BucketId,
+        target_mmr_root: H256,
+    ) -> Result<(u8, u128), Error> {
+        self.as_ref()
+            .submit_sync_confirmation(bucket_id, target_mmr_root)
+            .await
+    }
+}
+
 /// Handle for controlling the replica sync coordinator.
 pub struct ReplicaSyncCoordinatorHandle {
     command_tx: mpsc::Sender<SyncCommand>,
