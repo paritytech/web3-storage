@@ -781,13 +781,14 @@ async fn get_historical_roots(
     }))
 }
 
-/// Negotiate provider-signed [`AgreementTerms`] for a bucket owner.
+/// Sign [`AgreementTerms`] for a bucket owner, echoing the request but pinning
+/// `price_per_byte` to the provider's own listed price (the client may have
+/// proposed more).
 ///
-/// TODO: Request are automatically accepted, implement advance features to let providers determine
+/// TODO: requests are accepted automatically; let providers vet them later.
 ///
-/// Returns `503` if
-///     - The node has no signing key (no `--keyfile`) or no
-///     - The node fails to fetch provider registration info
+/// Returns `503` if the node has no signing key (`--keyfile`) or can't fetch its
+/// on-chain registration info.
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
@@ -810,7 +811,7 @@ async fn negotiate_terms(
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
-        price_per_byte: req.price_per_byte,
+        price_per_byte: info.price_per_byte,
         // TODO: current_block + StorageProvider::RequestTimeout
         valid_until: u32::MAX,
         nonce: nonce_counter.next(),

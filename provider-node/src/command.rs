@@ -64,8 +64,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await?;
-            state.provider_info = setup_provider_info(&cli, &state.provider_id).await?;
+            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
+            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
 
             Arc::new(state)
         }
@@ -210,32 +210,52 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-/// Fetch the provider's on-chain registration info once and store it for
-async fn setup_provider_info(
-    cli: &Cli,
-    provider_id: &str,
-) -> Result<StateProviderInfo, Box<dyn std::error::Error>> {
-    let provider_account = sp_runtime::AccountId32::from_str(provider_id)
-        .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
+/// Fetch the provider's on-chain registration info once and store it.
+///
+/// Returns `None` (and logs a warning) if anything goes wrong, so a transient
+/// chain hiccup or an unregistered provider doesn't take the whole node down.
+async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
+            return None;
+        }
+    };
 
-    let mut client = storage_client::ProviderClient::new(
+    let client = storage_client::ProviderClient::new(
         storage_client::ClientConfig {
             chain_ws_url: cli.rpc.chain_rpc.clone(),
             ..Default::default()
         },
         provider_id.to_string(),
-    )?;
-    client.connect().await?;
+    );
+    let mut client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("failed to build provider client: {e:?}");
+            return None;
+        }
+    };
+    if let Err(e) = client.connect().await {
+        tracing::warn!("failed to connect to chain: {e:?}");
+        return None;
+    }
 
-    let info = client
-        .get_provider_info(&provider_account)
-        .await?
-        .ok_or_else(|| {
-            format!(
+    let info = match client.get_provider_info(&provider_account).await {
+        Ok(Some(info)) => info,
+        Ok(None) => {
+            tracing::warn!(
                 "provider {provider_id} is not registered on chain; \
                  register it before starting the node"
-            )
-        })?;
+            );
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!("failed to fetch provider info: {e:?}");
+            return None;
+        }
+    };
 
     tracing::info!(
         "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
@@ -246,20 +266,22 @@ async fn setup_provider_info(
         info.accepting_primary,
     );
 
-    Ok(Some(Arc::new(RwLock::new(info))))
+    Some(Arc::new(RwLock::new(info)))
 }
 
 /// Create the in-memory nonce counter and bootstrap it from the chain's
 /// `ProviderReplayState.hsn`. The chain is the source of truth, so there
 /// is nothing to persist locally.
-async fn setup_nonce_counter(
-    cli: &Cli,
-    provider_id: &str,
-) -> Result<StateNonceCounter, Box<dyn std::error::Error>> {
+async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter {
     // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
     // reachable yet, set to None
-    let provider_account = sp_runtime::AccountId32::from_str(provider_id)
-        .map_err(|e| format!("invalid provider SS58: {e:?}"))?;
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
+            return None;
+        }
+    };
     match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
         .await
     {
@@ -271,15 +293,15 @@ async fn setup_nonce_counter(
             );
             let counter = NonceCounter::new(1);
             counter.bootstrap_from_hsn(hsn);
-            Ok(Some(Arc::new(counter)))
+            Some(Arc::new(counter))
         }
         Ok(None) => {
             tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
-            Ok(None)
+            None
         }
         Err(e) => {
             tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
-            Ok(None)
+            None
         }
     }
 }
