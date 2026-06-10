@@ -1,7 +1,8 @@
-//! Integration tests for the checkpoint coordinator (moved from unit tests for CI coverage).
+//! Integration tests for the checkpoint coordinator.
 
+use super::{test_state_with_seed, wait_for};
 use sp_core::H256;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::checkpoint_coordinator::SignProposalRequest;
@@ -9,7 +10,6 @@ use storage_provider_node::{
     CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointDuty,
     CheckpointResult, Error, ProviderState, Storage,
 };
-use tokio::sync::Mutex;
 
 struct MockCheckpointChainClient {
     block_number: Mutex<u64>,
@@ -39,14 +39,14 @@ impl MockCheckpointChainClient {
 #[async_trait::async_trait]
 impl CheckpointChainClient for MockCheckpointChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        Ok(*self.block_number.lock().await)
+        Ok(*self.block_number.lock().unwrap())
     }
 
     async fn fetch_checkpoint_config(
         &self,
         _bucket_id: BucketId,
     ) -> Result<Option<(u32, u32)>, Error> {
-        Ok(*self.config.lock().await)
+        Ok(*self.config.lock().unwrap())
     }
 
     async fn submit_checkpoint(
@@ -56,8 +56,8 @@ impl CheckpointChainClient for MockCheckpointChainClient {
     ) -> Result<H256, Error> {
         let bucket_id = duty.bucket_id;
         let window = duty.window;
-        self.submitted.lock().await.push((bucket_id, window));
-        let mut result = self.submit_result.lock().await;
+        self.submitted.lock().unwrap().push((bucket_id, window));
+        let mut result = self.submit_result.lock().unwrap();
         match &*result {
             Ok(h) => Ok(*h),
             Err(e) => {
@@ -67,36 +67,6 @@ impl CheckpointChainClient for MockCheckpointChainClient {
             }
         }
     }
-}
-
-/// Newtype wrapper to satisfy orphan rules when impl'ing the trait for shared mock access.
-struct SharedMock(Arc<MockCheckpointChainClient>);
-
-#[async_trait::async_trait]
-impl CheckpointChainClient for SharedMock {
-    async fn get_current_block(&self) -> Result<u64, Error> {
-        self.0.get_current_block().await
-    }
-
-    async fn fetch_checkpoint_config(
-        &self,
-        bucket_id: BucketId,
-    ) -> Result<Option<(u32, u32)>, Error> {
-        self.0.fetch_checkpoint_config(bucket_id).await
-    }
-
-    async fn submit_checkpoint(
-        &self,
-        duty: &CheckpointDuty,
-        signatures: Vec<(String, String)>,
-    ) -> Result<H256, Error> {
-        self.0.submit_checkpoint(duty, signatures).await
-    }
-}
-
-fn test_state_with_seed() -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::with_seed(storage, "//Alice").unwrap())
 }
 
 fn test_state_with_bucket(bucket_id: BucketId) -> Arc<ProviderState> {
@@ -118,28 +88,6 @@ fn test_config_default() {
 }
 
 #[test]
-fn test_checkpoint_result_variants() {
-    let success = CheckpointResult::Success {
-        bucket_id: 1,
-        window: 5,
-        mmr_root: H256::zero(),
-        signers: vec!["alice".to_string()],
-    };
-    assert!(matches!(success, CheckpointResult::Success { .. }));
-
-    let insufficient = CheckpointResult::InsufficientSignatures {
-        bucket_id: 1,
-        window: 5,
-        collected: 1,
-        required: 3,
-    };
-    assert!(matches!(
-        insufficient,
-        CheckpointResult::InsufficientSignatures { .. }
-    ));
-}
-
-#[test]
 fn test_sign_proposal_request_serialization() {
     let request = SignProposalRequest {
         bucket_id: 1,
@@ -157,7 +105,7 @@ fn test_sign_proposal_request_serialization() {
 #[tokio::test]
 async fn test_no_bucket_data() {
     let mock = MockCheckpointChainClient::new(500);
-    let state = test_state_with_seed();
+    let state = test_state_with_seed("//Alice");
     let config = CheckpointCoordinatorConfig::default();
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(mock));
 
@@ -170,8 +118,7 @@ async fn test_duty_found_submit_ok() {
     let mock = Arc::new(MockCheckpointChainClient::new(500));
     let state = test_state_with_bucket(1);
     let config = CheckpointCoordinatorConfig::default();
-    let coordinator =
-        CheckpointCoordinator::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let duty = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
     assert_eq!(duty.bucket_id, 1);
@@ -180,7 +127,7 @@ async fn test_duty_found_submit_ok() {
     let result = coordinator.coordinate_checkpoint(&duty).await;
     assert!(matches!(result, CheckpointResult::Success { .. }));
 
-    let submitted = mock.submitted.lock().await;
+    let submitted = mock.submitted.lock().unwrap();
     assert_eq!(submitted.len(), 1);
     assert_eq!(submitted[0], (1, 5));
 }
@@ -193,18 +140,17 @@ async fn test_submit_fails() {
     );
     let state = test_state_with_bucket(1);
     let config = CheckpointCoordinatorConfig::default();
-    let coordinator =
-        CheckpointCoordinator::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let duty = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
     let result = coordinator.coordinate_checkpoint(&duty).await;
     assert!(matches!(result, CheckpointResult::SubmissionFailed { .. }));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_pause_resume() {
     let mock = MockCheckpointChainClient::new(500);
-    let state = test_state_with_seed();
+    let state = test_state_with_seed("//Alice");
     let config = CheckpointCoordinatorConfig {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
@@ -225,7 +171,7 @@ async fn test_pause_resume() {
     assert!(!handle.is_running());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_force_checkpoint() {
     let mock = Arc::new(MockCheckpointChainClient::new(500));
     let state = test_state_with_bucket(1);
@@ -233,25 +179,25 @@ async fn test_force_checkpoint() {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
     };
-    let coordinator =
-        CheckpointCoordinator::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let handle = coordinator.start(None).await.unwrap();
 
     handle.force_checkpoint(1).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if !mock.submitted.lock().await.is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for checkpoint submission");
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "timed out waiting for checkpoint submission"
+    );
 
-    let submitted = mock.submitted.lock().await;
-    assert_eq!(submitted.len(), 1);
+    {
+        let submitted = mock.submitted.lock().unwrap();
+        assert_eq!(submitted.len(), 1);
+    }
 
     handle.stop().await.unwrap();
 }

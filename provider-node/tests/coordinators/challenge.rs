@@ -1,19 +1,18 @@
-//! Integration tests for the challenge responder (moved from unit tests for CI coverage).
+//! Integration tests for the challenge responder.
 
+use super::{test_state, wait_for, ALICE_SS58};
 use sp_core::H256;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
 use storage_provider_node::{
     build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponseResult, DetectedChallenge, Error, ProviderState, Storage,
 };
-use tokio::sync::Mutex;
 
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,
     submitted: Mutex<Vec<(u32, u16)>>,
-    /// If set, `submit_response` always returns this error message.
     submit_error: Mutex<Option<String>>,
 }
 
@@ -44,7 +43,7 @@ impl MockChallengeChainClient {
 #[async_trait::async_trait]
 impl ChallengeChainClient for MockChallengeChainClient {
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        Ok(self.challenges.lock().await.clone())
+        Ok(self.challenges.lock().unwrap().clone())
     }
 
     async fn submit_response(
@@ -54,42 +53,12 @@ impl ChallengeChainClient for MockChallengeChainClient {
         _mmr_proof: storage_primitives::MmrProof,
         _chunk_proof: storage_primitives::MerkleProof,
     ) -> Result<H256, Error> {
-        self.submitted.lock().await.push(challenge_id);
-        if let Some(err) = self.submit_error.lock().await.as_ref() {
+        self.submitted.lock().unwrap().push(challenge_id);
+        if let Some(err) = self.submit_error.lock().unwrap().as_ref() {
             return Err(Error::Internal(err.clone()));
         }
         Ok(H256::zero())
     }
-}
-
-/// Newtype wrapper to satisfy orphan rules when impl'ing the trait for shared mock access.
-struct SharedMock(Arc<MockChallengeChainClient>);
-
-#[async_trait::async_trait]
-impl ChallengeChainClient for SharedMock {
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        self.0.poll_challenges().await
-    }
-
-    async fn submit_response(
-        &self,
-        challenge_id: (u32, u16),
-        chunk_data: Vec<u8>,
-        mmr_proof: storage_primitives::MmrProof,
-        chunk_proof: storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
-        self.0
-            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
-            .await
-    }
-}
-
-fn test_state() -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::new(
-        storage,
-        "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
-    ))
 }
 
 fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedChallenge {
@@ -101,7 +70,7 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         start_seq: 0,
         leaf_index: 5,
         chunk_index: 0,
-        challenger: "5GrwvaEF...".to_string(),
+        challenger: ALICE_SS58.to_string(),
         created_at_block: 900,
     }
 }
@@ -121,35 +90,7 @@ fn test_detected_challenge() {
     assert_eq!(challenge.leaf_index, 5);
 }
 
-#[test]
-fn test_challenge_response_result_variants() {
-    let success = ChallengeResponseResult::Success {
-        challenge_id: (1000, 0),
-        block_hash: H256::zero(),
-    };
-    assert!(matches!(success, ChallengeResponseResult::Success { .. }));
-
-    let proof_failed = ChallengeResponseResult::ProofGenerationFailed {
-        challenge_id: (1000, 0),
-        error: "test".to_string(),
-    };
-    assert!(matches!(
-        proof_failed,
-        ChallengeResponseResult::ProofGenerationFailed { .. }
-    ));
-
-    let not_found = ChallengeResponseResult::DataNotFound {
-        challenge_id: (1000, 0),
-        bucket_id: 1,
-        leaf_index: 5,
-    };
-    assert!(matches!(
-        not_found,
-        ChallengeResponseResult::DataNotFound { .. }
-    ));
-}
-
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_no_challenges() {
     let mock = Arc::new(MockChallengeChainClient::new());
     let state = test_state();
@@ -157,16 +98,16 @@ async fn test_no_challenges() {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(None).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    assert!(mock.submitted.lock().await.is_empty());
+    assert!(mock.submitted.lock().unwrap().is_empty());
     handle.stop().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_paused_skips_poll() {
     let mock =
         Arc::new(MockChallengeChainClient::new().with_challenges(vec![make_challenge(1, 100, 0)]));
@@ -175,20 +116,18 @@ async fn test_paused_skips_poll() {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(None).await.unwrap();
 
-    // Pause immediately
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // No submissions because paused
-    assert!(mock.submitted.lock().await.is_empty());
+    assert!(mock.submitted.lock().unwrap().is_empty());
 
     handle.stop().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockChallengeChainClient::new();
     let state = test_state();
@@ -213,18 +152,15 @@ fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
     let storage = Arc::new(Storage::new());
     storage.init_bucket(1, 1024 * 1024);
 
-    // Store a chunk — blake2_256 of the data is the expected hash
     let chunk_data = b"test-chunk-data-for-challenge";
     let chunk_hash = blake2_256(chunk_data);
     storage
         .store_node(1, chunk_hash, chunk_data.to_vec(), None)
         .unwrap();
 
-    // With a single chunk, build_padded_merkle_tree returns chunk_hash directly.
     let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
     assert_eq!(data_root, chunk_hash);
 
-    // Commit the data_root to the MMR
     let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
     assert_eq!(leaf_indices, vec![0]);
 
@@ -236,18 +172,15 @@ fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
         start_seq,
         leaf_index: 0,
         chunk_index: 0,
-        challenger: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
+        challenger: ALICE_SS58.to_string(),
         created_at_block: 900,
     };
 
-    let state = Arc::new(ProviderState::new(
-        storage,
-        "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
-    ));
+    let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
     (state, challenge)
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {
     let (state, challenge) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
@@ -257,30 +190,29 @@ async fn test_successful_challenge_response() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(None).await.unwrap();
 
-    // Poll until the challenge is processed (with generous timeout for CI)
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if !mock.submitted.lock().await.is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for challenge submission");
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "timed out waiting for challenge submission"
+    );
 
-    let submitted = mock.submitted.lock().await;
-    assert_eq!(submitted[0], (1000, 0));
+    {
+        let submitted = mock.submitted.lock().unwrap();
+        assert_eq!(submitted[0], (1000, 0));
+    }
 
     handle.stop().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_proof_generation_failed_no_bucket() {
-    // Empty state — no buckets at all
     let state = test_state();
     let challenge = DetectedChallenge {
         bucket_id: 999,
@@ -290,14 +222,13 @@ async fn test_proof_generation_failed_no_bucket() {
         start_seq: 0,
         leaf_index: 0,
         chunk_index: 0,
-        challenger: "5GrwvaEF...".to_string(),
+        challenger: ALICE_SS58.to_string(),
         created_at_block: 900,
     };
 
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
-    let result: Arc<std::sync::Mutex<Option<ChallengeResponseResult>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
     let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
         let mut guard = result_clone.lock().unwrap();
@@ -311,19 +242,18 @@ async fn test_proof_generation_failed_no_bucket() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if result.lock().unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for callback");
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -337,14 +267,12 @@ async fn test_proof_generation_failed_no_bucket() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_data_not_found_bad_chunk_index() {
     let (state, mut challenge) = test_state_with_data();
-    // Valid leaf_index=0 but chunk_index beyond what exists (only 1 chunk at index 0)
     challenge.chunk_index = 999;
 
-    let result: Arc<std::sync::Mutex<Option<ChallengeResponseResult>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
     let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
         let mut guard = result_clone.lock().unwrap();
@@ -359,19 +287,18 @@ async fn test_data_not_found_bad_chunk_index() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if result.lock().unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for callback");
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -382,7 +309,7 @@ async fn test_data_not_found_bad_chunk_index() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_submission_failed() {
     let (state, challenge) = test_state_with_data();
     let mock = Arc::new(
@@ -391,8 +318,7 @@ async fn test_submission_failed() {
             .with_submit_error("chain unavailable".to_string()),
     );
 
-    let result: Arc<std::sync::Mutex<Option<ChallengeResponseResult>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
     let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
         let mut guard = result_clone.lock().unwrap();
@@ -406,19 +332,18 @@ async fn test_submission_failed() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if result.lock().unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for callback");
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -429,13 +354,12 @@ async fn test_submission_failed() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_callback_invoked_on_success() {
     let (state, challenge) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
 
-    let result: Arc<std::sync::Mutex<Option<ChallengeResponseResult>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let result: Arc<Mutex<Option<ChallengeResponseResult>>> = Arc::new(Mutex::new(None));
     let result_clone = Arc::clone(&result);
     let callback: Arc<dyn Fn(ChallengeResponseResult) + Send + Sync> = Arc::new(move |r| {
         let mut guard = result_clone.lock().unwrap();
@@ -449,19 +373,18 @@ async fn test_callback_invoked_on_success() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(Some(callback)).await.unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if result.lock().unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for callback");
+    let result_ref = Arc::clone(&result);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&result_ref);
+            async move { r.lock().unwrap().is_some() }
+        })
+        .await,
+        "timed out waiting for callback"
+    );
     handle.stop().await.unwrap();
 
     let r = result.lock().unwrap();
@@ -477,7 +400,7 @@ async fn test_callback_invoked_on_success() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_resume_after_pause() {
     let (state, challenge) = test_state_with_data();
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));
@@ -487,26 +410,23 @@ async fn test_resume_after_pause() {
         auto_respond: true,
         ..Default::default()
     };
-    let responder = ChallengeResponder::new(config, state, Box::new(SharedMock(Arc::clone(&mock))));
+    let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
     let handle = responder.start(None).await.unwrap();
 
-    // Pause immediately — no submissions
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(mock.submitted.lock().await.is_empty());
+    assert!(mock.submitted.lock().unwrap().is_empty());
 
-    // Resume — should process the challenge
     handle.resume().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if !mock.submitted.lock().await.is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for submission after resume");
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "timed out waiting for submission after resume"
+    );
 
     handle.stop().await.unwrap();
 }

@@ -1,8 +1,9 @@
-//! Integration tests for the replica sync coordinator (moved from unit tests for CI coverage).
+//! Integration tests for the replica sync coordinator.
 
+use super::{test_state, ALICE_SS58};
 use sp_core::H256;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
@@ -10,7 +11,6 @@ use storage_provider_node::{
     Error, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
-use tokio::sync::Mutex;
 
 struct MockReplicaSyncChainClient {
     block: Mutex<u64>,
@@ -21,7 +21,6 @@ struct MockReplicaSyncChainClient {
     confirm_result: Mutex<Result<(u8, u128), Error>>,
 }
 
-#[allow(dead_code)]
 impl MockReplicaSyncChainClient {
     fn new() -> Self {
         Self {
@@ -41,10 +40,8 @@ impl MockReplicaSyncChainClient {
         }
     }
 
-    fn with_snapshot_sync(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
-        // Synchronous version: constructs a new Mutex with the snapshot pre-inserted.
-        // Safe to call from inside an async runtime (unlike with_snapshot which uses block_on).
-        let mut map = self.snapshots.into_inner();
+    fn with_snapshot(self, bucket_id: BucketId, snapshot: BucketSnapshot) -> Self {
+        let mut map = self.snapshots.into_inner().unwrap();
         map.insert(bucket_id, snapshot);
         Self {
             snapshots: Mutex::new(map),
@@ -52,8 +49,8 @@ impl MockReplicaSyncChainClient {
         }
     }
 
-    fn with_endpoints_sync(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
-        let mut map = self.endpoints.into_inner();
+    fn with_endpoints(self, bucket_id: BucketId, endpoints: Vec<String>) -> Self {
+        let mut map = self.endpoints.into_inner().unwrap();
         map.insert(bucket_id, endpoints);
         Self {
             endpoints: Mutex::new(map),
@@ -65,7 +62,7 @@ impl MockReplicaSyncChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        Ok(*self.block.lock().await)
+        Ok(*self.block.lock().unwrap())
     }
 
     async fn fetch_replica_agreements(
@@ -73,11 +70,11 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        Ok(self.agreements.lock().await.clone())
+        Ok(self.agreements.lock().unwrap().clone())
     }
 
     async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
-        let snapshots = self.snapshots.lock().await;
+        let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
             .cloned()
@@ -88,7 +85,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
     }
 
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
-        let endpoints = self.endpoints.lock().await;
+        let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
 
@@ -97,21 +94,13 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         bucket_id: BucketId,
         _target_mmr_root: H256,
     ) -> Result<(u8, u128), Error> {
-        self.confirmations.lock().await.push(bucket_id);
-        let result = &*self.confirm_result.lock().await;
+        self.confirmations.lock().unwrap().push(bucket_id);
+        let result = &*self.confirm_result.lock().unwrap();
         match result {
             Ok(v) => Ok(*v),
             Err(e) => Err(Error::Internal(e.to_string())),
         }
     }
-}
-
-fn test_state() -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::new(
-        storage,
-        "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
-    ))
 }
 
 #[test]
@@ -120,36 +109,6 @@ fn test_config_default() {
     assert_eq!(config.poll_interval, Duration::from_secs(12));
     assert_eq!(config.max_concurrent_syncs, 3);
     assert!(config.auto_confirm);
-}
-
-#[test]
-fn test_sync_result_variants() {
-    let success = SyncResult::Success {
-        bucket_id: 1,
-        mmr_root: H256::zero(),
-        position_matched: 0,
-        payment: 1000,
-    };
-    assert!(matches!(success, SyncResult::Success { .. }));
-
-    let insufficient = SyncResult::InsufficientBalance {
-        bucket_id: 1,
-        required: 1000,
-        available: 500,
-    };
-    assert!(matches!(
-        insufficient,
-        SyncResult::InsufficientBalance { .. }
-    ));
-
-    let interval = SyncResult::SyncIntervalNotElapsed {
-        bucket_id: 1,
-        blocks_remaining: 50,
-    };
-    assert!(matches!(
-        interval,
-        SyncResult::SyncIntervalNotElapsed { .. }
-    ));
 }
 
 #[tokio::test]
@@ -187,7 +146,6 @@ async fn test_insufficient_balance() {
 
 #[tokio::test]
 async fn test_already_synced() {
-    // Create storage with a bucket whose root matches the target
     let storage = Arc::new(Storage::new());
     storage.init_bucket(1, u64::MAX);
     let data = b"test data".to_vec();
@@ -261,7 +219,7 @@ async fn test_primary_unavailable() {
     assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_stop_command() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
@@ -279,7 +237,7 @@ async fn test_stop_command() {
     assert!(!handle.is_running());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_pause_resume() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
@@ -311,14 +269,14 @@ async fn test_duties_filter_insufficient_balance() {
     let agreement = ReplicaAgreementInfo {
         bucket_id: 1,
         sync_balance: 50,
-        sync_price: 100, // balance < price → should be skipped
+        sync_price: 100,
         min_sync_interval: 0,
         last_sync: None,
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
-        .with_snapshot_sync(
+        .with_snapshot(
             1,
             BucketSnapshot {
                 mmr_root: H256::repeat_byte(0xAA),
@@ -341,12 +299,12 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 200,
-        last_sync: Some((H256::repeat_byte(0xBB), 50)), // last sync at block 50, current=100, elapsed=50 < 200
+        last_sync: Some((H256::repeat_byte(0xBB), 50)),
     };
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
-        .with_snapshot_sync(
+        .with_snapshot(
             1,
             BucketSnapshot {
                 mmr_root: H256::repeat_byte(0xAA),
@@ -375,10 +333,9 @@ async fn test_duties_filter_zero_snapshot_root() {
         last_sync: None,
     };
 
-    // Snapshot with zero root → no data to sync
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
-        .with_snapshot_sync(
+        .with_snapshot(
             1,
             BucketSnapshot {
                 mmr_root: H256::zero(),
@@ -396,7 +353,6 @@ async fn test_duties_filter_zero_snapshot_root() {
 
 #[tokio::test]
 async fn test_duties_filter_already_synced() {
-    // Set up local storage with the same root as the snapshot
     let storage = Arc::new(Storage::new());
     storage.init_bucket(1, u64::MAX);
 
@@ -406,10 +362,7 @@ async fn test_duties_filter_already_synced() {
     storage.store_node(1, data_root, data, None).unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
-    let state = Arc::new(ProviderState::new(
-        storage,
-        "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
-    ));
+    let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
 
     let agreement = ReplicaAgreementInfo {
         bucket_id: 1,
@@ -421,10 +374,10 @@ async fn test_duties_filter_already_synced() {
 
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
-        .with_snapshot_sync(
+        .with_snapshot(
             1,
             BucketSnapshot {
-                mmr_root, // same as local
+                mmr_root,
                 leaf_count: 1,
             },
         );
@@ -449,14 +402,14 @@ async fn test_duties_happy_path_returns_duty() {
     let target_root = H256::repeat_byte(0xCC);
     let mock = MockReplicaSyncChainClient::new()
         .with_agreements(vec![agreement])
-        .with_snapshot_sync(
+        .with_snapshot(
             42,
             BucketSnapshot {
                 mmr_root: target_root,
                 leaf_count: 10,
             },
         )
-        .with_endpoints_sync(42, vec!["http://primary:3333".to_string()]);
+        .with_endpoints(42, vec!["http://primary:3333".to_string()]);
 
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
@@ -478,7 +431,7 @@ async fn test_duties_happy_path_returns_duty() {
 // Handle commands: force_sync, status
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_status_command() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
@@ -499,7 +452,7 @@ async fn test_status_command() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_force_sync_command() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
@@ -511,7 +464,6 @@ async fn test_force_sync_command() {
 
     let handle = coordinator.start(None).await.unwrap();
 
-    // force_sync should succeed (sends command, doesn't wait for completion)
     let result = handle.force_sync(999).await;
     assert!(result.is_ok());
 
