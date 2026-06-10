@@ -9,8 +9,14 @@
  */
 
 import assert from "node:assert";
-import { createBucket, removeMember, setMember } from "../api.js";
-import { makeSigner, READ_OPTS, sameAddress } from "../common.js";
+import {
+  createBucket,
+  makeSigner,
+  READ_OPTS,
+  removeMember,
+  sameAddress,
+  setMember,
+} from "@web3-storage/sdk";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -117,7 +123,7 @@ async function main() {
       const tx = api.tx.StorageProvider.set_member({
         bucket_id: bucketId,
         member: reader.address,
-        role: (await import("@polkadot-api/substrate-bindings")).Enum("Reader"),
+        role: (await import("polkadot-api")).Enum("Reader"),
       });
       await submitTxExpectFailure(tx, writer.signer, "NotBucketAdmin", "6.6");
     },

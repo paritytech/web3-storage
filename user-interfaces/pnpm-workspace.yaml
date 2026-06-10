@@ -1,9 +1,0 @@
-packages:
-  - "shared/*"
-  # The magic-named @polkadot-api/descriptors package lives nested inside
-  # shared/papi/.papi/. PAPI tooling regenerates it there; we register it as
-  # a workspace package so consumers can depend on it via `workspace:*`.
-  - "shared/papi/.papi/descriptors"
-  - "provider"
-  - "console-ui"
-  - "drive-ui"

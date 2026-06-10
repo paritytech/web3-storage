@@ -13,24 +13,22 @@ import {
   createBucket,
   createBucketWithStorage,
   endAgreement,
+  ensureProviderRegistered,
   fetchCheckpointSignature,
   freezeBucket,
+  makeSigner,
+  READ_OPTS,
   rejectAgreement,
   requestPrimaryAgreement,
   setMember,
   submitClientCheckpoint,
-  uploadChunk,
-  withdrawAgreementRequest,
-} from "../api.js";
-import {
-  ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
-  makeSigner,
-  READ_OPTS,
   toHex,
+  uploadChunk,
   waitForAgreementAcceptance,
   waitForBlock,
-} from "../common.js";
+  withdrawAgreementRequest,
+} from "@web3-storage/sdk";
+import { ensureSoleAcceptingProvider } from "../support.js";
 import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";

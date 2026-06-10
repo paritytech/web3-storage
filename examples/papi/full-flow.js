@@ -11,7 +11,7 @@
  * Prerequisites:
  *   - Parachain running at ws://127.0.0.1:2222
  *   - Provider node running at the specified URL
- *   - Descriptors generated: npm run papi:generate
+ *   - Workspace deps installed: pnpm install (descriptors come from the tracked metadata)
  *
  * Usage: node full-flow.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
@@ -21,28 +21,26 @@ import {
   acceptAgreement,
   challengeCheckpoint,
   challengeOffchain,
+  connect,
   createBucket,
   downloadChunk,
   endAgreement,
+  ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointSignature,
+  makeSigner,
+  READ_OPTS,
   requestPrimaryAgreement,
+  requireOneEvent,
   respondToChallenge,
   submitClientCheckpoint,
   uploadChunk,
-} from "./api.js";
-import {
-  connect,
-  ensureProviderRegistered,
-  makeSigner,
-  parseProviderClientArgs,
-  READ_OPTS,
-  requireOneEvent,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
+} from "@web3-storage/sdk";
+import { parseProviderClientArgs } from "./support.js";
 
 const {
   chainWs: CHAIN_WS,

@@ -13,15 +13,13 @@ import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   createBucketWithStorage,
   downloadChunk,
-  uploadChunk,
-} from "../api.js";
-import {
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
   makeSigner,
   toHex,
+  uploadChunk,
   waitForAgreementAcceptance,
-} from "../common.js";
+} from "@web3-storage/sdk";
+import { ensureSoleAcceptingProvider } from "../support.js";
 import { runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";

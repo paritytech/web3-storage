@@ -16,14 +16,12 @@ import {
   cancelDeregister,
   createBucket,
   deregisterProvider,
-  requestPrimaryAgreement,
-  updateProviderSettings,
-} from "../api.js";
-import {
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
-} from "../common.js";
+  requestPrimaryAgreement,
+  updateProviderSettings,
+} from "@web3-storage/sdk";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";

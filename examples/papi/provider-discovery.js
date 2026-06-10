@@ -27,7 +27,7 @@ import {
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
+} from "@web3-storage/sdk";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const BYTES_NEEDED = BigInt(process.argv[3] || 1_073_741_824n); // 1 GiB

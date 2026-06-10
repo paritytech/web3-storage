@@ -15,7 +15,7 @@
  *   - Provider node running at the specified URL (its checkpoint coordinator
  *     must NOT be enabled, otherwise it would auto-submit and there would be
  *     no missed window to report)
- *   - Descriptors generated: npm run papi:generate
+ *   - Workspace deps installed: pnpm install (descriptors come from the tracked metadata)
  *
  * Usage: node checkpoint-missed.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
@@ -23,24 +23,24 @@
 import assert from "node:assert";
 import {
   configureCheckpointWindow,
+  connect,
   createBucket,
+  ensureProviderRegistered,
+  makeSigner,
+  READ_OPTS,
   reportMissedCheckpoint,
   requestPrimaryAgreement,
-} from "./api.js";
-import {
-  connect,
-  ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
-  makeSigner,
-  parseProviderClientArgs,
-  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
+} from "@web3-storage/sdk";
+import {
+  ensureSoleAcceptingProvider,
+  parseProviderClientArgs,
+} from "./support.js";
 
 const {
   chainWs: CHAIN_WS,

@@ -6,7 +6,7 @@
  */
 
 import { formatDispatchError } from "./format.js";
-import { READ_OPTS } from "../common.js";
+import { READ_OPTS } from "@web3-storage/sdk";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ export async function submitTxExpectFailure(tx, signer, expectedError, label) {
  */
 export async function setupChain(chainWs) {
   const { connect, waitForChainReady, waitForBlockProduction, waitForNextBlock } =
-    await import("../common.js");
+    await import("@web3-storage/sdk");
   const { papi, api } = await connect(chainWs);
   await waitForChainReady(api);
   await waitForBlockProduction(api);

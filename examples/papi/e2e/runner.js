@@ -43,7 +43,9 @@ for (const file of files) {
   try {
     execFileSync(
       process.execPath,
-      [resolve(__dirname, file), CHAIN_WS, PROVIDER_URL],
+      // Workflows import the raw-TS @web3-storage/sdk, so each child needs
+      // the tsx loader just like the justfile invocations do.
+      ["--import", "tsx", resolve(__dirname, file), CHAIN_WS, PROVIDER_URL],
       {
         stdio: "inherit",
         timeout: 10 * 60 * 1000, // 10 minutes per workflow

@@ -1,26 +1,26 @@
 {
   "name": "web3-storage-papi-demo",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
-    "papi:generate": "papi add -w ws://localhost:2222 parachain && papi",
-    "demo": "node full-flow.js",
-    "demo:provider-discovery": "node provider-discovery.js",
-    "demo:checkpoint-missed": "node checkpoint-missed.js",
-    "demo:sc-flow": "node sc-flow.js",
-    "e2e": "node e2e/runner.js"
+    "demo": "node --import tsx full-flow.js",
+    "demo:provider-discovery": "node --import tsx provider-discovery.js",
+    "demo:checkpoint-missed": "node --import tsx checkpoint-missed.js",
+    "demo:sc-flow": "node --import tsx sc-flow.js",
+    "e2e": "node --import tsx e2e/runner.js"
   },
   "dependencies": {
-    "@polkadot-api/descriptors": "file:.papi/descriptors",
-    "@polkadot-api/substrate-bindings": "^0.16.5",
+    "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "polkadot-api": "^1.23.3",
+    "@web3-storage/sdk": "workspace:*",
+    "polkadot-api": "^2.1.0",
     "viem": "^2.21.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@polkadot-api/cli": "^0.13.4",
-    "c8": "^10.1.3"
+    "c8": "^10.1.3",
+    "tsx": "^4.19.0"
   }
 }

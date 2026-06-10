@@ -116,8 +116,8 @@ jobs:
         if: steps.zombienet-cache.outputs.cache-hit != 'true'
         run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -250,8 +250,8 @@ jobs:
           .bin/polkadot-omni-node --version
           .bin/chain-spec-builder --version 2>/dev/null || true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -286,6 +286,19 @@ jobs:
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
 
+      # The tracked metadata snapshot in shared/papi is the single descriptor
+      # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
+      # from the live chain and fail loudly when the committed snapshot has
+      # drifted from the runtime — descriptors would otherwise silently
+      # disagree with what the chain actually exposes.
+      - name: Check PAPI metadata is in sync with the runtime
+        run: |
+          pnpm --filter @web3-storage/papi run papi:generate
+          if ! git diff --exit-code user-interfaces/shared/papi/.papi/metadata; then
+            echo "::error::Tracked PAPI metadata is stale. Run 'pnpm run papi:generate' against a current chain and commit the result."
+            exit 1
+          fi
+
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
 
@@ -294,9 +307,11 @@ jobs:
         run: |
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "  JS Coverage (E2E test helpers)"
+          echo "  JS Coverage (E2E suite + @web3-storage/sdk)"
           echo "═══════════════════════════════════════════════════════════"
-          cd examples/papi && npx c8 report --reporter=text
+          npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+            --include="examples/papi/**" --include="packages/sdk/src/**" \
+            --temp-directory=examples/papi/coverage/tmp
           echo ""
 
       - name: Extract JS coverage summary
@@ -305,7 +320,9 @@ jobs:
           mkdir -p /tmp/coverage/report
           JS_COV="0"
           if [ -f examples/papi/coverage/coverage-final.json ]; then
-            JS_COV=$(cd examples/papi && npx c8 report --reporter=text 2>/dev/null \
+            JS_COV=$(npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+              --include="examples/papi/**" --include="packages/sdk/src/**" \
+              --temp-directory=examples/papi/coverage/tmp 2>/dev/null \
               | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
           fi
           echo "{\"js\": ${JS_COV:-0}}" > /tmp/coverage/report/coverage-summary.json
@@ -404,8 +421,8 @@ jobs:
           echo "Using chain-spec script: $SCRIPT"
           echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -579,33 +596,12 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
 
-      # The CI container ships an older Node (~14) that pnpm/action-setup@v6
-      # rejects (`import.meta.resolve` requires ≥20.6). Install Node 22 first,
-      # then pnpm against that Node, then re-run setup-node to wire the
-      # pnpm-store cache (which needs `pnpm store path` available).
-      - name: Setup Node.js (for pnpm install)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
-        with:
-          version: 10
-
-      - name: Setup Node.js (with pnpm cache)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
-
-      - name: Install workspace deps
-        working-directory: user-interfaces
-        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        working-directory: user-interfaces
         run: pnpm --filter @web3-storage/drive-ui exec playwright install --with-deps chromium
 
       - name: Start chain (dev mode, 2s blocks)
@@ -629,19 +625,16 @@ jobs:
         uses: ./.github/actions/wait-for-provider-health
 
       - name: drive-ui e2e
-        working-directory: user-interfaces
         env:
           CI: "true"
         run: pnpm run test:e2e:drive-ui
 
       - name: console-ui e2e
-        working-directory: user-interfaces
         env:
           CI: "true"
         run: pnpm run test:e2e:console-ui
 
       - name: provider e2e
-        working-directory: user-interfaces
         env:
           CI: "true"
         run: pnpm run test:e2e:provider

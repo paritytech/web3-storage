@@ -54,8 +54,8 @@ user-interfaces/**/test-results/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 
-# Lockfiles are per-project, not committed
-# (each UI project has its own package manager)
+# The repo-root pnpm-lock.yaml is committed; npm lockfiles are not (no npm
+# islands — everything JS lives in the pnpm workspace).
 
 # Binary/generated docs
 *.docx
@@ -65,3 +65,5 @@ Screenshot.png
 
 # Python
 __pycache__
+# c8 output from `just e2e`
+examples/papi/coverage/

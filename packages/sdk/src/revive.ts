@@ -1,25 +1,23 @@
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,
  * call a function on it, and read back contract-emitted events. Uses viem
- * only for ABI encoding/decoding (no EVM RPC client).
+ * only for ABI encoding/decoding (no EVM RPC client) — which is why this
+ * module is a separate `@web3-storage/sdk/revive` subpath export: consumers
+ * that never touch contracts don't pull viem into their graph.
  *
  * NOTE on PAPI field names: the exact shape of `api.tx.Revive.*` is whatever
- * `papi:generate` produces from the runtime metadata. The names below assume
+ * `papi generate` produces from the runtime metadata. The names below assume
  * snake_case for arguments matching `pallet_revive::Call::call`/`instantiate_with_code`
- * dispatchables on `polkadot-stable2603`. If `papi:generate` surfaces a
+ * dispatchables on `polkadot-stable2603`. If `papi generate` surfaces a
  * different field name, adjust here.
  */
 
-import { Binary } from "@polkadot-api/substrate-bindings";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
+import type { Abi } from "viem";
 
-import {
-  hexToBytes,
-  requireOneEvent,
-  submitTx,
-  submitTxFinalized,
-  toHex,
-} from "./common.js";
+import { asHex, hexToBytes, type ParachainApi } from "./address.js";
+import type { ChainSigner } from "./signers.js";
+import { requireOneEvent, submitTx, submitTxFinalized } from "./tx.js";
 
 /**
  * Compute the EVM-side H160 of a substrate account via `AccountId32Mapper`'s
@@ -27,7 +25,7 @@ import {
  * the `address` view of a substrate-only account (e.g. minting an
  * `address`-keyed token to `//Bob`).
  */
-export function substrateToH160(publicKey) {
+export function substrateToH160(publicKey: Uint8Array | string): string {
   const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
   const hash = hexToBytes(keccak256(bytes));
   return "0x" + Buffer.from(hash.slice(12)).toString("hex");
@@ -39,7 +37,7 @@ export function substrateToH160(publicKey) {
  * isn't gated on tight estimation; the actual weight consumed is metered by
  * the precompile's `env.charge` calls.
  */
-const DEFAULT_GAS_LIMIT = {
+export const DEFAULT_GAS_LIMIT = {
   // Cap at ~half a block — block max is 2s × MaxEthExtrinsicWeight (9/10) = 1.8s;
   // staying well under prevents `Invalid::ExhaustsResources` rejection.
   ref_time: 1_000_000_000_000n, // 1s of ref_time
@@ -48,22 +46,22 @@ const DEFAULT_GAS_LIMIT = {
   // budget generously — under the cap but well above the per-call needs.
   proof_size: 4_000_000n,
 };
-const DEFAULT_STORAGE_DEPOSIT_LIMIT = 10n ** 18n; // 10^6 UNIT
+export const DEFAULT_STORAGE_DEPOSIT_LIMIT = 10n ** 18n; // 10^6 UNIT
 
 /**
  * Register `signer`'s substrate AccountId with `pallet_revive` so it can
  * participate in contract interactions. Idempotent: if the account is already
  * mapped (or is an ETH-native Address20), this becomes a no-op.
  */
-export async function ensureAccountMapped(api, signer) {
+export async function ensureAccountMapped(api: ParachainApi, signer: ChainSigner) {
   try {
     await submitTx(
       api.tx.Revive.map_account(),
       signer.signer,
-      `Revive.map_account(${signer.seed})`
+      `Revive.map_account(${signer.seed ?? signer.address})`,
     );
   } catch (e) {
-    const msg = String(e?.message ?? e);
+    const msg = String((e as Error)?.message ?? e);
     if (msg.includes("AccountAlreadyMapped") || msg.includes("AlreadyMapped")) {
       return; // idempotent
     }
@@ -71,69 +69,89 @@ export async function ensureAccountMapped(api, signer) {
   }
 }
 
+export interface DeployOpts {
+  value?: bigint;
+  gasLimit?: { ref_time: bigint; proof_size: bigint };
+  storageDepositLimit?: bigint;
+  salt?: Uint8Array | string;
+}
+
 /**
  * Upload + instantiate a contract in one extrinsic. Returns the H160 contract
  * address from the `Instantiated` event (as a hex string with 0x prefix).
  *
- * `value` is in substrate atomic units (not wei). The contract's substrate-mapped
- * account ends up holding it.
+ * `value` is in substrate atomic units (not wei). The contract's
+ * substrate-mapped account ends up holding it.
  */
 export async function deployContract(
-  api,
-  deployer,
-  bytecode,
-  constructorData = new Uint8Array(),
-  { value = 0n, gasLimit = DEFAULT_GAS_LIMIT, storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT, salt } = {}
+  api: ParachainApi,
+  deployer: ChainSigner,
+  bytecode: Uint8Array,
+  constructorData: Uint8Array = new Uint8Array(),
+  {
+    value = 0n,
+    gasLimit = DEFAULT_GAS_LIMIT,
+    storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT,
+    salt,
+  }: DeployOpts = {},
 ) {
   const tx = api.tx.Revive.instantiate_with_code({
     value,
     weight_limit: gasLimit,
     storage_deposit_limit: storageDepositLimit,
-    code: Binary.fromBytes(bytecode),
-    data: Binary.fromBytes(constructorData),
+    code: bytecode,
+    data: constructorData,
     // Option<[u8; 32]>: PAPI surfaces None as `undefined`.
-    salt: salt ? Binary.fromBytes(salt) : undefined,
+    salt: salt ? asHex(salt) : undefined,
   });
 
   const result = await submitTx(tx, deployer.signer, "Revive.instantiate_with_code");
   const instantiated = requireOneEvent(
     result.events,
     api.event.Revive.Instantiated,
-    "Revive.Instantiated"
+    "Revive.Instantiated",
   );
-  const addrBytes = instantiated.contract.asBytes
-    ? instantiated.contract.asBytes()
-    : instantiated.contract;
-  return { address: toHex(addrBytes), addressBytes: addrBytes, events: result.events };
+  const address = asHex(instantiated.contract);
+  return { address, addressBytes: hexToBytes(address), events: result.events };
+}
+
+export interface CallOpts {
+  value?: bigint;
+  gasLimit?: { ref_time: bigint; proof_size: bigint };
+  storageDepositLimit?: bigint;
+  /**
+   * Wait for finalization when a later tx references this call's effect by id
+   * (e.g. a precompile that creates a challenge). See submitTxFinalized.
+   */
+  finalized?: boolean;
 }
 
 /**
  * Call a deployed contract. `data` is the raw ABI-encoded calldata (4-byte
- * selector + ABI-encoded args); use viem's `encodeFunctionData` to build it.
+ * selector + ABI-encoded args); use {@link encodeCall} to build it.
  *
- * Returns the full `result` (events array + dispatchInfo) so callers can
- * pluck out pallet events emitted by the precompile's downstream dispatch.
+ * Returns the full submission result (events array + dispatch info) so
+ * callers can pluck out pallet events emitted by the precompile's downstream
+ * dispatch.
  */
 export async function callContract(
-  api,
-  signer,
-  contractAddressBytes,
-  data,
+  api: ParachainApi,
+  signer: ChainSigner,
+  contractAddress: Uint8Array | string,
+  data: Uint8Array,
   {
     value = 0n,
     gasLimit = DEFAULT_GAS_LIMIT,
     storageDepositLimit = DEFAULT_STORAGE_DEPOSIT_LIMIT,
-    // Wait for finalization when a later tx references this call's effect by id
-    // (e.g. a precompile that creates a challenge). See submitTxFinalized.
     finalized = false,
-  } = {}
+  }: CallOpts = {},
 ) {
   const tx = api.tx.Revive.call({
-    dest: Binary.fromBytes(contractAddressBytes),
+    dest: asHex(contractAddress),
     value,
     weight_limit: gasLimit,
     storage_deposit_limit: storageDepositLimit,
-    data: Binary.fromBytes(data),
+    data,
   });
   const submit = finalized ? submitTxFinalized : submitTx;
   return submit(tx, signer.signer, "Revive.call");
@@ -143,46 +161,37 @@ export async function callContract(
  * Find `Revive.ContractEmitted` events whose `contract` matches the given
  * H160 and decode them against `abi`. Returns an array of `{ eventName, args }`.
  */
-export function decodeContractEmitted(events, api, contractAddressBytes, abi) {
-  const decoded = [];
-  for (const ev of events) {
+export function decodeContractEmitted(
+  events: unknown[],
+  api: ParachainApi,
+  contractAddress: Uint8Array | string,
+  abi: Abi,
+) {
+  const wanted = asHex(contractAddress).toLowerCase();
+  const decoded: Array<{ eventName: string; args: unknown }> = [];
+  for (const ev of events as Array<{ type?: string; value?: { type?: string; value?: any } }>) {
     if (ev.type !== "Revive") continue;
     if (ev.value?.type !== "ContractEmitted") continue;
     const payload = ev.value.value;
-    const emitterBytes = payload.contract.asBytes
-      ? payload.contract.asBytes()
-      : payload.contract;
-    if (!bytesEq(emitterBytes, contractAddressBytes)) continue;
-    const dataBytes = payload.data.asBytes ? payload.data.asBytes() : payload.data;
-    const topicsBytes = (payload.topics || []).map((t) =>
-      t.asBytes ? t.asBytes() : t
-    );
+    if (asHex(payload.contract).toLowerCase() !== wanted) continue;
     try {
       const log = decodeEventLog({
         abi,
-        data: toHex(dataBytes),
-        topics: topicsBytes.map(toHex),
+        data: asHex(payload.data),
+        topics: (payload.topics || []).map((t: string | Uint8Array) => asHex(t)) as [
+          `0x${string}`,
+          ...`0x${string}`[],
+        ],
       });
-      decoded.push(log);
-    } catch (_) {
+      decoded.push(log as unknown as { eventName: string; args: unknown });
+    } catch {
       // unknown event (not in this ABI) — skip
     }
   }
   return decoded;
 }
 
-function bytesEq(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
-/** Convenience wrappers — keep callers free of viem imports. */
-export function encodeCall(abi, functionName, args) {
-  return Uint8Array.from(
-    Buffer.from(
-      encodeFunctionData({ abi, functionName, args }).slice(2),
-      "hex"
-    )
-  );
+/** Convenience wrapper — keeps callers free of viem imports. */
+export function encodeCall(abi: Abi, functionName: string, args: unknown[]): Uint8Array {
+  return hexToBytes(encodeFunctionData({ abi, functionName, args }));
 }

@@ -9,16 +9,18 @@
  */
 
 import assert from "node:assert";
-import { createDrive, deleteDrive, shareDrive, unshareDrive } from "../api.js";
 import {
+  createDrive,
+  deleteDrive,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
   makeSigner,
-  printBucketMembers,
   READ_OPTS,
   sameAddress,
+  shareDrive,
+  unshareDrive,
   waitForAgreementAcceptance,
-} from "../common.js";
+} from "@web3-storage/sdk";
+import { ensureSoleAcceptingProvider, printBucketMembers } from "../support.js";
 import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -139,7 +141,7 @@ async function main() {
       const tx = api.tx.DriveRegistry.share_drive({
         drive_id: result.driveId,
         member: owner.address,
-        role: (await import("@polkadot-api/substrate-bindings")).Enum("Writer"),
+        role: (await import("polkadot-api")).Enum("Writer"),
       });
       await submitTxExpectFailure(tx, member.signer, "NotAuthorizedToShare", "9.6");
     },

@@ -14,18 +14,16 @@ import {
   createS3BucketWithStorage,
   deleteObjectMetadata,
   deleteS3Bucket,
+  ensureProviderRegistered,
+  makeSigner,
   putChunk,
   putObjectMetadata,
-} from "../api.js";
-import {
-  ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
-  makeSigner,
   READ_OPTS,
   sameAddress,
   toHex,
   waitForAgreementAcceptance,
-} from "../common.js";
+} from "@web3-storage/sdk";
+import { ensureSoleAcceptingProvider } from "../support.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -75,9 +73,7 @@ async function main() {
       await putObjectMetadata(api, client, s3BucketId, "test.txt", obj, "text/plain");
       const stored = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("test.txt")
-        ),
+        new TextEncoder().encode("test.txt"),
         READ_OPTS
       );
       assert.ok(stored, "Object should exist in storage");
@@ -95,9 +91,7 @@ async function main() {
       ]);
       const stored = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("meta.txt")
-        ),
+        new TextEncoder().encode("meta.txt"),
         READ_OPTS
       );
       assert.ok(stored, "Object with metadata should exist");
@@ -110,22 +104,18 @@ async function main() {
       await copyObjectMetadata(api, client, s3BucketId, "test.txt", s3BucketId, "test-copy.txt");
       const original = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("test.txt")
-        ),
+        new TextEncoder().encode("test.txt"),
         READ_OPTS
       );
       const copy = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("test-copy.txt")
-        ),
+        new TextEncoder().encode("test-copy.txt"),
         READ_OPTS
       );
       assert.ok(copy, "Copy should exist");
       assert.deepStrictEqual(
-        toHex(copy.cid.asBytes()),
-        toHex(original.cid.asBytes()),
+        copy.cid,
+        original.cid,
         "CID should be the same after copy"
       );
     },
@@ -137,9 +127,7 @@ async function main() {
       await deleteObjectMetadata(api, client, s3BucketId, "meta.txt");
       const stored = await api.query.S3Registry.Objects.getValue(
         s3BucketId,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("meta.txt")
-        ),
+        new TextEncoder().encode("meta.txt"),
         READ_OPTS
       );
       assert.strictEqual(stored, undefined, "Object should be gone after delete");
@@ -210,9 +198,7 @@ async function main() {
       await waitForAgreementAcceptance(api, provider.address, l0);
       const tx = api.tx.S3Registry.delete_object_metadata({
         s3_bucket_id: bid,
-        key: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("does-not-exist.txt")
-        ),
+        key: new TextEncoder().encode("does-not-exist.txt"),
       });
       await submitTxExpectFailure(tx, client.signer, "ObjectNotFound", "3.8");
       // Cleanup
@@ -233,9 +219,7 @@ async function main() {
         max_payment: maxPay,
       });
       const tx = api.tx.S3Registry.create_s3_bucket_with_storage({
-        name: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode(dupName)
-        ),
+        name: new TextEncoder().encode(dupName),
         max_capacity: maxCapacity,
         duration,
         max_payment: maxPay,
@@ -267,9 +251,7 @@ async function main() {
       await putObjectMetadata(api, client, bid, "a/b/c/d.txt", obj, "text/plain");
       const stored = await api.query.S3Registry.Objects.getValue(
         bid,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("a/b/c/d.txt")
-        ),
+        new TextEncoder().encode("a/b/c/d.txt"),
         READ_OPTS
       );
       assert.ok(stored, "Object with nested path key should exist");
@@ -302,9 +284,7 @@ async function main() {
       await putObjectMetadata(api, client, bid, "file.txt", obj2, "text/plain");
       const stored = await api.query.S3Registry.Objects.getValue(
         bid,
-        (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("file.txt")
-        ),
+        new TextEncoder().encode("file.txt"),
         READ_OPTS
       );
       assert.strictEqual(stored.size, obj2.size, "Size should reflect the upserted object");

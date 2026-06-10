@@ -11,18 +11,16 @@
 import assert from "node:assert";
 import {
   createBucket,
+  ensureProviderRegistered,
   extendAgreement,
+  makeSigner,
+  READ_OPTS,
   requestPrimaryAgreement,
   setExtensionsBlocked,
   topUpAgreement,
   updateProviderSettings,
-} from "../api.js";
-import {
-  ensureProviderRegistered,
-  makeSigner,
-  READ_OPTS,
   waitForAgreementAcceptance,
-} from "../common.js";
+} from "@web3-storage/sdk";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";

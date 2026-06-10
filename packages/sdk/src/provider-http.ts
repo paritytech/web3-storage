@@ -1,0 +1,194 @@
+/**
+ * Provider-node HTTP helpers — the off-chain half of flows the pallet
+ * wrappers complete. Node-oriented (uses Buffer for base64); browser callers
+ * have their own fetch layers for now.
+ */
+
+import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
+
+import { asHex, toHex, type ParachainApi } from "./address.js";
+import { READ_OPTS } from "./tx.js";
+
+export interface ProviderFetchOpts {
+  method?: string;
+  params?: Record<string, string | number>;
+  body?: unknown;
+}
+
+export async function providerFetch(
+  providerUrl: string,
+  path: string,
+  opts: ProviderFetchOpts = {},
+): Promise<any> {
+  const url = new URL(path, providerUrl);
+  if (opts.params) {
+    for (const [k, v] of Object.entries(opts.params)) url.searchParams.set(k, String(v));
+  }
+  const resp = await fetch(url, {
+    method: opts.method || "GET",
+    headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!resp.ok) throw new Error(`${path}: ${resp.status} ${await resp.text()}`);
+  return resp.json();
+}
+
+export interface PutChunkResult {
+  hash: string;
+  cid: Uint8Array;
+  size: bigint;
+  data: Uint8Array;
+}
+
+/**
+ * PUT a single chunk to the provider without requesting an MMR commitment.
+ * Suitable for S3-style object uploads where the Layer 1 metadata records
+ * the CID itself and no Layer 0 checkpoint follows immediately.
+ */
+export async function putChunk(
+  providerUrl: string,
+  bucketId: bigint | number,
+  data: Uint8Array | string,
+): Promise<PutChunkResult> {
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  const cid = blake2b256(bytes);
+  const hash = toHex(cid);
+  await providerFetch(providerUrl, "/node", {
+    method: "PUT",
+    body: {
+      bucket_id: Number(bucketId),
+      hash,
+      data: Buffer.from(bytes).toString("base64"),
+      children: null,
+    },
+  });
+  return { hash, cid, size: BigInt(bytes.length), data: bytes };
+}
+
+/**
+ * PUT a chunk to the provider and request an MMR commitment. Returns the
+ * chunk hash, original bytes, and the /commit response (mmr_root,
+ * leaf_indices, start_seq, provider_signature).
+ */
+export async function uploadChunk(
+  providerUrl: string,
+  bucketId: bigint | number,
+  data: Uint8Array | string,
+): Promise<{ hash: string; data: Uint8Array; commit: any }> {
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+  const hash = toHex(blake2b256(bytes));
+  await providerFetch(providerUrl, "/node", {
+    method: "PUT",
+    body: {
+      bucket_id: Number(bucketId),
+      hash,
+      data: Buffer.from(bytes).toString("base64"),
+      children: null,
+    },
+  });
+  const commit = await providerFetch(providerUrl, "/commit", {
+    method: "POST",
+    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+  });
+  return { hash, data: bytes, commit };
+}
+
+export async function downloadChunk(
+  providerUrl: string,
+  chunkHashHex: string,
+): Promise<Buffer> {
+  const downloaded = await providerFetch(providerUrl, "/node", {
+    params: { hash: chunkHashHex },
+  });
+  return Buffer.from(downloaded.data, "base64");
+}
+
+export async function fetchCheckpointSignature(
+  providerUrl: string,
+  bucketId: bigint | number,
+): Promise<any> {
+  return providerFetch(providerUrl, "/checkpoint-signature", {
+    params: { bucket_id: Number(bucketId) },
+  });
+}
+
+export async function fetchCheckpointDuty(
+  providerUrl: string,
+  bucketId: bigint | number,
+): Promise<any> {
+  return providerFetch(providerUrl, "/checkpoint/duty", {
+    params: { bucket_id: Number(bucketId) },
+  });
+}
+
+export async function signCheckpointProposal(
+  providerUrl: string,
+  bucketId: bigint | number,
+  duty: { mmr_root: string; start_seq: number | string; leaf_count: number | string },
+  window: number | bigint,
+): Promise<any> {
+  return providerFetch(providerUrl, "/checkpoint/sign", {
+    method: "POST",
+    body: {
+      bucket_id: Number(bucketId),
+      mmr_root: duty.mmr_root,
+      start_seq: duty.start_seq,
+      leaf_count: duty.leaf_count,
+      window: Number(window),
+    },
+  });
+}
+
+/**
+ * Build the proof payload for `respond_to_challenge` by reading the challenge
+ * from chain state and fetching MMR + chunk proofs from the provider node.
+ */
+export async function fetchChallengeProof(
+  api: ParachainApi,
+  providerUrl: string,
+  challengeId: { deadline: number; index: number },
+): Promise<any> {
+  // Best block: a finalized read would lag the just-created challenge.
+  const challenges = await api.query.StorageProvider.Challenges.getValue(
+    challengeId.deadline,
+    READ_OPTS,
+  );
+  if (!challenges)
+    throw new Error("No challenges at deadline " + challengeId.deadline);
+  const challenge = challenges[challengeId.index];
+  if (!challenge)
+    throw new Error("Challenge index not found: " + challengeId.index);
+
+  const mmr = await providerFetch(providerUrl, "/mmr_proof", {
+    params: {
+      bucket_id: Number(challenge.bucket_id),
+      leaf_index: Number(challenge.leaf_index),
+    },
+  });
+  const chunk = await providerFetch(providerUrl, "/chunk_proof", {
+    params: {
+      data_root: mmr.leaf.data_root,
+      chunk_index: Number(challenge.chunk_index),
+    },
+  });
+
+  return {
+    chunk_data: new Uint8Array(Buffer.from(chunk.chunk_data, "base64")),
+    mmr_proof: {
+      peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
+      leaf: {
+        data_root: asHex(mmr.leaf.data_root),
+        data_size: BigInt(mmr.leaf.data_size),
+        total_size: BigInt(mmr.leaf.total_size),
+      },
+      leaf_proof: {
+        siblings: mmr.proof.siblings.map((h: string) => asHex(h)),
+        path: mmr.proof.path,
+      },
+    },
+    chunk_proof: {
+      siblings: chunk.proof.siblings.map((h: string) => asHex(h)),
+      path: chunk.proof.path,
+    },
+  };
+}

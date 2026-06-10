@@ -25,26 +25,30 @@ import { fileURLToPath } from "node:url";
 
 import {
   acceptAgreement,
-  fetchCheckpointSignature,
-  respondToChallenge,
-  submitClientCheckpoint,
-  uploadChunk,
-} from "./api.js";
-import {
   connect,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
+  fetchCheckpointSignature,
   hexToBytes,
   makeSigner,
-  parseProviderClientArgs,
   READ_OPTS,
+  respondToChallenge,
   sameAddress,
+  submitClientCheckpoint,
   toHex,
+  uploadChunk,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
-import { callContract, encodeCall, ensureAccountMapped } from "./sc-api.js";
+} from "@web3-storage/sdk";
+import {
+  callContract,
+  encodeCall,
+  ensureAccountMapped,
+} from "@web3-storage/sdk/revive";
+import {
+  ensureSoleAcceptingProvider,
+  parseProviderClientArgs,
+} from "./support.js";
 
 const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientArgs();
 
@@ -271,7 +275,7 @@ async function main() {
     const challenge = assertEvent(r.events, "StorageProvider", "ChallengeCreated", "challengeCheckpoint");
 
     console.log("    [substrate] respondToChallenge");
-    const proof = await import("./api.js").then((m) =>
+    const proof = await import("@web3-storage/sdk").then((m) =>
       m.fetchChallengeProof(api, providerUrl, challenge.challenge_id)
     );
     await respondToChallenge(api, provider, challenge.challenge_id, proof);

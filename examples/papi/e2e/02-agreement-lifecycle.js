@@ -12,18 +12,16 @@ import assert from "node:assert";
 import {
   createBucket,
   endAgreement,
-  rejectAgreement,
-  requestPrimaryAgreement,
-  withdrawAgreementRequest,
-} from "../api.js";
-import {
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
+  rejectAgreement,
+  requestPrimaryAgreement,
   sameAddress,
   waitForAgreementAcceptance,
   waitForBlock,
-} from "../common.js";
+  withdrawAgreementRequest,
+} from "@web3-storage/sdk";
 import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -269,7 +267,7 @@ async function main() {
       const tx = api.tx.StorageProvider.end_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        action: (await import("@polkadot-api/substrate-bindings")).Enum("Pay"),
+        action: (await import("polkadot-api")).Enum("Pay"),
       });
       await submitTxExpectFailure(tx, charlie.signer, "NotBucketAdmin", "2.12");
     },

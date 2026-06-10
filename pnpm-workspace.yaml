@@ -1,0 +1,16 @@
+packages:
+  - "user-interfaces/shared/*"
+  # The magic-named @polkadot-api/descriptors package lives nested inside
+  # shared/papi/.papi/. PAPI tooling regenerates it there; we register it as
+  # a workspace package so consumers can depend on it via `workspace:*`.
+  - "user-interfaces/shared/papi/.papi/descriptors"
+  - "user-interfaces/provider"
+  - "user-interfaces/console-ui"
+  - "user-interfaces/drive-ui"
+  - "packages/*"
+  - "examples/papi"
+
+# pnpm blocks dependency build scripts unless allow-listed; esbuild needs its
+# postinstall to place the platform binary.
+allowBuilds:
+  esbuild: true

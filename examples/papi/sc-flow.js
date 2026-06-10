@@ -16,7 +16,7 @@
  *   - Provider node running and reachable at `providerUrl`.
  *   - `examples/contracts/build/StorageMarketplace.{bin,abi}` exist
  *     (run `just build-contracts` first).
- *   - Descriptors generated via `npm run papi:generate` (includes Revive).
+ *   - Workspace deps installed via `pnpm install` (descriptors include Revive).
  *
  * Usage: node sc-flow.js [chain_ws] [provider_url] [provider_seed] [client_seed]
  */
@@ -28,31 +28,32 @@ import { fileURLToPath } from "node:url";
 
 import {
   challengeOffchain,
-  downloadChunk,
-  fetchChallengeProof,
-  respondToChallenge,
-  uploadChunk,
-} from "./api.js";
-import {
   connect,
+  downloadChunk,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
+  fetchChallengeProof,
+  hexToBytes,
   makeSigner,
-  parseProviderClientArgs,
   READ_OPTS,
   requireOneEvent,
+  respondToChallenge,
   toHex,
+  uploadChunk,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
+} from "@web3-storage/sdk";
 import {
   callContract,
   decodeContractEmitted,
   deployContract,
   encodeCall,
   ensureAccountMapped,
-} from "./sc-api.js";
+} from "@web3-storage/sdk/revive";
+import {
+  ensureSoleAcceptingProvider,
+  parseProviderClientArgs,
+} from "./support.js";
 
 const {
   chainWs: CHAIN_WS,
@@ -214,15 +215,6 @@ async function main() {
   } finally {
     papi.destroy();
   }
-}
-
-function hexToBytes(hex) {
-  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const out = new Uint8Array(h.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(h.substr(i * 2, 2), 16);
-  }
-  return out;
 }
 
 main().catch((e) => {

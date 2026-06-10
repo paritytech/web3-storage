@@ -15,25 +15,23 @@ import {
   claimCheckpointRewards,
   configureCheckpointWindow,
   createBucket,
+  ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointDuty,
   fetchCheckpointSignature,
   fundCheckpointPool,
+  makeSigner,
+  READ_OPTS,
   requestPrimaryAgreement,
   respondToChallenge,
   signCheckpointProposal,
   submitClientCheckpoint,
   submitProviderCheckpoint,
   uploadChunk,
-} from "../api.js";
-import {
-  ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
-  makeSigner,
-  READ_OPTS,
   waitForAgreementAcceptance,
   waitForBlock,
-} from "../common.js";
+} from "@web3-storage/sdk";
+import { ensureSoleAcceptingProvider } from "../support.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";

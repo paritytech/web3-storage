@@ -28,16 +28,14 @@ import { fileURLToPath } from "node:url";
 import {
   connect,
   ensureProviderRegistered,
-  ensureSoleAcceptingProvider,
   hexToBytes,
   makeSigner,
-  parseProviderClientArgs,
   READ_OPTS,
   requireOneEvent,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
-} from "./common.js";
+} from "@web3-storage/sdk";
 import {
   callContract,
   decodeContractEmitted,
@@ -45,7 +43,11 @@ import {
   encodeCall,
   ensureAccountMapped,
   substrateToH160,
-} from "./sc-api.js";
+} from "@web3-storage/sdk/revive";
+import {
+  ensureSoleAcceptingProvider,
+  parseProviderClientArgs,
+} from "./support.js";
 
 const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientArgs();
 
