@@ -1,12 +1,10 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    agreement_coordinator_subxt::SubxtAgreementChainClient,
     auth::{ChainMembershipResolver, MembershipCache},
-    checkpoint_coordinator_subxt::SubxtCheckpointChainClient,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
-    replica_sync_coordinator_subxt::SubxtReplicaSyncChainClient,
+    subxt_client::SubxtChainClient,
     AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
     ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -101,13 +99,31 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Connect a single chain client shared by every coordinator. One
+    // WebSocket connection and one signer (the provider's own account) back
+    // all on-chain actions; coordinators each get a cheap clone. Requires a
+    // signing key, so this is only available when a seed was provided.
+    let chain_client = match &seed {
+        Some(seed) => match SubxtChainClient::connect(&cli.rpc.chain_rpc, seed).await {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::error!("Failed to connect chain client: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     // Start optional background services (failures are non-fatal)
-    let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
+    let checkpoint_handle =
+        start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
         state.set_checkpoint_handle(handle);
     }
-    let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
-    let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
+    let _replica_sync_handle =
+        start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+    let _agreement_handle =
+        start_agreement_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address (requires signing key)
     if let Some(seed) = &seed {
@@ -131,29 +147,22 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start_checkpoint_coordinator(
     cli: &Cli,
-    seed: &Option<String>,
+    chain_client: Option<&SubxtChainClient>,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
         return None;
     }
 
-    let seed = match seed {
-        Some(s) => s.clone(),
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
         None => {
-            tracing::error!("Checkpoint coordinator requires --keyfile for signing. Skipping.");
+            tracing::error!(
+                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+            );
             return None;
         }
     };
-
-    let chain_client = match SubxtCheckpointChainClient::connect(&cli.rpc.chain_rpc, &seed).await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-            return None;
-        }
-    };
-    tracing::info!("Checkpoint coordinator connected to chain");
 
     let config = CheckpointCoordinatorConfig::default();
 
@@ -173,29 +182,22 @@ async fn start_checkpoint_coordinator(
 
 async fn start_replica_sync_coordinator(
     cli: &Cli,
+    chain_client: Option<&SubxtChainClient>,
     state: Arc<ProviderState>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
         return None;
     }
 
-    let keypair = match state.keypair.as_ref() {
-        Some(kp) => kp,
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
         None => {
-            tracing::error!("Replica sync coordinator requires a signing keypair. Skipping.");
+            tracing::error!(
+                "Replica sync coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+            );
             return None;
         }
     };
-
-    let chain_client = match SubxtReplicaSyncChainClient::connect(&cli.rpc.chain_rpc, keypair).await
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to connect replica sync coordinator: {}", e);
-            return None;
-        }
-    };
-    tracing::info!("Replica sync coordinator connected to chain");
 
     let config = ReplicaSyncCoordinatorConfig {
         poll_interval: Duration::from_secs(cli.replica_sync.replica_poll_interval),
@@ -220,29 +222,22 @@ async fn start_replica_sync_coordinator(
 
 async fn start_agreement_coordinator(
     cli: &Cli,
-    seed: &Option<String>,
+    chain_client: Option<&SubxtChainClient>,
     state: Arc<ProviderState>,
 ) -> Option<AgreementCoordinatorHandle> {
     if !cli.agreement.enable_agreement_coordinator {
         return None;
     }
 
-    let seed = match seed {
-        Some(s) => s.clone(),
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
         None => {
-            tracing::error!("Agreement coordinator requires --keyfile for signing. Skipping.");
+            tracing::error!(
+                "Agreement coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+            );
             return None;
         }
     };
-
-    let chain_client = match SubxtAgreementChainClient::connect(&cli.rpc.chain_rpc, &seed).await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to connect agreement coordinator: {}", e);
-            return None;
-        }
-    };
-    tracing::info!("Agreement coordinator connected to chain");
 
     let config = AgreementCoordinatorConfig {
         poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
