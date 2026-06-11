@@ -291,13 +291,21 @@ jobs:
       # from the live chain and fail loudly when the committed snapshot has
       # drifted from the runtime — descriptors would otherwise silently
       # disagree with what the chain actually exposes.
+      # Hash-compare instead of `git diff`: git refuses to discover the
+      # host-owned checkout from inside the CI container ("Not a git
+      # repository" via the dubious-ownership guard), and a content hash of
+      # the one tracked snapshot is the precise signal anyway.
       - name: Check PAPI metadata is in sync with the runtime
         run: |
+          META=user-interfaces/shared/papi/.papi/metadata/parachain.scale
+          BEFORE=$(sha256sum "$META" | cut -d' ' -f1)
           pnpm --filter @web3-storage/papi run papi:generate
-          if ! git diff --exit-code user-interfaces/shared/papi/.papi/metadata; then
-            echo "::error::Tracked PAPI metadata is stale. Run 'pnpm run papi:generate' against a current chain and commit the result."
+          AFTER=$(sha256sum "$META" | cut -d' ' -f1)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "::error::Tracked PAPI metadata is stale (committed $BEFORE, live chain $AFTER). Run 'pnpm run papi:generate' against a current chain and commit the result."
             exit 1
           fi
+          echo "Metadata in sync ($AFTER)"
 
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
@@ -305,6 +313,12 @@ jobs:
       - name: Print JS coverage
         if: always()
         run: |
+          # No data when an earlier step failed before the suite ran — skip
+          # instead of crashing this always() step on a missing directory.
+          if [ ! -d examples/papi/coverage/tmp ]; then
+            echo "No coverage data (E2E suite did not run)."
+            exit 0
+          fi
           echo ""
           echo "═══════════════════════════════════════════════════════════"
           echo "  JS Coverage (E2E suite + @web3-storage/sdk)"
