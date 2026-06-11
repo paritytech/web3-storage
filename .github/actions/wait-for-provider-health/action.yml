@@ -25,16 +25,21 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        LABEL: ${{ inputs.label }}
+        LOG_FILE: ${{ inputs.log-file }}
       run: |
-        echo "Waiting for ${{ inputs.label }} provider (${{ inputs.url }})..."
-        for i in $(seq 1 ${{ inputs.attempts }}); do
-          if curl -s "${{ inputs.url }}/health" | jq -e '.status' > /dev/null 2>&1; then
-            echo "${{ inputs.label }} provider is healthy (attempt $i)"
+        echo "Waiting for ${LABEL} provider (${URL})..."
+        for i in $(seq 1 "$ATTEMPTS"); do
+          if curl -s "${URL}/health" | jq -e '.status' > /dev/null 2>&1; then
+            echo "${LABEL} provider is healthy (attempt $i)"
             break
           fi
-          if [ "$i" -eq ${{ inputs.attempts }} ]; then
-            echo "Timeout: ${{ inputs.label }} provider did not become healthy"
-            cat "${{ inputs.log-file }}" 2>/dev/null || true
+          if [ "$i" -eq "$ATTEMPTS" ]; then
+            echo "Timeout: ${LABEL} provider did not become healthy"
+            cat "$LOG_FILE" 2>/dev/null || true
             exit 1
           fi
           sleep 2
