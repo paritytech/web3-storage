@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Check provider-node version matches tag
         run: |
@@ -48,6 +50,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Runtime config
         id: config
@@ -96,6 +100,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -149,6 +155,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> "$GITHUB_ENV"
@@ -200,6 +208,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -257,12 +267,17 @@ jobs:
 
           cat RELEASE_NOTES.md
 
+      # Use the runner's preinstalled gh CLI rather than a third-party action;
+      # the job already holds contents: write. Tag defaults to github.ref_name.
       - name: Create release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
-        with:
-          name: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
-          files: |
-            release-assets/*.wasm
-            release-assets/storage-provider-node-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_NAME: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$RELEASE_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            release-assets/*.wasm \
+            release-assets/storage-provider-node-*.tar.gz \
             release-assets/storage-provider-node-*.tar.gz.sha256
-          body_path: RELEASE_NOTES.md

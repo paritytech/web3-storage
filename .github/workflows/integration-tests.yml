@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -29,6 +32,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
@@ -82,6 +87,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
@@ -103,7 +110,7 @@ jobs:
 
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
 
       - name: Cache zombienet
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -114,7 +121,7 @@ jobs:
 
       - name: Download zombienet
         if: steps.zombienet-cache.outputs.cache-hit != 'true'
-        run: just zombienet_version=${{ env.ZOMBIENET_VERSION }} download-zombienet
+        run: just zombienet_version="$ZOMBIENET_VERSION" download-zombienet
 
       - name: Setup pnpm workspace
         uses: ./.github/actions/setup-pnpm
@@ -198,11 +205,17 @@ jobs:
     runs-on: parity-large
     timeout-minutes: 60
     needs: [set-image, build]
+    # actions: write is required by the push-only "gh cache delete" step below.
+    permissions:
+      contents: read
+      actions: write
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
@@ -243,7 +256,7 @@ jobs:
 
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
 
       - name: Log binary versions
         run: |
@@ -401,6 +414,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
@@ -422,7 +437,7 @@ jobs:
 
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
 
       - name: Resolve chain-spec script
         run: |
@@ -555,6 +570,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
@@ -587,7 +604,7 @@ jobs:
 
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }} download-polkadot-sdk-binaries
+        run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
 
       # Restored before the artifact download so the cached target/ can't clobber
       # the freshly downloaded provider + wbuild. save-if false — only the build

@@ -1,0 +1,21 @@
+# zizmor configuration — https://docs.zizmor.sh/configuration/
+#
+# Findings ignored here are deliberate, documented exceptions. Everything else
+# must stay clean: the `zizmor` CI workflow fails the build on any other finding.
+rules:
+  # The CI container image is resolved at runtime from .github/env (a trusted,
+  # committed file) via the set-image reusable workflow, and the cmd-bot image is
+  # the gated /cmd flow's input. Neither can be pinned to a digest in-line, and
+  # there are no other (pinnable) image refs in these files.
+  unpinned-images:
+    ignore:
+      - check.yml
+      - integration-tests.yml
+      - release.yml
+      - cmd-run.yml
+  # The release caches use release-specific keys (release-provider-{linux,macos})
+  # written only on tag builds (a trusted context); no lower-privilege workflow
+  # can poison them. Restore benefits the one-shot release builds.
+  cache-poisoning:
+    ignore:
+      - release.yml
