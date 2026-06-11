@@ -6,7 +6,7 @@
     "build_command": "build-paseo-runtime",
     "zombienet_config": "zombienet/storage-paseo-local.toml",
     "uris": [
-      "TODO: update Paseo WSS"
+      "wss://previewnet.substrate.dev/web3-storage"
     ],
     "integration_tests": true,
     "try_runtime": {
@@ -25,7 +25,7 @@
     "build_command": "build-runtime",
     "zombienet_config": "zombienet.toml",
     "uris": [
-      "wss://previewnet.substrate.dev/web3-storage"
+      "TODO: update WSS"
     ],
     "integration_tests": true,
     "try_runtime": {
