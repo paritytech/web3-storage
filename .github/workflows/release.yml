@@ -267,13 +267,17 @@ jobs:
 
           cat RELEASE_NOTES.md
 
-      # gh-release handles multi-asset uploads + the release body; intentional.
+      # Use the runner's preinstalled gh CLI rather than a third-party action;
+      # the job already holds contents: write. Tag defaults to github.ref_name.
       - name: Create release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3 zizmor: ignore[superfluous-actions]
-        with:
-          name: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
-          files: |
-            release-assets/*.wasm
-            release-assets/storage-provider-node-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_NAME: ${{ needs.build-runtime.outputs.name }} ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$RELEASE_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            release-assets/*.wasm \
+            release-assets/storage-provider-node-*.tar.gz \
             release-assets/storage-provider-node-*.tar.gz.sha256
-          body_path: RELEASE_NOTES.md
