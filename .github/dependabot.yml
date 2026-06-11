@@ -15,6 +15,8 @@ updates:
       - "/user-interfaces/**"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       user-interfaces-deps:
         applies-to: version-updates
@@ -29,6 +31,8 @@ updates:
     directory: "/examples/papi"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       examples-deps:
         applies-to: version-updates
@@ -43,6 +47,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       github-actions-deps:
         applies-to: version-updates
