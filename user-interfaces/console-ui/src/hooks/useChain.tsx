@@ -10,7 +10,7 @@ import { createClient, type PolkadotClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
 import { BehaviorSubject } from "rxjs";
-import { setSs58Prefix } from "@web3-storage/papi";
+import { setSs58Prefix } from "@web3-storage/sdk";
 import { loadSelectedNetwork } from "@web3-storage/network-config";
 
 const initialEndpoint = loadSelectedNetwork().config.parachainWs;

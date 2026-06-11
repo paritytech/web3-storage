@@ -60,7 +60,7 @@ async function main() {
       const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data);
       assert.ok(commit.mmr_root, "Should return mmr_root");
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
-      assert.deepStrictEqual(downloaded, Buffer.from(data), "Downloaded data should match");
+      assert.deepStrictEqual(downloaded, new TextEncoder().encode(data), "Downloaded data should match");
     },
   });
 

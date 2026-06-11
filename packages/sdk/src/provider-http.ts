@@ -1,10 +1,26 @@
 /**
  * Provider-node HTTP helpers — the off-chain half of flows the pallet
- * wrappers complete. Node-oriented (uses Buffer for base64); browser callers
- * have their own fetch layers for now.
+ * wrappers complete. Platform-neutral (btoa/atob-based base64), so browser
+ * consumers can typecheck and use these directly.
  */
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000; // String.fromCharCode arg-count limit headroom
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
 import { READ_OPTS } from "./tx.js";
@@ -58,7 +74,7 @@ export async function putChunk(
     body: {
       bucket_id: Number(bucketId),
       hash,
-      data: Buffer.from(bytes).toString("base64"),
+      data: bytesToBase64(bytes),
       children: null,
     },
   });
@@ -82,7 +98,7 @@ export async function uploadChunk(
     body: {
       bucket_id: Number(bucketId),
       hash,
-      data: Buffer.from(bytes).toString("base64"),
+      data: bytesToBase64(bytes),
       children: null,
     },
   });
@@ -96,11 +112,11 @@ export async function uploadChunk(
 export async function downloadChunk(
   providerUrl: string,
   chunkHashHex: string,
-): Promise<Buffer> {
+): Promise<Uint8Array> {
   const downloaded = await providerFetch(providerUrl, "/node", {
     params: { hash: chunkHashHex },
   });
-  return Buffer.from(downloaded.data, "base64");
+  return base64ToBytes(downloaded.data);
 }
 
 export async function fetchCheckpointSignature(
@@ -173,7 +189,7 @@ export async function fetchChallengeProof(
   });
 
   return {
-    chunk_data: new Uint8Array(Buffer.from(chunk.chunk_data, "base64")),
+    chunk_data: base64ToBytes(chunk.chunk_data),
     mmr_proof: {
       peaks: mmr.proof.peaks.map((h: string) => asHex(h)),
       leaf: {

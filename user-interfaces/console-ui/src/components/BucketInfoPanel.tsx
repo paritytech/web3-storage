@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { truncateHash } from "@/lib/utils";
-import { isSameAddress } from "@web3-storage/papi";
+import { isSameAddress } from "@web3-storage/sdk";
 import type { BucketMember, ProviderEndpointInfo } from "@/lib/storage";
 
 interface BucketInfoPanelProps {

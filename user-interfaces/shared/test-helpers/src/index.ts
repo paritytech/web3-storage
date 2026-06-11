@@ -1,25 +1,16 @@
 /**
- * Shared Playwright + chain helpers for the three Web3-Storage UIs
- * (drive-ui, console-ui, provider).
+ * Shared chain test-helpers for the three Web3-Storage UIs and the PAPI E2E
+ * suite. This root export is Playwright-free so plain-node consumers
+ * (examples/papi) can use it; Playwright fixtures live on the `./playwright`
+ * subpath.
  */
-
-export { expect } from "@playwright/test";
-
-export {
-  makeLocalPageFixture,
-  waitForConnection,
-  waitForMinBlock,
-  expectBestBlockToAdvance,
-  probeProviderHealth,
-  teardownChain,
-  type LocalPageFixtureOptions,
-} from "./fixtures";
 
 export {
   getApi,
   getClient,
   disconnect as disconnectApi,
   submitExtrinsic,
+  submitExtrinsicBestBlock,
   waitForBlock,
   getBlockNumber,
   getBestBlockNumber,
@@ -61,3 +52,5 @@ export {
   type CreateDriveOptions,
   type DriveHandle,
 } from "./buckets";
+
+export { ensureSoleAcceptingProvider } from "./orchestration";

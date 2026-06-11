@@ -6,6 +6,7 @@
  * `name` is the only user-supplied content we can round-trip.
  */
 import { test, expect } from "../fixtures";
+import { firstMatch, READ_OPTS } from "@web3-storage/sdk";
 import {
   Bob,
   cleanupDrives,
@@ -38,14 +39,11 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
  */
 async function waitForCreatedDriveId(): Promise<bigint> {
   const api = getApi();
-  await expect.poll(
-    async () => {
-      const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
-      return ids.length;
-    },
-    { timeout: 120_000, intervals: [1000, 2000, 3000] },
-  ).toBeGreaterThan(0);
-  const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
+  const { value: ids } = await firstMatch(
+    api.query.DriveRegistry.UserDrives.watchValue(Bob.address, READ_OPTS),
+    ({ value }) => value.length > 0,
+    { timeoutMs: 120_000, description: "a drive in Bob's UserDrives" },
+  );
   return ids[ids.length - 1];
 }
 

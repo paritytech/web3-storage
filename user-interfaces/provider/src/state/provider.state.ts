@@ -22,7 +22,7 @@ import {
   OnChainChallenge,
   OnChainBucketDetails,
 } from '@/lib/chain-client'
-import { isSameAddress } from '@web3-storage/papi'
+import { isSameAddress } from '@web3-storage/sdk'
 import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 

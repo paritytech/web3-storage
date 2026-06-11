@@ -8,7 +8,13 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
-import { parseMultiaddrToUrl, resolveProviderEndpoint } from "@web3-storage/papi";
+import {
+  parseMultiaddrToUrl,
+  READ_OPTS,
+  resolveProviderEndpoint,
+  submitTx,
+  waitForPrimaryProvider,
+} from "@web3-storage/sdk";
 import { EncryptionKey } from "./encryption";
 import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
@@ -203,94 +209,26 @@ export class StorageClient {
   }
 
   /**
-   * Submit a transaction and resolve on best-block inclusion (~6s)
-   * instead of finalization (~12-24s). Matches the Bulletin Chain pattern.
+   * Submit a transaction via the sdk and resolve on best-block inclusion
+   * (~2-6s) instead of finalization. Reads in this client target the best
+   * head (READ_OPTS), so read-your-writes holds. Throws TxDispatchError on
+   * chain-side failure; no stale-nonce auto-retry (user-visible retry is the
+   * right UX). The old ExtrinsicFailed-event fallback for stale descriptors
+   * is gone — CI now fails loudly when the tracked metadata drifts.
    */
-  private submitAndWatchBestBlock(tx: any): Promise<TxResult> {
-    return new Promise((resolve, reject) => {
-      let resolved = false;
-
-      const handleEvent = (ev: any) => {
-        console.log("[StorageClient] Tx event:", ev.type, ev);
-        if (ev.type === "txBestBlocksState" && ev.found && !resolved) {
-          resolved = true;
-          subscription.unsubscribe();
-
-          // polkadot-api may deliver events as undefined or empty if
-          // the runtime metadata has changed and event decoding fails.
-          const events = ev.events ?? [];
-          console.log("[StorageClient] Tx included in block:", ev.block.number,
-            "events:", events.length,
-            "ok:", ev.ok ?? "unknown",
-            "dispatchError:", ev.dispatchError ?? "none");
-          for (const event of events) {
-            console.log("[StorageClient]   Event:", event.type, event.value?.type, event.value?.value);
-          }
-
-          // Check for dispatch error. Two ways the tx can fail and we
-          // need to catch both: (a) ev.ok === false means PAPI saw a
-          // dispatch error directly, (b) some runtimes only surface it
-          // via a System.ExtrinsicFailed event in events[]. When events
-          // fail to decode (events.length === 0 with a stale descriptor),
-          // path (a) is the only signal we have.
-          if (ev.ok === false) {
-            const errorStr = ev.dispatchError
-              ? JSON.stringify(ev.dispatchError, (_k, v) =>
-                  typeof v === "bigint" ? v.toString() : v
-                )
-              : "dispatch error (no detail)";
-            console.error("[StorageClient] tx ok=false:", errorStr);
-            reject(new Error(`Transaction failed on-chain: ${errorStr}`));
-            return;
-          }
-          const failedEvent = events.find(
-            (e: any) => e.type === "System" && e.value?.type === "ExtrinsicFailed"
-          );
-          if (failedEvent) {
-            const dispatchError = failedEvent.value?.value?.dispatch_error ?? ev.dispatchError;
-            const errorStr = dispatchError
-              ? JSON.stringify(dispatchError, (_k, v) =>
-                  typeof v === "bigint" ? v.toString() : v
-                )
-              : "unknown dispatch error";
-            console.error("[StorageClient] ExtrinsicFailed:", errorStr);
-            reject(new Error(`Transaction failed on-chain: ${errorStr}`));
-            return;
-          }
-
-          resolve({
-            blockHash: ev.block.hash,
-            blockNumber: ev.block.number,
-            events,
-          });
-        }
-      };
-
-      const handleError = (err: any) => {
-        console.error("[StorageClient] Tx error:", err);
-        console.error("[StorageClient] Tx error details:", JSON.stringify(err, null, 2));
-        if (!resolved) {
-          resolved = true;
-          subscription?.unsubscribe();
-          reject(err);
-        }
-      };
-
-      console.log("[StorageClient] Signing and submitting tx...");
-      const subscription = tx.signSubmitAndWatch(this.signer!).subscribe({
-        next: handleEvent,
-        error: handleError,
-      });
-
-      // Timeout after 2 minutes
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          subscription?.unsubscribe();
-          reject(new Error("Transaction timed out"));
-        }
-      }, 120000);
-    });
+  private async submitAndWatchBestBlock(tx: any): Promise<TxResult> {
+    const ev = (await submitTx(tx, this.signer!, {
+      mode: "best",
+      retryStale: 0,
+      timeoutMs: 120_000,
+      onStatus: null,
+      label: "console-ui tx",
+    })) as any;
+    return {
+      blockHash: ev.block.hash,
+      blockNumber: ev.block.number,
+      events: ev.events ?? [],
+    };
   }
 
   // --- Provider Resolution ---
@@ -329,67 +267,48 @@ export class StorageClient {
   }
 
   /**
-   * Wait for a bucket's provider to become available.
-   * Polls for up to ~150 seconds with increasing backoff.
-   * Calls onProgress with elapsed seconds so the UI can show timing warnings.
+   * Wait for a bucket's provider to become available. watchValue-based: the
+   * sdk replays current bucket state and emits on change — no poll interval,
+   * no missed-acceptance window. Calls onProgress with elapsed ms so the UI
+   * can show timing warnings.
    */
   async waitForProvider(
     bucketId: bigint,
     onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
   ): Promise<string> {
     this.invalidateProviderCache(bucketId);
+    if (!this.api) throw new Error("Not connected");
 
-    // Poll schedule: 20 attempts over ~150s
-    // Early: 3s intervals, then 6s, then 10s
-    const intervals = [
-      0, 3000, 3000, 3000, 3000, 3000,       // 0-15s: every 3s
-      6000, 6000, 6000, 6000, 6000,           // 15-45s: every 6s
-      10000, 10000, 10000, 10000, 10000,      // 45-95s: every 10s
-      10000, 10000, 10000, 10000, 10000,      // 95-145s: every 10s
-    ];
+    const statusFor = (elapsedSec: number): string => {
+      if (elapsedSec < 30) return "Waiting for provider to accept the agreement...";
+      if (elapsedSec < 60) return "Provider is processing — this typically takes about a minute...";
+      if (elapsedSec < 100) return "Still waiting for provider acceptance...";
+      return "Taking longer than usual — provider may be busy or offline...";
+    };
+
+    onProgress?.(statusFor(0), 0, 1);
     const startTime = Date.now();
-
-    for (let i = 0; i < intervals.length; i++) {
-      if (intervals[i] > 0) {
-        await new Promise(r => setTimeout(r, intervals[i]));
-      }
-
-      const elapsedMs = Date.now() - startTime;
-      const elapsedSec = Math.round(elapsedMs / 1000);
-
-      let status: string;
-      if (elapsedSec < 30) {
-        status = "Waiting for provider to accept the agreement...";
-      } else if (elapsedSec < 60) {
-        status = "Provider is processing — this typically takes about a minute...";
-      } else if (elapsedSec < 100) {
-        status = "Still waiting for provider acceptance...";
-      } else {
-        status = "Taking longer than usual — provider may be busy or offline...";
-      }
-
-      console.log(`[StorageClient] waitForProvider bucket=${bucketId} attempt=${i + 1}/${intervals.length} elapsed=${elapsedSec}s`);
-      onProgress?.(status, elapsedMs, i + 1);
-
-      try {
-        if (!this.api) throw new Error("Not connected");
-        const url = await resolveProviderEndpoint(this.api, bucketId);
-        this.providerUrlCache.set(bucketId.toString(), url);
-        onProgress?.("Provider accepted — ready to use", Date.now() - startTime, intervals.length);
-        return url;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        const retryable = msg.includes("no primary providers") || msg.includes("not found on chain");
-        if (!retryable) throw err;
-        if (i === intervals.length - 1) {
-          throw new Error(
-            `Provider did not accept the agreement after ${Math.round((Date.now() - startTime) / 1000)}s. ` +
-            `The provider may be offline or not accepting new agreements.`
-          );
-        }
-      }
+    let tick = 0;
+    try {
+      await waitForPrimaryProvider(this.api, bucketId, {
+        timeoutMs: 150_000,
+        tickMs: 3_000,
+        onTick: (elapsedMs) => {
+          tick += 1;
+          onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs, tick);
+        },
+      });
+    } catch {
+      throw new Error(
+        `Provider did not accept the agreement after ${Math.round((Date.now() - startTime) / 1000)}s. ` +
+        `The provider may be offline or not accepting new agreements.`
+      );
     }
-    throw new Error("Provider did not accept the agreement");
+
+    const url = await resolveProviderEndpoint(this.api, bucketId);
+    this.providerUrlCache.set(bucketId.toString(), url);
+    onProgress?.("Provider accepted — ready to use", Date.now() - startTime, tick + 1);
+    return url;
   }
 
   /** Clear cached provider URL for a bucket (e.g. after provider changes). */
@@ -459,14 +378,15 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketIds = await this.api!.query.S3Registry.UserBuckets.getValue(
-      this.signerAddress!
+      this.signerAddress!,
+      READ_OPTS,
     );
 
     if (!bucketIds) return [];
 
     const buckets: BucketInfo[] = [];
     for (const bucketId of bucketIds) {
-      const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
+      const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId, READ_OPTS);
       if (bucket) {
         const bucketName = new TextDecoder().decode(bucket.name);
 
@@ -486,12 +406,13 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketId = await this.api!.query.S3Registry.BucketNameToId.getValue(
-      Binary.fromText(name)
+      Binary.fromText(name),
+      READ_OPTS,
     );
 
     if (bucketId === undefined) return null;
 
-    const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
+    const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId, READ_OPTS);
     if (!bucket) return null;
 
     const bucketName = new TextDecoder().decode(bucket.name);
@@ -509,7 +430,8 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketId = await this.api!.query.S3Registry.BucketNameToId.getValue(
-      Binary.fromText(name)
+      Binary.fromText(name),
+      READ_OPTS,
     );
 
     if (bucketId === undefined) {
@@ -632,7 +554,7 @@ export class StorageClient {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
 
     try {
-      const config = await this.api.query.StorageProvider.CheckpointConfigs.getValue(bucketId);
+      const config = await this.api.query.StorageProvider.CheckpointConfigs.getValue(bucketId, READ_OPTS);
       if (config) {
         return {
           interval: config.interval,
@@ -656,7 +578,7 @@ export class StorageClient {
 
     let lastWindow = 0n;
     try {
-      const lw = await this.api.query.StorageProvider.LastCheckpointWindow.getValue(bucketId);
+      const lw = await this.api.query.StorageProvider.LastCheckpointWindow.getValue(bucketId, READ_OPTS);
       if (lw !== undefined) lastWindow = BigInt(lw);
     } catch {
       // Storage item may not exist yet
@@ -664,7 +586,7 @@ export class StorageClient {
 
     let poolBalance = 0n;
     try {
-      const pool = await this.api.query.StorageProvider.CheckpointPool.getValue(bucketId);
+      const pool = await this.api.query.StorageProvider.CheckpointPool.getValue(bucketId, READ_OPTS);
       if (pool !== undefined) poolBalance = BigInt(pool);
     } catch {
       // Storage item may not exist yet
@@ -674,7 +596,7 @@ export class StorageClient {
     try {
       if (this.signerAddress) {
         const rewards = await this.api.query.StorageProvider.CheckpointRewards.getValue(
-          this.signerAddress, bucketId
+          this.signerAddress, bucketId, READ_OPTS
         );
         if (rewards !== undefined) pendingRewards = BigInt(rewards);
       }
@@ -684,7 +606,7 @@ export class StorageClient {
 
     let snapshot: CheckpointStatus["snapshot"] = null;
     try {
-      const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
+      const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       if (bucket?.snapshot) {
         const s = bucket.snapshot;
         const mmrHex = typeof s.mmr_root === "string" ? s.mmr_root : String(s.mmr_root);
@@ -786,7 +708,7 @@ export class StorageClient {
   async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
 
-    const account = await this.api.query.System.Account.getValue(address);
+    const account = await this.api.query.System.Account.getValue(address, READ_OPTS);
     return {
       free: BigInt(account.data.free),
       reserved: BigInt(account.data.reserved),
@@ -863,7 +785,7 @@ export class StorageClient {
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
     if (!this.api) throw new Error("Not connected");
 
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
+    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const roleMap: Record<string, 'Admin' | 'Writer' | 'Reader'> = {
@@ -912,7 +834,8 @@ export class StorageClient {
       const storageProvider = this.api.query.StorageProvider as any;
       if (!storageProvider.MemberBuckets) return [];
       const bucketIds = await storageProvider.MemberBuckets.getValue(
-        this.signerAddress
+        this.signerAddress,
+        READ_OPTS,
       );
       if (!bucketIds) return [];
       return bucketIds.map((id: any) => BigInt(id));
@@ -924,14 +847,14 @@ export class StorageClient {
   async getBucketProviders(bucketId: bigint): Promise<ProviderEndpointInfo[]> {
     if (!this.api) throw new Error("Not connected");
 
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
+    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const providers: string[] = bucket.primary_providers ?? [];
     const results: ProviderEndpointInfo[] = [];
 
     for (const providerAccount of providers) {
-      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount);
+      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount, READ_OPTS);
       if (!provider) {
         results.push({ account: providerAccount, endpoint: "unknown", healthy: false });
         continue;

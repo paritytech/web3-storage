@@ -11,6 +11,7 @@
  * chain. Settings test uses Eve, who's pre-registered by globalSetup.
  */
 import { test, expect } from "../fixtures";
+import { firstMatch, READ_OPTS } from "@web3-storage/sdk";
 import { Eve, Ferdie, getApi } from "@web3-storage/test-helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -84,11 +85,9 @@ test("settings update post-registration: pricePerByte round-trips", async ({
   await localPage.getByTestId("settings-priceperbyte-input").fill(newPrice);
   await localPage.getByTestId("settings-update").click();
 
-  await expect.poll(
-    async () => {
-      const p = await getApi().query.StorageProvider.Providers.getValue(Eve.address);
-      return p?.settings?.price_per_byte?.toString();
-    },
-    { timeout: 60_000 },
-  ).toBe(newPrice);
+  await firstMatch(
+    getApi().query.StorageProvider.Providers.watchValue(Eve.address, READ_OPTS),
+    ({ value }) => value?.settings?.price_per_byte?.toString() === newPrice,
+    { timeoutMs: 60_000, description: `Eve's price_per_byte to become ${newPrice}` },
+  );
 });
