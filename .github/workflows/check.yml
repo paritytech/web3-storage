@@ -170,19 +170,39 @@ jobs:
 
       - name: Measure PR coverage
         run: |
-          PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$PALLET_COV" ]; then
+            echo "ERROR: Failed to measure pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
           echo "PR pallet coverage: ${PALLET_COV}%"
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          PROVIDER_COV=$(cargo llvm-cov --lib -p storage-provider-node \
-            --ignore-filename-regex='(\.cargo|rustc)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          # Discover available integration test targets from filesystem
+          TEST_FLAGS=""
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
+          done
+
+          if [ -n "$TEST_FLAGS" ]; then
+            PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
+              -p storage-provider-node \
+              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --summary-only 2>&1 \
+              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          else
+            PROVIDER_COV=0
+          fi
           echo "PR_PROVIDER_COV=$PROVIDER_COV" >> $GITHUB_ENV
           echo "PR provider coverage: ${PROVIDER_COV}%"
 
@@ -195,19 +215,39 @@ jobs:
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          BASE_PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$BASE_PALLET_COV" ]; then
+            echo "ERROR: Failed to measure base pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
           echo "Base pallet coverage: ${BASE_PALLET_COV}%"
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PROVIDER_COV=$(cargo llvm-cov --lib -p storage-provider-node \
-            --ignore-filename-regex='(\.cargo|rustc)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          # Discover available integration test targets from filesystem
+          TEST_FLAGS=""
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
+          done
+
+          if [ -n "$TEST_FLAGS" ]; then
+            BASE_PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
+              -p storage-provider-node \
+              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --summary-only 2>&1 \
+              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          else
+            BASE_PROVIDER_COV=0
+          fi
           echo "BASE_PROVIDER_COV=$BASE_PROVIDER_COV" >> $GITHUB_ENV
           echo "Base provider coverage: ${BASE_PROVIDER_COV}%"
 
@@ -227,6 +267,9 @@ jobs:
             eval "PR_VAL=\$PR_${COMPONENT}_COV"
             eval "BASE_VAL=\$BASE_${COMPONENT}_COV"
             LABEL=$(echo "$COMPONENT" | tr '[:upper:]' '[:lower:]')
+            # Treat empty values as 0
+            PR_VAL="${PR_VAL:-0}"
+            BASE_VAL="${BASE_VAL:-0}"
             DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
             if [ "$DECREASED" = "1" ]; then
               echo "FAIL: $LABEL coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"

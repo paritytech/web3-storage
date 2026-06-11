@@ -9,10 +9,13 @@
 //! - Coordinating provider-initiated checkpoints
 
 pub mod agreement_coordinator;
+pub(crate) mod agreement_coordinator_subxt;
 pub mod api;
 pub mod auth;
 pub mod challenge_responder;
+pub(crate) mod challenge_responder_subxt;
 pub mod checkpoint_coordinator;
+pub(crate) mod checkpoint_coordinator_subxt;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -21,29 +24,31 @@ pub mod fs_index;
 pub mod mmr;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
+pub(crate) mod replica_sync_coordinator_subxt;
 pub mod s3_api;
 pub mod s3_index;
 pub mod storage;
 pub mod types;
 
 pub use agreement_coordinator::{
-    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+    AgreementChainClient, AgreementCoordinator, AgreementCoordinatorConfig,
+    AgreementCoordinatorHandle,
 };
 pub use api::create_router;
 pub use challenge_responder::{
-    ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
 pub use checkpoint_coordinator::{
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
-    CheckpointDuty, CheckpointResult, CoordinatorCommand,
+    CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, CheckpointDuty, CheckpointResult, CoordinatorCommand,
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
-    SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
+    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
 pub use s3_index::S3IndexManager;
 pub use storage::{

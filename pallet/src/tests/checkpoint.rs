@@ -1,6 +1,77 @@
 use super::*;
-use sp_core::H256;
+use codec::Encode;
+use sp_core::{sr25519, Pair, H256};
 use storage_primitives::BucketSnapshot;
+
+/// Register a provider using a real Sr25519 keypair so signatures can be verified on-chain.
+/// Returns the keypair for later use in signing.
+fn register_provider_with_keypair(who: u64, stake: u64) -> sr25519::Pair {
+    use frame_support::assert_ok;
+    let (pair, _) = sr25519::Pair::generate();
+    let public_key: frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> =
+        pair.public().0.to_vec().try_into().unwrap();
+    let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+    assert_ok!(StorageProvider::register_provider(
+        RuntimeOrigin::signed(who),
+        multiaddr.try_into().unwrap(),
+        public_key,
+        stake,
+    ));
+    pair
+}
+
+/// Create a signed checkpoint proposal for use in provider_checkpoint calls.
+fn sign_checkpoint_proposal(
+    pair: &sr25519::Pair,
+    signer_account: u64,
+    bucket_id: u64,
+    mmr_root: H256,
+    start_seq: u64,
+    leaf_count: u64,
+    window: u64,
+) -> (u64, sp_runtime::MultiSignature) {
+    let proposal = storage_primitives::CheckpointProposal::new(
+        bucket_id, mmr_root, start_seq, leaf_count, window,
+    );
+    let encoded = proposal.encode();
+    let signature = pair.sign(&encoded);
+    (
+        signer_account,
+        sp_runtime::MultiSignature::Sr25519(signature),
+    )
+}
+
+/// Setup agreement with a keypair-registered provider. Returns (bucket_id, keypair).
+fn setup_agreement_with_keypair(
+    provider: u64,
+    client: u64,
+    max_bytes: u64,
+    duration: u64,
+) -> (u64, sr25519::Pair) {
+    let pair = register_provider_with_keypair(provider, 200);
+    let bucket_id = {
+        use frame_support::assert_ok;
+        assert_ok!(StorageProvider::create_bucket(
+            RuntimeOrigin::signed(client),
+            1
+        ));
+        let bucket_id = crate::NextBucketId::<Test>::get() - 1;
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(client),
+            bucket_id,
+            provider,
+            max_bytes,
+            duration,
+            max_bytes * duration,
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(provider),
+            bucket_id,
+        ));
+        bucket_id
+    };
+    (bucket_id, pair)
+}
 
 /// Insert a snapshot directly into storage for testing checkpoint-related extrinsics.
 #[allow(dead_code)]
@@ -327,6 +398,371 @@ fn provider_checkpoint_fails_wrong_window() {
                 Default::default(),
             ),
             Error::<Test>::InvalidCheckpointWindow
+        );
+    });
+}
+
+#[test]
+fn provider_checkpoint_leader_within_grace_period() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        // With only 1 provider, leader_idx = hash % 1 = 0, so provider 2 is always leader
+        // Default interval=10, grace=5. Window 0 starts at block 0.
+        // At block 3 we're within grace period (block <= 0 + 5).
+        run_to_block(3);
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0, // window 0
+            vec![sig].try_into().unwrap(),
+        ));
+
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        let snapshot = bucket.snapshot.unwrap();
+        assert_eq!(snapshot.mmr_root, H256::repeat_byte(0xAA));
+        assert_eq!(snapshot.leaf_count, 10);
+        assert_eq!(LastCheckpointWindow::<Test>::get(bucket_id), Some(0));
+    });
+}
+
+#[test]
+fn provider_checkpoint_non_leader_rejected_during_grace() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
+        let pair3 = register_provider_with_keypair(3, 200);
+
+        // Add second provider
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            50,
+            500,
+            25000,
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+        ));
+
+        // Within grace period, only leader can submit.
+        // Determine the leader deterministically and only try the non-leader.
+        run_to_block(3);
+
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        let num_providers = bucket.primary_providers.len() as u32;
+        // Replicate deterministic leader election: blake2_256(bucket_id || window) % num_providers
+        let mut data = [0u8; 16];
+        data[..8].copy_from_slice(&bucket_id.to_le_bytes());
+        data[8..].copy_from_slice(&0u64.to_le_bytes()); // window = 0
+        let hash = sp_io::hashing::blake2_256(&data);
+        let seed = u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+        let leader_idx = (seed % num_providers) as usize;
+        let leader_account = bucket.primary_providers[leader_idx];
+
+        // Try submitting as the non-leader — should fail with NotCheckpointLeader
+        let (non_leader_account, non_leader_pair) = if leader_account == 2 {
+            (3u64, &pair3)
+        } else {
+            (2u64, &pair2)
+        };
+
+        let sig = sign_checkpoint_proposal(
+            non_leader_pair,
+            non_leader_account,
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+        );
+
+        assert_noop!(
+            StorageProvider::provider_checkpoint(
+                RuntimeOrigin::signed(non_leader_account),
+                bucket_id,
+                H256::repeat_byte(0xAA),
+                0,
+                10,
+                0,
+                vec![sig].try_into().unwrap(),
+            ),
+            Error::<Test>::NotCheckpointLeader
+        );
+    });
+}
+
+#[test]
+fn provider_checkpoint_fallback_after_grace() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
+        let _pair3 = register_provider_with_keypair(3, 200);
+
+        // Add second provider
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            3,
+            50,
+            500,
+            25000,
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+        ));
+
+        // After grace period (block > window_start + grace = 0 + 5 = 5)
+        // Any primary provider can submit (fallback)
+        run_to_block(6);
+
+        let sig2 =
+            sign_checkpoint_proposal(&pair2, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        // After grace, any primary provider can submit — provider 2 must succeed
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig2].try_into().unwrap(),
+        ));
+        let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+        assert_eq!(bucket.snapshot.unwrap().mmr_root, H256::repeat_byte(0xAA));
+    });
+}
+
+#[test]
+fn provider_checkpoint_already_submitted() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        // Submit checkpoint for window 0
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig].try_into().unwrap(),
+        ));
+
+        let sig2 = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xBB), 0, 20, 0);
+
+        // Try to submit again for window 0
+        assert_noop!(
+            StorageProvider::provider_checkpoint(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                H256::repeat_byte(0xBB),
+                0,
+                20,
+                0,
+                vec![sig2].try_into().unwrap(),
+            ),
+            Error::<Test>::CheckpointAlreadySubmitted
+        );
+    });
+}
+
+#[test]
+fn provider_checkpoint_frozen_constraint() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        // Set frozen_start_seq on the bucket
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            if let Some(bucket) = maybe_bucket {
+                bucket.frozen_start_seq = Some(5);
+            }
+        });
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 3, 10, 0);
+
+        // Try to submit with start_seq < frozen_start_seq
+        assert_noop!(
+            StorageProvider::provider_checkpoint(
+                RuntimeOrigin::signed(2),
+                bucket_id,
+                H256::repeat_byte(0xAA),
+                3, // start_seq < frozen_start_seq(5)
+                10,
+                0,
+                vec![sig].try_into().unwrap(),
+            ),
+            Error::<Test>::SnapshotViolatesFrozen
+        );
+    });
+}
+
+#[test]
+fn provider_checkpoint_reward_from_pool() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        // Fund the checkpoint pool
+        assert_ok!(StorageProvider::fund_checkpoint_pool(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            500,
+        ));
+
+        let pool_before = CheckpointPool::<Test>::get(bucket_id);
+        assert_eq!(pool_before, 500);
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        // Submit checkpoint
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig].try_into().unwrap(),
+        ));
+
+        // Pool should decrease by CheckpointReward (10)
+        assert_eq!(CheckpointPool::<Test>::get(bucket_id), 500 - 10);
+
+        // Reward should be stored in CheckpointRewards
+        assert_eq!(CheckpointRewards::<Test>::get(2u64, bucket_id), 10);
+    });
+}
+
+#[test]
+fn provider_checkpoint_no_reward_empty_pool() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        // Don't fund pool — should still succeed but reward = 0
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig].try_into().unwrap(),
+        ));
+
+        // No reward accumulated
+        assert_eq!(CheckpointRewards::<Test>::get(2u64, bucket_id), 0);
+    });
+}
+
+#[test]
+fn provider_checkpoint_emits_event() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        // Fund pool so we get a reward in the event
+        assert_ok!(StorageProvider::fund_checkpoint_pool(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            500,
+        ));
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig].try_into().unwrap(),
+        ));
+
+        let expected = RuntimeEvent::StorageProvider(crate::Event::ProviderCheckpointSubmitted {
+            bucket_id,
+            mmr_root: H256::repeat_byte(0xAA),
+            window: 0,
+            leader: 2,
+            signers: vec![2],
+            reward: 10,
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected));
+    });
+}
+
+#[test]
+fn report_missed_checkpoint_emits_event() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 500);
+
+        // Advance past window 0 + grace
+        run_to_block(11);
+
+        assert_ok!(StorageProvider::report_missed_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            0,
+        ));
+
+        // Penalty = CheckpointMissPenalty(50) or provider's stake if less
+        let events = frame_system::Pallet::<Test>::events();
+        let found = events.iter().any(|r| {
+            matches!(
+                &r.event,
+                RuntimeEvent::StorageProvider(crate::Event::CheckpointMissPenalized {
+                    bucket_id: bid,
+                    provider: 2,
+                    window: 0,
+                    ..
+                }) if *bid == bucket_id
+            )
+        });
+        assert!(found);
+    });
+}
+
+#[test]
+fn report_missed_checkpoint_fails_already_submitted() {
+    new_test_ext().execute_with(|| {
+        let (bucket_id, pair) = setup_agreement_with_keypair(2, 1, 50, 500);
+
+        let sig = sign_checkpoint_proposal(&pair, 2, bucket_id, H256::repeat_byte(0xAA), 0, 10, 0);
+
+        // Submit checkpoint for window 0
+        assert_ok!(StorageProvider::provider_checkpoint(
+            RuntimeOrigin::signed(2),
+            bucket_id,
+            H256::repeat_byte(0xAA),
+            0,
+            10,
+            0,
+            vec![sig].try_into().unwrap(),
+        ));
+
+        // Advance past window 0
+        run_to_block(11);
+
+        // Try to report window 0 as missed — but it was submitted
+        assert_noop!(
+            StorageProvider::report_missed_checkpoint(RuntimeOrigin::signed(3), bucket_id, 0),
+            Error::<Test>::CheckpointAlreadySubmitted
         );
     });
 }
