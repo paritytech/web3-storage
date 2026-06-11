@@ -37,17 +37,23 @@ importers:
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
       viem:
         specifier: ^2.21.0
-        version: 2.52.2(typescript@6.0.3)
+        version: 2.52.2(typescript@5.8.3)
       ws:
         specifier: ^8.18.0
         version: 8.20.0
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       c8:
         specifier: ^10.1.3
         version: 10.1.3
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
 
   packages/core:
     dependencies:
@@ -61,6 +67,9 @@ importers:
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))
 
   packages/layer0:
     dependencies:
@@ -95,6 +104,9 @@ importers:
       viem:
         specifier: ^2.21.0
         version: 2.52.2(typescript@5.8.3)
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))
 
   packages/layer1:
     dependencies:
@@ -111,6 +123,9 @@ importers:
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))
 
   packages/sdk:
     dependencies:
@@ -5215,6 +5230,14 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
+  '@vitest/mocker@4.1.5(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))':
+    dependencies:
+      '@vitest/spy': 4.1.5
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4)
+
   '@vitest/mocker@4.1.5(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))':
     dependencies:
       '@vitest/spy': 4.1.5
@@ -5250,10 +5273,6 @@ snapshots:
   abitype@1.2.3(typescript@5.8.3):
     optionalDependencies:
       typescript: 5.8.3
-
-  abitype@1.2.3(typescript@6.0.3):
-    optionalDependencies:
-      typescript: 6.0.3
 
   acorn-jsx@5.3.2(acorn@8.16.0):
     dependencies:
@@ -5919,21 +5938,6 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
-  ox@0.14.29(typescript@6.0.3):
-    dependencies:
-      '@adraffy/ens-normalize': 1.11.1
-      '@noble/ciphers': 1.3.0
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@6.0.3)
-      eventemitter3: 5.0.1
-    optionalDependencies:
-      typescript: 6.0.3
-    transitivePeerDependencies:
-      - zod
-
   p-limit@3.1.0:
     dependencies:
       yocto-queue: 0.1.0
@@ -6419,22 +6423,19 @@ snapshots:
       - utf-8-validate
       - zod
 
-  viem@2.52.2(typescript@6.0.3):
+  vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4):
     dependencies:
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@6.0.3)
-      isows: 1.0.7(ws@8.20.1)
-      ox: 0.14.29(typescript@6.0.3)
-      ws: 8.20.1
+      lightningcss: 1.32.0
+      picomatch: 4.0.4
+      postcss: 8.5.13
+      rolldown: 1.0.0-rc.17
+      tinyglobby: 0.2.16
     optionalDependencies:
-      typescript: 6.0.3
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-      - zod
+      '@types/node': 22.19.17
+      esbuild: 0.28.0
+      fsevents: 2.3.3
+      jiti: 2.6.1
+      tsx: 4.22.4
 
   vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4):
     dependencies:
@@ -6449,6 +6450,33 @@ snapshots:
       fsevents: 2.3.3
       jiti: 2.6.1
       tsx: 4.22.4
+
+  vitest@4.1.5(@types/node@22.19.17)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4)):
+    dependencies:
+      '@vitest/expect': 4.1.5
+      '@vitest/mocker': 4.1.5(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4))
+      '@vitest/pretty-format': 4.1.5
+      '@vitest/runner': 4.1.5
+      '@vitest/snapshot': 4.1.5
+      '@vitest/spy': 4.1.5
+      '@vitest/utils': 4.1.5
+      es-module-lexer: 2.1.0
+      expect-type: 1.3.0
+      magic-string: 0.30.21
+      obug: 2.1.1
+      pathe: 2.0.3
+      picomatch: 4.0.4
+      std-env: 4.1.0
+      tinybench: 2.9.0
+      tinyexec: 1.1.2
+      tinyglobby: 0.2.16
+      tinyrainbow: 3.1.0
+      vite: 8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.19.17
+    transitivePeerDependencies:
+      - msw
 
   vitest@4.1.5(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.28.0)(jiti@2.6.1)(tsx@4.22.4)):
     dependencies:

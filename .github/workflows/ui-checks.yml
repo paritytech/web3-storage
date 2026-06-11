@@ -29,6 +29,7 @@ jobs:
             ui:
               - 'user-interfaces/**'
               - 'packages/**'
+              - 'examples/papi/**'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'package.json'
@@ -50,6 +51,9 @@ jobs:
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Typecheck sdk packages + examples
+        run: pnpm run typecheck:packages
 
       - name: Run unit tests
         run: pnpm run test:unit

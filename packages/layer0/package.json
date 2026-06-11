@@ -10,7 +10,8 @@
     "./revive": "./src/revive.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
@@ -24,7 +25,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "~5.8.3",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "vitest": "^4.1.5"
   },
   "peerDependencies": {
     "viem": "^2.21.0"
