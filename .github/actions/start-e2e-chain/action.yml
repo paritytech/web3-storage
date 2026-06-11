@@ -24,27 +24,32 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        CHAIN_SPEC_SCRIPT: ${{ inputs.chain-spec-script }}
+        BLOCK_TIME: ${{ inputs.block-time }}
+        RPC_PORT: ${{ inputs.rpc-port }}
+        LOG_FILE: ${{ inputs.log-file }}
       run: |
         SPEC_FILE="/tmp/e2e-chain-spec.json"
-        echo "Generating chain spec from ${{ inputs.chain-spec-script }}..."
-        ${{ inputs.chain-spec-script }} > "$SPEC_FILE"
+        echo "Generating chain spec from ${CHAIN_SPEC_SCRIPT}..."
+        $CHAIN_SPEC_SCRIPT > "$SPEC_FILE"
 
-        echo "Starting polkadot-omni-node with ${{ inputs.block-time }}ms blocks..."
+        echo "Starting polkadot-omni-node with ${BLOCK_TIME}ms blocks..."
         nohup .bin/polkadot-omni-node \
           --chain "$SPEC_FILE" \
           --alice --tmp \
           --unsafe-force-node-key-generation \
-          --dev-block-time ${{ inputs.block-time }} \
-          --rpc-port ${{ inputs.rpc-port }} \
+          --dev-block-time "$BLOCK_TIME" \
+          --rpc-port "$RPC_PORT" \
           --rpc-cors all \
           -lruntime=info \
-          > ${{ inputs.log-file }} 2>&1 &
+          > "$LOG_FILE" 2>&1 &
 
         NODE_PID=$!
         sleep 10
         if ! kill -0 $NODE_PID 2>/dev/null; then
           echo "ERROR: polkadot-omni-node exited early"
-          cat "${{ inputs.log-file }}" || true
+          cat "$LOG_FILE" || true
           exit 1
         fi
-        echo "polkadot-omni-node running with ${{ inputs.block-time }}ms blocks (PID $NODE_PID)"
+        echo "polkadot-omni-node running with ${BLOCK_TIME}ms blocks (PID $NODE_PID)"
