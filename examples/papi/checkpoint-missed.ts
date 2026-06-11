@@ -87,10 +87,10 @@ async function main() {
     await waitForAgreementAcceptance(api, provider.address, bucketId);
     console.log("  Agreement accepted");
 
-    const bucket = await api.query.StorageProvider.Buckets.getValue(
+    const bucket = (await api.query.StorageProvider.Buckets.getValue(
       bucketId,
       READ_OPTS
-    );
+    ))!;
     assert.ok(
       bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
       "Provider should be primary after accept"
@@ -122,10 +122,10 @@ async function main() {
     await waitForBlock(papi, windowEnd);
 
     console.log("\n=== Step 4: Record balances, then report_missed_checkpoint ===");
-    const providerBefore = await api.query.StorageProvider.Providers.getValue(
+    const providerBefore = (await api.query.StorageProvider.Providers.getValue(
       provider.address,
       READ_OPTS
-    );
+    ))!;
     const reporterAcctBefore = await api.query.System.Account.getValue(
       client.address,
       READ_OPTS
@@ -136,7 +136,7 @@ async function main() {
       reporterAcctBefore.data.free.toString()
     );
 
-    const event = await reportMissedCheckpoint(api, client, bucketId, missedWindow);
+    const event = await reportMissedCheckpoint(api, client, bucketId, Number(missedWindow));
     console.log(
       "  CheckpointMissPenalized: provider=%s window=%s penalty=%s",
       event.provider,
@@ -150,10 +150,10 @@ async function main() {
     assert.ok(event.penalty > 0n, "Penalty should be > 0");
 
     console.log("\n=== Step 5: Verify slashing + reporter reward ===");
-    const providerAfter = await api.query.StorageProvider.Providers.getValue(
+    const providerAfter = (await api.query.StorageProvider.Providers.getValue(
       provider.address,
       READ_OPTS
-    );
+    ))!;
     const stakeDelta = providerBefore.stake - providerAfter.stake;
     console.log("  Provider stake delta: %s", stakeDelta.toString());
     assert.strictEqual(
@@ -177,15 +177,15 @@ async function main() {
 
     console.log("\nPASSED: missed-checkpoint reporting + leader slashing");
   } catch (err) {
-    console.error("\nERROR:", err.message || err);
-    if (err.stack) console.error(err.stack);
+    console.error("\nERROR:", (err as Error).message || err);
+    if ((err as Error).stack) console.error((err as Error).stack);
     process.exitCode = 1;
   } finally {
     if (restoreOthers) {
       try {
         await restoreOthers();
       } catch (err) {
-        console.error("WARN: restoring providers failed:", err.message || err);
+        console.error("WARN: restoring providers failed:", (err as Error).message || err);
       }
     }
     papi.destroy();

@@ -37,16 +37,16 @@ async function main() {
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
   // Shared state across tests
-  let mainBucketId;
-  let rejectBucketId;
-  let withdrawBucketId;
-  let burnBucketId;
+  let mainBucketId: bigint;
+  let rejectBucketId: bigint;
+  let withdrawBucketId: bigint;
+  let burnBucketId: bigint;
 
   const maxBytes = 1_048_576n; // 1 MiB
   const duration = 10;
   const maxPayment = maxBytes * BigInt(duration) * 10n;
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   // ── Success ───────────────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ async function main() {
         duration,
         max_payment: maxPayment,
       });
-      const events = api.event.StorageProvider.AgreementRequested.filter(result.events);
+      const events = api.event.StorageProvider.AgreementRequested.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementRequested event");
     },
   });
@@ -68,13 +68,13 @@ async function main() {
     name: "2.2 Accept agreement (auto-accept)",
     fn: async () => {
       await waitForAgreementAcceptance(api, provider.address, mainBucketId);
-      const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
         mainBucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       assert.ok(agreement, "Agreement should exist after acceptance");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(mainBucketId, READ_OPTS);
+      const bucket = (await api.query.StorageProvider.Buckets.getValue(mainBucketId, READ_OPTS))!;
       assert.ok(
         bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
         "Provider should be in primary_providers"
@@ -93,7 +93,7 @@ async function main() {
       });
       const balAfterRequest = await getFree(api, client);
       const result = await rejectAgreement(api, provider, rejectBucketId);
-      const events = api.event.StorageProvider.AgreementRejected.filter(result.events);
+      const events = api.event.StorageProvider.AgreementRejected.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementRejected event");
       // Locked payment is returned after reject. Balance should increase
       // compared to after the request (client still lost tx fees for
@@ -122,7 +122,7 @@ async function main() {
         max_payment: maxPayment,
       });
       const result = await withdrawAgreementRequest(api, client, withdrawBucketId, provider);
-      const events = api.event.StorageProvider.AgreementRequestWithdrawn.filter(result.events);
+      const events = api.event.StorageProvider.AgreementRequestWithdrawn.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementRequestWithdrawn event");
     },
   });
@@ -130,11 +130,11 @@ async function main() {
   tests.push({
     name: "2.5 End agreement (Pay)",
     fn: async () => {
-      const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
         mainBucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       const expiresAt = Number(agreement.expires_at);
       console.log("    Waiting for expiry at block %d...", expiresAt);
       await waitForBlock(papi, expiresAt);
@@ -162,15 +162,15 @@ async function main() {
         max_payment: burnMaxPayment,
       });
       await waitForAgreementAcceptance(api, provider.address, burnBucketId);
-      const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+      const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
         burnBucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
       await waitForBlock(papi, Number(agreement.expires_at));
       const result = await endAgreement(api, client, provider, burnBucketId, "Burn", { burn_percent: 100 });
-      const events = api.event.StorageProvider.AgreementEnded.filter(result.events);
+      const events = api.event.StorageProvider.AgreementEnded.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementEnded event");
     },
   });

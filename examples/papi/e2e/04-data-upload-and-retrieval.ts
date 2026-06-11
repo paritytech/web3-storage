@@ -25,7 +25,7 @@ import { runSuite, setupChain } from "./helpers.js";
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
-function randomBytes(n) {
+function randomBytes(n: number): Uint8Array {
   const buf = new Uint8Array(n);
   for (let i = 0; i < n; i++) buf[i] = Math.floor(Math.random() * 256);
   return buf;
@@ -49,7 +49,7 @@ async function main() {
   });
   await waitForAgreementAcceptance(api, provider.address, bucketId);
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   // ── Different sizes ───────────────────────────────────────────────────────
 
@@ -193,8 +193,8 @@ async function main() {
         await downloadChunk(PROVIDER_URL, fakeHash);
         assert.fail("Expected 404 for non-existent hash");
       } catch (err) {
-        assert.ok(err.message.includes("404") || err.message.includes("not found"),
-          `Expected 404-like error, got: ${err.message}`);
+        assert.ok((err as Error).message.includes("404") || (err as Error).message.includes("not found"),
+          `Expected 404-like error, got: ${(err as Error).message}`);
       }
     },
   });

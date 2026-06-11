@@ -222,7 +222,7 @@ generate-chain-spec: build-runtime
 #   just demo                                                       # default: Alice provider, Bob client
 #   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/full-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Compile the example marketplace contract to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).
@@ -233,25 +233,25 @@ build-contracts:
 # the storage-provider precompile, exercise upload/challenge, end via contract.
 # Requires: chain + provider running, contracts built (`just build-contracts`).
 sc-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/sc-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/sc-flow.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract precompile-coverage e2e: directly invokes every selector on
 # all three precompiles (storage-provider + drive-registry + s3-registry) and
 # asserts pallet events/storage updated. No intermediate contract.
 # Requires: chain + provider running, contracts built (`just build-contracts`).
 sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/sc-coverage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/sc-coverage.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract team-drive demo: deploys SharedTeamDrive, exercises
 # createTeam → invite → kick → disband through the drive-registry precompile.
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/sc-team-drive.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
 # NFT-shaped access token per S3 object through the s3-registry precompile,
 # transfers + burns + shuts down.
 sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/sc-token-gated.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/sc-token-gated.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Wait until the parachain's transaction pool is empty (bounded ~60s, then
 # proceeds with a warning). Run between back-to-back integration tests so the
@@ -309,12 +309,12 @@ papi-setup:
 
 # Marketplace-style read-only walk of the Providers storage map
 papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
-    node --import tsx examples/papi/provider-discovery.js "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
+    node --import tsx examples/papi/provider-discovery.ts "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
 
 # Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
 # wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
 papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/checkpoint-missed.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+    node --import tsx examples/papi/checkpoint-missed.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # ============================================================
 # E2E Test Suite
@@ -324,15 +324,15 @@ papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_
 e2e PROVIDER_URL=PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
         --include="examples/papi/**" --include="packages/sdk/src/**" \
-        node --import tsx examples/papi/e2e/runner.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+        node --import tsx examples/papi/e2e/runner.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
 e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
     #!/usr/bin/env bash
     set -euo pipefail
-    FILE=$(ls examples/papi/e2e/{{ NUM }}-*.js 2>/dev/null | head -1)
+    FILE=$(ls examples/papi/e2e/{{ NUM }}-*.ts 2>/dev/null | head -1)
     if [ -z "$FILE" ]; then
-        echo "No workflow file matching examples/papi/e2e/{{ NUM }}-*.js"
+        echo "No workflow file matching examples/papi/e2e/{{ NUM }}-*.ts"
         exit 1
     fi
     node --import tsx "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"

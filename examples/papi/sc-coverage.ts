@@ -39,6 +39,8 @@ import {
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
+  type ChainSigner,
+  type ParachainApi,
 } from "@web3-storage/sdk";
 import {
   callContract,
@@ -61,19 +63,19 @@ const DRIVE_REGISTRY_ADDR = hexToBytes("0x00000000000000000000000000000000090200
 const UNIT = 10n ** 12n;
 
 /** Send raw calldata to a precompile address as a signed substrate tx. */
-async function callPrecompile(api, signer, addr, abi, fnName, args, opts = {}) {
+async function callPrecompile(api: ParachainApi, signer: ChainSigner, addr: Uint8Array | string, abi: any, fnName: string, args: unknown[], opts = {}) {
   const data = encodeCall(abi, fnName, args);
   return callContract(api, signer, addr, data, opts);
 }
 
 /** Assert an event of the named pallet was emitted in this tx. */
-function assertEvent(events, type, valueType, label) {
+function assertEvent(events: any[], type: string, valueType: string, label: string) {
   const ev = events.find(
-    (e) => e.type === type && e.value?.type === valueType
+    (e: any) => e.type === type && e.value?.type === valueType
   );
   if (!ev) {
     const seen = events
-      .map((e) => `${e.type}::${e.value?.type ?? "?"}`)
+      .map((e: any) => `${e.type}::${e.value?.type ?? "?"}`)
       .join(", ");
     throw new Error(`expected ${type}::${valueType} after ${label}, saw: ${seen}`);
   }
@@ -139,12 +141,12 @@ async function main() {
       1, // Writer
     ]);
     assertEvent(r.events, "StorageProvider", "MemberSet", "setMember");
-    let bucket = await api.query.StorageProvider.Buckets.getValue(
+    let bucket = (await api.query.StorageProvider.Buckets.getValue(
       bucketA,
       READ_OPTS
-    );
+    ))!;
     assert.ok(
-      bucket.members.some((m) => sameAddress(m.account, member.address)),
+      bucket.members.some((m: { account: string }) => sameAddress(m.account, member.address)),
       "Charlie should be in bucket members after setMember"
     );
 

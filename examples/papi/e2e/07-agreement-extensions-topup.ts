@@ -42,9 +42,9 @@ async function main() {
   const duration = 100;
   const maxPayment = maxBytes * BigInt(duration) * 10n;
 
-  let bucketId;
+  let bucketId: bigint;
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   tests.push({
     name: "7.0 Setup bucket + agreement",
@@ -70,11 +70,11 @@ async function main() {
   tests.push({
     name: "7.1 Extend agreement duration",
     fn: async () => {
-      const before = await api.query.StorageProvider.StorageAgreements.getValue(
+      const before = (await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       // extend_agreement resets expires_at to current_block + additional_duration
       // (does NOT add to the existing expires_at). Use a value larger than the
       // original duration so the new expires_at always exceeds the old one.
@@ -83,13 +83,13 @@ async function main() {
         additional_duration: extDuration,
         max_payment: maxBytes * BigInt(extDuration) * 10n,
       });
-      const events = api.event.StorageProvider.AgreementExtended.filter(result.events);
+      const events = api.event.StorageProvider.AgreementExtended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementExtended event");
-      const after = await api.query.StorageProvider.StorageAgreements.getValue(
+      const after = (await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       assert.ok(after.expires_at > before.expires_at, "expires_at should increase");
     },
   });
@@ -97,23 +97,23 @@ async function main() {
   tests.push({
     name: "7.2 Top up bytes",
     fn: async () => {
-      const before = await api.query.StorageProvider.StorageAgreements.getValue(
+      const before = (await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       const extraBytes = 524_288n; // 512 KB
       const result = await topUpAgreement(api, client, bucketId, provider, {
         additional_bytes: extraBytes,
         max_payment: extraBytes * BigInt(duration) * 10n,
       });
-      const events = api.event.StorageProvider.AgreementToppedUp.filter(result.events);
+      const events = api.event.StorageProvider.AgreementToppedUp.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected AgreementToppedUp event");
-      const after = await api.query.StorageProvider.StorageAgreements.getValue(
+      const after = (await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,
         READ_OPTS
-      );
+      ))!;
       assert.ok(after.max_bytes > before.max_bytes, "max_bytes should increase");
     },
   });

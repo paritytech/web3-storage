@@ -154,7 +154,7 @@ async function main() {
     );
     const bought = contractLogs.find((l) => l.eventName === "BucketBoughtFor");
     assert(bought, "BucketBoughtFor not emitted by contract");
-    console.log("  BucketBoughtFor user:", bought.args.user);
+    console.log("  BucketBoughtFor user:", (bought.args as any).user);
 
     // 5) Off-chain ops are unchanged — they bypass the contract entirely.
     console.log("\n[5/6] Off-chain upload + challenge round-trip…");

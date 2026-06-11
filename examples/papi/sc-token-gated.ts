@@ -147,7 +147,7 @@ async function main() {
     let logs = decodeContractEmitted(r.events, api, deployed.addressBytes, abi);
     const minted = logs.find((l) => l.eventName === "Minted");
     assert.ok(minted, "Minted event missing");
-    const tokenId = minted.args.tokenId;
+    const tokenId = (minted.args as any).tokenId;
     console.log("  tokenId =", tokenId.toString());
 
     // 4) Publisher transfers the token to Charlie.
@@ -159,8 +159,8 @@ async function main() {
       logs.some(
         (l) =>
           l.eventName === "Transfer" &&
-          l.args.from.toLowerCase() === publisherH160.toLowerCase() &&
-          l.args.to.toLowerCase() === recipientH160.toLowerCase()
+          (l.args as any).from.toLowerCase() === publisherH160.toLowerCase() &&
+          (l.args as any).to.toLowerCase() === recipientH160.toLowerCase()
       ),
       "Transfer(publisher → Charlie) event missing"
     );

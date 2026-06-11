@@ -10,16 +10,13 @@
 
 import assert from "node:assert";
 import {
-  createDrive,
-  deleteDrive,
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
   sameAddress,
-  shareDrive,
-  unshareDrive,
   waitForAgreementAcceptance,
 } from "@web3-storage/sdk";
+import { FileSystemClient } from "@web3-storage/sdk/fs";
 import { ensureSoleAcceptingProvider, printBucketMembers } from "../support.js";
 import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
 
@@ -35,9 +32,13 @@ async function main() {
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
   const restore = await ensureSoleAcceptingProvider(api, provider);
 
-  let driveId, bucketId;
+  // The suite drives the file-system surface through the layer-1 client
+  // (chain ops silent-by-default; fs HTTP ops signed when possible).
+  const fs = new FileSystemClient({ api, signer: owner, providerUrl: PROVIDER_URL });
 
-  const tests = [];
+  let driveId: bigint, bucketId: bigint;
+
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   // ── Success ───────────────────────────────────────────────────────────────
 
@@ -46,18 +47,19 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
+      const result = await fs.createDrive({
+        name: `e2e-drive-${Date.now()}`,
+        maxCapacity,
+        storagePeriod,
         payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
+        minProviders: 1,
       });
       driveId = result.driveId;
       bucketId = result.bucketId;
       assert.ok(driveId !== undefined, "drive_id should be returned");
       assert.ok(bucketId !== undefined, "bucket_id should be returned");
       assert.ok(
-        sameAddress(result.matchedProvider, provider.address),
+        sameAddress(result.matchedProvider!, provider.address),
         "Should match expected provider"
       );
       await waitForAgreementAcceptance(api, provider.address, bucketId);
@@ -75,11 +77,10 @@ async function main() {
   tests.push({
     name: "9.2 Share drive (Writer)",
     fn: async () => {
-      const event = await shareDrive(api, owner, driveId, member, "Writer");
-      assert.ok(event, "Should get DriveShared event");
+      await fs.shareDrive(driveId, member.address, "Writer");
       const members = await printBucketMembers(api, bucketId, "after share Writer");
       assert.ok(
-        members.some((m) => sameAddress(m.account, member.address)),
+        members.some((m: { account: string }) => sameAddress(m.account, member.address)),
         "Member should appear in underlying bucket"
       );
     },
@@ -88,22 +89,20 @@ async function main() {
   tests.push({
     name: "9.3 Share drive (Reader) — change role",
     fn: async () => {
-      const event = await shareDrive(api, owner, driveId, member, "Reader");
-      assert.ok(event, "Should get DriveShared event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
-      const m = bucket.members.find((m) => sameAddress(m.account, member.address));
-      assert.strictEqual(m.role.type, "Reader", "Member should now be Reader");
+      await fs.shareDrive(driveId, member.address, "Reader");
+      const members = await fs.getBucketMembers(bucketId);
+      const m = members.find((m) => sameAddress(m.account, member.address));
+      assert.strictEqual(m!.role, "Reader", "Member should now be Reader");
     },
   });
 
   tests.push({
     name: "9.4 Unshare drive",
     fn: async () => {
-      const event = await unshareDrive(api, owner, driveId, member);
-      assert.ok(event, "Should get DriveUnshared event");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+      await fs.unshareDrive(driveId, member.address);
+      const members = await fs.getBucketMembers(bucketId);
       assert.ok(
-        !bucket.members.some((m) => sameAddress(m.account, member.address)),
+        !members.some((m: { account: string }) => sameAddress(m.account, member.address)),
         "Member should be gone from bucket"
       );
     },
@@ -113,8 +112,7 @@ async function main() {
     name: "9.5 Delete drive",
     fn: async () => {
       const ownerBefore = await getFree(api, owner);
-      const event = await deleteDrive(api, owner, driveId);
-      assert.ok(event, "Should get DriveDeleted event");
+      await fs.deleteDrive(driveId);
       const ownerAfter = await getFree(api, owner);
       // Owner should get a refund (balance increased, minus tx fees).
       console.log("    owner free delta = %s", (ownerAfter - ownerBefore).toString());
@@ -131,11 +129,12 @@ async function main() {
       // Create a new drive for this test.
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-9b-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
+      const result = await fs.createDrive({
+        name: `e2e-drive-9b-${Date.now()}`,
+        maxCapacity,
+        storagePeriod,
         payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
+        minProviders: 1,
       });
       await waitForAgreementAcceptance(api, provider.address, result.bucketId);
       const tx = api.tx.DriveRegistry.share_drive({
@@ -152,15 +151,44 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-9c-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
+      const result = await fs.createDrive({
+        name: `e2e-drive-9c-${Date.now()}`,
+        maxCapacity,
+        storagePeriod,
         payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
+        minProviders: 1,
       });
       await waitForAgreementAcceptance(api, provider.address, result.bucketId);
       const tx = api.tx.DriveRegistry.delete_drive({ drive_id: result.driveId });
       await submitTxExpectFailure(tx, member.signer, "NotDriveOwner", "9.7");
+    },
+  });
+
+  tests.push({
+    name: "9.8 FileSystemClient fs HTTP round-trip (mkdir/upload/ls/download/delete)",
+    fn: async () => {
+      const result = await fs.createDrive({
+        name: `e2e-drive-9fs-${Date.now()}`,
+        maxCapacity: 1_048_576n,
+        storagePeriod: 100,
+        payment: 1_048_576n * 100n * 10n,
+        minProviders: 1,
+      });
+      await waitForAgreementAcceptance(api, provider.address, result.bucketId);
+
+      await fs.createDirectory(result.bucketId, "/docs");
+      const body = new TextEncoder().encode(`fs round-trip ${Date.now()}`);
+      await fs.uploadFile(result.bucketId, "/docs/note.txt", body, { contentType: "text/plain" });
+
+      const entries = await fs.listDirectory(result.bucketId, "/docs");
+      assert.ok(entries.some((e) => e.name === "note.txt" && e.entryType === "file"), "ls should show the file");
+
+      const downloaded = await fs.downloadFile(result.bucketId, "/docs/note.txt");
+      assert.deepStrictEqual(downloaded, body, "downloaded bytes should match upload");
+
+      await fs.deleteFile(result.bucketId, "/docs/note.txt");
+      const after = await fs.listDirectory(result.bucketId, "/docs");
+      assert.ok(!after.some((e) => e.name === "note.txt"), "file should be gone after delete");
     },
   });
 

@@ -17,6 +17,7 @@
  */
 
 import assert from "node:assert";
+import type { PolkadotClient } from "polkadot-api";
 import {
   acceptAgreement,
   challengeCheckpoint,
@@ -39,6 +40,8 @@ import {
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
+  type ChainSigner,
+  type ParachainApi,
 } from "@web3-storage/sdk";
 import { parseProviderClientArgs } from "./support.js";
 
@@ -49,7 +52,7 @@ const {
   clientSeed: CLIENT_SEED,
 } = parseProviderClientArgs();
 
-async function setupAgreement(api, client, provider, bucketId) {
+async function setupAgreement(api: ParachainApi, client: ChainSigner, provider: ChainSigner, bucketId: bigint) {
   const existing = await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
     provider.address,
@@ -76,7 +79,7 @@ async function setupAgreement(api, client, provider, bucketId) {
   console.log("  Agreement accepted");
 }
 
-async function uploadAndVerify(bucketId) {
+async function uploadAndVerify(bucketId: bigint) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
   const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
@@ -97,12 +100,12 @@ async function uploadAndVerify(bucketId) {
   };
 }
 
-async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
-  const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+async function claimPaymentAfterExpiry(api: ParachainApi, papi: PolkadotClient, provider: ChainSigner, client: ChainSigner, bucketId: bigint) {
+  const agreement = (await api.query.StorageProvider.StorageAgreements.getValue(
     bucketId,
     provider.address,
     READ_OPTS
-  );
+  ))!;
   const expiresAt = Number(agreement.expires_at);
   console.log("  Agreement expires at block:", expiresAt);
 
@@ -128,7 +131,7 @@ async function claimPaymentAfterExpiry(api, papi, provider, client, bucketId) {
 // Read ChallengeDefended from the respond tx's own in-block events. A
 // background `api.event...watch()` only sees finalized blocks, so a count taken
 // right after responding would read 0.
-function recordDefended(api, result, label) {
+function recordDefended(api: ParachainApi, result: { events: unknown[] }, label: string) {
   const event = requireOneEvent(
     result.events,
     api.event.StorageProvider.ChallengeDefended,
@@ -246,8 +249,8 @@ async function main() {
     console.log("\n=== Step 8: Wait for agreement expiry & claim payment ===");
     await claimPaymentAfterExpiry(api, papi, provider, client, bucketId);
   } catch (err) {
-    console.error("\nERROR:", err.message || err);
-    if (err.stack) console.error(err.stack);
+    console.error("\nERROR:", (err as Error).message || err);
+    if ((err as Error).stack) console.error((err as Error).stack);
     process.exitCode = 1;
   } finally {
     papi.destroy();

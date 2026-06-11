@@ -5,7 +5,7 @@
  * @web3-storage/sdk.
  */
 
-import { READ_OPTS } from "@web3-storage/sdk";
+import { READ_OPTS, type ParachainApi } from "@web3-storage/sdk";
 
 /**
  * Default CLI arguments shared by examples that talk to both the chain and
@@ -24,17 +24,17 @@ export function parseProviderClientArgs(argv = process.argv) {
   };
 }
 
-export function fmtRole(role) {
+export function fmtRole(role: unknown): string {
   if (!role) return "?";
   if (typeof role === "string") return role;
-  return role.type ?? JSON.stringify(role);
+  return (role as { type?: string }).type ?? JSON.stringify(role);
 }
 
-export async function printBucketMembers(api, bucketId, label = "members") {
-  const bucket = await api.query.StorageProvider.Buckets.getValue(
+export async function printBucketMembers(api: ParachainApi, bucketId: bigint, label = "members") {
+  const bucket = (await api.query.StorageProvider.Buckets.getValue(
     bucketId,
     READ_OPTS
-  );
+  ))!;
   console.log(`  [${label}] bucket ${bucketId}:`);
   for (const m of bucket.members) {
     console.log(`    - ${m.account}  role=${fmtRole(m.role)}`);

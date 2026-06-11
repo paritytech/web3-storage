@@ -20,7 +20,7 @@ const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
 // Discover workflow files: XX-*.js in this directory, sorted by name.
 const files = readdirSync(__dirname)
-  .filter((f) => /^\d{2}-.*\.js$/.test(f))
+  .filter((f) => /^\d{2}-.*\.ts$/.test(f))
   .sort();
 
 if (files.length === 0) {
@@ -37,7 +37,7 @@ console.log(`${"═".repeat(70)}\n`);
 const results = [];
 
 for (const file of files) {
-  const label = file.replace(/\.js$/, "");
+  const label = file.replace(/\.ts$/, "");
   const t0 = Date.now();
   console.log("▶ Running %s …", label);
   try {

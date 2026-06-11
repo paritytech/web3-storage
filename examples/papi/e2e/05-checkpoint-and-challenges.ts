@@ -69,7 +69,7 @@ async function main() {
     providerSignature: upload.commit.provider_signature,
   };
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   // ── Success ───────────────────────────────────────────────────────────────
 
@@ -79,7 +79,7 @@ async function main() {
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
       const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
-      const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events);
+      const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected BucketCheckpointed event");
     },
   });
@@ -97,7 +97,7 @@ async function main() {
       assert.ok(challengeId.deadline, "Challenge should have a deadline");
       const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
       const result = await respondToChallenge(api, provider, challengeId, proof);
-      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events);
+      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
     },
   });
@@ -115,7 +115,7 @@ async function main() {
       assert.ok(challengeId.deadline, "Challenge should have a deadline");
       const proof = await fetchChallengeProof(api, PROVIDER_URL, challengeId);
       const result = await respondToChallenge(api, provider, challengeId, proof);
-      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events);
+      const events = api.event.StorageProvider.ChallengeDefended.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected ChallengeDefended event");
     },
   });
@@ -152,7 +152,7 @@ async function main() {
         bucketId,
         duty,
         signed.signature,
-        window
+        Number(window)
       );
       assert.ok(event.reward > 0n, "Reward should be positive");
     },

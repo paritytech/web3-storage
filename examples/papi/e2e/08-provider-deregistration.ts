@@ -43,19 +43,19 @@ async function main() {
   // one via createBucketWithStorage), so use Ferdie for deregister tests.
   await ensureProviderRegistered(api, ferdie, PROVIDER_URL);
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   // ── Success ───────────────────────────────────────────────────────────────
 
   tests.push({
     name: "8.1 Announce deregistration (no active agreements)",
     fn: async () => {
-      const info = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
+      const info = (await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS))!;
       assert.strictEqual(info.committed_bytes, 0n, "Ferdie should have no active agreements");
       const result = await deregisterProvider(api, ferdie);
-      const events = api.event.StorageProvider.DeregisterAnnounced.filter(result.events);
+      const events = api.event.StorageProvider.DeregisterAnnounced.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected DeregisterAnnounced event");
-      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
+      const after = (await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS))!;
       assert.strictEqual(
         after.settings.accepting_primary,
         false,
@@ -68,9 +68,9 @@ async function main() {
     name: "8.2 Cancel deregistration",
     fn: async () => {
       const result = await cancelDeregister(api, ferdie);
-      const events = api.event.StorageProvider.DeregisterCancelled.filter(result.events);
+      const events = api.event.StorageProvider.DeregisterCancelled.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Expected DeregisterCancelled event");
-      const after = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
+      const after = (await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS))!;
       assert.ok(after, "Provider should still exist after cancel");
     },
   });
@@ -87,7 +87,7 @@ async function main() {
         accepting_extensions: true,
         max_capacity: 0n,
       });
-      const stored = await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS);
+      const stored = (await api.query.StorageProvider.Providers.getValue(ferdie.address, READ_OPTS))!;
       assert.strictEqual(stored.settings.accepting_primary, true, "Should accept agreements again");
     },
   });

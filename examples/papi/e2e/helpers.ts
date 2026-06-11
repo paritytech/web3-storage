@@ -5,8 +5,19 @@
  * workflow file can focus on scenario logic.
  */
 
-import { formatDispatchError } from "./format.js";
-import { READ_OPTS } from "@web3-storage/sdk";
+import type { PolkadotSigner } from "polkadot-api/signer";
+import {
+  connect,
+  formatDispatchError,
+  READ_OPTS,
+  waitForBlockProduction,
+  waitForChainReady,
+  waitForNextBlock,
+  type ChainConnection,
+  type ChainSigner,
+  type ParachainApi,
+  type SubmittableTx,
+} from "@web3-storage/sdk";
 
 // ── Test runner primitives ──────────────────────────────────────────────────
 
@@ -14,7 +25,13 @@ import { READ_OPTS } from "@web3-storage/sdk";
  * Run a single test function and print PASS/FAIL.
  * Returns `{ name, passed, error? }`.
  */
-export async function runTest(name, fn) {
+export interface TestResult {
+  name: string;
+  passed: boolean;
+  error?: Error;
+}
+
+export async function runTest(name: string, fn: () => Promise<void>): Promise<TestResult> {
   const t0 = Date.now();
   try {
     await fn();
@@ -24,12 +41,12 @@ export async function runTest(name, fn) {
   } catch (err) {
     const ms = Date.now() - t0;
     console.log(`  ❌ FAIL  ${name}  (${ms}ms)`);
-    console.log(`          ${err.message || err}`);
-    if (err.stack) {
-      const firstFrame = err.stack.split("\n").find((l) => l.includes("file://"));
+    console.log(`          ${(err as Error).message || err}`);
+    if ((err as Error).stack) {
+      const firstFrame = (err as Error).stack!.split("\n").find((l) => l.includes("file://"));
       if (firstFrame) console.log(`         ${firstFrame.trim()}`);
     }
-    return { name, passed: false, error: err };
+    return { name, passed: false, error: err as Error };
   }
 }
 
@@ -41,7 +58,11 @@ export async function runTest(name, fn) {
  * @param {Array<{name: string, fn: Function}>} tests
  * @param {object} ctx  — shared context passed to each `fn(ctx)`
  */
-export async function runSuite(suiteName, tests, ctx) {
+export async function runSuite<C>(
+  suiteName: string,
+  tests: Array<{ name: string; fn: (ctx: C) => Promise<void> }>,
+  ctx: C,
+): Promise<{ passed: number; failed: number; total: number }> {
   console.log(`\n${"=".repeat(70)}`);
   console.log(`  ${suiteName}`);
   console.log(`${"=".repeat(70)}\n`);
@@ -81,12 +102,17 @@ export async function runSuite(suiteName, tests, ctx) {
  * `signAndSubmit` and throws on `!result.ok`). If the tx unexpectedly
  * succeeds, an assertion error is thrown.
  */
-export async function submitTxExpectFailure(tx, signer, expectedError, label) {
+export async function submitTxExpectFailure(
+  tx: SubmittableTx,
+  signer: PolkadotSigner,
+  expectedError: string,
+  label: string,
+) {
   try {
     const observable = tx.signSubmitAndWatch(signer);
-    const result = await new Promise((resolve, reject) => {
+    const result = await new Promise<any>((resolve, reject) => {
       let done = false;
-      let sub;
+      let sub: { unsubscribe(): void } | undefined;
       const cleanup = () => {
         done = true;
         clearTimeout(timer);
@@ -129,7 +155,7 @@ export async function submitTxExpectFailure(tx, signer, expectedError, label) {
   } catch (err) {
     // submitTx-style wrappers and PAPI can throw various errors. Check if the
     // error message itself contains what we're looking for.
-    if (err.message && err.message.includes(expectedError)) {
+    if ((err as Error).message && (err as Error).message.includes(expectedError)) {
       return; // expected failure — success
     }
     // Re-throw: either the tx succeeded unexpectedly or the error didn't match.
@@ -143,10 +169,8 @@ export async function submitTxExpectFailure(tx, signer, expectedError, label) {
  * Standard preamble for every E2E workflow: connect, wait for chain, return
  * `{ papi, api }`.
  */
-export async function setupChain(chainWs) {
-  const { connect, waitForChainReady, waitForBlockProduction, waitForNextBlock } =
-    await import("@web3-storage/sdk");
-  const { papi, api } = await connect(chainWs);
+export async function setupChain(chainWs: string): Promise<ChainConnection> {
+  const { papi, api } = connect(chainWs);
   await waitForChainReady(api);
   await waitForBlockProduction(api);
   await waitForNextBlock(papi);
@@ -156,7 +180,7 @@ export async function setupChain(chainWs) {
 /**
  * Grab the free balance for an account.
  */
-export async function getFree(api, who) {
+export async function getFree(api: ParachainApi, who: ChainSigner): Promise<bigint> {
   const acc = await api.query.System.Account.getValue(who.address, READ_OPTS);
   return acc.data.free;
 }

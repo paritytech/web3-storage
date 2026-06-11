@@ -27,6 +27,8 @@ import {
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
+  type ChainSigner,
+  type ParachainApi,
 } from "@web3-storage/sdk";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -34,7 +36,7 @@ const BYTES_NEEDED = BigInt(process.argv[3] || 1_073_741_824n); // 1 GiB
 const DURATION = Number(process.argv[4] || 100);
 const MAX_PRICE_PER_BYTE = BigInt(process.argv[5] || 10n);
 
-function scoreProvider(info, req) {
+function scoreProvider(info: any, req: any) {
   if (!info.settings.accepting_primary) {
     return { score: 0, reasons: ["not accepting primary"] };
   }
@@ -70,18 +72,18 @@ function scoreProvider(info, req) {
   return { score, reasons };
 }
 
-async function fetchAndRankProviders(api, req) {
+async function fetchAndRankProviders(api: ParachainApi, req: any) {
   const entries = await api.query.StorageProvider.Providers.getEntries(READ_OPTS);
-  const ranked = entries.map(({ keyArgs, value }) => ({
+  const ranked = entries.map(({ keyArgs, value }: { keyArgs: [string]; value: any }) => ({
     address: keyArgs[0],
     info: value,
     ...scoreProvider(value, req),
   }));
-  ranked.sort((a, b) => b.score - a.score);
+  ranked.sort((a: { score: number }, b: { score: number }) => b.score - a.score);
   return ranked;
 }
 
-function printProvider({ address, info, score, reasons }) {
+function printProvider({ address, info, score, reasons }: { address: string; info: any; score: number; reasons: string[] }) {
   const cap = info.settings.max_capacity;
   const free = cap === 0n ? "unlimited" : (cap - info.committed_bytes).toString();
   console.log(`  ${address}`);
@@ -131,11 +133,11 @@ async function main() {
     console.log("\nRanked providers:\n");
     for (const p of ranked) printProvider(p);
 
-    const eligible = ranked.filter((p) => p.score === 100);
+    const eligible = ranked.filter((p: { score: number }) => p.score === 100);
     console.log("Fully-matching providers (score=100): %d", eligible.length);
   } catch (err) {
-    console.error("\nERROR:", err.message || err);
-    if (err.stack) console.error(err.stack);
+    console.error("\nERROR:", (err as Error).message || err);
+    if ((err as Error).stack) console.error((err as Error).stack);
     process.exitCode = 1;
   } finally {
     papi.destroy();
