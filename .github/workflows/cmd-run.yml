@@ -21,9 +21,6 @@ on:
       is_org_member:
         description: "Is the user an org member"
         required: true
-      is_pr_author:
-        description: "Is the user the PR author"
-        required: true
       repo:
         description: "Repository to use"
         required: true
@@ -170,7 +167,6 @@ jobs:
         id: cmd
         env:
           IS_ORG_MEMBER: ${{ github.event.inputs.is_org_member }}
-          IS_PR_AUTHOR: ${{ github.event.inputs.is_pr_author }}
           RUNNER: ${{ github.event.inputs.runner }}
           IMAGE: ${{ github.event.inputs.image }}
         run: |
@@ -298,7 +294,7 @@ jobs:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: generate_token
         with:
-          app-id: ${{ secrets.CMD_BOT_APP_ID }}
+          client-id: ${{ secrets.CMD_BOT_APP_ID }}
           private-key: ${{ secrets.CMD_BOT_APP_KEY }}
 
       - name: Checkout
