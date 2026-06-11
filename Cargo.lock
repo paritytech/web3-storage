@@ -9743,6 +9743,7 @@ dependencies = [
 name = "storage-provider-node"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "axum",
  "base64",
  "bincode",
@@ -9761,6 +9762,7 @@ dependencies = [
  "storage-primitives",
  "subxt",
  "subxt-signer",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-rate-limit",

@@ -1,7 +1,9 @@
 //! Node startup and runtime orchestration.
 
+use crate::replica_sync_coordinator_subxt::SubxtReplicaSyncChainClient;
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
+    checkpoint_coordinator_subxt::SubxtCheckpointChainClient,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
     DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -101,17 +103,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start optional background services (failures are non-fatal)
-    let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
+    let checkpoint_handle = start_checkpoint_coordinator(&cli, state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
         state.set_checkpoint_handle(handle);
     }
     let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address (requires signing key)
-    if let Some(seed) = &seed {
+    if let Some(kp) = &state.keypair {
         sync_multiaddr_on_chain(
             &cli.rpc.chain_rpc,
-            seed,
+            kp,
             &state.provider_id,
             &cli.rpc.bind_addr,
         )
@@ -133,34 +135,33 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start_checkpoint_coordinator(
     cli: &Cli,
-    seed: &Option<String>,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
         return None;
     }
 
-    let seed = match seed {
-        Some(s) => s.clone(),
+    let keypair = match state.keypair.as_ref() {
+        Some(kp) => kp,
         None => {
             tracing::error!("Checkpoint coordinator requires --keyfile for signing. Skipping.");
             return None;
         }
     };
 
-    let config = CheckpointCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        seed: Some(seed),
-        ..Default::default()
-    };
-
-    let mut coordinator = CheckpointCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-        return None;
-    }
+    let chain_client =
+        match SubxtCheckpointChainClient::connect(&cli.rpc.chain_rpc, keypair.clone()).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to connect checkpoint coordinator: {}", e);
+                return None;
+            }
+        };
     tracing::info!("Checkpoint coordinator connected to chain");
+
+    let config = CheckpointCoordinatorConfig::default();
+
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -182,21 +183,32 @@ async fn start_replica_sync_coordinator(
         return None;
     }
 
+    let keypair = match state.keypair.as_ref() {
+        Some(kp) => kp,
+        None => {
+            tracing::error!("Replica sync coordinator requires a signing keypair. Skipping.");
+            return None;
+        }
+    };
+
+    let chain_client =
+        match SubxtReplicaSyncChainClient::connect(&cli.rpc.chain_rpc, keypair.clone()).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to connect replica sync coordinator: {}", e);
+                return None;
+            }
+        };
+    tracing::info!("Replica sync coordinator connected to chain");
+
     let config = ReplicaSyncCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
         poll_interval: Duration::from_secs(cli.replica_sync.replica_poll_interval),
         sync_timeout: Duration::from_secs(cli.replica_sync.replica_sync_timeout),
         max_concurrent_syncs: cli.replica_sync.replica_max_concurrent,
         auto_confirm: true,
     };
 
-    let mut coordinator = ReplicaSyncCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect replica sync coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Replica sync coordinator connected to chain");
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -321,7 +333,12 @@ fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
 
 /// Ensure the on-chain multiaddr matches the actual bind address.
 /// If the provider is registered and the multiaddr differs, submit an update transaction.
-async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str, bind_addr: &str) {
+async fn sync_multiaddr_on_chain(
+    chain_rpc: &str,
+    signer: &subxt_signer::sr25519::Keypair,
+    provider_id: &str,
+    bind_addr: &str,
+) {
     let expected_multiaddr = bind_addr_to_multiaddr(bind_addr);
 
     let account = match sp_runtime::AccountId32::from_str(provider_id) {
@@ -384,16 +401,6 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
         }
     };
 
-    // Create signer from seed
-    let uri: subxt_signer::SecretUri = match seed.parse() {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!("Failed to parse seed for multiaddr update: {:?}", e);
-            return;
-        }
-    };
-    let signer = subxt_signer::sr25519::Keypair::from_uri(&uri).expect("valid keypair from seed");
-
     let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
     let tx = subxt::dynamic::tx(
         "StorageProvider",
@@ -403,7 +410,7 @@ async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str,
 
     match api
         .tx()
-        .sign_and_submit_then_watch_default(&tx, &signer)
+        .sign_and_submit_then_watch_default(&tx, signer)
         .await
     {
         Ok(progress) => match progress.wait_for_finalized_success().await {
