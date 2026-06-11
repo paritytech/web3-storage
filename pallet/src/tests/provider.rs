@@ -1,4 +1,5 @@
 use super::*;
+use storage_primitives::EndAction;
 
 #[test]
 fn register_provider_works() {
@@ -90,10 +91,9 @@ fn add_stake_fails_if_not_registered() {
 }
 
 #[test]
-fn deregister_provider_full_flow_announce_then_complete() {
+fn deregister_provider_then_removes_provider_and_returns_stake() {
     new_test_ext().execute_with(|| {
         let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-
         assert_ok!(StorageProvider::register_provider(
             RuntimeOrigin::signed(1),
             multiaddr.try_into().unwrap(),
@@ -101,170 +101,36 @@ fn deregister_provider_full_flow_announce_then_complete() {
             200
         ));
 
-        let balance_before = Balances::free_balance(1);
+        // Seed pending rewards across two buckets. Poke storage directly
+        // because the reward-credit path requires a full checkpoint setup
+        // orthogonal to this test.
+        CheckpointRewards::<Test>::insert(1, 100u64, 30u64);
+        CheckpointRewards::<Test>::insert(1, 200u64, 70u64);
+        // Unrelated provider's reward — must survive.
+        CheckpointRewards::<Test>::insert(2, 100u64, 999u64);
 
-        // Announce step: provider record stays, stake stays reserved,
-        // acceptance flags are forced false, deregister_at is stamped.
+        let free_before = Balances::free_balance(1);
+
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             1
         )));
-        let provider = Providers::<Test>::get(1).unwrap();
-        assert_eq!(
-            provider.deregister_at,
-            Some(System::block_number() + 100) // DeregisterAnnouncementPeriod in mock
-        );
-        assert!(!provider.settings.accepting_primary);
-        assert!(!provider.settings.accepting_extensions);
-        assert_eq!(Balances::free_balance(1), balance_before); // not yet refunded
 
-        // Premature completion is rejected.
-        assert_noop!(
-            StorageProvider::complete_deregister(RuntimeOrigin::signed(1)),
-            Error::<Test>::DeregisterPeriodNotElapsed
-        );
-
-        // After the period, complete succeeds and stake comes back.
-        let deregister_at = provider.deregister_at.unwrap();
-        run_to_block(deregister_at);
-        assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
-            1
-        )));
+        // Provider is gone immediately.
         assert!(Providers::<Test>::get(1).is_none());
-        assert_eq!(Balances::free_balance(1), balance_before + 200);
+        // Stake (200) + rewards (100) returned in one call.
+        assert_eq!(Balances::free_balance(1), free_before + 300);
+        // Provider's reward entries drained.
+        assert_eq!(CheckpointRewards::<Test>::iter_prefix(1u64).count(), 0);
+        // Unrelated provider's reward untouched.
+        assert_eq!(CheckpointRewards::<Test>::get(2u64, 100u64), 999);
     });
 }
 
 #[test]
-fn deregister_provider_announcement_is_one_shot() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            1
-        )));
-        assert_noop!(
-            StorageProvider::deregister_provider(RuntimeOrigin::signed(1)),
-            Error::<Test>::DeregisterAnnounced
-        );
-    });
-}
-
-#[test]
-fn cancel_deregister_clears_announcement() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            1
-        )));
-        assert!(Providers::<Test>::get(1).unwrap().deregister_at.is_some());
-
-        assert_ok!(StorageProvider::cancel_deregister(RuntimeOrigin::signed(1)));
-        let restored = Providers::<Test>::get(1).unwrap();
-        assert!(restored.deregister_at.is_none());
-        // Cancel mirrors announce: flags that announce forced to false
-        // are restored to true.
-        assert!(restored.settings.accepting_primary);
-        assert!(restored.settings.accepting_extensions);
-
-        // And settings updates work again post-cancel.
-        let tweak = ProviderSettings {
-            min_duration: 10u64,
-            max_duration: 1000u64,
-            price_per_byte: 5u64,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            max_capacity: 0,
-        };
-        assert_ok!(StorageProvider::update_provider_settings(
-            RuntimeOrigin::signed(1),
-            tweak
-        ));
-    });
-}
-
-#[test]
-fn cancel_deregister_fails_without_announcement() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_noop!(
-            StorageProvider::cancel_deregister(RuntimeOrigin::signed(1)),
-            Error::<Test>::DeregisterNotAnnounced
-        );
-    });
-}
-
-#[test]
-fn complete_deregister_fails_without_announcement() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_noop!(
-            StorageProvider::complete_deregister(RuntimeOrigin::signed(1)),
-            Error::<Test>::DeregisterNotAnnounced
-        );
-    });
-}
-
-#[test]
-fn update_provider_settings_blocked_while_announcement_pending() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            1
-        )));
-
-        let resumed = ProviderSettings {
-            min_duration: 10u64,
-            max_duration: 1000u64,
-            price_per_byte: 5u64,
-            accepting_primary: true, // attempts to un-freeze
-            replica_sync_price: None,
-            accepting_extensions: true,
-            max_capacity: 0,
-        };
-        assert_noop!(
-            StorageProvider::update_provider_settings(RuntimeOrigin::signed(1), resumed),
-            Error::<Test>::DeregisterAnnounced
-        );
-    });
-}
-
-#[test]
-fn withdraw_agreement_request_still_works_during_announcement() {
-    // Defensive: if a request was created BEFORE announce and the
-    // provider is now exiting, the owner must still be able to recover
-    // their locked funds via withdraw_agreement_request. Otherwise the
-    // owner's payment would be stuck until the request expires
-    // (RequestTimeout) and even then there's no automatic refund path.
+fn withdraw_agreement_request_works_after_provider_deregisters() {
+    // A pending request created before the provider deregistered must
+    // still be withdrawable — the owner's locked funds should not be
+    // stranded just because the provider left.
     new_test_ext().execute_with(|| {
         let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
         assert_ok!(StorageProvider::register_provider(
@@ -285,11 +151,12 @@ fn withdraw_agreement_request_still_works_during_announcement() {
             1000
         ));
 
-        // Provider announces deregister (without accepting).
-        // committed_bytes is 0 because the request was never accepted.
+        // Provider deregisters immediately (committed_bytes == 0 because
+        // the request was never accepted).
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             2
         )));
+        assert!(Providers::<Test>::get(2).is_none());
 
         // Owner can still withdraw their pending request.
         assert_ok!(StorageProvider::withdraw_agreement_request(
@@ -298,144 +165,6 @@ fn withdraw_agreement_request_still_works_during_announcement() {
             2,
         ));
         assert!(AgreementRequests::<Test>::get(0, 2).is_none());
-    });
-}
-
-#[test]
-fn agreement_entry_points_reject_deregistering_provider() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(2),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
-
-        // Set up an existing agreement so top_up_agreement has something
-        // to top up — this happens BEFORE announce.
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            0,
-            2,
-            50,
-            100,
-            1000
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(2),
-            0
-        ));
-
-        // End the agreement so committed_bytes drops back to 0 and
-        // announce is allowed. Wait past expires_at + SettlementTimeout
-        // so claim_expired_agreement succeeds.
-        run_to_block(200);
-        assert_ok!(StorageProvider::claim_expired_agreement(
-            RuntimeOrigin::signed(2),
-            0
-        ));
-
-        // Now announce.
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            2
-        )));
-
-        // Every agreement-creating entry point now rejects with
-        // DeregisterAnnounced.
-        assert_noop!(
-            StorageProvider::request_primary_agreement(
-                RuntimeOrigin::signed(1),
-                0,
-                2,
-                50,
-                100,
-                1000
-            ),
-            Error::<Test>::DeregisterAnnounced
-        );
-        assert_noop!(
-            StorageProvider::request_agreement(
-                RuntimeOrigin::signed(1),
-                0,
-                2,
-                50,
-                100,
-                1000,
-                storage_primitives::ReplicaRequestParams {
-                    sync_balance: 0,
-                    min_sync_interval: 10,
-                }
-            ),
-            Error::<Test>::DeregisterAnnounced
-        );
-
-        // accept_agreement: there's no pending request now, but if there
-        // were, the deregister check would fire before the request
-        // lookup. We simulate by inserting a dummy request via storage.
-        crate::AgreementRequests::<Test>::insert(
-            0,
-            2,
-            crate::AgreementRequest {
-                requester: 1,
-                max_bytes: 50,
-                payment_locked: 0,
-                duration: 100,
-                expires_at: 10_000,
-                replica_params: None,
-            },
-        );
-        assert_noop!(
-            StorageProvider::accept_agreement(RuntimeOrigin::signed(2), 0),
-            Error::<Test>::DeregisterAnnounced
-        );
-
-        // Auto-match (find_matching_provider) skips deregistering
-        // providers — request_storage finds no candidate.
-        // (We don't have a public entry point that calls find_matching_provider
-        // directly without other setup; the unit-level guarantee is the
-        // skip branch we added at top of the loop.)
-    });
-}
-
-#[test]
-fn complete_deregister_drains_checkpoint_rewards() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-
-        // Seed pending rewards across two buckets for this provider. We
-        // poke storage directly because the on-chain reward-credit path
-        // requires a full checkpoint setup that's orthogonal to this
-        // test.
-        CheckpointRewards::<Test>::insert(1, 100u64, 30u64);
-        CheckpointRewards::<Test>::insert(1, 200u64, 70u64);
-        // Unrelated provider's reward in another bucket — must survive.
-        CheckpointRewards::<Test>::insert(2, 100u64, 999u64);
-
-        let free_before = Balances::free_balance(1);
-
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            1
-        )));
-        let deregister_at = Providers::<Test>::get(1).unwrap().deregister_at.unwrap();
-        run_to_block(deregister_at);
-        assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
-            1
-        )));
-
-        // 200 (stake) + 30 + 70 (drained rewards) = 300 added to free balance.
-        assert_eq!(Balances::free_balance(1), free_before + 300);
-        // Provider's reward entries are gone.
-        assert_eq!(CheckpointRewards::<Test>::iter_prefix(1u64).count(), 0);
-        // Unrelated provider's reward is untouched.
-        assert_eq!(CheckpointRewards::<Test>::get(2u64, 100u64), 999);
     });
 }
 
@@ -934,5 +663,53 @@ fn accept_agreement_works_within_capacity() {
         let provider = Providers::<Test>::get(2).unwrap();
         assert_eq!(provider.committed_bytes, 100);
         assert_eq!(provider.settings.max_capacity, 150);
+    });
+}
+
+#[test]
+fn deregister_provider_full_flow() {
+    // Full happy path: provider registers, user creates bucket + establishes
+    // an agreement, user early-terminates it, then provider deregisters.
+    new_test_ext().execute_with(|| {
+        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+        assert_ok!(StorageProvider::register_provider(
+            RuntimeOrigin::signed(2),
+            multiaddr.try_into().unwrap(),
+            test_public_key(),
+            200
+        ));
+
+        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+
+        // default price_per_byte == 0, so payment == 0; max_payment 1000 is just buffer.
+        assert_ok!(StorageProvider::request_primary_agreement(
+            RuntimeOrigin::signed(1),
+            0,
+            2,
+            100,
+            100,
+            1000
+        ));
+        assert_ok!(StorageProvider::accept_agreement(
+            RuntimeOrigin::signed(2),
+            0
+        ));
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 100);
+
+        // Acct 1 is bucket admin; current_block < expires_at so this is early termination.
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            0,
+            2,
+            EndAction::Pay
+        ));
+        assert_eq!(Providers::<Test>::get(2).unwrap().committed_bytes, 0);
+        assert!(StorageAgreements::<Test>::get(0, 2).is_none());
+
+        let reserved_before = Balances::reserved_balance(2);
+        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(2)));
+        assert!(Providers::<Test>::get(2).is_none());
+        assert_eq!(Balances::reserved_balance(2), 0);
+        assert!(reserved_before > 0); // confirms stake was actually released
     });
 }

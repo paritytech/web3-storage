@@ -66,23 +66,11 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn deregister_provider() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `345`
-		//  Estimated: `3825`
-		// Minimum execution time: 13_527_000 picoseconds.
-		Weight::from_parts(14_518_000, 0)
-			.saturating_add(Weight::from_parts(0, 3825))
-			.saturating_add(T::DbWeight::get().reads(1))
-			.saturating_add(T::DbWeight::get().writes(1))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::CheckpointRewards` (r:1001 w:1000)
 	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn complete_deregister() -> Weight {
+	fn deregister_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `45127`
 		//  Estimated: `2566553`
@@ -91,18 +79,6 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(Weight::from_parts(0, 2566553))
 			.saturating_add(T::DbWeight::get().reads(1003))
 			.saturating_add(T::DbWeight::get().writes(1002))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn cancel_deregister() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `328`
-		//  Estimated: `3825`
-		// Minimum execution time: 12_136_000 picoseconds.
-		Weight::from_parts(13_183_000, 0)
-			.saturating_add(Weight::from_parts(0, 3825))
-			.saturating_add(T::DbWeight::get().reads(1))
-			.saturating_add(T::DbWeight::get().writes(1))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)

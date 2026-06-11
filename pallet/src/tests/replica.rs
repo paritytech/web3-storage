@@ -67,12 +67,12 @@ fn request_agreement_fails_no_replica_sync_price() {
 }
 
 #[test]
-fn request_agreement_fails_deregister_announced() {
+fn request_agreement_fails_after_provider_deregistered() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
 
-        // Announce deregistration
+        // Provider deregisters immediately — record is gone.
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             2
         )));
@@ -90,7 +90,7 @@ fn request_agreement_fails_deregister_announced() {
                     min_sync_interval: 10,
                 }
             ),
-            Error::<Test>::DeregisterAnnounced
+            Error::<Test>::ProviderNotFound
         );
     });
 }
