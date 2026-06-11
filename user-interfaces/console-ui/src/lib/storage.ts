@@ -9,14 +9,15 @@ import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
 import {
+  makeSigner,
   parseMultiaddrToUrl,
   READ_OPTS,
-  resolveProviderEndpoint,
   submitTx,
-  waitForPrimaryProvider,
+  type ChainSigner,
 } from "@web3-storage/sdk";
+import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
 import { EncryptionKey } from "./encryption";
-import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
+import { type Keypair, toHex } from "./crypto";
 
 // Transaction result from best-block watching
 interface TxResult {
@@ -122,7 +123,10 @@ export class StorageClient {
   private signer: ReturnType<typeof getPolkadotSigner> | null = null;
   private signerAddress: string | null = null;
   private keypair: Keypair | null = null;
-  private providerUrlCache: Map<string, string> = new Map();
+  private chainSigner: ChainSigner | null = null;
+  private s3c: SdkS3Client | null = null;
+  /** Dev-chain fallback URLs (per bucket) when on-chain resolution fails. */
+  private fallbackUrlCache: Map<string, string> = new Map();
   private encryptionKey: EncryptionKey | null = null;
 
   constructor(chainWs: string) {
@@ -135,6 +139,18 @@ export class StorageClient {
     console.log("[StorageClient] Client created, getting typed API with parachain descriptor...");
     try {
       this.api = this.client.getTypedApi(parachain);
+      // Dev chains: pin the local provider URL. The provider stores data
+      // regardless of on-chain agreements, and on a dev chain the registered
+      // multiaddr points at the same localhost endpoint anyway.
+      const devOverride =
+        this.chainWs.includes("127.0.0.1") || this.chainWs.includes("localhost")
+          ? "http://127.0.0.1:3333"
+          : undefined;
+      this.s3c = new SdkS3Client({
+        api: this.api,
+        signer: this.chainSigner,
+        providerUrl: devOverride,
+      });
       console.log("[StorageClient] Typed API ready");
     } catch (err) {
       console.error("[StorageClient] Failed to get typed API (descriptor mismatch?):", err);
@@ -143,12 +159,13 @@ export class StorageClient {
   }
 
   async setSigner(seed: string): Promise<string> {
-    const keypair = seedToKeypair(seed);
-    this.keypair = keypair;
-    this.signer = getPolkadotSigner(keypair.publicKey, "Sr25519", (input) =>
-      keypair.sign(input),
-    );
-    this.signerAddress = toSs58(keypair.publicKey);
+    // One derivation source for everything: the sdk signer carries the raw
+    // keypair (provider auth) alongside the PolkadotSigner (extrinsics).
+    this.chainSigner = makeSigner(seed);
+    this.keypair = this.chainSigner.keypair ?? null;
+    this.signer = this.chainSigner.signer;
+    this.signerAddress = this.chainSigner.address;
+    this.s3c?.setSigner(this.chainSigner);
     return this.signerAddress;
   }
 
@@ -190,6 +207,11 @@ export class StorageClient {
   private ensureConnected(): void {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
     if (!this.signer) throw new Error("Signer not set. Call setSigner() first.");
+  }
+
+  private requireS3(): SdkS3Client {
+    if (!this.s3c) throw new Error("Not connected. Call connect() first.");
+    return this.s3c;
   }
 
   /**
@@ -242,14 +264,12 @@ export class StorageClient {
     onProgress?: (status: string, attempt: number, total: number) => void,
   ): Promise<string> {
     const key = bucketId.toString();
-    const cached = this.providerUrlCache.get(key);
-    if (cached) return cached;
+    const fallback = this.fallbackUrlCache.get(key);
+    if (fallback) return fallback;
 
-    // Try to resolve from on-chain bucket data (works when provider has accepted agreement)
+    // Resolve from on-chain bucket data via the sdk (cached inside the client).
     try {
-      if (!this.api) throw new Error("Not connected");
-      const url = await resolveProviderEndpoint(this.api, bucketId);
-      this.providerUrlCache.set(key, url);
+      const url = await this.requireS3().getProviderUrl(bucketId);
       onProgress?.("Provider ready", 1, 1);
       return url;
     } catch {
@@ -257,10 +277,10 @@ export class StorageClient {
       // The provider stores data regardless of on-chain agreements — agreements
       // are only needed for checkpoints/accountability, not for HTTP uploads.
       if (this.chainWs.includes("127.0.0.1") || this.chainWs.includes("localhost")) {
-        const fallback = "http://127.0.0.1:3333";
-        console.log(`[StorageClient] No on-chain provider for bucket ${bucketId}, using local fallback: ${fallback}`);
-        this.providerUrlCache.set(key, fallback);
-        return fallback;
+        const local = "http://127.0.0.1:3333";
+        console.log(`[StorageClient] No on-chain provider for bucket ${bucketId}, using local fallback: ${local}`);
+        this.fallbackUrlCache.set(key, local);
+        return local;
       }
       throw new Error(`Bucket ${bucketId} has no primary providers and no fallback available`);
     }
@@ -277,7 +297,6 @@ export class StorageClient {
     onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
   ): Promise<string> {
     this.invalidateProviderCache(bucketId);
-    if (!this.api) throw new Error("Not connected");
 
     const statusFor = (elapsedSec: number): string => {
       if (elapsedSec < 30) return "Waiting for provider to accept the agreement...";
@@ -290,7 +309,7 @@ export class StorageClient {
     const startTime = Date.now();
     let tick = 0;
     try {
-      await waitForPrimaryProvider(this.api, bucketId, {
+      const url = await this.requireS3().waitForProvider(bucketId, {
         timeoutMs: 150_000,
         tickMs: 3_000,
         onTick: (elapsedMs) => {
@@ -298,25 +317,23 @@ export class StorageClient {
           onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs, tick);
         },
       });
+      onProgress?.("Provider accepted — ready to use", Date.now() - startTime, tick + 1);
+      return url;
     } catch {
       throw new Error(
         `Provider did not accept the agreement after ${Math.round((Date.now() - startTime) / 1000)}s. ` +
         `The provider may be offline or not accepting new agreements.`
       );
     }
-
-    const url = await resolveProviderEndpoint(this.api, bucketId);
-    this.providerUrlCache.set(bucketId.toString(), url);
-    onProgress?.("Provider accepted — ready to use", Date.now() - startTime, tick + 1);
-    return url;
   }
 
   /** Clear cached provider URL for a bucket (e.g. after provider changes). */
   invalidateProviderCache(bucketId?: bigint): void {
+    this.s3c?.invalidateProviderUrl(bucketId);
     if (bucketId !== undefined) {
-      this.providerUrlCache.delete(bucketId.toString());
+      this.fallbackUrlCache.delete(bucketId.toString());
     } else {
-      this.providerUrlCache.clear();
+      this.fallbackUrlCache.clear();
     }
   }
 
@@ -453,99 +470,60 @@ export class StorageClient {
     options?: PutObjectOptions
   ): Promise<UploadResult> {
     this.ensureConnected();
-    this.validateObjectKey(key);
 
-    const providerUrl = await this.getProviderUrl(bucketId);
-
-    // Encrypt data before upload if encryption is enabled
+    // Encrypt data before upload if encryption is enabled; the sdk client
+    // carries opaque bytes so the on-chain CID covers what the provider stores.
     const uploadData = this.encryptionKey
       ? await this.encryptionKey.encrypt(data)
       : data;
 
-    // Upload via S3 endpoint which handles chunking, Merkle tree, MMR commit,
-    // and S3 index update in a single request.
-    const headers: Record<string, string> = {
-      "Content-Type": options?.contentType || "application/octet-stream",
-      ...this.signRequest("PUT", bucketId),
-    };
-    if (options?.metadata) {
-      for (const [k, v] of Object.entries(options.metadata)) {
-        headers[`x-amz-meta-${k}`] = v;
-      }
-    }
-
-    const response = await fetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { method: "PUT", headers, body: uploadData },
+    const result = await this.requireS3().putObject(
+      { layer0BucketId: bucketId },
+      key,
+      uploadData,
+      { contentType: options?.contentType, metadata: options?.metadata },
     );
-
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text()}`);
-    }
-
-    const result = await response.json();
-    return { cid: result.data_root || result.etag, size: data.length };
+    return { cid: result.cid ?? "", size: data.length };
   }
 
   /**
-   * Download an S3 object by key. Returns the raw bytes.
-   * Uses the S3 GET endpoint which reassembles chunks into the full object.
+   * Download an S3 object by key. Verifies the stored bytes against the
+   * on-chain CID when `s3BucketId` is provided: single-chunk mismatches throw
+   * CidMismatchError; multi-chunk payloads (or objects without on-chain
+   * metadata) come back `verified: false`. Decryption happens after
+   * verification — the CID covers what the provider stores.
    */
-  async downloadS3Object(bucketId: bigint, key: string): Promise<Blob> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await fetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { headers: this.signRequest("GET", bucketId) },
+  async downloadS3Object(
+    bucketId: bigint,
+    key: string,
+    s3BucketId?: bigint,
+  ): Promise<{ blob: Blob; verified: boolean }> {
+    const got = await this.requireS3().getObject(
+      { layer0BucketId: bucketId, s3BucketId },
+      key,
     );
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${await response.text()}`);
-    }
 
-    // Decrypt after download if encryption is enabled
     if (this.encryptionKey) {
-      const encrypted = new Uint8Array(await response.arrayBuffer());
-      const decrypted = await this.encryptionKey.decrypt(encrypted);
-      return new Blob([decrypted]);
+      const decrypted = await this.encryptionKey.decrypt(got.data);
+      return { blob: new Blob([decrypted as BlobPart]), verified: got.verified };
     }
-
-    return response.blob();
+    return { blob: new Blob([got.data as BlobPart]), verified: got.verified };
   }
 
   async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams();
-    if (prefix) params.set("prefix", prefix);
-
-    const response = await fetch(
-      `${providerUrl}/s3/${Number(bucketId)}/objects?${params.toString()}`,
-      { headers: this.signRequest("GET", bucketId) },
-    );
-
-    if (!response.ok) {
-      throw new Error(`List objects failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return (result.contents || []).map((obj: any) => ({
-      key: obj.key,
-      size: obj.size,
-      lastModified: obj.last_modified * 1000, // Unix seconds → JS millis
-      etag: obj.etag,
+    const listed = await this.requireS3().listObjects({ layer0BucketId: bucketId }, prefix);
+    return listed.map((o) => ({
+      key: o.key,
+      size: o.size,
+      lastModified: o.lastModified ?? 0,
+      etag: o.etag ?? "",
     }));
   }
 
   // --- S3 Additional Operations ---
 
   async deleteObject(bucketId: bigint, key: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await fetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE", headers: this.signRequest("DELETE", bucketId) },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Delete object failed: ${response.status} ${await response.text()}`);
-    }
+    await this.requireS3().deleteObject({ layer0BucketId: bucketId }, key);
   }
 
   // --- Checkpoint Operations ---
@@ -949,12 +927,6 @@ export class StorageClient {
     }
     if (!/^[a-z0-9.-]+$/.test(name)) {
       throw new Error("Bucket name can only contain lowercase letters, numbers, hyphens, and dots");
-    }
-  }
-
-  private validateObjectKey(key: string): void {
-    if (key.length === 0 || key.length > 1024) {
-      throw new Error("Object key must be 1-1024 characters");
     }
   }
 

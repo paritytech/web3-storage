@@ -32,7 +32,7 @@ cargo run -p file-system-client --example basic_usage
 - **Drive Registry pallet** (`storage-interfaces/file-system/pallet-registry/`) — on-chain drive metadata, owner mapping, root CID slot.
 - **File-system primitives** (`storage-interfaces/file-system/primitives/`) — shared types: `DriveInfo`, `DirectoryNode`, `FileManifest`, `CommitStrategy`.
 - **File-system client SDK** (`storage-interfaces/file-system/client/`) — Rust client. Real chain queries via subxt; file operations via the provider's `/fs/{bucket}/...` HTTP endpoints.
-- **TypeScript SDK** (`user-interfaces/sdk/typescript/file-system/`) — equivalent in TS, used by the drive-ui frontend.
+- **TypeScript SDK** — `FileSystemClient` from `@web3-storage/sdk/fs` (`packages/layer1`), built on the layer-0 chain binding.
 
 ## Related
 

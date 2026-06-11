@@ -39,7 +39,7 @@ interface StorageState {
   refreshBuckets: () => Promise<void>;
   deleteBucket: (name: string) => Promise<void>;
   putObject: (bucketName: string, key: string, data: Uint8Array, bucketId: bigint, options?: PutObjectOptions) => Promise<UploadResult>;
-  downloadS3Object: (bucketId: bigint, key: string) => Promise<Blob>;
+  downloadS3Object: (bucketId: bigint, key: string, s3BucketId?: bigint) => Promise<{ blob: Blob; verified: boolean }>;
   listObjects: (bucketId: bigint, prefix?: string) => Promise<S3ObjectInfo[]>;
   deleteObject: (bucketId: bigint, key: string) => Promise<void>;
 
@@ -271,9 +271,13 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     }
   }, [client]);
 
-  const downloadS3Object = useCallback(async (bucketId: bigint, key: string): Promise<Blob> => {
+  const downloadS3Object = useCallback(async (
+    bucketId: bigint,
+    key: string,
+    s3BucketId?: bigint,
+  ): Promise<{ blob: Blob; verified: boolean }> => {
     if (!client) throw new Error("Client not connected");
-    return client.downloadS3Object(bucketId, key);
+    return client.downloadS3Object(bucketId, key, s3BucketId);
   }, [client]);
 
   const listObjects = useCallback(async (bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> => {

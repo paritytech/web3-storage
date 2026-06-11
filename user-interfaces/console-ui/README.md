@@ -105,13 +105,11 @@ These can be configured via the Connect dialog in the UI.
 
 The UI uses a dark theme by default. Colors can be customized in `src/styles/index.css`.
 
-## Integration with SDKs
+## Integration with the SDK
 
-This UI is designed to work with the TypeScript SDKs:
-- `@web3-storage/file-system-sdk` - File System operations
-- `@web3-storage/s3-sdk` - S3-compatible operations
-
-See `../sdk/typescript/` for SDK documentation.
+Chain interaction and S3 object operations go through `@web3-storage/sdk`
+(`packages/sdk` — see its README), specifically `S3Client` from
+`@web3-storage/sdk/s3`.
 
 ## License
 

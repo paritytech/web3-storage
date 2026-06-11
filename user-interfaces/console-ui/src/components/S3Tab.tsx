@@ -367,7 +367,11 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const handleDownloadObject = async (obj: S3ObjectInfo) => {
     if (!selectedBucket) return;
     try {
-      const blob = await downloadS3Object(selectedBucket.layer0BucketId, obj.key);
+      const { blob, verified } = await downloadS3Object(
+        selectedBucket.layer0BucketId,
+        obj.key,
+        selectedBucket.s3BucketId,
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -376,7 +380,11 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast({ title: "Downloaded", description: obj.key });
+      if (verified) {
+        toast({ title: "Downloaded (verified)", description: `${obj.key} — content matches its on-chain CID` });
+      } else {
+        toast({ title: "Downloaded (unverified)", description: `${obj.key} — no on-chain CID to verify against` });
+      }
     } catch (err) {
       toast({ title: "Download failed", description: err instanceof Error ? err.message : "Error", variant: "destructive" });
     }

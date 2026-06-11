@@ -312,7 +312,9 @@ export class S3Client {
     }
     const data = new Uint8Array(await response.arrayBuffer());
 
-    if (opts.verify === false) return { data, verified: false };
+    if (opts.verify === false || bucket.s3BucketId === undefined) {
+      return { data, verified: false };
+    }
 
     const meta = await this.getObjectMetadata(bucket.s3BucketId, key).catch(() => null);
     if (!meta) return { data, verified: false };

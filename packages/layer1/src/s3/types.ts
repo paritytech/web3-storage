@@ -9,8 +9,15 @@ export interface BucketInfo {
   objectCount: number;
 }
 
-/** The two ids every object HTTP/chain op needs. */
-export type BucketRef = Pick<BucketInfo, "s3BucketId" | "layer0BucketId">;
+/**
+ * Bucket handle for object ops. HTTP routes key off `layer0BucketId`;
+ * `s3BucketId` is only needed to verify downloads against on-chain metadata
+ * — without it, getObject returns `verified: false`.
+ */
+export interface BucketRef {
+  layer0BucketId: bigint;
+  s3BucketId?: bigint;
+}
 
 export interface CreateBucketOptions {
   minProviders?: number;
