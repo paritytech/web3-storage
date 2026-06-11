@@ -114,6 +114,153 @@ impl SubxtChainClient {
         format!("http://{host}:{port}")
     }
 
+    /// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string
+    /// (e.g. "/ip4/127.0.0.1/tcp/3333").
+    fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
+        let parts: Vec<&str> = bind_addr.split(':').collect();
+        let (host, port) = if parts.len() == 2 {
+            (parts[0], parts[1])
+        } else {
+            ("127.0.0.1", "3333")
+        };
+        // 0.0.0.0 isn't useful as a client-facing address
+        let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
+        format!("/ip4/{host}/tcp/{port}")
+    }
+
+    /// Extract the raw bytes of a decoded `multiaddr` storage field.
+    fn extract_multiaddr_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
+        use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
+        match &val.value {
+            // Sequence/composite of individual byte values
+            ValueDef::Composite(Composite::Unnamed(items)) => items
+                .iter()
+                .filter_map(|item| match &item.value {
+                    ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
+                    _ => None,
+                })
+                .collect(),
+            // Some subxt versions encode a single byte as a bare primitive
+            ValueDef::Primitive(Primitive::U128(n)) => vec![*n as u8],
+            _ => vec![],
+        }
+    }
+
+    /// Ensure the provider's on-chain multiaddr matches its actual bind address.
+    ///
+    /// If the provider is registered and its recorded multiaddr differs from
+    /// `bind_addr`, submit an `update_provider_multiaddr` transaction. Reuses
+    /// this client's existing connection and signer rather than opening a new
+    /// one.
+    pub async fn sync_multiaddr(&self, provider_id: &str, bind_addr: &str) {
+        use subxt::dynamic::At;
+
+        let expected_multiaddr = Self::bind_addr_to_multiaddr(bind_addr);
+
+        // Read current on-chain provider info
+        let our_account: sp_core::crypto::AccountId32 =
+            match sp_core::crypto::Ss58Codec::from_ss58check(provider_id) {
+                Ok(a) => a,
+                Err(_) => {
+                    tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
+                    return;
+                }
+            };
+        let our_bytes: [u8; 32] = our_account.into();
+
+        let storage_query = subxt::dynamic::storage(
+            "StorageProvider",
+            "Providers",
+            vec![Value::from_bytes(our_bytes)],
+        );
+
+        let result = match self.api.storage().at_latest().await {
+            Ok(s) => s.fetch(&storage_query).await,
+            Err(e) => {
+                tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+                return;
+            }
+        };
+
+        let provider_value = match result {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                tracing::info!("Provider not registered on chain yet, skipping multiaddr sync");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch provider info: {}", e);
+                return;
+            }
+        };
+
+        // Extract the current multiaddr from the encoded provider storage entry.
+        let current = {
+            let decoded = match provider_value.to_value() {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Could not decode provider value: {}, skipping sync", e);
+                    return;
+                }
+            };
+
+            let multiaddr_val = match decoded.at("multiaddr") {
+                Some(v) => v,
+                None => {
+                    tracing::warn!("No multiaddr field in provider info, skipping sync");
+                    return;
+                }
+            };
+
+            let bytes = Self::extract_multiaddr_bytes(multiaddr_val);
+            if bytes.is_empty() {
+                tracing::warn!(
+                    "multiaddr decoded as empty, value structure: {:?}",
+                    multiaddr_val
+                );
+            }
+            String::from_utf8_lossy(&bytes).to_string()
+        };
+
+        if current == expected_multiaddr {
+            tracing::info!(
+                "On-chain multiaddr matches bind address: {}",
+                expected_multiaddr
+            );
+            return;
+        }
+
+        tracing::info!(
+            "On-chain multiaddr mismatch: chain=\"{}\" actual=\"{}\", updating...",
+            current,
+            expected_multiaddr
+        );
+
+        let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
+        let tx = subxt::dynamic::tx(
+            "StorageProvider",
+            "update_provider_multiaddr",
+            vec![Value::from_bytes(multiaddr_bytes)],
+        );
+
+        match self
+            .api
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
+            .await
+        {
+            Ok(progress) => match progress.wait_for_finalized_success().await {
+                Ok(_) => {
+                    tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr)
+                }
+                Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
+            },
+            Err(e) => {
+                tracing::error!("Failed to submit multiaddr update: {}", e);
+            }
+        }
+    }
+
     /// Decode a storage agreement from raw SCALE-encoded bytes.
     fn decode_storage_agreement_bytes(
         bucket_id: BucketId,
