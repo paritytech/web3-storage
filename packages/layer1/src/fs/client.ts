@@ -1,9 +1,10 @@
 /**
  * FileSystemClient — drives (DriveRegistry) + the provider node's /fs HTTP
- * surface. Chain ops delegate to the layer-0 pallet wrappers (silent,
- * in-block, no auto-retry — the right defaults for interactive apps); HTTP
- * ops go through core's retrying fetch and are signed when the signer has a
- * raw keypair.
+ * surface. Chain ops delegate to the layer-0 pallet wrappers (silent, no
+ * auto-retry, finalized submission + finalized reads by default — UI-grade,
+ * reorg-safe; tests/examples opt into in-block/best via readOpts/submitMode);
+ * HTTP ops go through core's retrying fetch and are signed when the signer
+ * has a raw keypair.
  *
  * Verification: `downloadByCid` is verified (single chunk — its hash IS the
  * CID; the layer-0 downloadChunk throws CidMismatchError). Path-based
@@ -25,7 +26,6 @@ import {
   setMember as setMemberTx,
   shareDrive as shareDriveTx,
   unshareDrive as unshareDriveTx,
-  READ_OPTS,
   type ChainSigner,
   type ParachainApi,
   type SubmitOpts,
@@ -54,6 +54,17 @@ export interface FileSystemClientOptions {
   fetch?: typeof fetch;
   /** Tx progress listener. Default null (silent) — apps drive their own UI. */
   onStatus?: TxStatusListener | null;
+  /**
+   * Read view for chain lookups. Defaults to "finalized" (UI-grade,
+   * reorg-safe). Tests/examples pass READ_OPTS ({at: "best"}) to match their
+   * in-block submission semantics.
+   */
+  readOpts?: { at: "best" | "finalized" };
+  /**
+   * Submission doneness. Defaults to "finalized" (UI-grade). Tests/examples
+   * pass "best" for speed.
+   */
+  submitMode?: "best" | "finalized";
 }
 
 function decodeName(name: Uint8Array | string | undefined | null): string | null {
@@ -72,11 +83,15 @@ export class FileSystemClient {
   private readonly providers: ProviderUrlResolver;
   private readonly fetchOpts: HttpFetchOpts;
   private readonly onStatus: TxStatusListener | null;
+  private readonly readOpts: { at: "best" | "finalized" };
+  private readonly submitMode: "best" | "finalized";
 
   constructor(opts: FileSystemClientOptions) {
     this.api = opts.api;
     this.signer = opts.signer ?? null;
-    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl);
+    this.readOpts = opts.readOpts ?? { at: "finalized" };
+    this.submitMode = opts.submitMode ?? "finalized";
+    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
     this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
     this.onStatus = opts.onStatus ?? null;
   }
@@ -91,7 +106,7 @@ export class FileSystemClient {
   }
 
   private submitOpts(): SubmitOpts {
-    return { retryStale: 0, onStatus: this.onStatus };
+    return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
   }
 
   private authHeaders(method: string, bucketId: bigint): Record<string, string> {
@@ -122,7 +137,7 @@ export class FileSystemClient {
   }
 
   async getDrive(driveId: bigint): Promise<DriveInfo | null> {
-    const drive = await this.api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
+    const drive = await this.api.query.DriveRegistry.Drives.getValue(driveId, this.readOpts);
     if (!drive) return null;
     return {
       driveId,
@@ -139,7 +154,7 @@ export class FileSystemClient {
 
   async listDrives(owner?: string): Promise<DriveInfo[]> {
     const who = owner ?? this.requireSigner().address;
-    const driveIds = await this.api.query.DriveRegistry.UserDrives.getValue(who, READ_OPTS);
+    const driveIds = await this.api.query.DriveRegistry.UserDrives.getValue(who, this.readOpts);
     const drives: DriveInfo[] = [];
     for (const id of driveIds ?? []) {
       const drive = await this.getDrive(id);
@@ -195,7 +210,7 @@ export class FileSystemClient {
   }
 
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, this.readOpts);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
     return (bucket.members ?? []).map((m: { account: string; role: { type?: string } | string }) => {
       const roleType = typeof m.role === "string" ? m.role : (m.role?.type ?? "Reader");

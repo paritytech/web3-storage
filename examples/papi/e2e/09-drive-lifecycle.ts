@@ -34,7 +34,14 @@ async function main() {
 
   // The suite drives the file-system surface through the layer-1 client
   // (chain ops silent-by-default; fs HTTP ops signed when possible).
-  const fs = new FileSystemClient({ api, signer: owner, providerUrl: PROVIDER_URL });
+  const fs = new FileSystemClient({
+    api,
+    signer: owner,
+    providerUrl: PROVIDER_URL,
+    // Test semantics: in-block submission + best-block reads (READ_OPTS).
+    readOpts: READ_OPTS,
+    submitMode: "best",
+  });
 
   let driveId: bigint, bucketId: bigint;
 

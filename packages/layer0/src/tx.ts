@@ -28,13 +28,18 @@ import type { Observable } from "rxjs";
 export const DEFAULT_TX_TIMEOUT_MS = 180_000;
 
 /**
- * Options for storage reads (`getValue` / `getEntries` / `watchValue`).
- * `submitTx` returns at in-block inclusion, so reads must target the best
- * block to see a just-written value (the default finalized head lags).
- * Single switch: flip to "finalized" here to trade read-your-writes for
- * reorg-safety everywhere at once.
+ * Options for storage reads (`getValue` / `getEntries` / `watchValue`) in
+ * TESTS AND EXAMPLES: those suites submit at in-block inclusion, so their
+ * reads must target the best block to see a just-written value.
+ *
+ * Real UIs keep "finalized" semantics (reorg-safe state display) — either
+ * omit read options entirely (finalized is PAPI's default) or pass
+ * {@link FINALIZED_READ_OPTS} explicitly; the layer-1 clients default to it.
  */
 export const READ_OPTS = { at: "best" } as const;
+
+/** UI-grade read options: the reorg-safe finalized view (PAPI's default). */
+export const FINALIZED_READ_OPTS = { at: "finalized" } as const;
 
 /** Transaction "doneness" thresholds, loosest to strictest. */
 export type TxMode = "in-pool" | "best" | "finalized";

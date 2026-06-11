@@ -1,8 +1,10 @@
 /**
  * S3Client — S3Registry buckets/object-metadata (chain) + the provider
  * node's /s3 object HTTP surface. Chain ops delegate to the layer-0 pallet
- * wrappers (silent, in-block, no auto-retry); HTTP ops go through core's
- * retrying fetch and are signed when the signer has a raw keypair.
+ * wrappers (silent, no auto-retry, finalized submission + finalized reads by
+ * default — UI-grade; tests/examples opt into in-block/best via
+ * readOpts/submitMode); HTTP ops go through core's retrying fetch and are
+ * signed when the signer has a raw keypair.
  *
  * Bytes are opaque here: client-side encryption (when used) wraps/unwraps
  * app-side, so CID verification covers exactly what the provider stores.
@@ -25,7 +27,6 @@ import {
   putObjectMetadata as putObjectMetadataTx,
   requireOneEvent,
   submitTx,
-  READ_OPTS,
   type ChainSigner,
   type ParachainApi,
   type SubmitOpts,
@@ -55,6 +56,17 @@ export interface S3ClientOptions {
   fetch?: typeof fetch;
   /** Tx progress listener. Default null (silent) — apps drive their own UI. */
   onStatus?: TxStatusListener | null;
+  /**
+   * Read view for chain lookups. Defaults to "finalized" (UI-grade,
+   * reorg-safe). Tests/examples pass READ_OPTS ({at: "best"}) to match their
+   * in-block submission semantics.
+   */
+  readOpts?: { at: "best" | "finalized" };
+  /**
+   * Submission doneness. Defaults to "finalized" (UI-grade). Tests/examples
+   * pass "best" for speed.
+   */
+  submitMode?: "best" | "finalized";
 }
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -65,11 +77,15 @@ export class S3Client {
   private readonly providers: ProviderUrlResolver;
   private readonly fetchOpts: HttpFetchOpts;
   private readonly onStatus: TxStatusListener | null;
+  private readonly readOpts: { at: "best" | "finalized" };
+  private readonly submitMode: "best" | "finalized";
 
   constructor(opts: S3ClientOptions) {
     this.api = opts.api;
     this.signer = opts.signer ?? null;
-    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl);
+    this.readOpts = opts.readOpts ?? { at: "finalized" };
+    this.submitMode = opts.submitMode ?? "finalized";
+    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
     this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
     this.onStatus = opts.onStatus ?? null;
   }
@@ -84,7 +100,7 @@ export class S3Client {
   }
 
   private submitOpts(): SubmitOpts {
-    return { retryStale: 0, onStatus: this.onStatus };
+    return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
   }
 
   private authHeaders(method: string, layer0BucketId: bigint): Record<string, string> {
@@ -162,10 +178,10 @@ export class S3Client {
   async headBucket(name: string): Promise<BucketInfo | null> {
     const bucketId = await this.api.query.S3Registry.BucketNameToId.getValue(
       utf8(name),
-      READ_OPTS,
+      this.readOpts,
     );
     if (bucketId === undefined) return null;
-    const bucket = await this.api.query.S3Registry.S3Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await this.api.query.S3Registry.S3Buckets.getValue(bucketId, this.readOpts);
     if (!bucket) return null;
     return {
       s3BucketId: bucketId,
@@ -179,10 +195,10 @@ export class S3Client {
 
   async listBuckets(owner?: string): Promise<BucketInfo[]> {
     const who = owner ?? this.requireSigner().address;
-    const ids = await this.api.query.S3Registry.UserBuckets.getValue(who, READ_OPTS);
+    const ids = await this.api.query.S3Registry.UserBuckets.getValue(who, this.readOpts);
     const buckets: BucketInfo[] = [];
     for (const id of ids ?? []) {
-      const bucket = await this.api.query.S3Registry.S3Buckets.getValue(id, READ_OPTS);
+      const bucket = await this.api.query.S3Registry.S3Buckets.getValue(id, this.readOpts);
       if (!bucket) continue;
       buckets.push({
         s3BucketId: id,
@@ -206,7 +222,7 @@ export class S3Client {
     const stored = await this.api.query.S3Registry.Objects.getValue(
       s3BucketId,
       utf8(key),
-      READ_OPTS,
+      this.readOpts,
     );
     if (!stored) return null;
     const userMetadata: Record<string, string> = {};

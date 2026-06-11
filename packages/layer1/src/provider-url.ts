@@ -18,6 +18,8 @@ export class ProviderUrlResolver {
     private readonly api: ParachainApi,
     /** Explicit override (dev/tests) — skips on-chain resolution entirely. */
     private readonly override?: string,
+    /** Read view for plain lookups. Finalized = UI-grade default. */
+    private readonly readOpts: { at: "best" | "finalized" } = { at: "finalized" },
   ) {}
 
   async get(bucketId: bigint): Promise<string> {
@@ -25,7 +27,7 @@ export class ProviderUrlResolver {
     const key = bucketId.toString();
     const cached = this.cache.get(key);
     if (cached) return cached;
-    const url = await resolveProviderEndpoint(this.api, bucketId);
+    const url = await resolveProviderEndpoint(this.api, bucketId, this.readOpts);
     this.cache.set(key, url);
     return url;
   }
@@ -43,7 +45,9 @@ export class ProviderUrlResolver {
     if (this.override) return this.override;
     this.invalidate(bucketId);
     await waitForPrimaryProvider(this.api, bucketId, { timeoutMs: 150_000, ...opts });
-    const url = await resolveProviderEndpoint(this.api, bucketId);
+    // The acceptance was just observed at the best head — resolve there too,
+    // or a finalized read could lag the very event that unblocked us.
+    const url = await resolveProviderEndpoint(this.api, bucketId, { at: "best" });
     this.cache.set(bucketId.toString(), url);
     return url;
   }

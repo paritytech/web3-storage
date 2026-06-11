@@ -11,7 +11,6 @@ import { Binary, Enum } from "polkadot-api";
 import {
   makeSigner,
   parseMultiaddrToUrl,
-  READ_OPTS,
   submitTx,
   type ChainSigner,
 } from "@web3-storage/sdk";
@@ -232,11 +231,13 @@ export class StorageClient {
 
   /**
    * Submit a transaction via the sdk and resolve on best-block inclusion
-   * (~2-6s) instead of finalization. Reads in this client target the best
-   * head (READ_OPTS), so read-your-writes holds. Throws TxDispatchError on
-   * chain-side failure; no stale-nonce auto-retry (user-visible retry is the
-   * right UX). The old ExtrinsicFailed-event fallback for stale descriptors
-   * is gone — CI now fails loudly when the tracked metadata drifts.
+   * (~2-6s) instead of finalization — this app's long-standing UX (Bulletin
+   * Chain pattern). Reads stay at the reorg-safe finalized default per
+   * review; the UI's refresh flows tolerate the short lag. Throws
+   * TxDispatchError on chain-side failure; no stale-nonce auto-retry
+   * (user-visible retry is the right UX). The old ExtrinsicFailed-event
+   * fallback for stale descriptors is gone — CI now fails loudly when the
+   * tracked metadata drifts.
    */
   private async submitAndWatchBestBlock(tx: any): Promise<TxResult> {
     const ev = (await submitTx(tx, this.signer!, {
@@ -395,15 +396,14 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketIds = await this.api!.query.S3Registry.UserBuckets.getValue(
-      this.signerAddress!,
-      READ_OPTS,
+      this.signerAddress!
     );
 
     if (!bucketIds) return [];
 
     const buckets: BucketInfo[] = [];
     for (const bucketId of bucketIds) {
-      const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId, READ_OPTS);
+      const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
       if (bucket) {
         const bucketName = new TextDecoder().decode(bucket.name);
 
@@ -423,13 +423,12 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketId = await this.api!.query.S3Registry.BucketNameToId.getValue(
-      Binary.fromText(name),
-      READ_OPTS,
+      Binary.fromText(name)
     );
 
     if (bucketId === undefined) return null;
 
-    const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await this.api!.query.S3Registry.S3Buckets.getValue(bucketId);
     if (!bucket) return null;
 
     const bucketName = new TextDecoder().decode(bucket.name);
@@ -447,8 +446,7 @@ export class StorageClient {
     this.ensureConnected();
 
     const bucketId = await this.api!.query.S3Registry.BucketNameToId.getValue(
-      Binary.fromText(name),
-      READ_OPTS,
+      Binary.fromText(name)
     );
 
     if (bucketId === undefined) {
@@ -532,7 +530,7 @@ export class StorageClient {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
 
     try {
-      const config = await this.api.query.StorageProvider.CheckpointConfigs.getValue(bucketId, READ_OPTS);
+      const config = await this.api.query.StorageProvider.CheckpointConfigs.getValue(bucketId);
       if (config) {
         return {
           interval: config.interval,
@@ -556,7 +554,7 @@ export class StorageClient {
 
     let lastWindow = 0n;
     try {
-      const lw = await this.api.query.StorageProvider.LastCheckpointWindow.getValue(bucketId, READ_OPTS);
+      const lw = await this.api.query.StorageProvider.LastCheckpointWindow.getValue(bucketId);
       if (lw !== undefined) lastWindow = BigInt(lw);
     } catch {
       // Storage item may not exist yet
@@ -564,7 +562,7 @@ export class StorageClient {
 
     let poolBalance = 0n;
     try {
-      const pool = await this.api.query.StorageProvider.CheckpointPool.getValue(bucketId, READ_OPTS);
+      const pool = await this.api.query.StorageProvider.CheckpointPool.getValue(bucketId);
       if (pool !== undefined) poolBalance = BigInt(pool);
     } catch {
       // Storage item may not exist yet
@@ -574,7 +572,7 @@ export class StorageClient {
     try {
       if (this.signerAddress) {
         const rewards = await this.api.query.StorageProvider.CheckpointRewards.getValue(
-          this.signerAddress, bucketId, READ_OPTS
+          this.signerAddress, bucketId
         );
         if (rewards !== undefined) pendingRewards = BigInt(rewards);
       }
@@ -584,7 +582,7 @@ export class StorageClient {
 
     let snapshot: CheckpointStatus["snapshot"] = null;
     try {
-      const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+      const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
       if (bucket?.snapshot) {
         const s = bucket.snapshot;
         const mmrHex = typeof s.mmr_root === "string" ? s.mmr_root : String(s.mmr_root);
@@ -686,7 +684,7 @@ export class StorageClient {
   async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
     if (!this.api) throw new Error("Not connected. Call connect() first.");
 
-    const account = await this.api.query.System.Account.getValue(address, READ_OPTS);
+    const account = await this.api.query.System.Account.getValue(address);
     return {
       free: BigInt(account.data.free),
       reserved: BigInt(account.data.reserved),
@@ -763,7 +761,7 @@ export class StorageClient {
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
     if (!this.api) throw new Error("Not connected");
 
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const roleMap: Record<string, 'Admin' | 'Writer' | 'Reader'> = {
@@ -812,8 +810,7 @@ export class StorageClient {
       const storageProvider = this.api.query.StorageProvider as any;
       if (!storageProvider.MemberBuckets) return [];
       const bucketIds = await storageProvider.MemberBuckets.getValue(
-        this.signerAddress,
-        READ_OPTS,
+        this.signerAddress
       );
       if (!bucketIds) return [];
       return bucketIds.map((id: any) => BigInt(id));
@@ -825,14 +822,14 @@ export class StorageClient {
   async getBucketProviders(bucketId: bigint): Promise<ProviderEndpointInfo[]> {
     if (!this.api) throw new Error("Not connected");
 
-    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await this.api.query.StorageProvider.Buckets.getValue(bucketId);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const providers: string[] = bucket.primary_providers ?? [];
     const results: ProviderEndpointInfo[] = [];
 
     for (const providerAccount of providers) {
-      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount, READ_OPTS);
+      const provider = await this.api.query.StorageProvider.Providers.getValue(providerAccount);
       if (!provider) {
         results.push({ account: providerAccount, endpoint: "unknown", healthy: false });
         continue;

@@ -15,6 +15,7 @@ import {
   hexToBytes,
   makeSigner,
   putChunk,
+  READ_OPTS,
   sameAddress,
   waitForAgreementAcceptance,
 } from "@web3-storage/sdk";
@@ -36,7 +37,14 @@ async function main() {
   // The suite drives the S3 surface through the layer-1 client (chain ops
   // silent-by-default, object HTTP signed + verified); putChunk keeps one
   // raw layer-0 upload path covered in 3.2.
-  const s3 = new S3Client({ api, signer: client, providerUrl: PROVIDER_URL });
+  const s3 = new S3Client({
+    api,
+    signer: client,
+    providerUrl: PROVIDER_URL,
+    // Test semantics: in-block submission + best-block reads (READ_OPTS).
+    readOpts: READ_OPTS,
+    submitMode: "best",
+  });
 
   let s3BucketId: bigint, layer0BucketId: bigint;
   const bucketName = `e2e-03-${Date.now()}`.slice(0, 63);

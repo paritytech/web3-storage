@@ -92,10 +92,12 @@ export function parseMultiaddrToUrl(multiaddr: string): string | null {
 export async function resolveProviderEndpoint(
   api: ParachainApi,
   bucketId: bigint,
+  // Finalized by default (UI-grade). Callers that just observed an acceptance
+  // at the best head (e.g. watch-based waits) pass { at: "best" } so the
+  // resolution can't lag the event that triggered it.
+  readOpts: { at: "best" | "finalized" } = { at: "finalized" },
 ): Promise<string> {
-  // Best-block reads: callers typically arrive here right after observing an
-  // acceptance at the best head; a finalized read would lag it and miss.
-  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, { at: "best" });
+  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, readOpts);
   if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
 
   const providers: string[] = bucket.primary_providers ?? [];
@@ -104,7 +106,7 @@ export async function resolveProviderEndpoint(
   }
 
   for (const providerAccount of providers) {
-    const provider = await api.query.StorageProvider.Providers.getValue(providerAccount, { at: "best" });
+    const provider = await api.query.StorageProvider.Providers.getValue(providerAccount, readOpts);
     if (!provider) continue;
 
     // multiaddr is a BoundedVec<u8> — decode to string.

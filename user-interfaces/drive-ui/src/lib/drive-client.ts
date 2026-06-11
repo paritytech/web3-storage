@@ -10,7 +10,7 @@
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
 import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
-import { READ_OPTS, type ChainSigner } from "@web3-storage/sdk";
+import type { ChainSigner } from "@web3-storage/sdk";
 import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
 
@@ -147,7 +147,7 @@ export class DriveClient {
 
   async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
     const api = this.requireApi();
-    const account = await api.query.System.Account.getValue(address, READ_OPTS);
+    const account = await api.query.System.Account.getValue(address);
     return { free: account.data.free, reserved: account.data.reserved };
   }
 
@@ -226,7 +226,7 @@ export class DriveClient {
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
     const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const snapshot = bucket.snapshot;

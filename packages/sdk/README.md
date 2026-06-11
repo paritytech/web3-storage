@@ -47,7 +47,11 @@ Canonical rules, established by the E2E suite's finalization fixes
 - **`submitTx` resolves at in-block inclusion (`mode: "best"`) by default** —
   ~6x faster than finalization, and read-your-writes holds as long as reads
   target the best block.
-- **All reads after an in-block submit use `READ_OPTS` (`{at: "best"}`)**.
+- **All reads after an in-block submit use `READ_OPTS` (`{at: "best"}`)** —
+  in TESTS AND EXAMPLES. Real UIs keep the reorg-safe finalized view
+  (PAPI's default, or `FINALIZED_READ_OPTS` explicitly), and the layer-1
+  clients default to finalized reads + finalized submission; suites opt into
+  test semantics via `readOpts: READ_OPTS, submitMode: "best"`.
 - **`mode: "finalized"` is opt-in, for reorg-sensitive effects only.** A
   challenge id embeds its creation block, so the challenge-creating wrappers
   finalize internally; everything else stays in-block.
