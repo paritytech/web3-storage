@@ -5,6 +5,7 @@
  * appears in the selector AND on-chain at S3Registry.S3Buckets.
  */
 import { test, expect } from "../fixtures";
+import { firstMatch, READ_OPTS } from "@web3-storage/sdk";
 import {
   Alice,
   cleanupBuckets,
@@ -45,17 +46,13 @@ test("create bucket via UI → on-chain S3Buckets matches", async ({ localPage }
   // is a separate ws connection — finalization can lag, so poll instead of
   // doing an immediate getValue.
   const api = getApi();
-  await expect.poll(
-    async () => {
-      const ids = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
-      return ids?.length ?? 0;
-    },
-    { timeout: 60_000, intervals: [1000, 2000, 3000] },
-  ).toBeGreaterThan(0);
-
-  const userBuckets = await api.query.S3Registry.UserBuckets.getValue(Alice.address);
+  const { value: userBuckets } = await firstMatch(
+    api.query.S3Registry.UserBuckets.watchValue(Alice.address, READ_OPTS),
+    ({ value }) => (value?.length ?? 0) > 0,
+    { timeoutMs: 60_000, description: "a bucket in Alice's UserBuckets" },
+  );
   const latestId = userBuckets![userBuckets!.length - 1];
-  const bucket = await api.query.S3Registry.S3Buckets.getValue(latestId);
+  const bucket = await api.query.S3Registry.S3Buckets.getValue(latestId, READ_OPTS);
   expect(bucket).toBeTruthy();
   const bucketName = new TextDecoder().decode(bucket!.name);
   expect(bucketName).toBe(name);

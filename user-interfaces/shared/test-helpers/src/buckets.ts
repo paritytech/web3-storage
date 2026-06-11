@@ -1,3 +1,4 @@
+import { waitForPrimaryProvider } from "@web3-storage/sdk";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
 import type { DevSigner } from "./signers";
 
@@ -122,20 +123,17 @@ export async function createDriveViaApi(
   // create_drive auto-emits a request_agreement targeting the matched
   // provider. Only the provider can call accept_agreement (the drive owner
   // can't), so we wait for the provider node's auto-coordinator to settle
-  // it. The coordinator polls every ~6s; accept_agreement finalizes in
-  // ~12-24s — typical end-to-end is 30-36s, worst case ~50s under nonce
-  // contention from rapid prior cleanup. 90s absorbs the worst case and
-  // adds <30s to the worst-case test (which we'd happily pay vs. a flake).
-  const start = Date.now();
-  const timeoutMs = 90_000;
-  while (Date.now() - start < timeoutMs) {
-    const bucket = await api.query.StorageProvider.Buckets.getValue(handle.bucketId);
-    if (bucket && bucket.primary_providers.length > 0) return handle;
-    await new Promise((r) => setTimeout(r, 1500));
+  // it. The coordinator polls every ~6s; typical end-to-end is well under a
+  // minute, worst case ~50s under nonce contention from rapid prior cleanup.
+  // 90s absorbs the worst case (which we'd happily pay vs. a flake).
+  try {
+    await waitForPrimaryProvider(api, handle.bucketId, { timeoutMs: 90_000 });
+  } catch (e) {
+    throw new Error(
+      `createDriveViaApi: ${(e as Error).message} — provider node may not be running or not auto-accepting.`,
+    );
   }
-  throw new Error(
-    `createDriveViaApi: bucket ${handle.bucketId} primary_providers stayed empty after ${timeoutMs}ms — provider node may not be running or not auto-accepting.`,
-  );
+  return handle;
 }
 
 export async function deleteDriveViaApi(signer: DevSigner, driveId: bigint): Promise<void> {

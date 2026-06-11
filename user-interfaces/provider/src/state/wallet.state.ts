@@ -17,14 +17,7 @@ import {
   InjectedExtension,
   InjectedPolkadotAccount,
 } from 'polkadot-api/pjs-signer'
-import { sr25519CreateDerive } from '@polkadot-labs/hdkd'
-import {
-  DEV_PHRASE,
-  entropyToMiniSecret,
-  mnemonicToEntropy,
-} from '@polkadot-labs/hdkd-helpers'
-import { getPolkadotSigner } from 'polkadot-api/signer'
-import { getSs58Prefix, isSameAddress, setSs58Prefix, toSs58 } from '@web3-storage/papi'
+import { getSs58Prefix, isSameAddress, makeSigner, setSs58Prefix } from '@web3-storage/sdk'
 import { getAccountBalance, isProviderRegistered } from '@/lib/chain-client'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,22 +102,12 @@ export async function updateSs58Prefix(prefix: number): Promise<void> {
  */
 function createDevAccountsWithKnownAddresses(): InjectedPolkadotAccount[] {
   try {
-    const entropy = mnemonicToEntropy(DEV_PHRASE)
-    const miniSecret = entropyToMiniSecret(entropy)
-    const derive = sr25519CreateDerive(miniSecret)
-
     return DEV_ACCOUNT_SEEDS.map(({ name, path }) => {
-      const keypair = derive(path)
-      const publicKey = keypair.publicKey
-
-      const polkadotSigner = getPolkadotSigner(publicKey, 'Sr25519', (input) =>
-        keypair.sign(input)
-      )
-
+      const { signer, address } = makeSigner(path)
       return {
-        address: toSs58(publicKey),
+        address,
         name: `${name} (Dev)`,
-        polkadotSigner,
+        polkadotSigner: signer,
       }
     })
   } catch (error) {

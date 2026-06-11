@@ -22,7 +22,7 @@ import { truncateHash } from "@/lib/utils";
 import { useChain } from "@/hooks/useChain";
 import { useStorage } from "@/hooks/useStorage";
 import { seedToKeypair, toSs58 } from "@/lib/crypto";
-import { isSameAddress } from "@web3-storage/papi";
+import { isSameAddress } from "@web3-storage/sdk";
 
 interface Account {
   name: string;

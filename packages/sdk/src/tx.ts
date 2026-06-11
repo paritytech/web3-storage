@@ -54,8 +54,10 @@ export interface SubmittableTx {
 }
 
 export interface TxStatusUpdate {
-  phase: "in-pool" | "best" | "finalized" | "retry-stale";
+  phase: "signed" | "in-pool" | "best" | "finalized" | "retry-stale";
   label: string;
+  /** True for the event the chosen mode resolves at. */
+  final?: boolean;
   txHash?: string;
   blockHash?: string;
   attempt?: number;
@@ -69,6 +71,14 @@ export type TxStatusListener = (update: TxStatusUpdate) => void;
  * printed. Pass `onStatus: null` for silence (UIs), or your own listener.
  */
 const consoleStatusListener: TxStatusListener = (u) => {
+  if (u.phase === "retry-stale") {
+    console.warn(
+      `  ⚠ ${u.label}: stale nonce (attempt ${u.attempt}/${u.maxAttempts}), ` +
+        `waiting for next block…`,
+    );
+    return;
+  }
+  if (!u.final) return; // intermediate progress is for UI listeners
   switch (u.phase) {
     case "in-pool":
       console.log(`📦 ${u.label} broadcasted txHash=${u.txHash}`);
@@ -78,12 +88,6 @@ const consoleStatusListener: TxStatusListener = (u) => {
       break;
     case "finalized":
       console.log(`📦 ${u.label} finalized in block ${u.blockHash}`);
-      break;
-    case "retry-stale":
-      console.warn(
-        `  ⚠ ${u.label}: stale nonce (attempt ${u.attempt}/${u.maxAttempts}), ` +
-          `waiting for next block…`,
-      );
       break;
   }
 };
@@ -137,14 +141,34 @@ const MODE_MATCH: Record<TxMode, (ev: TxEvent) => boolean> = {
   finalized: (ev) => ev.type === "finalized",
 };
 
-function statusFor(mode: TxMode, label: string, ev: TxEvent): TxStatusUpdate {
+function statusFor(
+  phase: TxStatusUpdate["phase"],
+  label: string,
+  ev: TxEvent,
+): TxStatusUpdate {
   const anyEv = ev as TxEvent & { txHash?: string; block?: { hash?: string } };
   return {
-    phase: mode,
+    phase,
     label,
     txHash: anyEv.txHash,
     blockHash: anyEv.block?.hash,
   };
+}
+
+/** Map a PAPI tx event to a status phase (undefined = not user-relevant). */
+function PHASE_FOR_EVENT(ev: TxEvent): TxStatusUpdate["phase"] | undefined {
+  switch (ev.type) {
+    case "signed":
+      return "signed";
+    case "broadcasted":
+      return "in-pool";
+    case "txBestBlocksState":
+      return ev.found ? "best" : undefined;
+    case "finalized":
+      return "finalized";
+    default:
+      return undefined;
+  }
 }
 
 /** Single submission attempt: subscribe, resolve at `mode`, bounded by timeout. */
@@ -212,8 +236,12 @@ function submitOnce(
               reject(new TxDispatchError(label, ev.dispatchError));
               return;
             }
-            if (MODE_MATCH[mode](ev)) {
-              onStatus?.(statusFor(mode, label, ev));
+            const final = MODE_MATCH[mode](ev);
+            // Stream every lifecycle event so UI listeners can show progress;
+            // the default console listener only prints the final one.
+            const phase = PHASE_FOR_EVENT(ev);
+            if (phase) onStatus?.({ ...statusFor(phase, label, ev), final });
+            if (final) {
               cleanup();
               resolve(ev);
             }

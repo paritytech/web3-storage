@@ -25,7 +25,7 @@ import {
 import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
-import { isSameAddress } from "@web3-storage/papi";
+import { isSameAddress } from "@web3-storage/sdk";
 import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
 import { EncryptionKey, bytesToHex } from "@/lib/encryption";
 import CreationStatusCard, { type CreationStatusItem } from "./CreationStatusCard";

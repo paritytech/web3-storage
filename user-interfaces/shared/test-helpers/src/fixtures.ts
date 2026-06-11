@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { getApi, getBestBlockNumber, disconnect, type ParachainApi } from "./chain-api";
+import { firstMatch } from "@web3-storage/sdk";
+import { getApi, getClient, getBestBlockNumber, disconnect, type ParachainApi } from "./chain-api";
 
 const PROVIDER_HEALTH_URL =
   process.env.PROVIDER_HEALTH_URL ?? "http://127.0.0.1:3333/health";
@@ -26,9 +27,11 @@ export async function waitForMinBlock(
   minBlock = 3,
   timeout = DEFAULT_MIN_BLOCK_TIMEOUT,
 ): Promise<void> {
-  await expect(async () => {
-    expect(await getBestBlockNumber()).toBeGreaterThanOrEqual(minBlock);
-  }).toPass({ timeout });
+  await firstMatch(
+    getClient().bestBlocks$,
+    (blocks) => (blocks[0]?.number ?? 0) >= minBlock,
+    { timeoutMs: timeout, description: `best block >= ${minBlock}` },
+  );
 }
 
 /**
@@ -40,9 +43,11 @@ export async function waitForMinBlock(
 export async function expectBestBlockToAdvance(page: Page, timeout = 30_000): Promise<void> {
   await expect(page.getByTestId("block-number")).toBeVisible();
   const first = await getBestBlockNumber();
-  await expect(async () => {
-    expect(await getBestBlockNumber()).toBeGreaterThan(first);
-  }).toPass({ timeout });
+  await firstMatch(
+    getClient().bestBlocks$,
+    (blocks) => (blocks[0]?.number ?? 0) > first,
+    { timeoutMs: timeout, description: `best block > ${first}` },
+  );
 }
 
 export async function probeProviderHealth(): Promise<boolean> {

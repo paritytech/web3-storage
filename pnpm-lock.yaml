@@ -29,6 +29,9 @@ importers:
       '@web3-storage/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@web3-storage/test-helpers':
+        specifier: workspace:*
+        version: link:../../user-interfaces/shared/test-helpers
       polkadot-api:
         specifier: ^2.1.0
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
@@ -124,9 +127,9 @@ importers:
       '@web3-storage/network-picker':
         specifier: workspace:*
         version: link:../shared/network-picker
-      '@web3-storage/papi':
+      '@web3-storage/sdk':
         specifier: workspace:*
-        version: link:../shared/papi
+        version: link:../../packages/sdk
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -248,9 +251,9 @@ importers:
       '@web3-storage/network-picker':
         specifier: workspace:*
         version: link:../shared/network-picker
-      '@web3-storage/papi':
+      '@web3-storage/sdk':
         specifier: workspace:*
-        version: link:../shared/papi
+        version: link:../../packages/sdk
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -357,9 +360,9 @@ importers:
       '@web3-storage/network-picker':
         specifier: workspace:*
         version: link:../shared/network-picker
-      '@web3-storage/papi':
+      '@web3-storage/sdk':
         specifier: workspace:*
-        version: link:../shared/papi
+        version: link:../../packages/sdk
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -497,15 +500,12 @@ importers:
       '@polkadot-api/substrate-bindings':
         specifier: ^0.20.1
         version: 0.20.2
-      '@polkadot-labs/hdkd':
-        specifier: ^0.0.28
-        version: 0.0.28
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.30
         version: 0.0.30
-      '@web3-storage/papi':
+      '@web3-storage/sdk':
         specifier: workspace:*
-        version: link:../papi
+        version: link:../../../packages/sdk
       polkadot-api:
         specifier: ^2.1.0
         version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)

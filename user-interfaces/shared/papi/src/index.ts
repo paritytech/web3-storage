@@ -93,7 +93,9 @@ export async function resolveProviderEndpoint(
   api: ParachainApi,
   bucketId: bigint,
 ): Promise<string> {
-  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+  // Best-block reads: callers typically arrive here right after observing an
+  // acceptance at the best head; a finalized read would lag it and miss.
+  const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, { at: "best" });
   if (!bucket) throw new Error(`Bucket ${bucketId} not found on chain`);
 
   const providers: string[] = bucket.primary_providers ?? [];
@@ -102,7 +104,7 @@ export async function resolveProviderEndpoint(
   }
 
   for (const providerAccount of providers) {
-    const provider = await api.query.StorageProvider.Providers.getValue(providerAccount);
+    const provider = await api.query.StorageProvider.Providers.getValue(providerAccount, { at: "best" });
     if (!provider) continue;
 
     // multiaddr is a BoundedVec<u8> — decode to string.

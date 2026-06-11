@@ -11,9 +11,11 @@ import {
   cleanupDrives,
   createDriveViaApi,
   deleteDriveViaApi,
+} from "@web3-storage/test-helpers";
+import {
   waitForConnection,
   waitForMinBlock,
-} from "@web3-storage/test-helpers";
+} from "@web3-storage/test-helpers/playwright";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);

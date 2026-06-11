@@ -163,7 +163,7 @@ async function main() {
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(
       downloaded,
-      Buffer.from(upload.data),
+      upload.data,
       "downloaded bytes != uploaded"
     );
     const offchainId = await challengeOffchain(api, client, provider, bucketId, {

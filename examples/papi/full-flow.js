@@ -84,7 +84,7 @@ async function uploadAndVerify(bucketId) {
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
   assert.deepStrictEqual(
     downloaded,
-    Buffer.from(data),
+    data,
     "Downloaded data does not match uploaded data"
   );
   console.log("  Upload verified (%d bytes)", data.length);

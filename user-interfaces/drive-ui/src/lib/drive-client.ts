@@ -7,7 +7,12 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint } from "@web3-storage/papi";
+import {
+  READ_OPTS,
+  resolveProviderEndpoint,
+  submitTx,
+  waitForPrimaryProvider,
+} from "@web3-storage/sdk";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
@@ -163,28 +168,22 @@ export class DriveClient {
   // ── Tx submission ─────────────────────────────────────────────────────────
 
   /**
-   * Sign + submit + wait for finalization. Throws on chain-side failure or
-   * signing/connection error.
-   *
-   * Resolves the next nonce via the legacy `system_accountNextIndex` JSON-RPC
-   * method directly against the node, bypassing PAPI's chainHead. PAPI's
-   * default and the runtime-API/storage variants both compute nonce from a
-   * specific block on the client's locally-observed chainHead, which can lag
-   * behind the chain's actual state when the page has just reloaded and a
-   * different connection (e.g. tests' api setup) has been submitting
-   * same-signer txs. `system_accountNextIndex` queries the node directly and
-   * accounts for pending pool state → always returns the correct next nonce.
+   * Sign + submit via the sdk, resolve at best-block inclusion (~2-6s vs
+   * ~12-24s finalized — none of this client's follow-up operations reference
+   * the tx by a block-height-derived id, and all reads in this file target
+   * the best head, so read-your-writes holds). Throws on chain-side failure
+   * or signing/connection error. No stale-nonce auto-retry: a user-visible
+   * retry is the right UX in a wallet-driven app.
    */
   private async submit(tx: Transaction): Promise<TxFinalizedPayload> {
     const { signer } = this.requireSigner();
-    const result = await tx.signAndSubmit(signer);
-    if (!result.ok) {
-      const err = JSON.stringify(result.dispatchError, (_k, v) =>
-        typeof v === "bigint" ? v.toString() : v,
-      );
-      throw new Error(`Transaction failed on-chain: ${err}`);
-    }
-    return result;
+    const result = await submitTx(tx, signer, {
+      mode: "best",
+      retryStale: 0,
+      onStatus: null,
+      label: "drive-ui tx",
+    });
+    return result as TxFinalizedPayload;
   }
 
   // ── Provider resolution ───────────────────────────────────────────────────
@@ -207,54 +206,44 @@ export class DriveClient {
     onProgress?: (status: string, elapsedMs: number) => void,
   ): Promise<string> {
     this.invalidateProviderUrl(bucketId);
+    const api = this.requireApi();
 
-    const intervals = [
-      0, 3000, 3000, 3000, 3000, 3000, 6000, 6000, 6000, 6000, 6000,
-      10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
-    ];
+    const statusFor = (elapsedSec: number): string => {
+      if (elapsedSec < 15) return "Checking if provider has accepted the agreement...";
+      if (elapsedSec < 45) return "Provider is reviewing the agreement...";
+      if (elapsedSec < 90) return "Still waiting for provider to accept...";
+      return "Taking longer than usual — provider may be busy or offline...";
+    };
+
+    onProgress?.(statusFor(0), 0);
     const startTime = Date.now();
-
-    for (let i = 0; i < intervals.length; i++) {
-      if (intervals[i] > 0) await sleep(intervals[i]);
-
-      const elapsedMs = Date.now() - startTime;
-      const elapsedSec = Math.round(elapsedMs / 1000);
-
-      let status: string;
-      if (elapsedSec < 15) status = "Checking if provider has accepted the agreement...";
-      else if (elapsedSec < 45) status = "Provider is reviewing the agreement...";
-      else if (elapsedSec < 90) status = "Still waiting for provider to accept...";
-      else status = "Taking longer than usual — provider may be busy or offline...";
-
-      onProgress?.(status, elapsedMs);
-
-      try {
-        const url = await resolveProviderEndpoint(this.requireApi(), bucketId);
-        this.providerUrlCache.set(bucketId.toString(), url);
-        onProgress?.("Provider accepted — ready to use", Date.now() - startTime);
-        return url;
-      } catch (err) {
-        const retryable =
-          err instanceof Error &&
-          (err.message.includes("no primary providers") || err.message.includes("not found on chain"));
-        if (!retryable) throw err;
-        if (i === intervals.length - 1) {
-          throw new Error(
-            `Provider did not accept the agreement after ${Math.round(
-              (Date.now() - startTime) / 1000,
-            )}s. The provider may be offline or not accepting new agreements.`,
-          );
-        }
-      }
+    try {
+      // watchValue replays the current bucket state and emits on change — no
+      // poll interval, no missed-acceptance window.
+      await waitForPrimaryProvider(api, bucketId, {
+        timeoutMs: 150_000,
+        tickMs: 3_000,
+        onTick: (elapsedMs) => onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs),
+      });
+    } catch {
+      throw new Error(
+        `Provider did not accept the agreement after ${Math.round(
+          (Date.now() - startTime) / 1000,
+        )}s. The provider may be offline or not accepting new agreements.`,
+      );
     }
-    throw new Error("Provider did not accept the agreement");
+
+    const url = await resolveProviderEndpoint(api, bucketId);
+    this.providerUrlCache.set(bucketId.toString(), url);
+    onProgress?.("Provider accepted — ready to use", Date.now() - startTime);
+    return url;
   }
 
   // ── Account ───────────────────────────────────────────────────────────────
 
   async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
     const api = this.requireApi();
-    const account = await api.query.System.Account.getValue(address);
+    const account = await api.query.System.Account.getValue(address, READ_OPTS);
     return { free: account.data.free, reserved: account.data.reserved };
   }
 
@@ -303,12 +292,12 @@ export class DriveClient {
     const api = this.requireApi();
     const { address } = this.requireSigner();
 
-    const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address);
+    const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address, READ_OPTS);
     if (driveIds.length === 0) return [];
 
     const drives: DriveInfo[] = [];
     for (const driveId of driveIds) {
-      const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
+      const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
       if (!drive) continue;
       drives.push({
         driveId,
@@ -327,7 +316,7 @@ export class DriveClient {
 
   async getDrive(driveId: bigint): Promise<DriveInfo | null> {
     const api = this.requireApi();
-    const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
+    const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
     if (!drive) return null;
     return {
       driveId,
@@ -434,7 +423,7 @@ export class DriveClient {
 
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
     const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const roleMap: Record<string, MemberRole> = {
@@ -475,7 +464,7 @@ export class DriveClient {
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
     const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
     if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
 
     const snapshot = bucket.snapshot;
