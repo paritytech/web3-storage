@@ -2,35 +2,26 @@
   "name": "@web3-storage/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Layer 0/1 chain-interaction SDK: typed PAPI extrinsic wrappers, signers, tx submission, and watchValue-based chain waits. Seed of the dedicated TS SDK (#123); consumed by the PAPI examples, E2E suites, and UIs.",
+  "description": "Umbrella SDK for the storage parachain: re-exports @web3-storage/{core,layer0,layer1} and hosts the Web3Storage facade. Consumers import this; the physical core/layer0/layer1 split (#123) stays an implementation detail.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./revive": "./src/revive.ts"
+    "./revive": "./src/revive.ts",
+    "./fs": "./src/fs.ts",
+    "./s3": "./src/s3.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-labs/hdkd": "^0.0.28",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.0",
-    "rxjs": "^7.8.2"
+    "@web3-storage/core": "workspace:*",
+    "@web3-storage/layer0": "workspace:*",
+    "@web3-storage/layer1": "workspace:*",
+    "polkadot-api": "^2.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "~5.8.3",
-    "viem": "^2.21.0"
-  },
-  "peerDependencies": {
-    "viem": "^2.21.0"
-  },
-  "peerDependenciesMeta": {
-    "viem": {
-      "optional": true
-    }
+    "typescript": "~5.8.3"
   }
 }

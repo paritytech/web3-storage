@@ -1,27 +1,4 @@
-/**
- * Address and byte-level helpers. SS58 encoding state (prefix) lives in
- * @web3-storage/papi — the single owner of the descriptor set — so every
- * consumer renders addresses with the same, runtime-derived prefix.
- */
-
-export {
-  getSs58Prefix,
-  isSameAddress,
-  parseMultiaddrToUrl,
-  resolveProviderEndpoint,
-  setSs58Prefix,
-  toSs58,
-  type ParachainApi,
-} from "@web3-storage/papi";
-
-import { isSameAddress } from "@web3-storage/papi";
-
-/**
- * Compare two SS58 addresses by their underlying public key, regardless of
- * the prefix each one was encoded with. Alias kept for the PAPI examples,
- * which predate `isSameAddress`.
- */
-export const sameAddress = isSameAddress;
+/** Byte/hex primitives shared by every layer. */
 
 export function toHex(bytes: Uint8Array | ArrayLike<number>): string {
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -55,4 +32,20 @@ export function bytesEq(
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000; // String.fromCharCode arg-count limit headroom
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }

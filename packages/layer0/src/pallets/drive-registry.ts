@@ -4,13 +4,14 @@ import { Enum } from "polkadot-api";
 
 import type { ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
-import { requireOneEvent, submitTx } from "../tx.js";
+import { requireOneEvent, submitTx, type SubmitOpts } from "../tx.js";
 
 export async function createDrive(
   api: ParachainApi,
   owner: ChainSigner,
   name: string,
   params: any,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.DriveRegistry.create_drive({
@@ -18,7 +19,7 @@ export async function createDrive(
       ...params,
     }),
     owner.signer,
-    "create_drive",
+    { label: "create_drive", ...opts },
   );
   const event = requireOneEvent(
     result.events,
@@ -41,6 +42,7 @@ export async function shareDrive(
   driveId: bigint,
   member: ChainSigner | { address: string },
   role: string,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.DriveRegistry.share_drive({
@@ -49,7 +51,7 @@ export async function shareDrive(
       role: Enum(role as never),
     }),
     owner.signer,
-    `share_drive(${role})`,
+    { label: `share_drive(${role})`, ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -63,6 +65,7 @@ export async function unshareDrive(
   owner: ChainSigner,
   driveId: bigint,
   member: ChainSigner | { address: string },
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.DriveRegistry.unshare_drive({
@@ -70,7 +73,7 @@ export async function unshareDrive(
       member: member.address,
     }),
     owner.signer,
-    "unshare_drive",
+    { label: "unshare_drive", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -83,11 +86,12 @@ export async function deleteDrive(
   api: ParachainApi,
   owner: ChainSigner,
   driveId: bigint,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.DriveRegistry.delete_drive({ drive_id: driveId }),
     owner.signer,
-    "delete_drive",
+    { label: "delete_drive", ...opts },
   );
   return requireOneEvent(
     result.events,

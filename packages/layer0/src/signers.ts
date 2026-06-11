@@ -31,6 +31,13 @@ export interface ChainSigner {
   seed?: string;
   /** Dev-account name, when this is one of the well-known dev signers. */
   name?: DevAccountName;
+  /**
+   * Raw keypair, when locally derived. Needed for provider request signing
+   * (raw sr25519 over the auth message — PolkadotSigner.signBytes may wrap).
+   * Wallet-extension signers cannot provide this; signed provider requests
+   * are then unavailable (unauthenticated providers still work).
+   */
+  keypair?: Keypair;
 }
 
 /**
@@ -71,6 +78,7 @@ export function makeSigner(seed: string): ChainSigner {
     address: toSs58(keypair.publicKey),
     publicKey: keypair.publicKey,
     seed,
+    keypair,
   };
 }
 

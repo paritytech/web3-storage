@@ -2,7 +2,7 @@
 
 import { asHex, type ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
-import { requireOneEvent, submitTx } from "../tx.js";
+import { requireOneEvent, submitTx, type SubmitOpts } from "../tx.js";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
@@ -11,6 +11,7 @@ export async function createS3BucketWithStorage(
   client: ChainSigner,
   name: string,
   params: any,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.S3Registry.create_s3_bucket_with_storage({
@@ -18,7 +19,7 @@ export async function createS3BucketWithStorage(
       ...params,
     }),
     client.signer,
-    "create_s3_bucket_with_storage",
+    { label: "create_s3_bucket_with_storage", ...opts },
   );
   const event = requireOneEvent(
     result.events,
@@ -43,6 +44,7 @@ export async function putObjectMetadata(
   obj: { cid: Uint8Array; size: bigint },
   contentType: string,
   userMetadata: Array<[string, string]> = [],
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.S3Registry.put_object_metadata({
@@ -54,7 +56,7 @@ export async function putObjectMetadata(
       user_metadata: userMetadata.map(([k, v]) => [utf8(k), utf8(v)] as [Uint8Array, Uint8Array]),
     }),
     client.signer,
-    `put_object_metadata(${key})`,
+    { label: `put_object_metadata(${key})`, ...opts },
   );
 }
 
@@ -65,6 +67,7 @@ export async function copyObjectMetadata(
   srcKey: string,
   dstBucketId: bigint,
   dstKey: string,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.S3Registry.copy_object_metadata({
@@ -74,7 +77,7 @@ export async function copyObjectMetadata(
       dst_key: utf8(dstKey),
     }),
     client.signer,
-    `copy_object_metadata(${srcKey} -> ${dstKey})`,
+    { label: `copy_object_metadata(${srcKey} -> ${dstKey})`, ...opts },
   );
 }
 
@@ -83,6 +86,7 @@ export async function deleteObjectMetadata(
   client: ChainSigner,
   s3BucketId: bigint,
   key: string,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.S3Registry.delete_object_metadata({
@@ -90,7 +94,7 @@ export async function deleteObjectMetadata(
       key: utf8(key),
     }),
     client.signer,
-    `delete_object_metadata(${key})`,
+    { label: `delete_object_metadata(${key})`, ...opts },
   );
 }
 
@@ -98,11 +102,12 @@ export async function deleteS3Bucket(
   api: ParachainApi,
   client: ChainSigner,
   s3BucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId }),
     client.signer,
-    "delete_s3_bucket",
+    { label: "delete_s3_bucket", ...opts },
   );
   return requireOneEvent(
     result.events,

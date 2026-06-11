@@ -10,13 +10,14 @@ import { Enum } from "polkadot-api";
 
 import { asHex, bytesEq, type ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
-import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized } from "../tx.js";
+import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
 export async function registerProvider(
   api: ParachainApi,
   provider: ChainSigner,
   providerUrl: string,
   stake: bigint = 1_000_000_000_000_000n,
+  opts: SubmitOpts = {},
 ) {
   const port = new URL(providerUrl).port;
   const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${port}`);
@@ -27,7 +28,7 @@ export async function registerProvider(
       stake,
     }),
     provider.signer,
-    "register_provider",
+    { label: "register_provider", ...opts },
   );
 }
 
@@ -35,11 +36,12 @@ export async function updateProviderSettings(
   api: ParachainApi,
   provider: ChainSigner,
   settings: any,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.update_provider_settings({ settings }),
     provider.signer,
-    "update_provider_settings",
+    { label: "update_provider_settings", ...opts },
   );
 }
 
@@ -58,6 +60,7 @@ export async function ensureProviderRegistered(
     pricePerByte = 1n,
     maxDuration = 100_000,
   }: { pricePerByte?: bigint; maxDuration?: number } = {},
+  opts: SubmitOpts = {},
 ) {
   const existing = await api.query.StorageProvider.Providers.getValue(
     provider.address,
@@ -65,7 +68,7 @@ export async function ensureProviderRegistered(
   );
   if (!existing) {
     console.log("  Registering provider", provider.address);
-    await registerProvider(api, provider, providerUrl);
+    await registerProvider(api, provider, providerUrl, undefined, opts);
   } else {
     if (!bytesEq(existing.public_key, provider.publicKey)) {
       throw new Error(
@@ -75,26 +78,32 @@ export async function ensureProviderRegistered(
     }
   }
   // Always (re)apply settings so price/acceptance are correct for this run.
-  await updateProviderSettings(api, provider, {
-    min_duration: 10,
-    max_duration: maxDuration,
-    price_per_byte: pricePerByte,
-    accepting_primary: true,
-    replica_sync_price: undefined,
-    accepting_extensions: true,
-    max_capacity: 0n,
-  });
+  await updateProviderSettings(
+    api,
+    provider,
+    {
+      min_duration: 10,
+      max_duration: maxDuration,
+      price_per_byte: pricePerByte,
+      accepting_primary: true,
+      replica_sync_price: undefined,
+      accepting_extensions: true,
+      max_capacity: 0n,
+    },
+    opts,
+  );
 }
 
 export async function createBucket(
   api: ParachainApi,
   signer: ChainSigner,
   { minProviders = 1 }: { minProviders?: number } = {},
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.create_bucket({ min_providers: minProviders }),
     signer.signer,
-    "create_bucket",
+    { label: "create_bucket", ...opts },
   );
   const event = requireOneEvent(
     result.events,
@@ -108,11 +117,12 @@ export async function createBucketWithStorage(
   api: ParachainApi,
   client: ChainSigner,
   params: any,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.create_bucket_with_storage(params),
     client.signer,
-    "create_bucket_with_storage",
+    { label: "create_bucket_with_storage", ...opts },
   );
   const created = requireOneEvent(
     result.events,
@@ -137,6 +147,7 @@ export async function requestPrimaryAgreement(
   provider: ChainSigner | { address: string },
   bucketId: bigint,
   params: any,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.request_primary_agreement({
@@ -145,7 +156,7 @@ export async function requestPrimaryAgreement(
       ...params,
     }),
     client.signer,
-    "request_primary_agreement",
+    { label: "request_primary_agreement", ...opts },
   );
 }
 
@@ -153,11 +164,12 @@ export async function acceptAgreement(
   api: ParachainApi,
   provider: ChainSigner,
   bucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
     provider.signer,
-    "accept_agreement",
+    { label: "accept_agreement", ...opts },
   );
 }
 
@@ -167,6 +179,7 @@ export async function setMember(
   bucketId: bigint,
   member: ChainSigner | { address: string },
   role: string,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.set_member({
@@ -175,7 +188,7 @@ export async function setMember(
       role: Enum(role as never),
     }),
     admin.signer,
-    `set_member(${role})`,
+    { label: `set_member(${role})`, ...opts },
   );
 }
 
@@ -184,6 +197,7 @@ export async function removeMember(
   admin: ChainSigner,
   bucketId: bigint,
   member: ChainSigner | { address: string },
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.remove_member({
@@ -191,7 +205,7 @@ export async function removeMember(
       member: member.address,
     }),
     admin.signer,
-    "remove_member",
+    { label: "remove_member", ...opts },
   );
 }
 
@@ -206,6 +220,7 @@ export async function submitClientCheckpoint(
     leaf_count: number | string;
     provider_signature: string;
   },
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.checkpoint({
@@ -216,7 +231,7 @@ export async function submitClientCheckpoint(
       signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
     }),
     client.signer,
-    "checkpoint",
+    { label: "checkpoint", ...opts },
   );
 }
 
@@ -231,6 +246,7 @@ export async function challengeOffchain(
     leafIndex: number | string;
     providerSignature: string;
   },
+  opts: SubmitOpts = {},
 ) {
   // Finalized: the challenge_id must survive to the respond that references it
   // (a best-block reorg would invalidate it -> ChallengeNotFound).
@@ -245,7 +261,7 @@ export async function challengeOffchain(
       provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
     }),
     client.signer,
-    "challenge_offchain",
+    { label: "challenge_offchain", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -260,6 +276,7 @@ export async function challengeCheckpoint(
   provider: ChainSigner | { address: string },
   bucketId: bigint,
   leafIndex: number | bigint,
+  opts: SubmitOpts = {},
 ) {
   // Finalized: see challengeOffchain.
   const result = await submitTxFinalized(
@@ -270,7 +287,7 @@ export async function challengeCheckpoint(
       chunk_index: 0n,
     }),
     client.signer,
-    "challenge_checkpoint",
+    { label: "challenge_checkpoint", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -284,6 +301,7 @@ export async function respondToChallenge(
   provider: ChainSigner,
   challengeId: any,
   proof: any,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.respond_to_challenge({
@@ -291,7 +309,7 @@ export async function respondToChallenge(
       response: Enum("Proof", proof),
     }),
     provider.signer,
-    "respond_to_challenge",
+    { label: "respond_to_challenge", ...opts },
   );
 }
 
@@ -302,6 +320,7 @@ export async function endAgreement(
   bucketId: bigint,
   action: string = "Pay",
   actionValue?: unknown,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.end_agreement({
@@ -313,7 +332,7 @@ export async function endAgreement(
           : Enum(action as never),
     }),
     client.signer,
-    `end_agreement(${action})`,
+    { label: `end_agreement(${action})`, ...opts },
   );
 }
 
@@ -321,35 +340,48 @@ export async function addStake(
   api: ParachainApi,
   provider: ChainSigner,
   amount: bigint,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.add_stake({ amount }),
     provider.signer,
-    "add_stake",
+    { label: "add_stake", ...opts },
   );
 }
 
-export async function deregisterProvider(api: ParachainApi, provider: ChainSigner) {
+export async function deregisterProvider(
+  api: ParachainApi,
+  provider: ChainSigner,
+  opts: SubmitOpts = {},
+) {
   return submitTx(
     api.tx.StorageProvider.deregister_provider(),
     provider.signer,
-    "deregister_provider",
+    { label: "deregister_provider", ...opts },
   );
 }
 
-export async function completeDeregister(api: ParachainApi, provider: ChainSigner) {
+export async function completeDeregister(
+  api: ParachainApi,
+  provider: ChainSigner,
+  opts: SubmitOpts = {},
+) {
   return submitTx(
     api.tx.StorageProvider.complete_deregister(),
     provider.signer,
-    "complete_deregister",
+    { label: "complete_deregister", ...opts },
   );
 }
 
-export async function cancelDeregister(api: ParachainApi, provider: ChainSigner) {
+export async function cancelDeregister(
+  api: ParachainApi,
+  provider: ChainSigner,
+  opts: SubmitOpts = {},
+) {
   return submitTx(
     api.tx.StorageProvider.cancel_deregister(),
     provider.signer,
-    "cancel_deregister",
+    { label: "cancel_deregister", ...opts },
   );
 }
 
@@ -357,13 +389,14 @@ export async function updateProviderMultiaddr(
   api: ParachainApi,
   provider: ChainSigner,
   multiaddr: string | Uint8Array,
+  opts: SubmitOpts = {},
 ) {
   const bytes =
     typeof multiaddr === "string" ? new TextEncoder().encode(multiaddr) : multiaddr;
   return submitTx(
     api.tx.StorageProvider.update_provider_multiaddr({ multiaddr: bytes }),
     provider.signer,
-    "update_provider_multiaddr",
+    { label: "update_provider_multiaddr", ...opts },
   );
 }
 
@@ -372,6 +405,7 @@ export async function setMinProviders(
   admin: ChainSigner,
   bucketId: bigint,
   minProviders: number,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.set_min_providers({
@@ -379,7 +413,7 @@ export async function setMinProviders(
       min_providers: minProviders,
     }),
     admin.signer,
-    "set_min_providers",
+    { label: "set_min_providers", ...opts },
   );
 }
 
@@ -387,11 +421,12 @@ export async function rejectAgreement(
   api: ParachainApi,
   provider: ChainSigner,
   bucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
     provider.signer,
-    "reject_agreement",
+    { label: "reject_agreement", ...opts },
   );
 }
 
@@ -400,6 +435,7 @@ export async function withdrawAgreementRequest(
   client: ChainSigner,
   bucketId: bigint,
   provider: ChainSigner | { address: string },
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.withdraw_agreement_request({
@@ -407,7 +443,7 @@ export async function withdrawAgreementRequest(
       provider: provider.address,
     }),
     client.signer,
-    "withdraw_agreement_request",
+    { label: "withdraw_agreement_request", ...opts },
   );
 }
 
@@ -415,12 +451,13 @@ export async function claimExpiredAgreement(
   api: ParachainApi,
   caller: ChainSigner,
   bucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     // The runtime derives the provider from the signed origin.
     api.tx.StorageProvider.claim_expired_agreement({ bucket_id: bucketId }),
     caller.signer,
-    "claim_expired_agreement",
+    { label: "claim_expired_agreement", ...opts },
   );
 }
 
@@ -430,6 +467,7 @@ export async function extendAgreement(
   bucketId: bigint,
   provider: ChainSigner | { address: string },
   params: any,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.extend_agreement({
@@ -438,7 +476,7 @@ export async function extendAgreement(
       ...params,
     }),
     client.signer,
-    "extend_agreement",
+    { label: "extend_agreement", ...opts },
   );
 }
 
@@ -448,6 +486,7 @@ export async function topUpAgreement(
   bucketId: bigint,
   provider: ChainSigner | { address: string },
   params: any,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.top_up_agreement({
@@ -456,7 +495,7 @@ export async function topUpAgreement(
       ...params,
     }),
     client.signer,
-    "top_up_agreement",
+    { label: "top_up_agreement", ...opts },
   );
 }
 
@@ -465,6 +504,7 @@ export async function setExtensionsBlocked(
   provider: ChainSigner,
   bucketId: bigint,
   blocked: boolean,
+  opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.set_extensions_blocked({
@@ -472,7 +512,7 @@ export async function setExtensionsBlocked(
       blocked,
     }),
     provider.signer,
-    "set_extensions_blocked",
+    { label: "set_extensions_blocked", ...opts },
   );
 }
 
@@ -480,11 +520,12 @@ export async function freezeBucket(
   api: ParachainApi,
   client: ChainSigner,
   bucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId }),
     client.signer,
-    "freeze_bucket",
+    { label: "freeze_bucket", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -502,6 +543,7 @@ export async function configureCheckpointWindow(
     gracePeriod,
     enabled = true,
   }: { interval: number; gracePeriod: number; enabled?: boolean },
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.configure_checkpoint_window({
@@ -511,7 +553,7 @@ export async function configureCheckpointWindow(
       enabled,
     }),
     admin.signer,
-    "configure_checkpoint_window",
+    { label: "configure_checkpoint_window", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -525,6 +567,7 @@ export async function fundCheckpointPool(
   funder: ChainSigner,
   bucketId: bigint,
   amount: bigint,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.fund_checkpoint_pool({
@@ -532,7 +575,7 @@ export async function fundCheckpointPool(
       amount,
     }),
     funder.signer,
-    "fund_checkpoint_pool",
+    { label: "fund_checkpoint_pool", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -548,6 +591,7 @@ export async function submitProviderCheckpoint(
   duty: { mmr_root: string; start_seq: number | string; leaf_count: number | string },
   signature: string,
   window: number,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.provider_checkpoint({
@@ -559,7 +603,7 @@ export async function submitProviderCheckpoint(
       signatures: [[provider.address, Enum("Sr25519", asHex(signature))]],
     }),
     provider.signer,
-    "provider_checkpoint",
+    { label: "provider_checkpoint", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -572,11 +616,12 @@ export async function claimCheckpointRewards(
   api: ParachainApi,
   provider: ChainSigner,
   bucketId: bigint,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.claim_checkpoint_rewards({ bucket_id: bucketId }),
     provider.signer,
-    "claim_checkpoint_rewards",
+    { label: "claim_checkpoint_rewards", ...opts },
   );
   return requireOneEvent(
     result.events,
@@ -590,6 +635,7 @@ export async function reportMissedCheckpoint(
   reporter: ChainSigner,
   bucketId: bigint,
   window: number,
+  opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.StorageProvider.report_missed_checkpoint({
@@ -597,7 +643,7 @@ export async function reportMissedCheckpoint(
       window: BigInt(window),
     }),
     reporter.signer,
-    "report_missed_checkpoint",
+    { label: "report_missed_checkpoint", ...opts },
   );
   return requireOneEvent(
     result.events,

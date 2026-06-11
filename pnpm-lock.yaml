@@ -49,7 +49,20 @@ importers:
         specifier: ^4.19.0
         version: 4.22.4
 
-  packages/sdk:
+  packages/core:
+    dependencies:
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.30
+        version: 0.0.30
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+
+  packages/layer0:
     dependencies:
       '@polkadot-api/descriptors':
         specifier: workspace:*
@@ -60,6 +73,9 @@ importers:
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.30
         version: 0.0.30
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
       '@web3-storage/papi':
         specifier: workspace:*
         version: link:../../user-interfaces/shared/papi
@@ -79,6 +95,44 @@ importers:
       viem:
         specifier: ^2.21.0
         version: 2.52.2(typescript@5.8.3)
+
+  packages/layer1:
+    dependencies:
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
+      '@web3-storage/layer0':
+        specifier: workspace:*
+        version: link:../layer0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+
+  packages/sdk:
+    dependencies:
+      '@web3-storage/core':
+        specifier: workspace:*
+        version: link:../core
+      '@web3-storage/layer0':
+        specifier: workspace:*
+        version: link:../layer0
+      '@web3-storage/layer1':
+        specifier: workspace:*
+        version: link:../layer1
+      polkadot-api:
+        specifier: ^2.1.0
+        version: 2.1.1(esbuild@0.28.0)(rxjs@7.8.2)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
 
   user-interfaces/console-ui:
     dependencies:

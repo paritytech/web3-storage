@@ -5,22 +5,7 @@
  */
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let bin = "";
-  const CHUNK = 0x8000; // String.fromCharCode arg-count limit headroom
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
+import { base64ToBytes, bytesToBase64 } from "@web3-storage/core";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
 import { READ_OPTS } from "./tx.js";
