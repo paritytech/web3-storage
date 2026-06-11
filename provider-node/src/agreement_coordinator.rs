@@ -136,6 +136,11 @@ impl AgreementCoordinator {
 
         loop {
             tokio::select! {
+                // Prefer control commands over the poll tick: the interval's
+                // first tick fires immediately, so an unbiased select could
+                // service a poll before a Stop queued right after start().
+                biased;
+
                 cmd = command_rx.recv() => {
                     match cmd {
                         Some(AgreementCommand::Stop) | None => {
