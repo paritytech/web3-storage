@@ -131,6 +131,35 @@ start-paseo-chain: check build-paseo-runtime
     echo ""
     PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml
 
+# Start a standalone dev chain with 2s blocks for E2E testing (no relay chain).
+# Blocks finalize instantly — much faster than zombienet for automated tests.
+# The runtime build command and chain-spec script are read from
+# scripts/runtimes-matrix.json so a local run matches the CI e2e job exactly.
+# Defaults to web3-storage-paseo (what CI's e2e job uses).
+start-e2e-chain RUNTIME="web3-storage-paseo": check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BUILD_CMD=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .build_command // empty' scripts/runtimes-matrix.json)
+    SPEC_SCRIPT=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+    if [ -z "$BUILD_CMD" ] || [ -z "$SPEC_SCRIPT" ]; then
+        echo "Unknown runtime '{{ RUNTIME }}' (no match with build_command + chain_spec_script in scripts/runtimes-matrix.json)"
+        exit 1
+    fi
+    just "$BUILD_CMD"
+    echo ""
+    echo "=== Starting E2E Dev Chain ({{ RUNTIME }}, 2s blocks, no relay chain) ==="
+    echo ""
+    SPEC_FILE="/tmp/e2e-chain-spec.json"
+    "$SPEC_SCRIPT" > "$SPEC_FILE"
+    .bin/polkadot-omni-node \
+        --chain "$SPEC_FILE" \
+        --alice --tmp \
+        --unsafe-force-node-key-generation \
+        --dev-block-time 2000 \
+        --rpc-port {{ CHAIN_PORT }} \
+        --rpc-cors all \
+        -lruntime=info
+
 # Start the storage provider node
 # Examples:
 #   just start-provider                                       # inmemory, //Alice key, port 3333
@@ -286,40 +315,36 @@ papi-setup:
     npm run papi:generate
 
 # ============================================================
-# PAPI single-purpose demos
+# PAPI standalone demos (not covered by E2E suite)
 # ============================================================
-# Each script exercises one pallet workflow via the typed PAPI client.
-# All assume the chain (and the provider, for non-read-only ones) is running.
-
-# Bucket ACL flow: create_bucket -> set_member -> promote -> remove_member (pure on-chain)
-papi-bucket-membership ADMIN="//Alice" WRITER="//Eve" READER="//Ferdie": papi-setup
-    node examples/papi/bucket-membership.js "{{ CHAIN_WS }}" "{{ ADMIN }}" "{{ WRITER }}" "{{ READER }}"
 
 # Marketplace-style read-only walk of the Providers storage map
 papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
     node examples/papi/provider-discovery.js "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
 
-# Atomic create_bucket_with_storage -> upload -> checkpoint -> freeze_bucket
-papi-bucket-with-storage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/bucket-with-storage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
-# S3 registry workflow: create_s3_bucket -> put/copy/delete object metadata -> delete_s3_bucket
-papi-s3-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/s3-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
-# Drive registry workflow: create_drive -> share -> unshare -> delete_drive
-papi-drive-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" OWNER_SEED="//Bob" MEMBER_SEED="//Ferdie": papi-setup
-    node examples/papi/drive-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ OWNER_SEED }}" "{{ MEMBER_SEED }}"
-
-# Provider-initiated checkpoint + reward flow: configure_checkpoint_window ->
-# fund_checkpoint_pool -> provider_checkpoint -> claim_checkpoint_rewards.
-papi-checkpoint-rewards PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/checkpoint-rewards.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
 # Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
 # wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
 papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/checkpoint-missed.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# ============================================================
+# E2E Test Suite
+# ============================================================
+
+# Run comprehensive E2E test suite (all 10 workflows sequentially)
+e2e PROVIDER_URL=PROVIDER_URL: papi-setup
+    cd examples/papi && npx c8 --reporter=text --reporter=json --report-dir=coverage node e2e/runner.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
+# Run a single E2E workflow by number (e.g. just e2e-single 01)
+e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FILE=$(ls examples/papi/e2e/{{ NUM }}-*.js 2>/dev/null | head -1)
+    if [ -z "$FILE" ]; then
+        echo "No workflow file matching examples/papi/e2e/{{ NUM }}-*.js"
+        exit 1
+    fi
+    node "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # ============================================================
 # File System (Layer 1)

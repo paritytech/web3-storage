@@ -5,6 +5,7 @@
     "path": "runtimes/web3-storage-paseo",
     "build_command": "build-paseo-runtime",
     "zombienet_config": "zombienet/storage-paseo-local.toml",
+    "chain_spec_script": "scripts/build-paseo-chain-spec.sh",
     "uris": [
       "wss://previewnet.substrate.dev/web3-storage"
     ],
@@ -24,6 +25,7 @@
     "path": "runtime",
     "build_command": "build-runtime",
     "zombienet_config": "zombienet.toml",
+    "chain_spec_script": "scripts/build-chain-spec.sh",
     "uris": [
       "TODO: update WSS"
     ],

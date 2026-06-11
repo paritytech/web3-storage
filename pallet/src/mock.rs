@@ -127,7 +127,6 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 }
 
 /// Build test externalities with custom balances.
-#[allow(dead_code)]
 pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default()
         .build_storage()
@@ -143,12 +142,69 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
     t.into()
 }
 
-/// Run to a specific block number.
-#[allow(dead_code)]
+/// Run to a specific block number, calling both System and StorageProvider hooks.
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
-        <System as Hooks<u64>>::on_finalize(System::block_number());
-        System::set_block_number(System::block_number() + 1);
-        <System as Hooks<u64>>::on_initialize(System::block_number());
+        let current = System::block_number();
+        if current > 1 {
+            <StorageProvider as Hooks<u64>>::on_finalize(current);
+        }
+        <System as Hooks<u64>>::on_finalize(current);
+        System::set_block_number(current + 1);
+        <System as Hooks<u64>>::on_initialize(current + 1);
     }
+}
+
+/// Helper: create a test public key (32 bytes).
+pub fn test_public_key() -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> {
+    vec![1u8; 32].try_into().unwrap()
+}
+
+/// Helper: register a provider with default settings and given stake.
+pub fn register_provider(who: u64, stake: u64) {
+    use frame_support::assert_ok;
+    let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
+    assert_ok!(StorageProvider::register_provider(
+        RuntimeOrigin::signed(who),
+        multiaddr.try_into().unwrap(),
+        test_public_key(),
+        stake
+    ));
+}
+
+/// Helper: register a provider with custom settings.
+pub fn register_provider_with_settings(
+    who: u64,
+    stake: u64,
+    settings: crate::ProviderSettings<Test>,
+) {
+    use frame_support::assert_ok;
+    register_provider(who, stake);
+    assert_ok!(StorageProvider::update_provider_settings(
+        RuntimeOrigin::signed(who),
+        settings
+    ));
+}
+
+/// Helper: create a bucket, request + accept a Primary agreement. Returns bucket_id.
+pub fn setup_agreement(provider: u64, client: u64, max_bytes: u64, duration: u64) -> u64 {
+    use frame_support::assert_ok;
+    assert_ok!(StorageProvider::create_bucket(
+        RuntimeOrigin::signed(client),
+        1
+    ));
+    let bucket_id = crate::NextBucketId::<Test>::get() - 1;
+    assert_ok!(StorageProvider::request_primary_agreement(
+        RuntimeOrigin::signed(client),
+        bucket_id,
+        provider,
+        max_bytes,
+        duration,
+        max_bytes * duration, // generous max_payment
+    ));
+    assert_ok!(StorageProvider::accept_agreement(
+        RuntimeOrigin::signed(provider),
+        bucket_id
+    ));
+    bucket_id
 }

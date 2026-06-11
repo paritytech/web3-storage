@@ -21,9 +21,6 @@ on:
       is_org_member:
         description: "Is the user an org member"
         required: true
-      is_pr_author:
-        description: "Is the user the PR author"
-        required: true
       repo:
         description: "Repository to use"
         required: true
@@ -35,16 +32,15 @@ on:
         required: false
         default: "false"
 
-permissions:
-  # allow the action to comment on the PR
-  contents: read
-  issues: write
-  pull-requests: write
-  actions: read
+# Least-privilege by default — each job grants only the scopes it needs.
+permissions: {}
 
 jobs:
   before-cmd:
     runs-on: ubuntu-latest
+    permissions:
+      actions: read # read this run's jobs via the REST API
+      issues: write # comment on the PR
     env:
       JOB_NAME: "cmd"
       CMD: ${{ github.event.inputs.cmd }}
@@ -62,12 +58,12 @@ jobs:
           jobLink=$(curl -s \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs | jq '.jobs[] | select(.name | contains("${{ env.JOB_NAME }}")) | .html_url')
+            https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs | jq -r '.jobs[] | select(.name | contains("${{ env.JOB_NAME }}")) | .html_url')
 
           runLink=$(curl -s \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }} | jq '.html_url')
+            https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }} | jq -r '.html_url')
 
           echo "job_url=${jobLink}"
           echo "run_url=${runLink}"
@@ -79,13 +75,15 @@ jobs:
         if: ${{ github.event.inputs.is_quiet == 'false' &&
           !startsWith(github.event.inputs.cmd, 'fmt') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          JOB_URL: ${{ steps.build-link.outputs.job_url }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            let job_url = ${{ steps.build-link.outputs.job_url }}
+            let job_url = process.env.JOB_URL || '';
             let cmd = process.env.CMD;
             github.rest.issues.createComment({
-              issue_number: ${{ env.PR_NUM }},
+              issue_number: Number(process.env.PR_NUM),
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `Command "${cmd}" has started 🚀 [See logs here](${job_url})`
@@ -139,6 +137,7 @@ jobs:
         with:
           repository: ${{ env.REPO }}
           ref: ${{ env.PR_BRANCH }}
+          persist-credentials: false
 
       - name: Load .github/env
         if: startsWith(github.event.inputs.cmd, 'bench')
@@ -159,7 +158,7 @@ jobs:
       - name: Download frame-omni-bencher
         if: startsWith(github.event.inputs.cmd, 'bench') &&
           steps.bencher-cache.outputs.cache-hit != 'true'
-        run: just polkadot_version=${{ env.POLKADOT_SDK_VERSION }}
+        run: just polkadot_version="$POLKADOT_SDK_VERSION"
           download-frame-omni-bencher
 
       - name: Add .bin to PATH
@@ -170,7 +169,6 @@ jobs:
         id: cmd
         env:
           IS_ORG_MEMBER: ${{ github.event.inputs.is_org_member }}
-          IS_PR_AUTHOR: ${{ github.event.inputs.is_pr_author }}
           RUNNER: ${{ github.event.inputs.runner }}
           IMAGE: ${{ github.event.inputs.image }}
         run: |
@@ -183,7 +181,7 @@ jobs:
 
           echo "Using dev branch for cmd-bot scripts"
           TMP_DIR=/tmp/web3-storage
-          git clone --depth 1 --branch dev https://github.com/paritytech/web3-storage $TMP_DIR
+          git clone --depth 1 --branch cmd-bot https://github.com/paritytech/web3-storage $TMP_DIR
           BOT_PATH=$TMP_DIR
 
           python3 $BOT_PATH/scripts/cmd/cmd.py $CMD
@@ -293,6 +291,9 @@ jobs:
       PR_NUM: ${{ github.event.inputs.pr_num }}
       REPO: ${{ github.event.inputs.repo }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout via GITHUB_TOKEN; the push uses the App token below
+      issues: write # comment on the PR
     steps:
       # needs to be able to trigger CI, as default token does not retrigger
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -300,8 +301,11 @@ jobs:
         with:
           app-id: ${{ secrets.CMD_BOT_APP_ID }}
           private-key: ${{ secrets.CMD_BOT_APP_KEY }}
+          permission-contents: write
 
-      - name: Checkout
+      # Pushes commits to the PR branch via the App token, so this checkout must
+      # persist credentials — artipacked is expected and safe here.
+      - name: Checkout # zizmor: ignore[artipacked]
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           token: ${{ steps.generate_token.outputs.token }}
@@ -315,6 +319,8 @@ jobs:
           path: command-diff
 
       - name: Apply & Commit changes
+        env:
+          ACTOR: ${{ github.actor }}
         run: |
           ls -lsa .
 
@@ -340,7 +346,7 @@ jobs:
 
             git add .
             git restore --staged Cargo.lock # ignore changes in Cargo.lock
-            git commit -m "Update from ${{ github.actor }} running command '$CMD'" || true
+            git commit -m "Update from $ACTOR running command '$CMD'" || true
 
             # Attempt to push changes
             if ! push_changes; then
@@ -362,10 +368,11 @@ jobs:
           SUBWEIGHT: "${{ needs.cmd.outputs.subweight }}"
           CMD_OUTPUT: "${{ needs.cmd.outputs.cmd_output }}"
           PR_NUM: ${{ github.event.inputs.pr_num }}
+          RUN_URL: ${{ needs.before-cmd.outputs.run_url }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            let runUrl = ${{ needs.before-cmd.outputs.run_url }};
+            let runUrl = process.env.RUN_URL || '';
             let subweight = process.env.SUBWEIGHT || '';
             let cmdOutput = process.env.CMD_OUTPUT || '';
             let cmd = process.env.CMD;
@@ -380,7 +387,7 @@ jobs:
               : '';
 
             github.rest.issues.createComment({
-              issue_number: ${{ env.PR_NUM }},
+              issue_number: Number(process.env.PR_NUM),
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `Command "${cmd}" has finished ✅ [See logs here](${runUrl})${subweightCollapsed}${cmdOutputCollapsed}`
@@ -390,6 +397,8 @@ jobs:
     needs: [before-cmd, cmd, after-cmd]
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    permissions:
+      issues: write # comment on / react to the PR
     env:
       CMD_OUTPUT: "${{ needs.cmd.outputs.cmd_output }}"
       CMD: ${{ github.event.inputs.cmd }}
@@ -400,10 +409,12 @@ jobs:
         if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' ||
           needs.before-cmd.result == 'failure' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          JOB_URL: ${{ needs.before-cmd.outputs.job_url }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            let jobUrl = ${{ needs.before-cmd.outputs.job_url }};
+            let jobUrl = process.env.JOB_URL || '';
             let cmdOutput = process.env.CMD_OUTPUT;
             let cmd = process.env.CMD;
             let cmdOutputCollapsed = '';
@@ -412,7 +423,7 @@ jobs:
             }
 
             github.rest.issues.createComment({
-              issue_number: ${{ env.PR_NUM }},
+              issue_number: Number(process.env.PR_NUM),
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `Command "${cmd}" has failed ❌! [See logs here](${jobUrl})${cmdOutputCollapsed}`
@@ -426,7 +437,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             github.rest.reactions.createForIssueComment({
-              comment_id: ${{ env.COMMENT_ID }},
+              comment_id: Number(process.env.COMMENT_ID),
               owner: context.repo.owner,
               repo: context.repo.repo,
               content: 'confused'
@@ -440,7 +451,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             github.rest.reactions.createForIssueComment({
-              comment_id: ${{ env.COMMENT_ID }},
+              comment_id: Number(process.env.COMMENT_ID),
               owner: context.repo.owner,
               repo: context.repo.repo,
               content: '+1'

@@ -1,0 +1,457 @@
+//! Integration tests for auth-enabled HTTP endpoints.
+//!
+//! These tests spin up a real HTTP server with `auth_enabled = true` and a
+//! `MockResolver` that returns configurable roles for test accounts.  All
+//! assertions go through real HTTP requests — the auth middleware, signature
+//! verification, membership cache lookup, and role check are exercised as a
+//! single end-to-end path.
+
+use axum::http::StatusCode;
+use reqwest::Client;
+use serde_json::Value;
+use sp_core::{sr25519, Pair};
+use std::sync::Arc;
+use std::time::Duration;
+use storage_primitives::Role;
+use storage_provider_node::auth::{MembershipCache, MembershipResolver};
+use storage_provider_node::{create_router, ProviderState, Storage};
+use tokio::net::TcpListener;
+
+type AccountId32 = sp_core::crypto::AccountId32;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mock resolver (returns configurable roles, no chain needed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct MockResolver {
+    members: std::sync::Mutex<Vec<(AccountId32, Role)>>,
+}
+
+impl MockResolver {
+    fn new(members: Vec<(AccountId32, Role)>) -> Self {
+        Self {
+            members: std::sync::Mutex::new(members),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl MembershipResolver for MockResolver {
+    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        Ok(self.members.lock().unwrap().clone())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth header helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn make_auth_header(
+    keypair: &sr25519::Pair,
+    method: &str,
+    bucket_id: u64,
+    timestamp: u64,
+) -> String {
+    let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
+    let signature = keypair.sign(message.as_bytes());
+    format!(
+        "Web3Storage 0x{}:0x{}:{}",
+        hex_encode(&keypair.public().0),
+        hex_encode(&signature.0),
+        timestamp
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test server
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct AuthTestServer {
+    addr: std::net::SocketAddr,
+    client: Client,
+}
+
+impl AuthTestServer {
+    /// Start a server with auth enabled and Alice as the given role.
+    async fn with_role(alice_role: Role) -> Self {
+        let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let alice_account = AccountId32::new(alice_kp.public().0);
+
+        let resolver = MockResolver::new(vec![(alice_account, alice_role)]);
+        let cache = Arc::new(MembershipCache::new(
+            Box::new(resolver),
+            Duration::from_secs(60),
+        ));
+
+        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
+            .expect("//Alice is valid");
+        state.auth_enabled = true;
+        state.membership_cache = Some(cache);
+
+        let app = create_router(Arc::new(state));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        Self {
+            addr,
+            client: Client::new(),
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("http://{}{}", self.addr, path)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S3 endpoint auth tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn s3_writer_can_put_object() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=hello.txt"))
+        .header("Authorization", &header)
+        .body(b"hello world".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["etag"].is_string());
+    assert!(body["data_root"].is_string());
+}
+
+#[tokio::test]
+async fn s3_reader_blocked_from_put() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=hello.txt"))
+        .header("Authorization", &header)
+        .body(b"hello world".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "insufficient_role");
+}
+
+#[tokio::test]
+async fn s3_reader_can_get_object() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // First PUT (as Writer)
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/s3/1/object?key=read-me.txt"))
+        .header("Authorization", &header)
+        .body(b"readable data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // GET (Reader level is sufficient)
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "GET", 1, ts);
+    let resp = server
+        .client
+        .get(server.url("/s3/1/object?key=read-me.txt"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), b"readable data");
+}
+
+#[tokio::test]
+async fn s3_missing_auth_header_returns_401() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+
+    // No Authorization header at all
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=no-auth.txt"))
+        .body(b"data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "auth_required");
+}
+
+#[tokio::test]
+async fn s3_expired_timestamp_returns_401() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Use a timestamp from 10 minutes ago (max_skew is 5 min)
+    let old_ts = current_timestamp() - 600;
+    let header = make_auth_header(&alice, "PUT", 1, old_ts);
+
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=old.txt"))
+        .header("Authorization", &header)
+        .body(b"stale".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "auth_required");
+}
+
+#[tokio::test]
+async fn s3_wrong_signature_returns_401() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Sign for bucket 1, but send to bucket 2 — method/bucket mismatch
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 999, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/s3/1/object?key=wrong-sig.txt"))
+        .header("Authorization", &header)
+        .body(b"data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // Signature doesn't match bucket_id=1, so verification fails
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn s3_admin_can_delete_object() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // PUT first
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/s3/1/object?key=delete-me.txt"))
+        .header("Authorization", &header)
+        .body(b"delete this".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // DELETE
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "DELETE", 1, ts);
+    let resp = server
+        .client
+        .delete(server.url("/s3/1/object?key=delete-me.txt"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FS endpoint auth tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn fs_writer_can_put_file() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/fs/1/file?path=/hello.txt"))
+        .header("Authorization", &header)
+        .body(b"fs content".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn fs_reader_blocked_from_put() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/fs/1/file?path=/blocked.txt"))
+        .header("Authorization", &header)
+        .body(b"denied".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn fs_reader_can_list_dir() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "GET", 1, ts);
+
+    let resp = server
+        .client
+        .get(server.url("/fs/1/ls?path=/"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn fs_reader_blocked_from_mkdir() {
+    let server = AuthTestServer::with_role(Role::Reader).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+
+    let resp = server
+        .client
+        .post(server.url("/fs/1/mkdir?path=/new-dir"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn fs_unknown_account_returns_forbidden() {
+    // Server only knows Alice as Admin; Bob is not a member at all
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let bob = sr25519::Pair::from_string("//Bob", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&bob, "PUT", 1, ts);
+
+    let resp = server
+        .client
+        .put(server.url("/fs/1/file?path=/intruder.txt"))
+        .header("Authorization", &header)
+        .body(b"nope".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn s3_list_with_auth() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // PUT an object first
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/s3/1/object?key=listed.txt"))
+        .header("Authorization", &header)
+        .body(b"list me".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // LIST
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "GET", 1, ts);
+    let resp = server
+        .client
+        .get(server.url("/s3/1/objects"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let contents = body["contents"].as_array().unwrap();
+    assert!(contents.iter().any(|o| o["key"] == "listed.txt"));
+}
+
+#[tokio::test]
+async fn s3_head_with_auth() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // PUT
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/s3/1/object?key=head-me.txt"))
+        .header("Authorization", &header)
+        .body(b"head data".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // HEAD
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "HEAD", 1, ts);
+    let resp = server
+        .client
+        .head(server.url("/s3/1/object?key=head-me.txt"))
+        .header("Authorization", &header)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}

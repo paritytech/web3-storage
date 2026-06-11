@@ -110,7 +110,7 @@ Tests are idempotent: chain-state collisions (already-registered provider, lefto
 ### CI gates
 
 - **Tier 1 — `ui-checks.yml`**: typecheck + Vite build + Vitest. Runs on every PR touching `user-interfaces/**`. ~2-3 min.
-- **Tier 2 — `ui-e2e.yml`**: full Playwright e2e against zombienet + provider. Runs on PRs touching `user-interfaces/**`, `pallet/**`, `runtime/**`, `storage-interfaces/**`, or `provider-node/**`. **Required from day 1** — robustness comes from idempotent test setup, generous CI timeouts, and detect-and-skip for state collisions, not from softening the gate.
+- **Tier 2 — `integration-tests.yml` (`ui-integration-tests` job)**: full Playwright e2e against a standalone paseo dev chain (omni-node, 2s blocks, no relay chain) + provider, reusing the shared `build` artifact instead of rebuilding. Runs on every PR (like the rest of the integration suite) and is gated by the required **Integration Tests** check. **Required from day 1** — robustness comes from idempotent test setup, generous CI timeouts, and detect-and-skip for state collisions, not from softening the gate.
 
 ## Workspace gotchas
 

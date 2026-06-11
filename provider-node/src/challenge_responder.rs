@@ -5,39 +5,30 @@
 //! the required proof data.
 
 use crate::{Error, ProviderState};
-use sp_core::{crypto::Ss58Codec, H256};
+use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
-use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::Keypair;
 use tokio::sync::mpsc;
 
 /// Configuration for the challenge responder.
 #[derive(Clone, Debug)]
 pub struct ChallengeResponderConfig {
-    /// WebSocket URL for the parachain.
-    pub chain_ws_url: String,
     /// How often to poll for challenges (if not using subscriptions).
     pub poll_interval: Duration,
     /// Maximum time to spend gathering proof data.
     pub proof_timeout: Duration,
     /// Whether to automatically respond to challenges.
     pub auto_respond: bool,
-    /// Seed phrase or derivation path for signing (e.g., "//Alice").
-    /// Used to create the subxt signer directly (avoids key conversion issues).
-    pub seed: Option<String>,
 }
 
 impl Default for ChallengeResponderConfig {
     fn default() -> Self {
         Self {
-            chain_ws_url: "ws://127.0.0.1:2222".to_string(),
             poll_interval: Duration::from_secs(6), // ~1 block
             proof_timeout: Duration::from_secs(30),
             auto_respond: true,
-            seed: None,
         }
     }
 }
@@ -89,6 +80,41 @@ pub enum ChallengeResponseResult {
         bucket_id: BucketId,
         leaf_index: u64,
     },
+}
+
+/// Trait abstracting chain interactions for the challenge responder.
+#[async_trait::async_trait]
+pub trait ChallengeChainClient: Send + Sync {
+    /// Poll the chain for active challenges targeting this provider.
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error>;
+
+    /// Submit a challenge response transaction.
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: storage_primitives::MmrProof,
+        chunk_proof: storage_primitives::MerkleProof,
+    ) -> Result<H256, Error>;
+}
+
+#[async_trait::async_trait]
+impl<T: ChallengeChainClient> ChallengeChainClient for Arc<T> {
+    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
+        self.as_ref().poll_challenges().await
+    }
+
+    async fn submit_response(
+        &self,
+        challenge_id: (u32, u16),
+        chunk_data: Vec<u8>,
+        mmr_proof: storage_primitives::MmrProof,
+        chunk_proof: storage_primitives::MerkleProof,
+    ) -> Result<H256, Error> {
+        self.as_ref()
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
+            .await
+    }
 }
 
 /// Commands for controlling the responder.
@@ -145,49 +171,21 @@ impl ChallengeResponderHandle {
 pub struct ChallengeResponder {
     config: ChallengeResponderConfig,
     state: Arc<ProviderState>,
-    api: Option<OnlineClient<PolkadotConfig>>,
-    signer: Option<Keypair>,
+    chain_client: Box<dyn ChallengeChainClient>,
 }
 
 impl ChallengeResponder {
     /// Create a new challenge responder.
-    pub fn new(config: ChallengeResponderConfig, state: Arc<ProviderState>) -> Self {
+    pub fn new(
+        config: ChallengeResponderConfig,
+        state: Arc<ProviderState>,
+        chain_client: Box<dyn ChallengeChainClient>,
+    ) -> Self {
         Self {
             config,
             state,
-            api: None,
-            signer: None,
+            chain_client,
         }
-    }
-
-    /// Connect to the blockchain.
-    pub async fn connect(&mut self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.config.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
-        self.api = Some(api);
-
-        // Create signer from seed URI (e.g. "//Alice") using subxt_signer directly.
-        // This avoids key conversion issues between sp_core and subxt_signer.
-        if let Some(ref seed) = self.config.seed {
-            let uri: subxt_signer::SecretUri = seed
-                .parse()
-                .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-            let signer = Keypair::from_uri(&uri)
-                .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-            tracing::info!(
-                "Challenge responder signer: {}",
-                sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
-            );
-            self.signer = Some(signer);
-        }
-
-        tracing::info!(
-            "Challenge responder connected to {}",
-            self.config.chain_ws_url
-        );
-        Ok(())
     }
 
     /// Start the challenge responder background service.
@@ -195,20 +193,12 @@ impl ChallengeResponder {
         self,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) -> Result<ChallengeResponderHandle, Error> {
-        if self.api.is_none() {
-            return Err(Error::Internal("Not connected to chain".to_string()));
-        }
-
         let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
 
-        let responder = self;
-
         tokio::spawn(async move {
-            responder
-                .run_loop(command_rx, running_clone, callback)
-                .await;
+            self.run_loop(command_rx, running_clone, callback).await;
         });
 
         Ok(ChallengeResponderHandle {
@@ -231,6 +221,11 @@ impl ChallengeResponder {
 
         loop {
             tokio::select! {
+                // Prefer control commands over the poll tick: the interval's
+                // first tick fires immediately, so an unbiased select could
+                // service a poll before a Pause/Stop queued right after start().
+                biased;
+
                 cmd = command_rx.recv() => {
                     match cmd {
                         Some(ResponderCommand::Stop) | None => {
@@ -259,8 +254,7 @@ impl ChallengeResponder {
                         continue;
                     }
 
-                    // Poll for challenges
-                    match self.poll_challenges().await {
+                    match self.chain_client.poll_challenges().await {
                         Ok(challenges) => {
                             for challenge in challenges {
                                 tracing::info!(
@@ -283,27 +277,6 @@ impl ChallengeResponder {
                 }
             }
         }
-    }
-
-    /// Poll for active challenges against this provider.
-    async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
-
-        // Query Challenges storage
-        // This is a simplified version - in production, we'd use proper storage queries
-        // and filter for challenges targeting this provider
-        let _storage = api
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-        // TODO: Implement proper storage query for Challenges
-        // For now, return empty - challenges would be detected via events
-        Ok(vec![])
     }
 
     /// Respond to a specific challenge.
@@ -352,7 +325,8 @@ impl ChallengeResponder {
 
         // Step 3: Submit response transaction
         match self
-            .submit_response(challenge_id, &chunk_data, &mmr_proof, &chunk_proof)
+            .chain_client
+            .submit_response(challenge_id, chunk_data, mmr_proof, chunk_proof)
             .await
         {
             Ok(block_hash) => {
@@ -374,213 +348,5 @@ impl ChallengeResponder {
                 }
             }
         }
-    }
-
-    /// Submit the challenge response transaction.
-    async fn submit_response(
-        &self,
-        challenge_id: (u32, u16),
-        chunk_data: &[u8],
-        mmr_proof: &storage_primitives::MmrProof,
-        chunk_proof: &storage_primitives::MerkleProof,
-    ) -> Result<H256, Error> {
-        let api = self
-            .api
-            .as_ref()
-            .ok_or_else(|| Error::Internal("Not connected to chain".to_string()))?;
-
-        let signer = self
-            .signer
-            .as_ref()
-            .ok_or_else(|| Error::Internal("No signer configured".to_string()))?;
-
-        // Build ChallengeId
-        let challenge_id_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "deadline",
-                subxt::dynamic::Value::u128(challenge_id.0 as u128),
-            ),
-            ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
-        ]);
-
-        // Build MmrProof value
-        let mmr_proof_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "peaks",
-                subxt::dynamic::Value::unnamed_composite(
-                    mmr_proof
-                        .peaks
-                        .iter()
-                        .map(|p| subxt::dynamic::Value::from_bytes(p.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "leaf",
-                subxt::dynamic::Value::named_composite(vec![
-                    (
-                        "data_root",
-                        subxt::dynamic::Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
-                    ),
-                    (
-                        "data_size",
-                        subxt::dynamic::Value::u128(mmr_proof.leaf.data_size as u128),
-                    ),
-                    (
-                        "total_size",
-                        subxt::dynamic::Value::u128(mmr_proof.leaf.total_size as u128),
-                    ),
-                ]),
-            ),
-            (
-                "leaf_proof",
-                subxt::dynamic::Value::named_composite(vec![
-                    (
-                        "siblings",
-                        subxt::dynamic::Value::unnamed_composite(
-                            mmr_proof
-                                .leaf_proof
-                                .siblings
-                                .iter()
-                                .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                    (
-                        "path",
-                        subxt::dynamic::Value::unnamed_composite(
-                            mmr_proof
-                                .leaf_proof
-                                .path
-                                .iter()
-                                .map(|b| subxt::dynamic::Value::bool(*b))
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                ]),
-            ),
-        ]);
-
-        // Build chunk proof value
-        let chunk_proof_val = subxt::dynamic::Value::named_composite(vec![
-            (
-                "siblings",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .siblings
-                        .iter()
-                        .map(|s| subxt::dynamic::Value::from_bytes(s.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "path",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .path
-                        .iter()
-                        .map(|b| subxt::dynamic::Value::bool(*b))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        ]);
-
-        // Build ChallengeResponse::Proof variant
-        let response_val = subxt::dynamic::Value::named_variant(
-            "Proof",
-            vec![
-                ("chunk_data", subxt::dynamic::Value::from_bytes(chunk_data)),
-                ("mmr_proof", mmr_proof_val),
-                ("chunk_proof", chunk_proof_val),
-            ],
-        );
-
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "respond_to_challenge",
-            vec![challenge_id_val, response_val],
-        );
-
-        // Submit and wait for finalization
-        let tx_progress = api
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
-
-        Ok(H256::zero())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_challenge_responder_config_default() {
-        let config = ChallengeResponderConfig::default();
-        assert_eq!(config.chain_ws_url, "ws://127.0.0.1:2222");
-        assert_eq!(config.poll_interval, Duration::from_secs(6));
-        assert!(config.auto_respond);
-    }
-
-    #[test]
-    fn test_detected_challenge() {
-        let challenge = DetectedChallenge {
-            bucket_id: 1,
-            deadline: 1000,
-            index: 0,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_index: 5,
-            chunk_index: 0,
-            challenger: "5GrwvaEF...".to_string(),
-            created_at_block: 900,
-        };
-
-        assert_eq!(challenge.bucket_id, 1);
-        assert_eq!(challenge.deadline, 1000);
-        assert_eq!(challenge.leaf_index, 5);
-    }
-
-    #[test]
-    fn test_challenge_response_result_variants() {
-        let success = ChallengeResponseResult::Success {
-            challenge_id: (1000, 0),
-            block_hash: H256::zero(),
-        };
-        assert!(matches!(success, ChallengeResponseResult::Success { .. }));
-
-        let proof_failed = ChallengeResponseResult::ProofGenerationFailed {
-            challenge_id: (1000, 0),
-            error: "test".to_string(),
-        };
-        assert!(matches!(
-            proof_failed,
-            ChallengeResponseResult::ProofGenerationFailed { .. }
-        ));
-
-        let not_found = ChallengeResponseResult::DataNotFound {
-            challenge_id: (1000, 0),
-            bucket_id: 1,
-            leaf_index: 5,
-        };
-        assert!(matches!(
-            not_found,
-            ChallengeResponseResult::DataNotFound { .. }
-        ));
-    }
-
-    #[test]
-    fn test_responder_command_variants() {
-        // Verify commands can be constructed
-        let _stop = ResponderCommand::Stop;
-        let _pause = ResponderCommand::Pause;
-        let _resume = ResponderCommand::Resume;
     }
 }
