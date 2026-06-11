@@ -707,7 +707,9 @@ fn deregister_provider_full_flow() {
         assert!(StorageAgreements::<Test>::get(0, 2).is_none());
 
         let reserved_before = Balances::reserved_balance(2);
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(2)));
+        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
+            2
+        )));
         assert!(Providers::<Test>::get(2).is_none());
         assert_eq!(Balances::reserved_balance(2), 0);
         assert!(reserved_before > 0); // confirms stake was actually released
