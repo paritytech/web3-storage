@@ -200,7 +200,24 @@ export async function cleanProviderRegistry(
     if (keep.has(pk)) continue;
     const signer = knownDev[pk];
     if (!signer) continue;
-    if ((value as { committed_bytes: bigint }).committed_bytes !== 0n) continue;
+    const info = value as {
+      committed_bytes: bigint;
+      settings: { accepting_primary: boolean } & Record<string, unknown>;
+    };
+    if (info.committed_bytes !== 0n) {
+      // Can't wipe a provider with active agreements — but it can still be
+      // picked by auto-matching and stall every drive/bucket creation (its
+      // node isn't running). Silence it instead: flip accepting_primary off.
+      if (info.settings.accepting_primary) {
+        await submitExtrinsic(
+          api.tx.StorageProvider.update_provider_settings({
+            settings: { ...info.settings, accepting_primary: false } as never,
+          }),
+          signer.signer,
+        );
+      }
+      continue;
+    }
     await forceRemoveProvider(signer);
   }
 }
