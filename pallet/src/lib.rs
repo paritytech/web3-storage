@@ -3794,7 +3794,7 @@ pub mod pallet {
                 storage_primitives::PRIMARY_TERM_CONTEXT,
             )?;
 
-            // Replay window: at most once per nonce, within the trailing 256 slots.
+            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
             ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
                 window.try_accept(terms.nonce).map_err(|e| match e {
                     ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
@@ -3940,7 +3940,7 @@ pub mod pallet {
                 storage_primitives::REPLICA_TERM_CONTEXT,
             )?;
 
-            // Replay window: at most once per nonce, within the trailing 256 slots.
+            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
             ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
                 window.try_accept(terms.nonce).map_err(|e| match e {
                     ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
