@@ -100,7 +100,7 @@ jobs:
 
       - name: Download try-runtime
         if: steps.cache-restore.outputs.cache-matched-key == '' && steps.try-runtime-cache.outputs.cache-hit != 'true'
-        run: just try_runtime_version=${{ env.TRY_RUNTIME_VERSION }} download-try-runtime
+        run: just download-try-runtime
 
       - name: Generate snapshot for ${{ matrix.runtime.name }}
         if: steps.cache-restore.outputs.cache-matched-key == ''
@@ -184,7 +184,7 @@ jobs:
 
       - name: Download try-runtime
         if: steps.try-runtime-cache.outputs.cache-hit != 'true'
-        run: just try_runtime_version=${{ env.TRY_RUNTIME_VERSION }} download-try-runtime
+        run: just download-try-runtime
 
       - name: Restore snapshot from cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5

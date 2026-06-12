@@ -5,12 +5,17 @@
 # Or on macOS:
 #   brew install just
 
+# Tool versions come from .github/env — the single source of truth shared with
+# CI. Shell-exported vars still override file values.
+set dotenv-load := true
+set dotenv-filename := ".github/env"
+
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2603"
+polkadot_version := env("POLKADOT_SDK_VERSION")
 # Zombienet version
-zombienet_version := "v0.4.11"
+zombienet_version := env("ZOMBIENET_VERSION")
 # try-runtime CLI version (for runtime migration checks)
-try_runtime_version := "v0.10.1"
+try_runtime_version := env("TRY_RUNTIME_VERSION")
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -22,6 +27,7 @@ darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-musl" }
 try_runtime_base := "https://github.com/paritytech/try-runtime-cli/releases/download/" + try_runtime_version + "/"
 try_runtime_asset := if os == "darwin" { "try-runtime-aarch64-apple-darwin" } else { "try-runtime-x86_64-unknown-linux-musl" }
+try_runtime_sha256 := if os == "darwin" { env("TRY_RUNTIME_AARCH64_APPLE_DARWIN_SHA256", "") } else { env("TRY_RUNTIME_X86_64_UNKNOWN_LINUX_MUSL_SHA256", "") }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -55,7 +61,7 @@ build-provider:
     cargo build --release -p storage-provider-node
 
 [private]
-_download BIN URL:
+_download BIN URL SHA256="":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p .bin
@@ -76,6 +82,15 @@ _download BIN URL:
         fi
         sleep $((attempt * 5))
     done
+    if [[ -n "{{SHA256}}" ]]; then
+        actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum .bin/{{BIN}}; else shasum -a 256 .bin/{{BIN}}; fi | cut -d' ' -f1)
+        if [[ "$actual" != "{{SHA256}}" ]]; then
+            echo "Checksum mismatch for {{BIN}}: expected {{SHA256}}, got $actual"
+            rm -f .bin/{{BIN}}
+            exit 1
+        fi
+        echo "{{BIN}} checksum verified"
+    fi
     chmod +x .bin/{{BIN}}
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
@@ -93,7 +108,7 @@ download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombie
 download-frame-omni-bencher: (_download "frame-omni-bencher" polkadot_sdk_base + "frame-omni-bencher" + darwin_suffix)
 
 # Download try-runtime CLI (for runtime migration checks)
-download-try-runtime: (_download "try-runtime" try_runtime_base + try_runtime_asset)
+download-try-runtime: (_download "try-runtime" (try_runtime_base + try_runtime_asset) try_runtime_sha256)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
