@@ -213,6 +213,7 @@ try-runtime = [
 	"pallet-balances/try-runtime",
 	"pallet-collator-selection/try-runtime",
 	"pallet-drive-registry-precompile/try-runtime",
+	"pallet-drive-registry/try-runtime",
 	"pallet-message-queue/try-runtime",
 	"pallet-revive/try-runtime",
 	"pallet-s3-registry-precompile/try-runtime",
