@@ -19,9 +19,6 @@
 //! * `copy_object_metadata` — distinct src and dst buckets, both keys at
 //!   max length, source object carries max-size metadata, dst hits the
 //!   new-object branch with `object_count` at `MaxObjectsPerBucket - 1`.
-//! * `create_s3_bucket_with_storage` — `MaxPrimaryProviders` providers
-//!   registered so `query_available_providers` iterates the full set; name
-//!   at max length; `UserBuckets` pre-filled to the capacity boundary.
 
 use super::*;
 use alloc::{vec, vec::Vec};
@@ -30,8 +27,8 @@ use frame_support::{
     traits::{Currency, Get},
     BoundedVec,
 };
-use frame_system::RawOrigin;
-use pallet_storage_provider::{Pallet as StorageProvider, ProviderSettings};
+use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
+use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettings};
 use s3_primitives::{
     BucketName, MaxContentTypeLen, MaxEtagLen, MaxMetadataEntries, MaxMetadataKeyLen,
     MaxMetadataValueLen, MaxObjectKeyLen, MetadataEntry, ObjectKey, ObjectMetadata, S3BucketId,
@@ -39,8 +36,12 @@ use s3_primitives::{
 };
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
+use storage_primitives::AgreementTerms;
 
 const SEED: u32 = 0;
+
+/// Key type used by the benchmarking keystore for provider signing material.
+const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"s3bn");
 
 /// Account with effectively unbounded balance.
 fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
@@ -51,11 +52,17 @@ fn funded_account<T: Config>(name: &'static str, index: u32) -> T::AccountId {
 }
 
 /// Register a storage provider that accepts primary agreements with enough
-/// stake/capacity to back the benchmarks that open agreements.
-fn create_provider<T: Config>(index: u32) -> T::AccountId {
+/// stake/capacity to back the benchmarks that open agreements. Returns both
+/// the account and the sr25519 public key registered against it so the
+/// `create_s3_bucket` benchmark can sign terms with the matching keystore key.
+fn create_provider<T: Config>(index: u32) -> (T::AccountId, sp_core::sr25519::Public) {
     let provider = funded_account::<T>("provider", index);
     let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-    let public_key = [0u8; 32].to_vec();
+
+    // Generate an sr25519 key in the runtime keystore so the pallet can
+    // verify signatures over agreement terms.
+    let seed = alloc::format!("//S3BenchProvider{index}");
+    let public_key = sp_io::crypto::sr25519_generate(KEY_TYPE, Some(seed.into_bytes()));
 
     let capacity: u64 = 1_000_000_000;
     let capacity_balance: BalanceOf<T> = capacity.saturated_into();
@@ -65,7 +72,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     let _ = StorageProvider::<T>::register_provider(
         RawOrigin::Signed(provider.clone()).into(),
         multiaddr.try_into().unwrap(),
-        public_key.try_into().unwrap(),
+        public_key.0.to_vec().try_into().unwrap(),
         stake,
     );
 
@@ -82,7 +89,18 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
         },
     );
 
-    provider
+    (provider, public_key)
+}
+
+/// Sign agreement terms with the provider's keystore key.
+fn sign_terms<T: Config>(
+    public_key: &sp_core::sr25519::Public,
+    terms: &AgreementTermsOf<T>,
+) -> sp_runtime::MultiSignature {
+    let hash = sp_io::hashing::blake2_256(&terms.signing_payload());
+    let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, public_key, &hash)
+        .expect("benchmarking keystore signs with a key it generated");
+    sp_runtime::MultiSignature::Sr25519(sig)
 }
 
 /// Generate a valid S3 bucket name of `len` bytes (3 ≤ len ≤ 63), made of
@@ -186,11 +204,16 @@ mod benchmarks {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Worst case:
+    /// - Provider registered with full max-capacity stake so the Layer 0
+    ///   signature / replay / capacity / stake / duration / price checks
+    ///   all run.
     /// - Name is at the max 63 bytes that `validate_bucket_name` accepts.
     /// - `UserBuckets` for the caller is pre-filled to `MaxBucketsPerUser - 1`
     ///   so the bounded `try_push` runs right at the capacity boundary.
     #[benchmark]
     fn create_s3_bucket() {
+        let (provider, provider_pk) = create_provider::<T>(0);
+
         let user = funded_account::<T>("user", 0);
         let cap = T::MaxBucketsPerUser::get();
         if cap > 1 {
@@ -198,9 +221,22 @@ mod benchmarks {
         }
 
         let name = make_bucket_name(63, 0);
+        let max_bytes: u64 = 1_000;
+        let duration: BlockNumberFor<T> = 100u32.into();
+        let terms: AgreementTermsOf<T> = AgreementTerms {
+            owner: user.clone(),
+            max_bytes,
+            duration,
+            price_per_byte: 1u32.into(),
+            valid_until: BlockNumberFor::<T>::max_value(),
+            nonce: 1,
+            bucket_id: None,
+            replica_params: None,
+        };
+        let sig = sign_terms::<T>(&provider_pk, &terms);
 
         #[extrinsic_call]
-        create_s3_bucket(RawOrigin::Signed(user), name, 1);
+        create_s3_bucket(RawOrigin::Signed(user), name, provider, terms, sig);
     }
 
     /// Worst case:
@@ -332,44 +368,6 @@ mod benchmarks {
             src_key,
             dst_bucket_id,
             dst_key,
-        );
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Atomic create-with-storage
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Worst case:
-    /// - `MaxPrimaryProviders` providers registered so
-    ///   `query_available_providers` iterates the full set.
-    /// - Bucket name at max length.
-    /// - `UserBuckets` pre-filled to `MaxBucketsPerUser - 1` so the
-    ///   bounded `try_push` happens at the capacity boundary.
-    #[benchmark]
-    fn create_s3_bucket_with_storage() {
-        let n = <T as pallet_storage_provider::Config>::MaxPrimaryProviders::get();
-        for i in 0..n {
-            let _ = create_provider::<T>(i);
-        }
-
-        let user = funded_account::<T>("user", 0);
-        let cap = T::MaxBucketsPerUser::get();
-        if cap > 1 {
-            prefill_user_buckets::<T>(&user, cap - 1);
-        }
-
-        let name = make_bucket_name(63, 6);
-        let max_capacity: u64 = 1_000;
-        let duration: BlockNumberFor<T> = 100u32.into();
-        let max_payment = BalanceOf::<T>::max_value() / 10u32.into();
-
-        #[extrinsic_call]
-        create_s3_bucket_with_storage(
-            RawOrigin::Signed(user),
-            name,
-            max_capacity,
-            duration,
-            max_payment,
         );
     }
 

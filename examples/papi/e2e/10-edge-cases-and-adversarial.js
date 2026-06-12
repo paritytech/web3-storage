@@ -10,17 +10,12 @@
 import assert from "node:assert";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
-  createBucket,
-  createBucketWithStorage,
   endAgreement,
   fetchCheckpointSignature,
   freezeBucket,
-  rejectAgreement,
-  requestPrimaryAgreement,
   setMember,
   submitClientCheckpoint,
   uploadChunk,
-  withdrawAgreementRequest,
 } from "../api.js";
 import {
   ensureProviderRegistered,
@@ -28,10 +23,15 @@ import {
   makeSigner,
   READ_OPTS,
   toHex,
-  waitForAgreementAcceptance,
   waitForBlock,
 } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
+import {
+  getFree,
+  negotiateAndEstablish,
+  runSuite,
+  submitTxExpectFailure,
+  setupChain,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -48,55 +48,22 @@ async function main() {
 
   const maxBytes = 1_048_576n;
   const duration = 50;
-  const maxPayment = maxBytes * BigInt(duration) * 10n;
 
   const tests = [];
 
   // ── Balance Accounting ────────────────────────────────────────────────────
 
   tests.push({
-    name: "10.1 Request + reject returns funds",
+    name: "10.1 Establish locks the payment",
     fn: async () => {
+      // Redeeming signed terms reserves price_per_byte × max_bytes × duration
+      // up front. At price 1 that's ~52M units — far above any tx fee.
       const balBefore = await getFree(api, bob);
-      const bucketId = await createBucket(api, bob);
-      await requestPrimaryAgreement(api, bob, provider, bucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      const balAfterRequest = await getFree(api, bob);
-      assert.ok(balAfterRequest < balBefore, "Balance should decrease after request (payment locked)");
-      await rejectAgreement(api, provider, bucketId);
-      const balAfterReject = await getFree(api, bob);
-      // After rejection, the locked payment is returned. Balance should recover
-      // (minus tx fees for the 3 extrinsics: create_bucket + request + reject was provider's).
+      await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, { maxBytes, duration });
+      const balAfter = await getFree(api, bob);
       assert.ok(
-        balAfterReject > balAfterRequest,
-        `Balance should increase after reject: ${balAfterReject} > ${balAfterRequest}`
-      );
-    },
-  });
-
-  tests.push({
-    name: "10.2 Request + withdraw returns funds",
-    fn: async () => {
-      // Use a large duration so the reserved payment far exceeds tx fees.
-      // The pallet reserves price_per_byte * max_bytes * duration, which at
-      // price_per_byte=1 must be large enough to dwarf the withdraw tx fee.
-      const longDuration = 10_000;
-      const longMaxPayment = maxBytes * BigInt(longDuration) * 10n;
-      const bucketId = await createBucket(api, bob);
-      await requestPrimaryAgreement(api, bob, provider, bucketId, {
-        max_bytes: maxBytes,
-        duration: longDuration,
-        max_payment: longMaxPayment,
-      });
-      const balAfterRequest = await getFree(api, bob);
-      await withdrawAgreementRequest(api, bob, bucketId, provider);
-      const balAfterWithdraw = await getFree(api, bob);
-      assert.ok(
-        balAfterWithdraw > balAfterRequest,
-        `Balance should increase after withdraw: ${balAfterWithdraw} > ${balAfterRequest}`
+        balAfter < balBefore,
+        `Balance should decrease after establish (payment locked): ${balAfter} < ${balBefore}`
       );
     },
   });
@@ -104,17 +71,11 @@ async function main() {
   // ── Capacity Tracking ─────────────────────────────────────────────────────
 
   tests.push({
-    name: "10.3 committed_bytes increments on accept",
+    name: "10.2 committed_bytes increments on establish",
     fn: async () => {
       const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       const beforeBytes = infoBefore.committed_bytes;
-      const bucketId = await createBucket(api, bob);
-      await requestPrimaryAgreement(api, bob, provider, bucketId, {
-        max_bytes: maxBytes,
-        duration: 100,
-        max_payment: maxBytes * 100n * 10n,
-      });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
+      await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, { maxBytes, duration: 100 });
       const infoAfter = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       assert.ok(
         infoAfter.committed_bytes > beforeBytes,
@@ -124,15 +85,12 @@ async function main() {
   });
 
   tests.push({
-    name: "10.4 committed_bytes decrements on end",
+    name: "10.3 committed_bytes decrements on end",
     fn: async () => {
-      const bucketId = await createBucket(api, bob);
-      await requestPrimaryAgreement(api, bob, provider, bucketId, {
-        max_bytes: maxBytes,
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
         duration: 10,
-        max_payment: maxBytes * 10n * 10n,
       });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
       const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
@@ -154,12 +112,10 @@ async function main() {
   tests.push({
     name: "10.5 Freeze is irreversible",
     fn: async () => {
-      const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_bytes: maxBytes,
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
         duration: 100,
-        max_price_per_byte: 10n,
       });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
       // freeze_bucket requires a snapshot (checkpoint) to exist.
       await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot");
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
@@ -177,12 +133,10 @@ async function main() {
   tests.push({
     name: "10.6 Checkpoint after freeze",
     fn: async () => {
-      const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_bytes: maxBytes,
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
         duration: 100,
-        max_price_per_byte: 10n,
       });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
       // Upload some data.
       await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data");
       // Checkpoint before freeze.
@@ -205,8 +159,12 @@ async function main() {
   tests.push({
     name: "10.7 Same account member of multiple buckets",
     fn: async () => {
-      const bucket1 = await createBucket(api, dave);
-      const bucket2 = await createBucket(api, dave);
+      const { bucketId: bucket1 } = await negotiateAndEstablish(
+        api, PROVIDER_URL, dave, provider, { maxBytes, duration: 100 }
+      );
+      const { bucketId: bucket2 } = await negotiateAndEstablish(
+        api, PROVIDER_URL, dave, provider, { maxBytes, duration: 100 }
+      );
       await setMember(api, dave, bucket1, eve, "Writer");
       await setMember(api, dave, bucket2, eve, "Reader");
       const eveBuckets = await api.query.StorageProvider.MemberBuckets.getValue(eve.address, READ_OPTS);
@@ -220,12 +178,10 @@ async function main() {
   tests.push({
     name: "10.8 Upload verify blake2-256",
     fn: async () => {
-      const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_bytes: maxBytes,
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
         duration: 100,
-        max_price_per_byte: 10n,
       });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
       const data = "integrity check data for blake2-256";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
@@ -237,12 +193,10 @@ async function main() {
   tests.push({
     name: "10.9 Identical content → same hash, different MMR leaves",
     fn: async () => {
-      const { bucketId } = await createBucketWithStorage(api, bob, {
-        max_bytes: maxBytes,
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
         duration: 100,
-        max_price_per_byte: 10n,
       });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
       const data = "identical content for dedup test";
       const r1 = await uploadChunk(PROVIDER_URL, bucketId, data);
       const r2 = await uploadChunk(PROVIDER_URL, bucketId, data);

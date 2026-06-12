@@ -41,7 +41,7 @@ use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
 use sp_core::H256;
-use sp_runtime::BoundedVec;
+use sp_runtime::{AccountId32, BoundedVec};
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
@@ -171,46 +171,47 @@ impl FileSystemClient {
     /// # Arguments
     ///
     /// * `name` - Optional human-readable name for the drive
-    /// * `max_capacity` - Maximum storage capacity in bytes (e.g., 10 GB = 10_000_000_000)
-    /// * `storage_period` - Storage duration in blocks (e.g., 500 blocks)
-    /// * `payment` - Upfront payment tokens for storage agreements
-    /// * `min_providers` - Optional minimum number of providers (default: 3 for long-term, 1 for short-term)
+    /// * `provider` - Provider account that signed `terms`
+    /// * `terms` - Provider-signed agreement terms (from `ProviderClient::negotiate_terms`)
+    /// * `sig` - Provider signature over the SCALE-encoded terms
     ///
     /// # Returns
     ///
-    /// The newly created drive ID
+    /// The newly created drive ID. Bucket creation and the primary agreement
+    /// open atomically inside Layer 0's `establish_storage_agreement_internal`.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// // Create a 10 GB drive with defaults
-    /// let drive_id = fs_client.create_drive(
-    ///     Some("My Documents"),
-    ///     10_000_000_000,  // 10 GB
-    ///     500,              // 500 blocks
-    ///     1_000_000_000_000, // 1 token (12 decimals)
-    ///     None,             // Use default providers (auto-determined)
+    /// use storage_client::{NegotiateRequest, ProviderClient};
+    ///
+    /// let signed = ProviderClient::negotiate_terms(
+    ///     "http://127.0.0.1:3333",
+    ///     &NegotiateRequest {
+    ///         owner: owner_account,
+    ///         max_bytes: 10_000_000_000,
+    ///         duration: 500,
+    ///         price_per_byte: 1,
+    ///         replica_params: None,
+    ///     },
     /// ).await?;
     ///
-    /// // Create a highly replicated drive
     /// let drive_id = fs_client.create_drive(
-    ///     Some("Critical Data"),
-    ///     5_000_000_000,
-    ///     500,
-    ///     2_000_000_000_000, // 2 tokens for more providers
-    ///     Some(5),           // 1 primary + 4 replicas
+    ///     Some("My Documents"),
+    ///     provider_account,
+    ///     signed.terms,
+    ///     signed.signature,
     /// ).await?;
     /// ```
     pub async fn create_drive(
         &mut self,
         name: Option<&str>,
-        max_capacity: u64,
-        storage_period: u64,
-        payment: u128,
-        min_providers: Option<u8>,
+        provider: AccountId32,
+        terms: storage_client::AgreementTermsOf,
+        sig: sp_runtime::MultiSignature,
     ) -> Result<DriveId> {
         let drive_id = self
-            .create_drive_on_chain(name, max_capacity, storage_period, payment, min_providers)
+            .create_drive_on_chain(name, provider, &terms, &sig)
             .await?;
 
         // Get the bucket_id for this drive
@@ -877,21 +878,14 @@ impl FileSystemClient {
     async fn create_drive_on_chain(
         &self,
         name: Option<&str>,
-        max_capacity: u64,
-        storage_period: u64,
-        payment: u128,
-        min_providers: Option<u8>,
+        provider: AccountId32,
+        terms: &storage_client::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
     ) -> Result<DriveId> {
         let name_bytes = name.map(|n| n.as_bytes().to_vec());
 
         // Build the extrinsic
-        let call = substrate::extrinsics::create_drive(
-            name_bytes,
-            max_capacity,
-            storage_period,
-            payment,
-            min_providers,
-        );
+        let call = substrate::extrinsics::create_drive(name_bytes, provider, terms, sig);
 
         // Sign and submit
         let signer = self.substrate_client.signer()?;

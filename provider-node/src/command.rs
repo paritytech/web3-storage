@@ -5,13 +5,14 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
 };
 use clap::Parser;
-use std::sync::Arc;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -63,6 +64,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     cli.auth.auth_max_skew
                 );
             }
+
+            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
+            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
 
             Arc::new(state)
         }
@@ -120,8 +124,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
-    let _agreement_handle =
-        start_agreement_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
 
     // Sync on-chain multiaddr with actual bind address. Reuses the chain
     // client connected above, so this only runs when that connection succeeded
@@ -136,7 +138,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(&cli.rpc.bind_addr).await?;
     let app = create_router(state);
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -216,39 +222,97 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-async fn start_agreement_coordinator(
-    cli: &Cli,
-    chain_client: Option<&SubxtChainClient>,
-    state: Arc<ProviderState>,
-) -> Option<AgreementCoordinatorHandle> {
-    if !cli.agreement.enable_agreement_coordinator {
-        return None;
-    }
-
-    let chain_client = match chain_client {
-        Some(c) => c.clone(),
-        None => {
-            tracing::error!(
-                "Agreement coordinator needs a chain client (--keyfile + reachable chain). Skipping."
-            );
+/// Fetch the provider's on-chain registration info once and store it.
+///
+/// Returns `None` (and logs a warning) if anything goes wrong, so a transient
+/// chain hiccup or an unregistered provider doesn't take the whole node down.
+async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
             return None;
         }
     };
 
-    let config = AgreementCoordinatorConfig {
-        poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
-        auto_accept: true,
+    let client = storage_client::ProviderClient::new(
+        storage_client::ClientConfig {
+            chain_ws_url: cli.rpc.chain_rpc.clone(),
+            ..Default::default()
+        },
+        provider_id.to_string(),
+    );
+    let mut client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("failed to build provider client: {e:?}");
+            return None;
+        }
     };
+    if let Err(e) = client.connect().await {
+        tracing::warn!("failed to connect to chain: {e:?}");
+        return None;
+    }
 
-    let coordinator = AgreementCoordinator::new(config, state, Box::new(chain_client));
-
-    match coordinator.start().await {
-        Ok(handle) => {
-            tracing::info!("Agreement coordinator started — auto-accepting agreements");
-            Some(handle)
+    let info = match client.get_provider_info(&provider_account).await {
+        Ok(Some(info)) => info,
+        Ok(None) => {
+            tracing::warn!(
+                "provider {provider_id} is not registered on chain; \
+                 register it before starting the node"
+            );
+            return None;
         }
         Err(e) => {
-            tracing::error!("Failed to start agreement coordinator: {}", e);
+            tracing::warn!("failed to fetch provider info: {e:?}");
+            return None;
+        }
+    };
+
+    tracing::info!(
+        "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
+        info.price_per_byte,
+        info.min_duration,
+        info.max_duration,
+        info.max_capacity,
+        info.accepting_primary,
+    );
+
+    Some(Arc::new(RwLock::new(info)))
+}
+
+/// Create the in-memory nonce counter and bootstrap it from the chain's
+/// `ProviderReplayState.hsn`. The chain is the source of truth, so there
+/// is nothing to persist locally.
+async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter {
+    // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
+    // reachable yet, set to None
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
+            return None;
+        }
+    };
+    match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
+        .await
+    {
+        Ok(Some(hsn)) => {
+            tracing::info!(
+                "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
+                hsn,
+                provider_id,
+            );
+            let counter = NonceCounter::new(1);
+            counter.bootstrap_from_hsn(hsn);
+            Some(Arc::new(counter))
+        }
+        Ok(None) => {
+            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
+            None
+        }
+        Err(e) => {
+            tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
             None
         }
     }

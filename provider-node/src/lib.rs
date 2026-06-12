@@ -8,7 +8,6 @@
 //! - Syncing data between providers (for replicas)
 //! - Coordinating provider-initiated checkpoints
 
-pub mod agreement_coordinator;
 pub mod api;
 pub mod auth;
 pub mod challenge_responder;
@@ -19,6 +18,7 @@ pub mod error;
 pub mod fs_api;
 pub mod fs_index;
 pub mod mmr;
+pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
 pub mod s3_api;
@@ -27,10 +27,6 @@ pub mod storage;
 pub(crate) mod subxt_client;
 pub mod types;
 
-pub use agreement_coordinator::{
-    AgreementChainClient, AgreementCoordinator, AgreementCoordinatorConfig,
-    AgreementCoordinatorHandle,
-};
 pub use api::create_router;
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
@@ -42,6 +38,7 @@ pub use checkpoint_coordinator::{
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -54,10 +51,15 @@ pub use storage::{
 };
 pub use types::*;
 
-use sp_core::{crypto::Ss58Codec, sr25519, Pair};
-use std::sync::Arc;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use storage_client::discovery::ProviderInfo;
+use subxt_signer::sr25519;
 use tokio::sync::mpsc;
+
+pub type StateNonceCounter = Option<Arc<NonceCounter>>;
+pub type StateProviderInfo = Option<Arc<RwLock<ProviderInfo>>>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -66,7 +68,7 @@ pub struct ProviderState {
     /// Provider account ID (SS58 encoded)
     pub provider_id: String,
     /// Signing keypair (optional, for dev/testing)
-    pub keypair: Option<sr25519::Pair>,
+    pub keypair: Option<sr25519::Keypair>,
     /// S3-compatible object index
     pub s3_index: S3IndexManager,
     /// File system drive index
@@ -79,6 +81,11 @@ pub struct ProviderState {
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
+    /// Monotonic nonce counter used by `/negotiate` to allocate fresh
+    /// nonces for provider-signed `AgreementTerms`.
+    pub nonce_counter: StateNonceCounter,
+    /// On-chain provider registration info.
+    pub provider_info: StateProviderInfo,
 }
 
 impl ProviderState {
@@ -93,15 +100,18 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
+            nonce_counter: None,
+            provider_info: None,
         }
     }
 
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
     pub fn with_seed(storage: Arc<dyn StorageBackend>, seed: &str) -> Result<Self, String> {
-        let keypair = sr25519::Pair::from_string(seed, None)
+        let suri = subxt_signer::SecretUri::from_str(seed).expect("Failed to parse SURI");
+        let keypair = sr25519::Keypair::from_uri(&suri)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
 
-        let provider_id = keypair.public().to_ss58check();
+        let provider_id = keypair.public_key().to_account_id().to_string();
 
         Ok(Self {
             storage,
@@ -113,6 +123,8 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
+            nonce_counter: None,
+            provider_info: None,
         })
     }
 
@@ -139,7 +151,6 @@ impl ProviderState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sp_core::ByteArray;
 
     fn test_storage() -> Arc<dyn StorageBackend> {
         Arc::new(storage::Storage::new())
@@ -176,12 +187,30 @@ mod tests {
             "must not return the zero-byte placeholder"
         );
 
-        let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
-        let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let sig_array: [u8; 64] = sig_bytes
+            .clone()
+            .try_into()
+            .expect("sr25519 signatures are 64 bytes");
+        let sig = sr25519::Signature(sig_array);
+        let suri = subxt_signer::SecretUri::from_str("//Alice").expect("Failed to parse SURI");
+        let alice = sr25519::Keypair::from_uri(&suri).unwrap();
         assert!(
-            sr25519::Pair::verify(&sig, message, &alice.public()),
+            sr25519::verify(&sig, message, &alice.public_key()),
             "signature did not verify under //Alice's public key"
         );
+    }
+
+    /// Decode an `0x`-prefixed hex signature into an `sr25519::Signature`.
+    fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
+        let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
+        let array: [u8; 64] = bytes.try_into().expect("sr25519 signatures are 64 bytes");
+        sr25519::Signature(array)
+    }
+
+    /// Derive a keypair from a SURI like `//Alice`.
+    fn keypair_for(seed: &str) -> sr25519::Keypair {
+        let suri = subxt_signer::SecretUri::from_str(seed).expect("Failed to parse SURI");
+        sr25519::Keypair::from_uri(&suri).unwrap()
     }
 
     #[test]
@@ -191,9 +220,7 @@ mod tests {
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
         let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
-        let alice_pub = sr25519::Pair::from_string("//Alice", None)
-            .unwrap()
-            .public();
+        let alice_pub = keypair_for("//Alice").public_key();
         let msg = b"commitment-payload";
 
         let sig_a = state.sign(msg).unwrap();
@@ -202,8 +229,8 @@ mod tests {
         for sig_hex in [&sig_a, &sig_b] {
             let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
             assert_ne!(bytes, vec![0u8; 64]);
-            let sig = sr25519::Signature::from_slice(&bytes).unwrap();
-            assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));
+            let sig = sig_from_hex(sig_hex);
+            assert!(sr25519::verify(&sig, msg, &alice_pub));
         }
     }
 
@@ -214,21 +241,14 @@ mod tests {
         // stops checking the message or the key.
         let alice = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
         let bob = ProviderState::with_seed(test_storage(), "//Bob").unwrap();
-        let alice_pub = sr25519::Pair::from_string("//Alice", None)
-            .unwrap()
-            .public();
+        let alice_pub = keypair_for("//Alice").public_key();
         let msg = b"checkpoint payload";
 
-        let bob_sig_hex = bob.sign(msg).unwrap();
-        let bob_sig_bytes = hex::decode(bob_sig_hex.strip_prefix("0x").unwrap()).unwrap();
-        let bob_sig = sr25519::Signature::from_slice(&bob_sig_bytes).unwrap();
-
-        assert!(!sr25519::Pair::verify(&bob_sig, msg, &alice_pub));
+        let bob_sig = sig_from_hex(&bob.sign(msg).unwrap());
+        assert!(!sr25519::verify(&bob_sig, msg, &alice_pub));
 
         // Sanity: //Alice's own signature still verifies under her own key.
-        let alice_sig_hex = alice.sign(msg).unwrap();
-        let alice_sig_bytes = hex::decode(alice_sig_hex.strip_prefix("0x").unwrap()).unwrap();
-        let alice_sig = sr25519::Signature::from_slice(&alice_sig_bytes).unwrap();
-        assert!(sr25519::Pair::verify(&alice_sig, msg, &alice_pub));
+        let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
+        assert!(sr25519::verify(&alice_sig, msg, &alice_pub));
     }
 }

@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn member_buckets_index_on_create() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
+        create_bucket(1, 1);
 
         let member_buckets = pallet::MemberBuckets::<Test>::get(1);
         assert_eq!(member_buckets.to_vec(), vec![0, 1]);
@@ -14,7 +14,7 @@ fn member_buckets_index_on_create() {
 #[test]
 fn member_buckets_index_on_set_member() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Add account 2 as writer
         assert_ok!(StorageProvider::set_member(
@@ -43,7 +43,7 @@ fn member_buckets_index_on_set_member() {
 #[test]
 fn member_buckets_index_on_remove_member() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             0,
@@ -66,7 +66,7 @@ fn member_buckets_index_on_remove_member() {
 #[test]
 fn member_buckets_index_on_bucket_delete() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             0,
@@ -94,9 +94,9 @@ fn member_buckets_index_on_bucket_delete() {
 fn member_buckets_multi_membership() {
     new_test_ext().execute_with(|| {
         // Create 3 buckets owned by different accounts
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(2), 1));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(3), 1));
+        create_bucket(1, 1);
+        create_bucket(2, 1);
+        create_bucket(3, 1);
 
         // Add account 4 to all 3 buckets
         assert_ok!(StorageProvider::set_member(

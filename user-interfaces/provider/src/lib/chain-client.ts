@@ -123,9 +123,8 @@ export async function getChainProperties(): Promise<{
     } catch { /* use default */ }
 
     try {
-      // expectedBlockTime = 2 * MinimumPeriod (Aura convention)
-      const period = await api.constants.Timestamp.MinimumPeriod()
-      blockTimeMs = Number(period) * 2
+      const period = await api.constants.Aura.SlotDuration()
+      blockTimeMs = Number(period)
     } catch { /* use default */ }
   }
 
@@ -392,22 +391,23 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
   return out
 }
 
-export async function getAgreementRequests(address: string): Promise<OnChainAgreementRequest[]> {
-  const entries = await requireApi().query.StorageProvider.AgreementRequests.getEntries()
-  const out: OnChainAgreementRequest[] = []
-  for (const { keyArgs, value } of entries) {
-    const [bucketIdRaw, providerAddr] = keyArgs
-    if (!isSameAddress(providerAddr, address)) continue
-    out.push({
-      bucketId: Number(bucketIdRaw),
-      requester: value.requester,
-      maxBytes: value.max_bytes,
-      paymentLocked: value.payment_locked,
-      duration: value.duration,
-      expiresAt: value.expires_at,
-    })
-  }
-  return out
+export async function getAgreementRequests(_address: string): Promise<OnChainAgreementRequest[]> {
+  // const entries = await requireApi().query.StorageProvider.AgreementRequests.getEntries()
+  // const out: OnChainAgreementRequest[] = []
+  // for (const { keyArgs, value } of entries) {
+  //   const [bucketIdRaw, providerAddr] = keyArgs
+  //   if (!isSameAddress(providerAddr, address)) continue
+  //   out.push({
+  //     bucketId: Number(bucketIdRaw),
+  //     requester: value.requester,
+  //     maxBytes: value.max_bytes,
+  //     paymentLocked: value.payment_locked,
+  //     duration: value.duration,
+  //     expiresAt: value.expires_at,
+  //   })
+  // }
+  // return out
+  return [];
 }
 
 export async function getProviderCheckpoints(address: string): Promise<OnChainCheckpoint[]> {

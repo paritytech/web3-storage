@@ -64,7 +64,7 @@ pub struct MatchedProvider {
 }
 
 /// Provider information for discovery.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,
