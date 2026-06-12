@@ -8,3 +8,53 @@ updates:
       default-days: 7
     ignore:
       - dependency-name: "*"
+
+  - package-ecosystem: "npm"
+    directories:
+      - "/user-interfaces"
+      - "/user-interfaces/**"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      user-interfaces-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      user-interfaces-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/examples/papi"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      examples-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      examples-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
