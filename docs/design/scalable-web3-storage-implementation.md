@@ -807,7 +807,6 @@ pub enum Event<T: Config> {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
         slashed_amount: BalanceOf<T>,
-        challenger_reward: BalanceOf<T>,
     },
 
     // ─────────────────────────────────────────────────────────────
@@ -2332,7 +2331,9 @@ pub struct MmrProof {
 
 3c. Provider fails to respond / invalid proof
     └─ Provider's contract stake fully slashed
-    └─ Challenger refunded deposit + compensation from slash
+    └─ Challenger made whole from the slash: deposit refunded, tx fees
+       reimbursed—but no reward beyond actual costs (no profit motive
+       for forcing slashes)
     └─ Clear on-chain evidence of provider fault
 ```
 
