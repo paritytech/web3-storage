@@ -6,26 +6,22 @@
  * SS58/duplicate tests assert on toast text.
  */
 import { test, expect } from "../fixtures";
-import {
-  Alice,
-  Bob,
-  cleanupBuckets,
-  createBucketViaApi,
-} from "@web3-storage/test-helpers";
+import { Alice, Bob, cleanupBuckets } from "@web3-storage/test-helpers";
+import { createBucketInFreshContext } from "../helpers/createBucketViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 let bucketName: string;
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
+test.beforeAll(async ({ browser }) => {
+  test.setTimeout(180_000);
   bucketName = `members-${Date.now()}`;
-  await createBucketViaApi(Alice, { name: bucketName });
+  await createBucketInFreshContext(browser, bucketName);
 });
 
 test.afterAll(async () => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await cleanupBuckets(Alice);
 });
 

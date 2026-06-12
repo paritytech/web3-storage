@@ -53,6 +53,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "const-random",
  "getrandom 0.3.4",
  "once_cell",
  "version_check",
@@ -3258,6 +3259,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
+name = "flurry"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf5efcf77a4da27927d3ab0509dec5b0954bb3bc59da5a1de9e52642ebd4cdf9"
+dependencies = [
+ "ahash",
+ "num_cpus",
+ "parking_lot",
+ "seize",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3384,6 +3397,23 @@ dependencies = [
  "parity-scale-codec",
  "scale-info",
  "serde",
+]
+
+[[package]]
+name = "frame-metadata-hash-extension"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc9522fcf64f45004d010a9eb7c21f9854706cfc545856f33f932cd57295bbcf"
+dependencies = [
+ "array-bytes 6.2.3",
+ "const-hex",
+ "docify",
+ "frame-support",
+ "frame-system",
+ "log",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-runtime",
 ]
 
 [[package]]
@@ -5476,6 +5506,7 @@ dependencies = [
  "scale-info",
  "sp-core",
  "sp-io",
+ "sp-keystore",
  "sp-runtime",
  "storage-primitives",
 ]
@@ -5718,7 +5749,9 @@ dependencies = [
  "scale-info",
  "sp-core",
  "sp-io",
+ "sp-keystore",
  "sp-runtime",
+ "storage-primitives",
 ]
 
 [[package]]
@@ -5733,6 +5766,7 @@ dependencies = [
  "parity-scale-codec",
  "sp-core",
  "sp-runtime",
+ "storage-primitives",
  "tracing",
 ]
 
@@ -8269,6 +8303,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "seize"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "689224d06523904ebcc9b482c6a3f4f7fb396096645c4cd10c0d2ff7371a34d3"
+
+[[package]]
 name = "semver"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9529,10 +9569,12 @@ dependencies = [
  "chacha20poly1305",
  "futures",
  "hex",
+ "parity-scale-codec",
  "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
+ "serde_with",
  "sp-core",
  "sp-runtime",
  "storage-primitives",
@@ -9561,6 +9603,7 @@ dependencies = [
  "cumulus-primitives-utility",
  "frame-benchmarking",
  "frame-executive",
+ "frame-metadata-hash-extension",
  "frame-support",
  "frame-system",
  "frame-system-benchmarking",
@@ -9629,6 +9672,7 @@ dependencies = [
  "cumulus-primitives-utility",
  "frame-benchmarking",
  "frame-executive",
+ "frame-metadata-hash-extension",
  "frame-support",
  "frame-system",
  "frame-system-benchmarking",
@@ -9713,12 +9757,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
+ "sp-runtime",
+ "storage-client",
  "storage-primitives",
  "subxt",
  "subxt-signer",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-rate-limit",
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.19",
@@ -10284,6 +10331,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tokio-rate-limit"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ae467448273dfbe9396db99e17d0c806c2c776e2703703102bbed076aaf0fcb"
+dependencies = [
+ "async-trait",
+ "flurry",
+ "parking_lot",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

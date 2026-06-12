@@ -23,17 +23,34 @@
 import assert from "node:assert";
 import {
   addStake,
-  createBucketWithStorage,
   registerProvider,
   updateProviderMultiaddr,
   updateProviderSettings,
 } from "../api.js";
-import { makeSigner, ensureSoleAcceptingProvider, sameAddress, READ_OPTS } from "../common.js";
+import { makeSigner, toHex, READ_OPTS } from "../common.js";
 import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 const UNIT = 1_000_000_000_000n;
+
+/**
+ * Provider matching moved off-chain: clients call the `find_matching_providers`
+ * runtime API, pick a provider, then redeem its signed terms. This finds a
+ * given provider's match entry (scored 0-100) for the requirements.
+ */
+async function matchEntry(api, who, { bytesNeeded, minDuration, maxPricePerByte }) {
+  const matches = await api.apis.StorageProviderApi.find_matching_providers(
+    {
+      bytes_needed: bytesNeeded,
+      min_duration: minDuration,
+      max_price_per_byte: maxPricePerByte,
+      primary_only: true,
+    },
+    50
+  );
+  return matches.find((m) => toHex(m.account.asBytes()) === toHex(who.publicKey));
+}
 
 async function main() {
   const charlie = makeSigner("//Charlie");
@@ -118,24 +135,16 @@ async function main() {
   tests.push({
     name: "1.5 Settings take effect for matching",
     fn: async () => {
-      // Ensure Charlie is the sole accepting provider for deterministic matching.
-      const restore = await ensureSoleAcceptingProvider(api, charlie);
-      try {
-        const maxCapacity = 1_048_576n;
-        const duration = 50;
-        const { bucketId, matchedProvider } = await createBucketWithStorage(api, dave, {
-          max_bytes: maxCapacity,
-          duration,
-          max_price_per_byte: 10n,
-        });
-        assert.ok(bucketId !== undefined, "Bucket should be created");
-        assert.ok(
-          sameAddress(matchedProvider, charlie.address),
-          `Expected match to Charlie, got ${matchedProvider}`
-        );
-      } finally {
-        await restore();
-      }
+      // With accepting_primary=true and price 2 (set in 1.2), Charlie is a
+      // perfect match for a request priced at 10.
+      const entry = await matchEntry(api, charlie, {
+        bytesNeeded: 1_048_576n,
+        minDuration: 50,
+        maxPricePerByte: 10n,
+      });
+      assert.ok(entry, "Charlie should appear in matching results");
+      assert.strictEqual(entry.match_score, 100, "Charlie should be a perfect match");
+      assert.strictEqual(entry.partial_reason, undefined, "No partial-match reason expected");
     },
   });
 
@@ -233,17 +242,21 @@ async function main() {
         accepting_extensions: true,
         max_capacity: 0n,
       });
-      // Silence all others too.
-      const restore = await ensureSoleAcceptingProvider(api, charlie);
       try {
-        const tx = api.tx.StorageProvider.create_bucket_with_storage({
-          max_bytes: 1_048_576n,
-          duration: 50,
-          max_price_per_byte: 10n,
+        // A non-accepting provider scores 0 with a NotAccepting reason.
+        const entry = await matchEntry(api, charlie, {
+          bytesNeeded: 1_048_576n,
+          minDuration: 50,
+          maxPricePerByte: 10n,
         });
-        await submitTxExpectFailure(tx, dave.signer, "NoMatchingProvider", "1.11");
+        assert.ok(entry, "Charlie should still be listed");
+        assert.strictEqual(entry.match_score, 0, "Non-accepting provider should score 0");
+        assert.strictEqual(
+          entry.partial_reason?.type,
+          "NotAccepting",
+          "Reason should be NotAccepting"
+        );
       } finally {
-        await restore();
         // Restore accepting_primary for remaining tests.
         await updateProviderSettings(api, charlie, {
           min_duration: 10,

@@ -8,7 +8,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
-import { parseMultiaddrToUrl, resolveProviderEndpoint } from "@web3-storage/papi";
+import { resolveProviderEndpoint } from "@web3-storage/papi";
 import { EncryptionKey } from "./encryption";
 import { type Keypair, seedToKeypair, toHex, toSs58 } from "./crypto";
 
@@ -33,10 +33,135 @@ export interface UploadResult {
   size: number;
 }
 
-export interface CreateBucketOptions {
-  capacity: bigint;
+/**
+ * Provider-signed agreement terms returned by `POST /negotiate` on the
+ * provider node. The signature is the SCALE-encoded `MultiSignature` as
+ * hex (e.g. `0x01<64-byte-sr25519-sig>`).
+ */
+export interface SignedTerms {
+  terms: {
+    owner: string;
+    max_bytes: number | bigint;
+    duration: number;
+    price_per_byte: number | bigint;
+    valid_until: number;
+    nonce: number | bigint;
+    replica_params: unknown | null;
+    bucket_id: bigint | null;
+  };
+  signature: string;
+}
+
+export interface NegotiateRequest {
+  owner: string;
+  max_bytes: number | bigint;
   duration: number;
-  maxPayment: bigint;
+  price_per_byte: number | bigint;
+  replica_params: unknown | null;
+  bucket_id?: bigint | null;
+}
+
+/**
+ * Parse a multiaddr (e.g. `/ip4/127.0.0.1/tcp/3333` or `/dns4/host/tcp/3333`)
+ * into an HTTP base URL. Exported so the UI can derive the negotiate
+ * endpoint from a picked provider's chain metadata before any agreement
+ * exists on chain.
+ */
+export function parseMultiaddrToHttp(multiaddr: string): string | null {
+  const parts = multiaddr.split("/").filter(Boolean);
+  let host: string | null = null;
+  let port: string | null = null;
+  for (let i = 0; i < parts.length; i++) {
+    if (
+      (parts[i] === "ip4" ||
+        parts[i] === "ip6" ||
+        parts[i] === "dns4" ||
+        parts[i] === "dns6") &&
+      parts[i + 1]
+    ) {
+      host = parts[i + 1];
+    }
+    if (parts[i] === "tcp" && parts[i + 1]) {
+      port = parts[i + 1];
+    }
+  }
+  return host && port ? `http://${host}:${port}` : null;
+}
+
+/**
+ * POST a `NegotiateRequest` to the provider's `/negotiate` endpoint and
+ * return the provider-signed terms bundle. Mirrors
+ * `examples/papi/api.js::negotiateTerms`.
+ */
+export async function negotiateTerms(
+  providerUrl: string,
+  request: NegotiateRequest,
+): Promise<SignedTerms> {
+  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`/negotiate failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+// MultiSignature SCALE variant order from sp_runtime.
+const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
+  0: "Ed25519",
+  1: "Sr25519",
+  2: "Ecdsa",
+  3: "Eth",
+};
+
+function hexToBytes(hex: string): Uint8Array {
+  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(h.substr(i * 2, 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Build the agreement terms and sign it
+ */
+export function buildSignedTermsArgs(
+  providerAccount: string,
+  signed: SignedTerms,
+) {
+  const sigBytes = hexToBytes(signed.signature);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
+  if (!variantName) {
+    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
+  }
+  const sigPayloadHex =
+    "0x" +
+    Array.from(sigBytes.slice(1))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  const sig = Enum(variantName as any, sigPayloadHex);
+
+  const t = signed.terms;
+  const terms = {
+    owner: t.owner,
+    max_bytes: BigInt(t.max_bytes),
+    duration: t.duration,
+    price_per_byte: BigInt(t.price_per_byte),
+    valid_until: t.valid_until,
+    nonce: BigInt(t.nonce),
+    replica_params: (t.replica_params ?? undefined) as any,
+    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
+  };
+  return { provider: providerAccount, terms, sig };
 }
 
 export interface CheckpointConfig {
@@ -89,6 +214,30 @@ export interface AvailableProvider {
   maxDuration: number;
   acceptingPrimary: boolean;
   agreementsTotal: number;
+}
+
+export interface MatchingProviders extends AvailableProvider {
+  matchScore: number;
+  partialReason: string;
+  committedBytes: bigint;
+  replicaSyncPrice?: bigint;
+  acceptingExtensions: boolean;
+  registeredAt: number;
+  agreementsExtended: number;
+  agreementsNotExtended: number;
+  agreementsBurned: number;
+  challengesReceived: number;
+  challengesFailed: number;
+}
+
+export interface QueryMatchingProvidersParams {
+  query: {
+    bytesNeeded: bigint;
+    minDuration: number;
+    maxPricePerByte: bigint;
+    primaryOnly: boolean;
+  };
+  limit: number;
 }
 
 export interface PutObjectOptions {
@@ -328,70 +477,6 @@ export class StorageClient {
     }
   }
 
-  /**
-   * Wait for a bucket's provider to become available.
-   * Polls for up to ~150 seconds with increasing backoff.
-   * Calls onProgress with elapsed seconds so the UI can show timing warnings.
-   */
-  async waitForProvider(
-    bucketId: bigint,
-    onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
-  ): Promise<string> {
-    this.invalidateProviderCache(bucketId);
-
-    // Poll schedule: 20 attempts over ~150s
-    // Early: 3s intervals, then 6s, then 10s
-    const intervals = [
-      0, 3000, 3000, 3000, 3000, 3000,       // 0-15s: every 3s
-      6000, 6000, 6000, 6000, 6000,           // 15-45s: every 6s
-      10000, 10000, 10000, 10000, 10000,      // 45-95s: every 10s
-      10000, 10000, 10000, 10000, 10000,      // 95-145s: every 10s
-    ];
-    const startTime = Date.now();
-
-    for (let i = 0; i < intervals.length; i++) {
-      if (intervals[i] > 0) {
-        await new Promise(r => setTimeout(r, intervals[i]));
-      }
-
-      const elapsedMs = Date.now() - startTime;
-      const elapsedSec = Math.round(elapsedMs / 1000);
-
-      let status: string;
-      if (elapsedSec < 30) {
-        status = "Waiting for provider to accept the agreement...";
-      } else if (elapsedSec < 60) {
-        status = "Provider is processing — this typically takes about a minute...";
-      } else if (elapsedSec < 100) {
-        status = "Still waiting for provider acceptance...";
-      } else {
-        status = "Taking longer than usual — provider may be busy or offline...";
-      }
-
-      console.log(`[StorageClient] waitForProvider bucket=${bucketId} attempt=${i + 1}/${intervals.length} elapsed=${elapsedSec}s`);
-      onProgress?.(status, elapsedMs, i + 1);
-
-      try {
-        if (!this.api) throw new Error("Not connected");
-        const url = await resolveProviderEndpoint(this.api, bucketId);
-        this.providerUrlCache.set(bucketId.toString(), url);
-        onProgress?.("Provider accepted — ready to use", Date.now() - startTime, intervals.length);
-        return url;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "";
-        const retryable = msg.includes("no primary providers") || msg.includes("not found on chain");
-        if (!retryable) throw err;
-        if (i === intervals.length - 1) {
-          throw new Error(
-            `Provider did not accept the agreement after ${Math.round((Date.now() - startTime) / 1000)}s. ` +
-            `The provider may be offline or not accepting new agreements.`
-          );
-        }
-      }
-    }
-    throw new Error("Provider did not accept the agreement");
-  }
-
   /** Clear cached provider URL for a bucket (e.g. after provider changes). */
   invalidateProviderCache(bucketId?: bigint): void {
     if (bucketId !== undefined) {
@@ -403,17 +488,41 @@ export class StorageClient {
 
   // --- S3 Operations ---
 
-  async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
+  /**
+   * Redeem provider-signed agreement terms on chain to open a Layer-0
+   * bucket + primary agreement and register the S3 metadata bucket on top
+   * of it — atomically in one extrinsic.
+   *
+   * **This is only step 2 of bucket creation.** Step 1 is the HTTP
+   * negotiation against the provider (`negotiateTerms`). Splitting the two
+   * lets the caller retry a failed on-chain submit without re-negotiating
+   * (the signed terms are still valid until `terms.valid_until`).
+   *
+   * The provider URL is needed only so the cache can be primed for the
+   * first upload — the chain itself doesn't see it.
+   */
+  async submitCreateBucket(
+    name: string,
+    providerAccount: string,
+    providerUrl: string,
+    signed: SignedTerms,
+  ): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
 
-    console.log("[StorageClient] createBucket:", name, options);
+    console.log(
+      "[StorageClient] submitCreateBucket:",
+      name,
+      "provider=",
+      providerAccount,
+      providerUrl,
+      "nonce=",
+      signed.terms.nonce,
+    );
 
-    // Create the S3 bucket (this also creates the Layer 0 bucket).
-    // Provider agreement is requested separately after creation.
     const tx = this.api!.tx.S3Registry.create_s3_bucket({
       name: Binary.fromText(name),
-      min_providers: 1,
+      ...buildSignedTermsArgs(providerAccount, signed),
     });
 
     const result = await this.submitAndWatchBestBlock(tx);
@@ -437,6 +546,9 @@ export class StorageClient {
       );
       const looked = await this.headBucket(name);
       if (looked) {
+        // Prime the provider URL cache so the first upload doesn't have to
+        // resolve it from chain.
+        this.providerUrlCache.set(looked.layer0BucketId.toString(), providerUrl);
         return looked;
       }
       throw new Error(
@@ -445,7 +557,12 @@ export class StorageClient {
       );
     }
 
-    // Return bucket info from the event data
+    // We already know the provider HTTP URL — prime the cache so the first
+    // upload skips the on-chain lookup.
+    if (layer0BucketId !== null) {
+      this.providerUrlCache.set(layer0BucketId.toString(), providerUrl);
+    }
+
     return {
       s3BucketId,
       name,
@@ -939,7 +1056,7 @@ export class StorageClient {
 
       const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
 
-      const url = parseMultiaddrToUrl(multiaddrStr) ?? "unknown";
+      const url = parseMultiaddrToHttp(multiaddrStr) ?? "unknown";
       const healthy = url !== "unknown" ? await this.probeHealthy(url) : false;
 
       results.push({ account: providerAccount, endpoint: url, healthy });
@@ -966,7 +1083,13 @@ export class StorageClient {
 
       const maxCapacity = BigInt(settings.max_capacity ?? 0);
       const committedBytes = BigInt(provider.committed_bytes ?? 0);
-      const availableCapacity = maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+      // 0 means unlimited
+      let availableCapacity: bigint = 0n;
+
+      if (maxCapacity !== 0n) {
+        // On-chain already enforces `maxCapacity` > `committedBytes`
+        availableCapacity = maxCapacity - committedBytes;
+      }
 
       providers.push({
         account,
@@ -992,25 +1115,65 @@ export class StorageClient {
     return providers;
   }
 
-  async requestAgreementWithProvider(
-    bucketId: bigint,
-    providerAccount: string,
-    maxBytes: bigint,
-    duration: number,
-    maxPayment: bigint,
-  ): Promise<void> {
-    this.ensureConnected();
+  /**
+   * Score registered providers against the given storage requirements using
+   * the `find_matching_providers` runtime API. Unlike `listAvailableProviders`
+   * (a raw storage sweep), this returns a `matchScore` and `partialReason` per
+   * provider so the picker can surface "best fit" vs near-misses. Sorted by
+   * score descending.
+   */
+  async queryMatchingProviders(
+    query: QueryMatchingProvidersParams["query"],
+    limit: QueryMatchingProvidersParams["limit"] = 10,
+  ): Promise<MatchingProviders[]> {
+    if (!this.api) throw new Error("Not connected. Call connect() first.");
 
-    const tx = this.api!.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: providerAccount,
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxPayment,
-    });
+    const matches = await this.api.apis.StorageProviderApi.find_matching_providers(
+      {
+        bytes_needed: query.bytesNeeded,
+        min_duration: query.minDuration,
+        max_price_per_byte: query.maxPricePerByte,
+        primary_only: query.primaryOnly,
+      },
+      limit,
+    );
 
-    await this.submitAndWatchBestBlock(tx);
+    return matches
+      .map((match) => {
+        const info = match.info;
+        const maxCapacity = BigInt(info.max_capacity ?? 0);
+        const committedBytes = BigInt(info.committed_bytes ?? 0);
+        const availableCapacity =
+          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+        return {
+          account: toSs58(match.account),
+          multiaddr: new TextDecoder().decode(info.multiaddr),
+          stake: BigInt(info.stake ?? 0),
+          availableCapacity,
+          maxCapacity,
+          committedBytes,
+          pricePerByte: BigInt(info.price_per_byte ?? 0),
+          minDuration: info.min_duration ?? 0,
+          maxDuration: info.max_duration ?? 0,
+          acceptingPrimary: info.accepting_primary ?? false,
+          replicaSyncPrice:
+            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+          acceptingExtensions: info.accepting_extensions ?? false,
+          registeredAt: Number(info.registered_at ?? 0),
+          agreementsTotal: info.agreements_total ?? 0,
+          agreementsExtended: info.agreements_extended ?? 0,
+          agreementsNotExtended: info.agreements_not_extended ?? 0,
+          agreementsBurned: info.agreements_burned ?? 0,
+          challengesReceived: info.challenges_received ?? 0,
+          challengesFailed: info.challenges_failed ?? 0,
+          matchScore: match.match_score,
+          partialReason: match.partial_reason?.type ?? "",
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore);
   }
+
 
   // --- Helpers ---
 
