@@ -168,7 +168,7 @@ async function main() {
   tests.push({
     name: "3.8 Delete non-existent object",
     fn: async () => {
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
+      const { s3BucketId: bid } = await mkBucket(
         `e2e-03c-${Date.now()}`.slice(0, 63),
       );
       const tx = api.tx.S3Registry.delete_object_metadata({
