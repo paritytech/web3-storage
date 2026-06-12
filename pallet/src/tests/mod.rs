@@ -17,6 +17,7 @@ mod checkpoint;
 mod end_agreement;
 mod error_paths;
 mod extend_topup;
+mod genesis;
 mod member_buckets;
 mod misc;
 mod provider;

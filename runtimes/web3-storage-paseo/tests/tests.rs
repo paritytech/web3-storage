@@ -1313,3 +1313,95 @@ fn should_create_s3_bucket_with_storage_via_xcm_from_sibling_parachain() {
         assert!(user_buckets.contains(&s3_bucket_id_before));
     });
 }
+
+//
+// Genesis config presets
+//
+
+/// Recursively merge `patch` into `base` (same semantics as the chain-spec
+/// `json_patch::merge` used by `GenesisBuilder::build_state`).
+fn json_merge(base: &mut serde_json::Value, patch: serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base_map), serde_json::Value::Object(patch_map)) => {
+            for (key, value) in patch_map {
+                json_merge(
+                    base_map.entry(key).or_insert(serde_json::Value::Null),
+                    value,
+                );
+            }
+        }
+        (base_slot, patch_value) => *base_slot = patch_value,
+    }
+}
+
+/// Build test externalities from a named genesis preset, exercising the same
+/// JSON path as `GenesisBuilder::build_state`.
+fn preset_ext(name: &str) -> sp_io::TestExternalities {
+    let patch = storage_paseo_runtime::genesis_config_presets::get_preset(
+        &sp_genesis_builder::PresetId::from(name),
+    )
+    .expect("preset must exist");
+    let patch: serde_json::Value = serde_json::from_slice(&patch).expect("preset must be JSON");
+
+    let mut base = serde_json::to_value(RuntimeGenesisConfig::default()).unwrap();
+    json_merge(&mut base, patch);
+
+    let config: RuntimeGenesisConfig =
+        serde_json::from_value(base).expect("merged preset must deserialize");
+    sp_io::TestExternalities::new(config.build_storage().unwrap())
+}
+
+#[test]
+fn preset_names_contains_previewnet() {
+    let names = storage_paseo_runtime::genesis_config_presets::preset_names();
+    assert!(names.iter().any(|id| id.as_str()
+        == storage_paseo_runtime::genesis_config_presets::PREVIEWNET_RUNTIME_PRESET));
+}
+
+#[test]
+fn previewnet_preset_registers_default_provider() {
+    preset_ext("previewnet").execute_with(|| {
+        let alice = Sr25519Keyring::Alice.to_account_id();
+
+        let provider = pallet_storage_provider::Providers::<Runtime>::get(&alice)
+            .expect("PreviewNet default provider must be registered at genesis");
+        assert_eq!(provider.multiaddr.to_vec(), b"/ip4/127.0.0.1/tcp/3333");
+        assert_eq!(
+            provider.public_key.to_vec(),
+            Sr25519Keyring::Alice.to_raw_public_vec()
+        );
+        assert_eq!(provider.stake, 1_200_000_000_000 * UNIT);
+        assert_eq!(provider.committed_bytes, 0);
+
+        assert_eq!(provider.settings.min_duration, 100);
+        assert_eq!(provider.settings.max_duration, 100_000);
+        assert_eq!(provider.settings.price_per_byte, 1);
+        assert!(provider.settings.accepting_primary);
+        assert_eq!(provider.settings.replica_sync_price, None);
+        assert!(provider.settings.accepting_extensions);
+        assert_eq!(provider.settings.max_capacity, 1_099_511_627);
+
+        assert_eq!(Balances::reserved_balance(&alice), 1_200_000_000_000 * UNIT);
+
+        // The two genesis buckets from local_testnet are preserved.
+        assert_eq!(pallet_storage_provider::NextBucketId::<Runtime>::get(), 2);
+
+        assert_eq!(pallet_sudo::Key::<Runtime>::get(), Some(alice));
+    });
+}
+
+#[test]
+fn local_and_dev_presets_register_no_providers() {
+    // Local flows (`just demo`, examples/papi) register the provider
+    // themselves and would fail with `ProviderAlreadyRegistered` if these
+    // presets pre-registered one.
+    for preset in ["local_testnet", "development"] {
+        preset_ext(preset).execute_with(|| {
+            assert_eq!(
+                pallet_storage_provider::Providers::<Runtime>::iter().count(),
+                0,
+                "preset {preset} must not register providers"
+            );
+        });
+    }
+}

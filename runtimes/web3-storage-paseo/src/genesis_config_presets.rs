@@ -5,11 +5,41 @@ use crate::*;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
 use frame_support::build_struct_json_patch;
+use pallet_storage_provider::{GenesisProvider, ProviderSettings};
 use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
 // Parachain ID for Paseo Web3 Storage runtime
 pub const WEB3_STORAGE_PARA_ID: ParaId = ParaId::new(1600);
+
+/// Preset id for PreviewNet, consumed by the PPN repo's chain-spec script
+/// (`chain-spec-builder create ... named-preset previewnet`).
+pub const PREVIEWNET_RUNTIME_PRESET: &str = "previewnet";
+
+/// The PreviewNet default provider (the PPN sidecar, running as //Alice).
+///
+/// Values mirror the provider registered on the live chain so a PreviewNet
+/// wipe re-creates the same on-chain state. The multiaddr matches the
+/// sidecar's bind-derived value byte-for-byte so its multiaddr-sync submits
+/// no update at startup; switching it to the public endpoint is tracked in
+/// issue #169.
+fn previewnet_genesis_provider() -> GenesisProvider<Runtime> {
+    GenesisProvider {
+        account: Sr25519Keyring::Alice.to_account_id(),
+        multiaddr: b"/ip4/127.0.0.1/tcp/3333".to_vec(),
+        public_key: Sr25519Keyring::Alice.to_raw_public_vec(),
+        stake: 1_200_000_000_000 * UNIT,
+        settings: ProviderSettings {
+            min_duration: 100,
+            max_duration: 100_000,
+            price_per_byte: 1,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 1_099_511_627,
+        },
+    }
+}
 
 fn storage_parachain_genesis(
     invulnerables: Vec<(AccountId, sp_consensus_aura::sr25519::AuthorityId)>,
@@ -18,6 +48,7 @@ fn storage_parachain_genesis(
     id: ParaId,
     sudo_account: Option<AccountId>,
     genesis_buckets: Vec<(AccountId, u32)>,
+    genesis_providers: Vec<GenesisProvider<Runtime>>,
 ) -> serde_json::Value {
     build_struct_json_patch!(RuntimeGenesisConfig {
         balances: BalancesConfig {
@@ -50,6 +81,7 @@ fn storage_parachain_genesis(
         sudo: SudoConfig { key: sudo_account },
         storage_provider: StorageProviderConfig {
             buckets: genesis_buckets,
+            providers: genesis_providers,
         },
     })
 }
@@ -81,6 +113,9 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
+            // No genesis providers: local flows (`just demo`, examples/papi)
+            // register the provider themselves.
+            vec![],
         ),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
@@ -103,6 +138,36 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
                 (Sr25519Keyring::Bob.to_account_id(), 1),
                 (Sr25519Keyring::Bob.to_account_id(), 1),
             ],
+            // No genesis providers: local flows (`just demo`, examples/papi)
+            // register the provider themselves.
+            vec![],
+        ),
+        // Same as local_testnet, plus the PreviewNet default provider so a
+        // PreviewNet wipe does not require manually re-registering it.
+        PREVIEWNET_RUNTIME_PRESET => storage_parachain_genesis(
+            vec![
+                (
+                    Sr25519Keyring::Alice.to_account_id(),
+                    Sr25519Keyring::Alice.public().into(),
+                ),
+                (
+                    Sr25519Keyring::Bob.to_account_id(),
+                    Sr25519Keyring::Bob.public().into(),
+                ),
+            ],
+            Sr25519Keyring::well_known()
+                .map(|k| k.to_account_id())
+                .collect(),
+            UNIT * 10_000_000_000_000,
+            WEB3_STORAGE_PARA_ID,
+            // Sudo
+            Some(Sr25519Keyring::Alice.to_account_id()),
+            // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
+            vec![
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+                (Sr25519Keyring::Bob.to_account_id(), 1),
+            ],
+            vec![previewnet_genesis_provider()],
         ),
         _ => return None,
     };
@@ -119,5 +184,6 @@ pub fn preset_names() -> Vec<PresetId> {
     vec![
         PresetId::from(sp_genesis_builder::DEV_RUNTIME_PRESET),
         PresetId::from(sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET),
+        PresetId::from(PREVIEWNET_RUNTIME_PRESET),
     ]
 }
