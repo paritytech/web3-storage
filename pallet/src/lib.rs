@@ -3903,6 +3903,9 @@ pub mod pallet {
                 Error::<T>::TermsBucketMismatch
             );
 
+            // Request's terms.max_bytes must greater than 0
+            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
+
             // Quote must not be stale.
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
