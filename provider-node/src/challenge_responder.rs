@@ -221,8 +221,9 @@ impl ChallengeResponder {
 
         loop {
             tokio::select! {
-                // Prioritize control commands (pause/resume/stop) over the periodic
-                // poll so a pause takes effect before the next poll can submit.
+                // Prefer control commands over the poll tick: the interval's
+                // first tick fires immediately, so an unbiased select could
+                // service a poll before a Pause/Stop queued right after start().
                 biased;
 
                 cmd = command_rx.recv() => {

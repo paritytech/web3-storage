@@ -30,23 +30,28 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        MIN_BLOCK: ${{ inputs.min-block }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        RPC_URL: ${{ inputs.rpc-url }}
+        LOG_FILE: ${{ inputs.log-file }}
       run: |
-        echo "Waiting for parachain to produce blocks (min #${{ inputs.min-block }})..."
-        for i in $(seq 1 ${{ inputs.attempts }}); do
+        echo "Waiting for parachain to produce blocks (min #${MIN_BLOCK})..."
+        for i in $(seq 1 "$ATTEMPTS"); do
           HEADER=$(curl -s -H "Content-Type: application/json" \
             -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}' \
-            "${{ inputs.rpc-url }}" 2>/dev/null) || true
+            "$RPC_URL" 2>/dev/null) || true
           BLOCK_HEX=$(echo "$HEADER" | jq -r '.result.number // empty' 2>/dev/null)
           if [ -n "$BLOCK_HEX" ]; then
             BLOCK_NUM=$((BLOCK_HEX))
-            if [ "$BLOCK_NUM" -ge ${{ inputs.min-block }} ]; then
+            if [ "$BLOCK_NUM" -ge "$MIN_BLOCK" ]; then
               echo "Parachain best block: #$BLOCK_NUM (attempt $i)"
               break
             fi
           fi
-          if [ "$i" -eq ${{ inputs.attempts }} ]; then
-            echo "TIMEOUT: parachain did not produce block #${{ inputs.min-block }}"
-            cat "${{ inputs.log-file }}" 2>/dev/null || true
+          if [ "$i" -eq "$ATTEMPTS" ]; then
+            echo "TIMEOUT: parachain did not produce block #${MIN_BLOCK}"
+            cat "$LOG_FILE" 2>/dev/null || true
             exit 1
           fi
           sleep 5
