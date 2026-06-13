@@ -241,22 +241,6 @@ export async function deregisterProvider(api, provider) {
   );
 }
 
-export async function completeDeregister(api, provider) {
-  return submitTx(
-    api.tx.StorageProvider.complete_deregister(),
-    provider.signer,
-    "complete_deregister"
-  );
-}
-
-export async function cancelDeregister(api, provider) {
-  return submitTx(
-    api.tx.StorageProvider.cancel_deregister(),
-    provider.signer,
-    "cancel_deregister"
-  );
-}
-
 export async function updateProviderMultiaddr(api, provider, multiaddr) {
   const bytes = typeof multiaddr === "string"
     ? new TextEncoder().encode(multiaddr)

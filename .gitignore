@@ -45,6 +45,7 @@ zombienet/storage-local-spec.json
 
 # Build output
 **/dist/
+coverage
 
 # Playwright artefacts
 user-interfaces/**/playwright-report/
