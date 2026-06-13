@@ -79,12 +79,12 @@ fn establish_replica_agreement_fails_no_replica_sync_price() {
 }
 
 #[test]
-fn establish_replica_agreement_fails_deregister_announced() {
+fn establish_replica_agreement_fails_after_provider_deregistered() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
         let bucket_id = create_bucket(1, 0);
 
-        // Announce deregistration
+        // Provider deregisters immediately (no active agreements).
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             2
         )));
@@ -109,7 +109,7 @@ fn establish_replica_agreement_fails_deregister_announced() {
                 terms,
                 sig
             ),
-            Error::<Test>::DeregisterAnnounced
+            Error::<Test>::ProviderNotFound
         );
     });
 }

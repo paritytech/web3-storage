@@ -56,8 +56,6 @@ use core::marker::PhantomData;
 pub trait WeightInfo {
 	fn register_provider() -> Weight;
 	fn deregister_provider() -> Weight;
-	fn complete_deregister() -> Weight;
-	fn cancel_deregister() -> Weight;
 	fn update_provider_settings() -> Weight;
 	fn add_stake() -> Weight;
 	fn block_extensions() -> Weight;
@@ -108,22 +106,11 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn deregister_provider() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `272`
-		//  Estimated: `3825`
-		// Minimum execution time: 7_000_000 picoseconds.
-		Weight::from_parts(8_000_000, 3825)
-			.saturating_add(T::DbWeight::get().reads(1_u64))
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::CheckpointRewards` (r:1001 w:1000)
 	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn complete_deregister() -> Weight {
+	fn deregister_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `44971`
 		//  Estimated: `2566553`
@@ -131,17 +118,6 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		Weight::from_parts(4_199_000_000, 2566553)
 			.saturating_add(T::DbWeight::get().reads(1003_u64))
 			.saturating_add(T::DbWeight::get().writes(1002_u64))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn cancel_deregister() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `255`
-		//  Estimated: `3825`
-		// Minimum execution time: 6_000_000 picoseconds.
-		Weight::from_parts(7_000_000, 3825)
-			.saturating_add(T::DbWeight::get().reads(1_u64))
-			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
@@ -631,22 +607,11 @@ impl WeightInfo for () {
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn deregister_provider() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `272`
-		//  Estimated: `3825`
-		// Minimum execution time: 7_000_000 picoseconds.
-		Weight::from_parts(8_000_000, 3825)
-			.saturating_add(RocksDbWeight::get().reads(1_u64))
-			.saturating_add(RocksDbWeight::get().writes(1_u64))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::CheckpointRewards` (r:1001 w:1000)
 	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn complete_deregister() -> Weight {
+	fn deregister_provider() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `44971`
 		//  Estimated: `2566553`
@@ -654,17 +619,6 @@ impl WeightInfo for () {
 		Weight::from_parts(4_199_000_000, 2566553)
 			.saturating_add(RocksDbWeight::get().reads(1003_u64))
 			.saturating_add(RocksDbWeight::get().writes(1002_u64))
-	}
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn cancel_deregister() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `255`
-		//  Estimated: `3825`
-		// Minimum execution time: 6_000_000 picoseconds.
-		Weight::from_parts(7_000_000, 3825)
-			.saturating_add(RocksDbWeight::get().reads(1_u64))
-			.saturating_add(RocksDbWeight::get().writes(1_u64))
 	}
 	/// Storage: `StorageProvider::Providers` (r:1 w:1)
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)

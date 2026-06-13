@@ -17,7 +17,7 @@ use storage_paseo_runtime::{
     RuntimeOrigin, S3Registry, SessionKeys, StorageProvider, System, TxExtension,
     UncheckedExtrinsic, WeightToFee,
 };
-use storage_primitives::AgreementTerms;
+use storage_primitives::{AgreementTerms, EndAction};
 use xcm::latest::prelude::*;
 use xcm_runtime_apis::conversions::LocationToAccountHelper;
 
@@ -468,83 +468,92 @@ fn should_deregister_provider() {
 
         assert_eq!(Balances::reserved_balance(&who), stake);
 
-        // Step 1: announce. Record stays, stake stays reserved, deregister_at stamped.
+        // Provider has no active agreements (committed_bytes == 0).
         assert_ok_ok(construct_and_apply_extrinsic(
             Some(account.pair()),
             RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::deregister_provider {}),
         ));
-        let provider =
-            StorageProvider::providers(&who).expect("provider must still exist after announce");
-        let deregister_at = provider
-            .deregister_at
-            .expect("deregister_at must be set after announce");
-        assert_eq!(Balances::reserved_balance(&who), stake);
 
-        // Step 2: premature completion is rejected.
-        let result = construct_and_apply_extrinsic(
-            Some(account.pair()),
-            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::complete_deregister {}),
-        );
-        assert!(
-            result.expect("extrinsic applies").is_err(),
-            "complete_deregister before deregister_at must error"
-        );
-
-        // Step 3: fast-forward through the announcement period. Jump close to
-        // the boundary with `set_block_number` (the period is `48 * HOURS`
-        // ≈ 28,800 blocks, far too many to iterate one-by-one) then cross it
-        // via `advance_block` so the `on_finalize` / `on_initialize` hooks
-        // fire at the maturing block.
-        System::set_block_number(deregister_at.saturating_sub(1));
-        advance_block();
-        assert!(frame_system::Pallet::<Runtime>::block_number() >= deregister_at);
-
-        // Step 4: complete. Record removed, stake unreserved.
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(account.pair()),
-            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::complete_deregister {}),
-        ));
+        // Record removed immediately, stake unreserved.
         assert!(StorageProvider::providers(&who).is_none());
         assert_eq!(Balances::reserved_balance(&who), 0);
     });
 }
 
+/// Full deregister lifecycle: register → establish agreement → end agreement
+/// → deregister → re-register. Mirrors the E2E workflow 08 lifecycle test.
 #[test]
-fn should_cancel_deregister_announcement() {
+fn should_deregister_provider_full_lifecycle() {
     new_test_ext().execute_with(|| {
-        let account = Sr25519Keyring::Alice;
-        let who: AccountId = account.to_account_id();
+        let provider = Sr25519Keyring::Bob;
+        let provider_id: AccountId = provider.to_account_id();
+        let owner = Sr25519Keyring::Alice;
+        let owner_id: AccountId = owner.to_account_id();
         let stake = default_stake();
-        register_provider_for(account, stake);
 
-        // Announce.
+        // 1. Provider registers and accepts primary agreements.
+        register_accepting_provider_for(provider, stake);
+        let _ = Balances::deposit_creating(&owner_id, 10 * UNIT);
+
+        // 2. Owner redeems provider-signed terms to open an agreement.
+        let bucket_id = pallet_storage_provider::NextBucketId::<Runtime>::get();
+        let terms = primary_terms(owner_id.clone(), 1_000_000, 500, 1);
+        let sig = sign_primary_terms(provider, &terms);
         assert_ok_ok(construct_and_apply_extrinsic(
-            Some(account.pair()),
+            Some(owner.pair()),
+            RuntimeCall::StorageProvider(
+                StorageProviderCall::<Runtime>::establish_storage_agreement {
+                    provider: provider_id.clone(),
+                    terms,
+                    sig,
+                },
+            ),
+        ));
+        assert!(
+            StorageProvider::providers(&provider_id)
+                .expect("provider must exist")
+                .committed_bytes
+                > 0,
+            "provider should have committed_bytes > 0 after establishing"
+        );
+
+        // 3. Deregister is gated while committed.
+        let blocked = construct_and_apply_extrinsic(
+            Some(provider.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::deregister_provider {}),
+        );
+        assert!(
+            blocked.expect("extrinsic applies").is_err(),
+            "deregister must fail while committed_bytes > 0"
+        );
+
+        // 4. Owner (bucket admin) early-terminates via Pay.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(owner.pair()),
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::end_agreement {
+                bucket_id,
+                provider: provider_id.clone(),
+                action: EndAction::Pay,
+            }),
+        ));
+        assert_eq!(
+            StorageProvider::providers(&provider_id)
+                .expect("provider must exist")
+                .committed_bytes,
+            0,
+            "committed_bytes should be 0 after ending the agreement"
+        );
+
+        // 5. Deregister now succeeds and removes the record.
+        assert_ok_ok(construct_and_apply_extrinsic(
+            Some(provider.pair()),
             RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::deregister_provider {}),
         ));
-        let provider = StorageProvider::providers(&who).expect("provider must exist");
-        assert!(provider.deregister_at.is_some());
-        // Announce forces acceptance flags off.
-        assert!(!provider.settings.accepting_primary);
-        assert!(!provider.settings.accepting_extensions);
+        assert!(StorageProvider::providers(&provider_id).is_none());
 
-        // Advance a few blocks to make sure cancel still works within the window.
-        advance_block();
-        advance_block();
-
-        // Cancel.
-        assert_ok_ok(construct_and_apply_extrinsic(
-            Some(account.pair()),
-            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::cancel_deregister {}),
-        ));
-        let provider =
-            StorageProvider::providers(&who).expect("provider must still exist after cancel");
-        // Cancel mirrors announce: deregister_at cleared, flags restored.
-        assert!(provider.deregister_at.is_none());
-        assert!(provider.settings.accepting_primary);
-        assert!(provider.settings.accepting_extensions);
-        // Stake stays reserved throughout — never went anywhere.
-        assert_eq!(Balances::reserved_balance(&who), stake);
+        // 6. Re-registration works — the record was fully removed, not flagged.
+        register_provider_for(provider, stake);
+        assert!(StorageProvider::providers(&provider_id).is_some());
     });
 }
 

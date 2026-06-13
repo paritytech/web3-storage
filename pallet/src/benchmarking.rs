@@ -264,71 +264,28 @@ mod benchmarks {
         register_provider(RawOrigin::Signed(caller), multiaddr, public_key, stake);
     }
 
-    #[benchmark]
-    fn deregister_provider() {
-        let _provider = create_provider::<T>(0);
-        // Need to remove all agreements first - just use a fresh provider with no agreements
-
-        let provider2 = funded_account::<T>("provider2", 99);
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
-        let public_key = [0u8; 32].to_vec();
-        let stake = T::MinProviderStake::get();
-
-        let _ = Pallet::<T>::register_provider(
-            RawOrigin::Signed(provider2.clone()).into(),
-            multiaddr.try_into().unwrap(),
-            public_key.try_into().unwrap(),
-            stake,
-        );
-
-        #[extrinsic_call]
-        deregister_provider(RawOrigin::Signed(provider2));
-    }
-
     /// Worst case: provider has the maximum representative number of pending
     /// `CheckpointRewards` entries, all drained via `iter_prefix` + `take`
     /// before stake is unreserved and the record removed.
     ///
     /// The drain count is bounded by `MaxBucketsPerMember` — the closest
     /// existing config-derived cap on "how many buckets one entity holds
-    /// state in." Not a strict semantic match (a provider isn't required to
-    /// be a bucket member), but it's the right order of magnitude and tracks
-    /// the runtime's storage-bloat tolerance for the same shape of data.
+    /// state in."
     #[benchmark]
-    fn complete_deregister() {
+    fn deregister_provider() {
         let provider = create_provider::<T>(0);
 
-        // Seed reward entries across distinct buckets. We poke storage
-        // directly because exercising the real checkpoint-reward credit path
-        // requires a full multi-provider checkpoint setup per bucket, which
-        // would dominate the benchmark and obscure the drain cost we're
-        // actually measuring.
+        // Seed reward entries across distinct buckets directly — exercising
+        // the real checkpoint-reward credit path would dominate and obscure
+        // the drain cost we're actually measuring.
         let reward: BalanceOf<T> = 1_000u32.into();
         let n = T::MaxBucketsPerMember::get();
         for i in 0..n {
             CheckpointRewards::<T>::insert(&provider, i as BucketId, reward);
         }
 
-        // Announce step.
-        let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
-
-        // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
-        let announce_block = System::<T>::block_number();
-        let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
-        System::<T>::set_block_number(complete_after);
-
         #[extrinsic_call]
-        complete_deregister(RawOrigin::Signed(provider));
-    }
-
-    /// Single provider mutate: clears `deregister_at` and restores acceptance flags.
-    #[benchmark]
-    fn cancel_deregister() {
-        let provider = create_provider::<T>(0);
-        let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
-
-        #[extrinsic_call]
-        cancel_deregister(RawOrigin::Signed(provider));
+        deregister_provider(RawOrigin::Signed(provider));
     }
 
     #[benchmark]
