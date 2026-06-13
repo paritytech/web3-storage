@@ -5,7 +5,7 @@
  *
  * Accounts: //Alice (provider w/ node), //Charlie (bare provider), //Dave (client)
  *
- * Usage: node e2e/08-provider-deregistration.js [chain_ws] [provider_url]
+ * Usage: node e2e/08-provider-deregistration.js [chain_ws] [alice_provider_url] [charlie_provider_url]
  */
 
 import assert from "node:assert";
@@ -19,7 +19,8 @@ import {
 } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
-const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+const ALICE_PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+const CHARLIE_PROVIDER_URL = process.argv[4] || "http://127.0.0.1:3334";
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -29,10 +30,10 @@ async function main() {
   const { papi, api } = await setupChain(CHAIN_WS);
 
   // Alice runs the provider node — used for the active-agreement test.
-  await ensureProviderRegistered(api, provider, PROVIDER_URL);
+  await ensureProviderRegistered(api, provider, ALICE_PROVIDER_URL);
 
   // Charlie is a bare registration (no node) for the single-step deregister tests.
-  await ensureProviderRegistered(api, charlie, PROVIDER_URL);
+  await ensureProviderRegistered(api, charlie, CHARLIE_PROVIDER_URL);
 
   const tests = [];
 
@@ -59,7 +60,7 @@ async function main() {
     name: "8.2 Re-registration works after deregister",
     fn: async () => {
       // Proves the record was fully removed (not merely flagged).
-      await registerProvider(api, charlie, PROVIDER_URL);
+      await registerProvider(api, charlie, ALICE_PROVIDER_URL);
       const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.ok(stored, "Charlie should be re-registered");
     },
@@ -70,34 +71,35 @@ async function main() {
   tests.push({
     name: "8.3 Full deregister lifecycle (establish → end → deregister → re-register)",
     fn: async () => {
-      // Step 1: dave opens an agreement against Alice.
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, dave, provider, {
+      // Use Charlie (fresh provider) so committed_bytes is fully controlled by this test
+      // Step 1: Dave opens an agreement against Charlie.
+      const { bucketId } = await negotiateAndEstablish(api, CHARLIE_PROVIDER_URL, dave, charlie, {
         maxBytes: 1_048_576n,
         duration: 100,
       });
-      const infoBefore = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      assert.ok(infoBefore.committed_bytes > 0n, "Alice should have committed_bytes > 0");
+      const infoBefore = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
+      assert.ok(infoBefore.committed_bytes > 0n, "Charlie should have committed_bytes > 0");
 
       // Step 2: deregister is blocked while committed.
       const txBlocked = api.tx.StorageProvider.deregister_provider();
-      await submitTxExpectFailure(txBlocked, provider.signer, "ProviderHasActiveAgreements", "8.3-gate");
+      await submitTxExpectFailure(txBlocked, charlie.signer, "ProviderHasActiveAgreements", "8.3-gate");
 
       // Step 3: dave (bucket owner/admin) early-terminates via Pay.
-      await endAgreement(api, dave, provider, bucketId, "Pay");
-      const infoAfterEnd = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
+      await endAgreement(api, dave, charlie, bucketId, "Pay");
+      const infoAfterEnd = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.strictEqual(infoAfterEnd.committed_bytes, 0n, "committed_bytes should be 0 after end");
 
       // Step 4: deregister now succeeds.
-      const result = await deregisterProvider(api, provider);
+      const result = await deregisterProvider(api, charlie);
       const events = api.event.StorageProvider.ProviderDeregistered.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected ProviderDeregistered event");
-      const afterDeregister = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      assert.strictEqual(afterDeregister, undefined, "Alice provider record must be absent after deregistration");
+      const afterDeregister = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
+      assert.strictEqual(afterDeregister, undefined, "Charlie provider record must be absent after deregistration");
 
-      // Step 5: Alice re-registers successfully.
-      await registerProvider(api, provider, PROVIDER_URL);
-      const reregistered = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
-      assert.ok(reregistered, "Alice should be re-registered");
+      // Step 5: Charlie re-registers successfully.
+      await registerProvider(api, charlie, CHARLIE_PROVIDER_URL);
+      const reregistered = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
+      assert.ok(reregistered, "Charlie should be re-registered");
     },
   });
 

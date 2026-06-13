@@ -298,18 +298,39 @@ jobs:
       - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
           cargo run --release -p storage-client --example register_provider \
             ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3334 /ip4/127.0.0.1/tcp/3334 /tmp/charlie-key
 
-      - name: Start provider (inmemory)
+      - name: Start provider (alice - inmemory)
         run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider-alice.log 2>&1 &
 
-      - name: Wait for provider health
+      - name: Wait for alice provider health
         uses: ./.github/actions/wait-for-provider-health
+        with:
+          url: http://127.0.0.1:3333
+          label: alice
+          log-file: /tmp/provider-alice.log
+
+      - name: Start provider (charlie - inmemory)
+        run: |
+          nohup ./target/release/storage-provider-node \
+            --keyfile /tmp/charlie-key --storage-mode inmemory \
+            --bind-addr 0.0.0.0:3334 --chain-rpc ws://127.0.0.1:2222 \
+            --enable-checkpoint-coordinator > /tmp/provider-charlie.log 2>&1 &
+
+      - name: Wait for charlie provider health
+        uses: ./.github/actions/wait-for-provider-health
+        with:
+          url: http://127.0.0.1:3334
+          label: charlie
+          log-file: /tmp/provider-charlie.log
 
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
@@ -380,7 +401,8 @@ jobs:
           name: e2e-integration-test-logs
           path: |
             /tmp/omni-node.log
-            /tmp/provider.log
+            /tmp/provider-alice.log
+            /tmp/provider-charlie.log
 
   # ── Smart-contract demos (dev mode) ──────────────────────────────────────────
   # Runs all SC demos on a fast dev-mode chain (2s blocks, instant finality).

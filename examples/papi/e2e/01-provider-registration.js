@@ -47,7 +47,8 @@ async function matchEntry(api, who, { bytesNeeded, minDuration, maxPricePerByte 
       max_price_per_byte: maxPricePerByte,
       primary_only: true,
     },
-    50
+    50,
+    READ_OPTS
   );
   return matches.find((m) => toHex(m.account.asBytes()) === toHex(who.publicKey));
 }
@@ -251,6 +252,7 @@ async function main() {
         });
         assert.ok(entry, "Charlie should still be listed");
         assert.strictEqual(entry.match_score, 0, "Non-accepting provider should score 0");
+        assert.strictEqual(entry.info.accepting_primary, false, "Non-accepting primary provider should be false");
         assert.strictEqual(
           entry.partial_reason?.type,
           "NotAccepting",
