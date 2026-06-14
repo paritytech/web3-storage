@@ -12,7 +12,9 @@ import {
   type BucketMember,
   type ProviderEndpointInfo,
   type AvailableProvider,
-  type CreateBucketOptions,
+  type MatchingProviders,
+  type QueryMatchingProvidersParams,
+  type SignedTerms,
   type UploadResult,
   type PutObjectOptions,
   type S3ObjectInfo,
@@ -35,7 +37,14 @@ interface StorageState {
   setSigner: (seed: string) => Promise<void>;
 
   // Buckets (S3)
-  createBucket: (name: string, options: CreateBucketOptions) => Promise<BucketInfo>;
+  // Step 2 of bucket creation. Step 1 (HTTP `negotiateTerms`) runs in the
+  // caller so a failed chain submit can be retried with the same `signed`.
+  submitCreateBucket: (
+    name: string,
+    providerAccount: string,
+    providerUrl: string,
+    signed: SignedTerms,
+  ) => Promise<BucketInfo>;
   refreshBuckets: () => Promise<void>;
   deleteBucket: (name: string) => Promise<void>;
   putObject: (bucketName: string, key: string, data: Uint8Array, bucketId: bigint, options?: PutObjectOptions) => Promise<UploadResult>;
@@ -45,9 +54,11 @@ interface StorageState {
 
   // Provider
   checkProviderHealth: (bucketId: bigint) => Promise<boolean>;
-  waitForProvider: (bucketId: bigint, onProgress?: (status: string, elapsedMs: number, attempt: number) => void) => Promise<string>;
   listAvailableProviders: () => Promise<AvailableProvider[]>;
-  requestAgreementWithProvider: (bucketId: bigint, providerAccount: string, maxBytes: bigint, duration: number, maxPayment: bigint) => Promise<void>;
+  queryMatchingProviders: (
+    query: QueryMatchingProvidersParams["query"],
+    limit?: QueryMatchingProvidersParams["limit"],
+  ) => Promise<MatchingProviders[]>;
 
   // Bucket Members & Permissions
   fetchBucketMembers: (bucketId: bigint) => Promise<BucketMember[]>;
@@ -187,22 +198,27 @@ export function StorageProvider({ children }: { children: ReactNode }) {
 
   // --- Bucket Operations ---
 
-  const createBucket = useCallback(async (name: string, options: CreateBucketOptions): Promise<BucketInfo> => {
+  const submitCreateBucket = useCallback(async (
+    name: string,
+    providerAccount: string,
+    providerUrl: string,
+    signed: SignedTerms,
+  ): Promise<BucketInfo> => {
     if (!client) throw new Error("Client not connected");
     if (!signerAddress) throw new Error("Signer not set");
 
     setLoading(true);
     setError(null);
     try {
-      console.log("[useStorage] createBucket:", name, options);
-      const bucket = await client.createBucket(name, options);
-      console.log("[useStorage] createBucket success:", bucket);
+      console.log("[useStorage] submitCreateBucket:", name, providerAccount, providerUrl);
+      const bucket = await client.submitCreateBucket(name, providerAccount, providerUrl, signed);
+      console.log("[useStorage] submitCreateBucket success:", bucket);
       // Skip refreshBuckets — caller already has BucketInfo from events.
       // Add to local state directly for immediate UI update.
       setBuckets((prev) => [...prev, bucket]);
       return bucket;
     } catch (err) {
-      console.error("[useStorage] createBucket failed:", err);
+      console.error("[useStorage] submitCreateBucket failed:", err);
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[useStorage] Error message:", msg);
       if (msg.includes("incompatible") || msg.includes("runtime")) {
@@ -293,35 +309,17 @@ export function StorageProvider({ children }: { children: ReactNode }) {
     return client.checkProviderHealth(bucketId);
   }, [client]);
 
-  const waitForProvider = useCallback(async (
-    bucketId: bigint,
-    onProgress?: (status: string, elapsedMs: number, attempt: number) => void,
-  ): Promise<string> => {
-    if (!client) throw new Error("Client not connected");
-    return client.waitForProvider(bucketId, onProgress);
-  }, [client]);
-
   const listAvailableProviders = useCallback(async (): Promise<AvailableProvider[]> => {
     if (!client) throw new Error("Client not connected");
     return client.listAvailableProviders();
   }, [client]);
 
-  const requestAgreementWithProvider = useCallback(async (
-    bucketId: bigint,
-    providerAccount: string,
-    maxBytes: bigint,
-    duration: number,
-    maxPayment: bigint,
-  ): Promise<void> => {
+  const queryMatchingProviders = useCallback(async (
+    query: QueryMatchingProvidersParams["query"],
+    limit?: QueryMatchingProvidersParams["limit"],
+  ): Promise<MatchingProviders[]> => {
     if (!client) throw new Error("Client not connected");
-    setError(null);
-    try {
-      await client.requestAgreementWithProvider(bucketId, providerAccount, maxBytes, duration, maxPayment);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to request agreement";
-      setError(msg);
-      throw err;
-    }
+    return client.queryMatchingProviders(query, limit);
   }, [client]);
 
   // --- Bucket Members & Permissions ---
@@ -458,7 +456,7 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         balance,
         providerCapacity,
         setSigner,
-        createBucket,
+        submitCreateBucket,
         refreshBuckets,
         deleteBucket,
         putObject,
@@ -466,9 +464,8 @@ export function StorageProvider({ children }: { children: ReactNode }) {
         listObjects,
         deleteObject,
         checkProviderHealth,
-        waitForProvider,
         listAvailableProviders,
-        requestAgreementWithProvider,
+        queryMatchingProviders,
         fetchBucketMembers,
         addBucketMember,
         removeBucketMember,

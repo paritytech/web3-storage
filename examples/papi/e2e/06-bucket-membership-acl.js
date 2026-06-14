@@ -9,18 +9,31 @@
  */
 
 import assert from "node:assert";
-import { createBucket, removeMember, setMember } from "../api.js";
-import { makeSigner, READ_OPTS, sameAddress } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import { removeMember, setMember } from "../api.js";
+import {
+  ensureProviderRegistered,
+  makeSigner,
+  READ_OPTS,
+  sameAddress,
+} from "../common.js";
+import {
+  negotiateAndEstablish,
+  runSuite,
+  submitTxExpectFailure,
+  setupChain,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
+const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
 async function main() {
+  const provider = makeSigner("//Alice");
   const admin = makeSigner("//Dave");
   const writer = makeSigner("//Eve");
   const reader = makeSigner("//Ferdie");
 
   const { papi, api } = await setupChain(CHAIN_WS);
+  await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
   let bucketId;
 
@@ -31,7 +44,12 @@ async function main() {
   tests.push({
     name: "6.0 Create bucket",
     fn: async () => {
-      bucketId = await createBucket(api, admin);
+      // A bucket now comes from redeeming provider-signed terms; Dave is the
+      // admin of the bucket opened by the agreement.
+      ({ bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, admin, provider, {
+        maxBytes: 1_048_576n,
+        duration: 100,
+      }));
       assert.ok(bucketId !== undefined, "Bucket should be created");
     },
   });

@@ -345,6 +345,7 @@ maxPayment: 600000000000000000
 replicaParams: {
   syncBalance: 50000000,
   minSyncInterval: 100
+  syncPrice: 1000000,
 }
 ```
 

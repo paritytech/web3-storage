@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use reqwest::Client;
 use serde_json::{json, Value};
+use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,6 +21,8 @@ struct TestServer {
     client: Client,
 }
 
+pub const PROVIDER_SEED: &str = "//Alice";
+
 impl TestServer {
     /// Spin up a server with `//Alice` as the signing key.
     ///
@@ -27,7 +30,7 @@ impl TestServer {
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
         Self::with_state(Arc::new(
-            ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
+            ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
                 .expect("//Alice is a valid SURI"),
         ))
         .await
@@ -97,8 +100,13 @@ async fn test_info_endpoint() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
+    let expect_provider_id = sr25519::Pair::from_string(PROVIDER_SEED, None)
+        .expect("Invalid provider seed")
+        .public()
+        .to_ss58check();
+
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "healthy");
+    assert_eq!(body["provider_id"], expect_provider_id);
 }
 
 #[tokio::test]

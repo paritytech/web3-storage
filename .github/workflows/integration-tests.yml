@@ -155,14 +155,21 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Register providers on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3334 /ip4/127.0.0.1/tcp/3334 /tmp/charlie-key
+
+      - name: Start provider (inmemory) and wait for health
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider-inmemory.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -190,6 +197,7 @@ jobs:
           name: zombienet-smoke-test-logs
           path: |
             /tmp/zombienet.log
+            /tmp/provider-inmemory.log
             /tmp/provider.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
@@ -287,14 +295,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (inmemory)
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -480,14 +492,18 @@ jobs:
         with:
           log-file: /tmp/omni-node.log
 
-      - name: Start provider (inmemory)
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (inmemory) and wait for health
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -633,14 +649,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (Alice, inmemory)
+      - name: Register providers on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (Alice, inmemory)
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health

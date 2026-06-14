@@ -34,6 +34,7 @@ import {
   parseProviderClientArgs,
   READ_OPTS,
   requireOneEvent,
+  toHex,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -44,6 +45,8 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
+  h160ToSubstrate,
+  negotiatePrecompileTerms,
   substrateToH160,
 } from "./sc-api.js";
 
@@ -78,8 +81,9 @@ async function main() {
     const recipientH160 = substrateToH160(recipient.publicKey);
 
     console.log("\n[setup] provider + Revive account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, providerUrl, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -103,14 +107,27 @@ async function main() {
     const deployed = await deployContract(api, publisher, bytecode);
     console.log("  contract:", deployed.address);
 
-    // 2) initialize{value: 5 UNIT}('cov-bucket-N', …).
+    // 2) initialize{value: 5 UNIT}('cov-bucket-N', …) — terms negotiated with
+    // the contract's substrate-mapped account as owner; msg.value funds that
+    // account's payment reserve.
     // Bucket name: 3-63 chars, lowercase alphanumeric + hyphens. Append the
     // block number so the name is unique across reruns on the same chain
     // (`pallet_s3_registry` enforces global name uniqueness).
     const blockHead = await api.query.System.Number.getValue(READ_OPTS);
     const bucketName = `cov-bucket-${Number(blockHead)}`;
-    console.log(`\n[2/6] initialize{value: 5 UNIT}('${bucketName}', 1MiB, 50 blocks, …)`);
-    const initData = encodeCall(abi, "initialize", [bucketName, 1n << 20n, 50, 2n * UNIT]);
+    console.log(`\n[2/6] initialize{value: 5 UNIT}('${bucketName}', provider, terms[1MiB×50], sig)`);
+    const contractAccount = h160ToSubstrate(deployed.addressBytes);
+    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+      maxBytes: 1n << 20n,
+      duration: 50,
+      pricePerByte: PRICE_PER_BYTE,
+    });
+    const initData = encodeCall(abi, "initialize", [
+      bucketName,
+      toHex(provider.publicKey),
+      signed.terms,
+      signed.signature,
+    ]);
     let r = await callContract(api, publisher, deployed.addressBytes, initData, {
       value: 5n * UNIT,
     });
