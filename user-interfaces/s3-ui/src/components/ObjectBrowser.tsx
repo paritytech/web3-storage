@@ -13,6 +13,8 @@ import {
   LayoutGrid,
   LayoutList,
   Loader2,
+  Shield,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +38,7 @@ import {
   useS3Loading,
   useUploading,
   useViewMode,
+  useEncryptionKey,
   setViewMode,
   navigateToPrefix,
   refreshObjects,
@@ -49,6 +52,8 @@ import UploadZone from "./UploadZone";
 import UploadObjectDialog from "./UploadObjectDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./EmptyState";
+import CheckpointPanel from "./CheckpointPanel";
+import EncryptionPanel from "./EncryptionPanel";
 
 /**
  * Derive virtual folders and files from flat S3 object keys.
@@ -86,8 +91,11 @@ export default function ObjectBrowser() {
   const loading = useS3Loading();
   const uploading = useUploading();
   const viewMode = useViewMode();
+  const encryptionKey = useEncryptionKey();
 
   const [objectToDelete, setObjectToDelete] = useState<string | null>(null);
+  const [showCheckpoint, setShowCheckpoint] = useState(false);
+  const [showEncryption, setShowEncryption] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [dropFile, setDropFile] = useState<File | null>(null);
 
@@ -200,6 +208,26 @@ export default function ObjectBrowser() {
             </Button>
             <div className="w-px h-6 bg-border mx-1" />
             <Button
+              data-testid="encryption-toggle"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setShowEncryption(!showEncryption)}
+              title={encryptionKey ? "Encryption enabled" : "Encryption"}
+            >
+              <Lock className={`h-4 w-4 ${encryptionKey ? "text-amber-500" : showEncryption ? "text-primary" : ""}`} />
+            </Button>
+            <Button
+              data-testid="checkpoint-toggle"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setShowCheckpoint(!showCheckpoint)}
+              title="Checkpoint"
+            >
+              <Shield className={`h-4 w-4 ${showCheckpoint ? "text-primary" : ""}`} />
+            </Button>
+            <Button
               data-testid="view-mode-toggle"
               variant="ghost"
               size="icon"
@@ -224,6 +252,18 @@ export default function ObjectBrowser() {
             </Button>
           </div>
         </div>
+
+        {showEncryption && (
+          <div className="pt-4">
+            <EncryptionPanel />
+          </div>
+        )}
+
+        {showCheckpoint && (
+          <div className="pt-4">
+            <CheckpointPanel />
+          </div>
+        )}
 
         {/* Object list */}
         <div className="flex-1 pt-4">
