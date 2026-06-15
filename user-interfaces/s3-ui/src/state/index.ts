@@ -94,7 +94,9 @@ export {
   useCheckpointInfo,
   useCheckpointDuty,
   useCheckpointLoading,
+  useCheckpointStatus,
   refreshCheckpoint,
   triggerCheckpoint,
   clearCheckpointState,
+  type CheckpointStatus,
 } from "./checkpoint.state";
