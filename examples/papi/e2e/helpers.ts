@@ -8,7 +8,9 @@
 import type { PolkadotSigner } from "polkadot-api/signer";
 import {
   connect,
+  establishStorageAgreement,
   formatDispatchError,
+  negotiateTerms,
   READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
@@ -16,6 +18,7 @@ import {
   type ChainConnection,
   type ChainSigner,
   type ParachainApi,
+  type SignedTerms,
   type SubmittableTx,
 } from "@web3-storage/sdk";
 
@@ -183,4 +186,58 @@ export async function setupChain(chainWs: string): Promise<ChainConnection> {
 export async function getFree(api: ParachainApi, who: ChainSigner): Promise<bigint> {
   const acc = await api.query.System.Account.getValue(who.address, READ_OPTS);
   return acc.data.free;
+}
+
+// ── Off-chain agreement helpers (negotiate -> establish, #105) ───────────────
+
+export interface NegotiateOpts {
+  maxBytes: bigint;
+  duration: number;
+  /** Set for replica agreements against an existing bucket. */
+  bucketId?: bigint | null;
+  replicaParams?: { sync_balance: bigint; min_sync_interval: number } | null;
+  /** Defaults to the provider's current on-chain price_per_byte. */
+  pricePerByte?: bigint | null;
+}
+
+/**
+ * Negotiate provider-signed terms for `owner` against `provider`'s /negotiate
+ * endpoint, defaulting price_per_byte to the provider's on-chain setting.
+ */
+export async function negotiateSigned(
+  api: ParachainApi,
+  providerUrl: string,
+  owner: ChainSigner,
+  provider: ChainSigner,
+  { maxBytes, duration, bucketId = null, replicaParams = null, pricePerByte = null }: NegotiateOpts,
+): Promise<SignedTerms> {
+  let price = pricePerByte;
+  if (price == null) {
+    const info = await api.query.StorageProvider.Providers.getValue(provider.address, READ_OPTS);
+    price = info?.settings?.price_per_byte ?? 1n;
+  }
+  return negotiateTerms(providerUrl, {
+    owner: owner.address,
+    max_bytes: maxBytes,
+    duration,
+    price_per_byte: price,
+    bucket_id: bucketId,
+    replica_params: replicaParams,
+  });
+}
+
+/**
+ * Negotiate signed terms and redeem them via establish_storage_agreement.
+ * Returns the new bucket id plus the signed terms (handy for replica flows).
+ */
+export async function negotiateAndEstablish(
+  api: ParachainApi,
+  providerUrl: string,
+  owner: ChainSigner,
+  provider: ChainSigner,
+  opts: NegotiateOpts,
+): Promise<{ bucketId: bigint; signed: SignedTerms }> {
+  const signed = await negotiateSigned(api, providerUrl, owner, provider, opts);
+  const { bucketId } = await establishStorageAgreement(api, owner, provider, signed);
+  return { bucketId, signed };
 }

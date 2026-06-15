@@ -24,14 +24,13 @@ import assert from "node:assert";
 import {
   configureCheckpointWindow,
   connect,
-  createBucket,
   ensureProviderRegistered,
+  establishStorageAgreement,
   makeSigner,
+  negotiateTerms,
   READ_OPTS,
   reportMissedCheckpoint,
-  requestPrimaryAgreement,
   sameAddress,
-  waitForAgreementAcceptance,
   waitForBlock,
   waitForBlockProduction,
   waitForChainReady,
@@ -74,26 +73,24 @@ async function main() {
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
     restoreOthers = await ensureSoleAcceptingProvider(api, provider);
 
-    const bucketId = await createBucket(api, client);
-    console.log("  Bucket created: id=%s", bucketId);
-
-    const maxBytes = 1_048_576n;
-    const duration = 200;
-    await requestPrimaryAgreement(api, client, provider, bucketId, {
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxBytes * BigInt(duration) * 2n,
+    const signed = await negotiateTerms(PROVIDER_URL, {
+      owner: client.address,
+      max_bytes: 1_048_576n, // 1 MiB
+      duration: 200,
+      price_per_byte: 1n,
+      replica_params: null,
+      bucket_id: null,
     });
-    await waitForAgreementAcceptance(api, provider.address, bucketId);
-    console.log("  Agreement accepted");
+    const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+    console.log("  Bucket + agreement opened: id=%s", bucketId);
 
     const bucket = (await api.query.StorageProvider.Buckets.getValue(
       bucketId,
       READ_OPTS
     ))!;
     assert.ok(
-      bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
-      "Provider should be primary after accept"
+      bucket.primary_providers.some((p: string) => sameAddress(p, provider.address)),
+      "Provider should be primary after establish_storage_agreement"
     );
 
     console.log("\n=== Step 2: configure_checkpoint_window (tight) ===");

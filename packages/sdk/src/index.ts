@@ -14,6 +14,7 @@ export * from "@web3-storage/layer1";
 export {
   HttpError,
   httpFetch,
+  negotiateTerms,
   bytesToBase64,
   base64ToBytes,
   signProviderRequest,
@@ -22,6 +23,8 @@ export {
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
   type HttpFetchOpts,
+  type NegotiateRequest,
+  type SignedTerms,
   type SigningKeypair,
 } from "@web3-storage/core";
 

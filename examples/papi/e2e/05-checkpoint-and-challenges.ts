@@ -14,7 +14,6 @@ import {
   challengeOffchain,
   claimCheckpointRewards,
   configureCheckpointWindow,
-  createBucket,
   ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointDuty,
@@ -22,17 +21,15 @@ import {
   fundCheckpointPool,
   makeSigner,
   READ_OPTS,
-  requestPrimaryAgreement,
   respondToChallenge,
   signCheckpointProposal,
   submitClientCheckpoint,
   submitProviderCheckpoint,
   uploadChunk,
-  waitForAgreementAcceptance,
   waitForBlock,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -50,15 +47,12 @@ async function main() {
   const restore = await ensureSoleAcceptingProvider(api, provider);
 
   // Create a bucket + agreement + upload data for checkpoint tests.
-  const bucketId = await createBucket(api, client);
   const maxBytes = 1_048_576n;
   const duration = 200;
-  await requestPrimaryAgreement(api, client, provider, bucketId, {
-    max_bytes: maxBytes,
+  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
+    maxBytes,
     duration,
-    max_payment: maxBytes * BigInt(duration) * 10n,
   });
-  await waitForAgreementAcceptance(api, provider.address, bucketId);
 
   const payload = `checkpoint-test @ ${Date.now()}`;
   const upload = await uploadChunk(PROVIDER_URL, bucketId, payload);

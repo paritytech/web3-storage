@@ -11,16 +11,14 @@
 import assert from "node:assert";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
-  createBucketWithStorage,
   downloadChunk,
   ensureProviderRegistered,
   makeSigner,
   toHex,
   uploadChunk,
-  waitForAgreementAcceptance,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
-import { runSuite, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -39,15 +37,13 @@ async function main() {
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
   const restore = await ensureSoleAcceptingProvider(api, provider);
 
-  // Create a bucket for upload tests.
+  // Create a bucket for upload tests by redeeming provider-signed terms.
   const maxCapacity = 10_485_760n; // 10 MiB
   const duration = 100;
-  const { bucketId } = await createBucketWithStorage(api, client, {
-    max_bytes: maxCapacity,
+  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
+    maxBytes: maxCapacity,
     duration,
-    max_price_per_byte: 10n,
   });
-  await waitForAgreementAcceptance(api, provider.address, bucketId);
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 

@@ -43,10 +43,9 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
-  h160ToSubstrate,
-  negotiatePrecompileTerms,
   substrateToH160,
 } from "@web3-storage/sdk/revive";
+import { h160ToSubstrate, negotiatePrecompileTerms } from "./sc-support.js";
 import {
   ensureSoleAcceptingProvider,
   parseProviderClientArgs,

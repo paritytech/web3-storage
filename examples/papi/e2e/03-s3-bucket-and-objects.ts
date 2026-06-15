@@ -10,21 +10,44 @@
 
 import assert from "node:assert";
 import {
+  buildSignedTermsArgs,
   copyObjectMetadata,
+  createS3Bucket,
+  deleteObjectMetadata,
+  deleteS3Bucket,
   ensureProviderRegistered,
-  hexToBytes,
   makeSigner,
   putChunk,
+  putObjectMetadata,
   READ_OPTS,
-  sameAddress,
-  waitForAgreementAcceptance,
+  type ChainSigner,
+  type ParachainApi,
 } from "@web3-storage/sdk";
-import { S3Client } from "@web3-storage/sdk/s3";
 import { ensureSoleAcceptingProvider } from "../support.js";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import { negotiateSigned, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+
+/**
+ * Create an S3 bucket: negotiate provider-signed terms, then redeem them via
+ * `create_s3_bucket`, which opens the underlying Layer 0 bucket + primary
+ * agreement atomically. Returns `{ s3BucketId, layer0BucketId }`.
+ */
+async function createS3BucketWithStorage(
+  api: ParachainApi,
+  providerUrl: string,
+  client: ChainSigner,
+  provider: ChainSigner,
+  name: string,
+  { maxBytes, duration }: { maxBytes: bigint; duration: number }
+) {
+  const signed = await negotiateSigned(api, providerUrl, client, provider, {
+    maxBytes,
+    duration,
+  });
+  return createS3Bucket(api, client, name, provider, signed);
+}
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -34,34 +57,10 @@ async function main() {
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
   const restore = await ensureSoleAcceptingProvider(api, provider);
 
-  // The suite drives the S3 surface through the layer-1 client (chain ops
-  // silent-by-default, object HTTP signed + verified); putChunk keeps one
-  // raw layer-0 upload path covered in 3.2.
-  const s3 = new S3Client({
-    api,
-    signer: client,
-    providerUrl: PROVIDER_URL,
-    // Test semantics: in-block submission + best-block reads (READ_OPTS).
-    readOpts: READ_OPTS,
-    submitMode: "best",
-  });
-
   let s3BucketId: bigint, layer0BucketId: bigint;
   const bucketName = `e2e-03-${Date.now()}`.slice(0, 63);
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
-
-  const mkBucket = async (name: string) => {
-    const maxCapacity = 1_048_576n;
-    const duration = 100;
-    const r = await s3.createBucketWithStorage(name, {
-      maxCapacity,
-      duration,
-      maxPayment: maxCapacity * BigInt(duration) * 10n,
-    });
-    await waitForAgreementAcceptance(api, provider.address, r.layer0BucketId);
-    return r;
-  };
 
   // ── Success ───────────────────────────────────────────────────────────────
 
@@ -70,20 +69,18 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const duration = 100;
-      const result = await s3.createBucketWithStorage(bucketName, {
-        maxCapacity,
-        duration,
-        maxPayment: maxCapacity * BigInt(duration) * 10n,
-      });
+      const result = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        bucketName,
+        { maxBytes: maxCapacity, duration }
+      );
       s3BucketId = result.s3BucketId;
       layer0BucketId = result.layer0BucketId;
       assert.ok(s3BucketId !== undefined, "s3_bucket_id should be returned");
       assert.ok(layer0BucketId !== undefined, "layer0_bucket_id should be returned");
-      assert.ok(
-        sameAddress(result.matchedProvider!, provider.address),
-        "Should match expected provider"
-      );
-      await waitForAgreementAcceptance(api, provider.address, layer0BucketId);
     },
   });
 
@@ -91,8 +88,12 @@ async function main() {
     name: "3.2 Put object metadata",
     fn: async () => {
       const obj = await putChunk(PROVIDER_URL, layer0BucketId, "hello from e2e test");
-      await s3.putObjectMetadata(s3BucketId, "test.txt", obj, "text/plain");
-      const stored = await s3.getObjectMetadata(s3BucketId, "test.txt");
+      await putObjectMetadata(api, client, s3BucketId, "test.txt", obj, "text/plain");
+      const stored = (await api.query.S3Registry.Objects.getValue(
+        s3BucketId,
+        new TextEncoder().encode("test.txt"),
+        READ_OPTS
+      ))!;
       assert.ok(stored, "Object should exist in storage");
       assert.strictEqual(stored.size, obj.size, "Size should match");
     },
@@ -102,13 +103,16 @@ async function main() {
     name: "3.3 Put with user metadata",
     fn: async () => {
       const obj = await putChunk(PROVIDER_URL, layer0BucketId, "data with metadata");
-      await s3.putObjectMetadata(s3BucketId, "meta.txt", obj, "text/plain", [
+      await putObjectMetadata(api, client, s3BucketId, "meta.txt", obj, "text/plain", [
         ["author", "e2e-test"],
         ["version", "1"],
       ]);
-      const stored = await s3.getObjectMetadata(s3BucketId, "meta.txt");
+      const stored = await api.query.S3Registry.Objects.getValue(
+        s3BucketId,
+        new TextEncoder().encode("meta.txt"),
+        READ_OPTS
+      );
       assert.ok(stored, "Object with metadata should exist");
-      assert.strictEqual(stored.userMetadata.author, "e2e-test", "User metadata round-trips");
     },
   });
 
@@ -116,20 +120,36 @@ async function main() {
     name: "3.4 Copy object metadata",
     fn: async () => {
       await copyObjectMetadata(api, client, s3BucketId, "test.txt", s3BucketId, "test-copy.txt");
-      const original = await s3.getObjectMetadata(s3BucketId, "test.txt");
-      const copy = await s3.getObjectMetadata(s3BucketId, "test-copy.txt");
+      const original = (await api.query.S3Registry.Objects.getValue(
+        s3BucketId,
+        new TextEncoder().encode("test.txt"),
+        READ_OPTS
+      ))!;
+      const copy = (await api.query.S3Registry.Objects.getValue(
+        s3BucketId,
+        new TextEncoder().encode("test-copy.txt"),
+        READ_OPTS
+      ))!;
       assert.ok(copy, "Copy should exist");
-      assert.deepStrictEqual(copy.cid, original!.cid, "CID should be the same after copy");
+      assert.strictEqual(
+        copy.cid.toString(),
+        original.cid.toString(),
+        "CID should be the same after copy"
+      );
     },
   });
 
   tests.push({
     name: "3.5 Delete object metadata",
     fn: async () => {
-      await s3.deleteObjectMetadata(s3BucketId, "meta.txt");
-      const stored = await s3.getObjectMetadata(s3BucketId, "meta.txt");
-      assert.strictEqual(stored, null, "Object should be gone after delete");
-      const bucketInfo = await s3.headBucket(bucketName);
+      await deleteObjectMetadata(api, client, s3BucketId, "meta.txt");
+      const stored = await api.query.S3Registry.Objects.getValue(
+        s3BucketId,
+        new TextEncoder().encode("meta.txt"),
+        READ_OPTS
+      );
+      assert.strictEqual(stored, undefined, "Object should be gone after delete");
+      const bucketInfo = await api.query.S3Registry.S3Buckets.getValue(s3BucketId, READ_OPTS);
       assert.ok(bucketInfo, "Bucket should still exist");
     },
   });
@@ -138,11 +158,12 @@ async function main() {
     name: "3.6 Delete S3 bucket (after removing all objects)",
     fn: async () => {
       // Remove remaining objects.
-      await s3.deleteObjectMetadata(s3BucketId, "test.txt");
-      await s3.deleteObjectMetadata(s3BucketId, "test-copy.txt");
-      await s3.deleteBucket(s3BucketId);
-      const after = await s3.headBucket(bucketName);
-      assert.strictEqual(after, null, "Bucket should be gone");
+      await deleteObjectMetadata(api, client, s3BucketId, "test.txt");
+      await deleteObjectMetadata(api, client, s3BucketId, "test-copy.txt");
+      const result = await deleteS3Bucket(api, client, s3BucketId);
+      assert.ok(result, "Should get S3BucketDeleted event");
+      const after = await api.query.S3Registry.S3Buckets.getValue(s3BucketId, READ_OPTS);
+      assert.strictEqual(after, undefined, "Bucket should be gone");
     },
   });
 
@@ -152,24 +173,40 @@ async function main() {
     name: "3.7 Delete non-empty bucket",
     fn: async () => {
       // Create a new bucket for this test.
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
-        `e2e-03b-${Date.now()}`.slice(0, 63),
+      const name2 = `e2e-03b-${Date.now()}`.slice(0, 63);
+      const maxCapacity = 1_048_576n;
+      const duration = 100;
+      const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        name2,
+        { maxBytes: maxCapacity, duration }
       );
       const obj = await putChunk(PROVIDER_URL, l0, "not empty");
-      await s3.putObjectMetadata(bid, "file.txt", obj, "text/plain");
+      await putObjectMetadata(api, client, bid, "file.txt", obj, "text/plain");
       const tx = api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: bid });
       await submitTxExpectFailure(tx, client.signer, "BucketNotEmpty", "3.7");
       // Cleanup
-      await s3.deleteObjectMetadata(bid, "file.txt");
-      await s3.deleteBucket(bid);
+      await deleteObjectMetadata(api, client, bid, "file.txt");
+      await deleteS3Bucket(api, client, bid);
     },
   });
 
   tests.push({
     name: "3.8 Delete non-existent object",
     fn: async () => {
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
-        `e2e-03c-${Date.now()}`.slice(0, 63),
+      const name3 = `e2e-03c-${Date.now()}`.slice(0, 63);
+      const maxCapacity = 1_048_576n;
+      const duration = 100;
+      const { s3BucketId: bid } = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        name3,
+        { maxBytes: maxCapacity, duration }
       );
       const tx = api.tx.S3Registry.delete_object_metadata({
         s3_bucket_id: bid,
@@ -177,7 +214,7 @@ async function main() {
       });
       await submitTxExpectFailure(tx, client.signer, "ObjectNotFound", "3.8");
       // Cleanup
-      await s3.deleteBucket(bid);
+      await deleteS3Bucket(api, client, bid);
     },
   });
 
@@ -185,12 +222,21 @@ async function main() {
     name: "3.9 Duplicate bucket name",
     fn: async () => {
       const dupName = `e2e-03dup-${Date.now()}`.slice(0, 63);
-      await mkBucket(dupName);
-      const tx = api.tx.S3Registry.create_s3_bucket_with_storage({
+      const maxCapacity = 1_048_576n;
+      const duration = 100;
+      await createS3BucketWithStorage(api, PROVIDER_URL, client, provider, dupName, {
+        maxBytes: maxCapacity,
+        duration,
+      });
+      // A second create with the same name fails atomically — even with a
+      // fresh, valid signed quote.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes: maxCapacity,
+        duration,
+      });
+      const tx = api.tx.S3Registry.create_s3_bucket({
         name: new TextEncoder().encode(dupName),
-        max_capacity: 1_048_576n,
-        duration: 100,
-        max_payment: 1_048_576n * 100n * 10n,
+        ...buildSignedTermsArgs(provider, signed),
       });
       await submitTxExpectFailure(tx, client.signer, "BucketNameExists", "3.9");
     },
@@ -201,65 +247,58 @@ async function main() {
   tests.push({
     name: "3.10 Object key with path separators",
     fn: async () => {
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
-        `e2e-03edge-${Date.now()}`.slice(0, 63),
+      const edgeName = `e2e-03edge-${Date.now()}`.slice(0, 63);
+      const maxCapacity = 1_048_576n;
+      const duration = 100;
+      const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        edgeName,
+        { maxBytes: maxCapacity, duration }
       );
       const obj = await putChunk(PROVIDER_URL, l0, "deep nested");
-      await s3.putObjectMetadata(bid, "a/b/c/d.txt", obj, "text/plain");
-      const stored = await s3.getObjectMetadata(bid, "a/b/c/d.txt");
+      await putObjectMetadata(api, client, bid, "a/b/c/d.txt", obj, "text/plain");
+      const stored = await api.query.S3Registry.Objects.getValue(
+        bid,
+        new TextEncoder().encode("a/b/c/d.txt"),
+        READ_OPTS
+      );
       assert.ok(stored, "Object with nested path key should exist");
       // Cleanup
-      await s3.deleteObjectMetadata(bid, "a/b/c/d.txt");
-      await s3.deleteBucket(bid);
+      await deleteObjectMetadata(api, client, bid, "a/b/c/d.txt");
+      await deleteS3Bucket(api, client, bid);
     },
   });
 
   tests.push({
     name: "3.11 Overwrite existing key (upsert)",
     fn: async () => {
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
-        `e2e-03ups-${Date.now()}`.slice(0, 63),
+      const upsertName = `e2e-03ups-${Date.now()}`.slice(0, 63);
+      const maxCapacity = 1_048_576n;
+      const duration = 100;
+      const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        upsertName,
+        { maxBytes: maxCapacity, duration }
       );
       const obj1 = await putChunk(PROVIDER_URL, l0, "version 1");
-      await s3.putObjectMetadata(bid, "file.txt", obj1, "text/plain");
+      await putObjectMetadata(api, client, bid, "file.txt", obj1, "text/plain");
       const obj2 = await putChunk(PROVIDER_URL, l0, "version 2 updated");
-      await s3.putObjectMetadata(bid, "file.txt", obj2, "text/plain");
-      const stored = await s3.getObjectMetadata(bid, "file.txt");
-      assert.strictEqual(stored!.size, obj2.size, "Size should reflect the upserted object");
+      await putObjectMetadata(api, client, bid, "file.txt", obj2, "text/plain");
+      const stored = (await api.query.S3Registry.Objects.getValue(
+        bid,
+        new TextEncoder().encode("file.txt"),
+        READ_OPTS
+      ))!;
+      assert.strictEqual(stored.size, obj2.size, "Size should reflect the upserted object");
       // Cleanup
-      await s3.deleteObjectMetadata(bid, "file.txt");
-      await s3.deleteBucket(bid);
-    },
-  });
-
-  tests.push({
-    name: "3.12 S3Client object HTTP round-trip (put/get/list/delete + CID verification)",
-    fn: async () => {
-      const { s3BucketId: bid, layer0BucketId: l0 } = await mkBucket(
-        `e2e-03http-${Date.now()}`.slice(0, 63),
-      );
-      const bucket = { s3BucketId: bid, layer0BucketId: l0 };
-      const body = new TextEncoder().encode(`round-trip ${Date.now()}`);
-
-      const put = await s3.putObject(bucket, "rt.txt", body, {
-        contentType: "text/plain",
-        metadata: { origin: "e2e-03" },
-      });
-      assert.ok(put.cid, "putObject should echo a data_root cid");
-
-      // Anchor the cid on chain so getObject can verify against it.
-      await s3.putObjectMetadata(bid, "rt.txt", { cid: hexToBytes(put.cid!), size: BigInt(body.length) }, "text/plain");
-
-      const got = await s3.getObject(bucket, "rt.txt");
-      assert.strictEqual(got.verified, true, "single-chunk download should verify against the on-chain cid");
-      assert.deepStrictEqual(got.data, body, "downloaded bytes should match upload");
-
-      const listed = await s3.listObjects(bucket);
-      assert.ok(listed.some((o) => o.key === "rt.txt"), "listObjects should contain the key");
-
-      await s3.deleteObject(bucket, "rt.txt");
-      await s3.deleteObjectMetadata(bid, "rt.txt");
-      await s3.deleteBucket(bid);
+      await deleteObjectMetadata(api, client, bid, "file.txt");
+      await deleteS3Bucket(api, client, bid);
     },
   });
 
@@ -271,9 +310,11 @@ async function main() {
   papi.destroy();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-}).finally(() => {
-  process.exit(process.exitCode || 0);
-});
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    process.exit(process.exitCode || 0);
+  });

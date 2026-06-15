@@ -10,18 +10,15 @@
 
 import assert from "node:assert";
 import {
-  createBucket,
   ensureProviderRegistered,
   extendAgreement,
   makeSigner,
   READ_OPTS,
-  requestPrimaryAgreement,
   setExtensionsBlocked,
   topUpAgreement,
   updateProviderSettings,
-  waitForAgreementAcceptance,
 } from "@web3-storage/sdk";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -40,7 +37,6 @@ async function main() {
   // Create a bucket with a longer-lived agreement for extension tests.
   const maxBytes = 1_048_576n;
   const duration = 100;
-  const maxPayment = maxBytes * BigInt(duration) * 10n;
 
   let bucketId: bigint;
 
@@ -49,13 +45,10 @@ async function main() {
   tests.push({
     name: "7.0 Setup bucket + agreement",
     fn: async () => {
-      bucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, bucketId, {
-        max_bytes: maxBytes,
+      ({ bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
+        maxBytes,
         duration,
-        max_payment: maxPayment,
-      });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
+      }));
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,

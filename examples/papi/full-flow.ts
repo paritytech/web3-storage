@@ -19,19 +19,18 @@
 import assert from "node:assert";
 import type { PolkadotClient } from "polkadot-api";
 import {
-  acceptAgreement,
   challengeCheckpoint,
   challengeOffchain,
   connect,
-  createBucket,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
+  establishStorageAgreement,
   fetchChallengeProof,
   fetchCheckpointSignature,
   makeSigner,
+  negotiateTerms,
   READ_OPTS,
-  requestPrimaryAgreement,
   requireOneEvent,
   respondToChallenge,
   submitClientCheckpoint,
@@ -52,31 +51,41 @@ const {
   clientSeed: CLIENT_SEED,
 } = parseProviderClientArgs();
 
-async function setupAgreement(api: ParachainApi, client: ChainSigner, provider: ChainSigner, bucketId: bigint) {
-  const existing = await api.query.StorageProvider.StorageAgreements.getValue(
-    bucketId,
-    provider.address,
-    READ_OPTS
-  );
-  if (existing) {
-    console.log("  Agreement already exists");
-    return;
-  }
+/**
+ * Negotiate provider-signed terms over HTTP, then redeem them on-chain.
+ * The bucket + primary agreement are opened atomically inside
+ * `establish_storage_agreement` — no separate create_bucket step.
+ */
+async function setupAgreement(
+  api: ParachainApi,
+  providerUrl: string,
+  client: ChainSigner,
+  provider: ChainSigner
+): Promise<bigint> {
   const maxBytes = 1_073_741_824n; // 1 GiB
   const duration = 15;
   console.log(
-    "  Requesting agreement (%s), duration=%d blocks...",
-    client.seed,
+    "  Negotiating signed terms with provider (max_bytes=%s, duration=%d)...",
+    maxBytes,
     duration
   );
-  await requestPrimaryAgreement(api, client, provider, bucketId, {
+  const signed = await negotiateTerms(providerUrl, {
+    owner: client.address,
     max_bytes: maxBytes,
     duration,
-    max_payment: maxBytes * BigInt(duration) * 2n,
+    price_per_byte: 1n,
+    replica_params: null,
+    bucket_id: null,
   });
-  console.log("  Accepting agreement (%s)...", provider.seed);
-  await acceptAgreement(api, provider, bucketId);
-  console.log("  Agreement accepted");
+  console.log(
+    "  Provider signed terms: nonce=%s, valid_until=%s",
+    signed.terms.nonce,
+    signed.terms.valid_until
+  );
+  console.log("  Redeeming on-chain via establish_storage_agreement...");
+  const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+  console.log("  Bucket %s opened with primary agreement", bucketId);
+  return bucketId;
 }
 
 async function uploadAndVerify(bucketId: bigint) {
@@ -162,9 +171,7 @@ async function main() {
   try {
     console.log("\n=== Step 1: Setup ===");
     await ensureProviderRegistered(api, provider, PROVIDER_URL);
-    const bucketId = await createBucket(api, client);
-    console.log("  Bucket created with ID:", bucketId);
-    await setupAgreement(api, client, provider, bucketId);
+    const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
     const upload = await uploadAndVerify(bucketId);

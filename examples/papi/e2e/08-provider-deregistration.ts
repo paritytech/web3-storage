@@ -1,46 +1,46 @@
 /**
  * E2E Workflow 08 — Provider Deregistration
  *
- * Accounts: //Charlie (provider), //Dave (client)
+ * Accounts: //Alice (provider w/ node), //Ferdie (bare provider), //Dave (client)
  *
  * Note: DeregisterAnnouncementPeriod = 48 hours — too long for E2E.
  * We test announce + cancel paths. complete_deregister requires a
  * shorter period runtime.
+ *
+ * Agreements are now opened by redeeming provider-signed terms, so the
+ * "active agreements block deregister" test uses Alice (the only provider
+ * with a node that can sign valid terms). Ferdie is a bare registration used
+ * for the announce/cancel paths, which need no agreement and no node.
  *
  * Usage: node e2e/08-provider-deregistration.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
 import {
-  acceptAgreement,
   cancelDeregister,
-  createBucket,
   deregisterProvider,
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
-  requestPrimaryAgreement,
   updateProviderSettings,
 } from "@web3-storage/sdk";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
-
 async function main() {
-  const charlie = makeSigner("//Charlie");
+  const provider = makeSigner("//Alice");
   const dave = makeSigner("//Dave");
   const ferdie = makeSigner("//Ferdie");
 
   const { papi, api } = await setupChain(CHAIN_WS);
 
-  // Ensure Charlie is registered (used for 8.4+ tests with active agreements).
-  await ensureProviderRegistered(api, charlie, PROVIDER_URL);
+  // Alice runs the provider node — used for the active-agreement test, since
+  // only her key produces signatures the chain accepts.
+  await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
-  // Register Ferdie as a fresh provider with no prior agreements.
-  // Charlie may have active agreements from earlier workflows (test 01 creates
-  // one via createBucketWithStorage), so use Ferdie for deregister tests.
+  // Ferdie is a bare provider registration (no node) for announce/cancel.
   await ensureProviderRegistered(api, ferdie, PROVIDER_URL);
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
@@ -97,19 +97,19 @@ async function main() {
   tests.push({
     name: "8.4 Deregister with active agreements",
     fn: async () => {
-      // Create an agreement so Charlie has committed_bytes > 0.
-      const maxBytes = 1_048_576n;
-      const duration = 100;
-      const bucketId = await createBucket(api, dave);
-      await requestPrimaryAgreement(api, dave, charlie, bucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxBytes * BigInt(duration) * 10n,
+      // Open an agreement against Alice so she has committed_bytes > 0, then
+      // confirm she can't announce deregistration while it's active.
+      await negotiateAndEstablish(api, PROVIDER_URL, dave, provider, {
+        maxBytes: 1_048_576n,
+        duration: 100,
       });
-      // Manually accept — Charlie has no provider node running.
-      await acceptAgreement(api, charlie, bucketId);
+      const info = (await api.query.StorageProvider.Providers.getValue(
+        provider.address,
+        READ_OPTS
+      ))!;
+      assert.ok(info.committed_bytes > 0n, "Alice should have an active agreement");
       const tx = api.tx.StorageProvider.deregister_provider();
-      await submitTxExpectFailure(tx, charlie.signer, "ProviderHasActiveAgreements", "8.4");
+      await submitTxExpectFailure(tx, provider.signer, "ProviderHasActiveAgreements", "8.4");
     },
   });
 
@@ -137,43 +137,6 @@ async function main() {
     fn: async () => {
       const tx = api.tx.StorageProvider.deregister_provider();
       await submitTxExpectFailure(tx, dave.signer, "ProviderNotFound", "8.7");
-    },
-  });
-
-  tests.push({
-    name: "8.8 Accept agreement after deregistration announcement (not accepting)",
-    fn: async () => {
-      // Since Charlie has active agreements and can't deregister, this test
-      // verifies that a provider with accepting_primary=false is not matched.
-      await updateProviderSettings(api, charlie, {
-        min_duration: 10,
-        max_duration: 100_000,
-        price_per_byte: 1n,
-        accepting_primary: false,
-        replica_sync_price: undefined,
-        accepting_extensions: true,
-        max_capacity: 0n,
-      });
-      // Attempting to request an agreement with a non-accepting provider.
-      const bucketId = await createBucket(api, dave);
-      const tx = api.tx.StorageProvider.request_primary_agreement({
-        bucket_id: bucketId,
-        provider: charlie.address,
-        max_bytes: 1_048_576n,
-        duration: 50,
-        max_payment: 1_048_576n * 50n * 10n,
-      });
-      await submitTxExpectFailure(tx, dave.signer, "ProviderNotAcceptingPrimary", "8.8");
-      // Restore settings.
-      await updateProviderSettings(api, charlie, {
-        min_duration: 10,
-        max_duration: 100_000,
-        price_per_byte: 1n,
-        accepting_primary: true,
-        replica_sync_price: undefined,
-        accepting_extensions: true,
-        max_capacity: 0n,
-      });
     },
   });
 
