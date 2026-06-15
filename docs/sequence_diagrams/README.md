@@ -15,6 +15,13 @@ Visual sequence diagrams for the core protocol flows in Scalable Web3 Storage.
 |---|---|
 | [S3 Bucket Creation](./s3-bucket-creation.md) | End-to-end flow: provider discovery, off-chain negotiation with term signing, single atomic on-chain extrinsic (Layer 0 bucket + agreement + S3 registry), and UI completion. |
 
+## S3 Object Read & Write
+
+| Diagram | Description |
+|---|---|
+| [S3 Write Flow (putObject)](./s3-write-flow.md) | Client upload to primary provider: auth, chunking (256 KiB), Merkle tree, MMR commit, S3 index update. Includes replica sync (background pull from primaries). |
+| [S3 Read Flow (getObject)](./s3-read-flow.md) | Client download: provider URL resolution, auth, DFS tree traversal, chunk reassembly. Includes Rust SDK verified download and multi-provider topology. |
+
 ## Checkpoint Flows
 
 How on-chain `BucketSnapshot` records are created, making providers liable for stored data.
