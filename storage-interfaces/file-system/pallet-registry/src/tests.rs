@@ -498,3 +498,56 @@ fn delete_drive_removes_from_list() {
         assert!(DriveRegistry::list_user_drives(&alice).is_empty());
     });
 }
+
+#[test]
+fn create_drive_fails_when_at_max_drives() {
+    // Create MaxDrivesPerUser drives (100 in the mock), then assert the next
+    // attempt is rejected with TooManyDrives — covering lib.rs:211.
+    new_test_ext().execute_with(|| {
+        let (pk, provider) = setup_provider();
+        for nonce in 1..=100u64 {
+            let terms = primary_terms(1, 100, 500, nonce, 0);
+            let sig = sign_terms(&pk, &terms);
+            assert_ok!(DriveRegistry::create_drive(
+                RuntimeOrigin::signed(1),
+                None,
+                provider,
+                terms,
+                sig,
+            ));
+        }
+        let terms = primary_terms(1, 100, 500, 101, 0);
+        let sig = sign_terms(&pk, &terms);
+        assert_noop!(
+            DriveRegistry::create_drive(
+                RuntimeOrigin::signed(1),
+                None,
+                provider,
+                terms,
+                sig,
+            ),
+            Error::<Test>::TooManyDrives
+        );
+    });
+}
+
+#[test]
+fn is_drive_owner_with_existing_drive() {
+    // is_drive_owner with an existing drive covers lib.rs:404 (the Some branch
+    // that evaluates `drive.owner == *account`). The existing helper_functions_work
+    // test only calls it on non-existent drives (the else branch).
+    new_test_ext().execute_with(|| {
+        let (pk, provider) = setup_provider();
+        let terms = primary_terms(1, 100, 500, 1, 0);
+        let sig = sign_terms(&pk, &terms);
+        assert_ok!(DriveRegistry::create_drive(
+            RuntimeOrigin::signed(1),
+            None,
+            provider,
+            terms,
+            sig,
+        ));
+        assert!(DriveRegistry::is_drive_owner(0, &1u64));
+        assert!(!DriveRegistry::is_drive_owner(0, &2u64));
+    });
+}
