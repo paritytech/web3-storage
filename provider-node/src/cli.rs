@@ -70,6 +70,17 @@ pub struct RpcParams {
         env = "CHAIN_RPC"
     )]
     pub chain_rpc: String,
+
+    /// Public multiaddr to advertise on chain instead of the bind-derived one.
+    ///
+    /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
+    /// reachable by clients, so the multiaddr sync would otherwise pin a
+    /// useless `/ip4/127.0.0.1/tcp/3333` on chain. Set this to the
+    /// externally-reachable address — typically a TLS-terminating reverse
+    /// proxy — and the sync maintains it instead, e.g.
+    /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
+    #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
+    pub public_multiaddr: Option<String>,
 }
 
 /// Parameters for provider identity and signing keys.

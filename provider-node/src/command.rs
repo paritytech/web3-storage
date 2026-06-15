@@ -109,13 +109,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
 
-    // Sync on-chain multiaddr with actual bind address (requires signing key)
+    // Sync the on-chain multiaddr (requires signing key). Advertise the public
+    // multiaddr when configured, otherwise derive one from the bind address.
     if let Some(kp) = &state.keypair {
         sync_multiaddr_on_chain(
             &cli.rpc.chain_rpc,
             kp,
             &state.provider_id,
             &cli.rpc.bind_addr,
+            cli.rpc.public_multiaddr.as_deref(),
         )
         .await;
     }
@@ -331,15 +333,23 @@ fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
     format!("/ip4/{host}/tcp/{port}")
 }
 
-/// Ensure the on-chain multiaddr matches the actual bind address.
-/// If the provider is registered and the multiaddr differs, submit an update transaction.
+/// Ensure the on-chain multiaddr matches the address this node advertises.
+///
+/// The advertised value is `public_multiaddr` when set (hosted deployments
+/// behind a reverse proxy), otherwise one derived from the bind address (local
+/// dev). If the provider is registered and the on-chain value differs, submit
+/// an update transaction.
 async fn sync_multiaddr_on_chain(
     chain_rpc: &str,
     signer: &subxt_signer::sr25519::Keypair,
     provider_id: &str,
     bind_addr: &str,
+    public_multiaddr: Option<&str>,
 ) {
-    let expected_multiaddr = bind_addr_to_multiaddr(bind_addr);
+    let expected_multiaddr = match public_multiaddr {
+        Some(addr) => addr.to_string(),
+        None => bind_addr_to_multiaddr(bind_addr),
+    };
 
     let account = match sp_runtime::AccountId32::from_str(provider_id) {
         Ok(a) => a,
@@ -381,7 +391,7 @@ async fn sync_multiaddr_on_chain(
 
     if current == expected_multiaddr {
         tracing::info!(
-            "On-chain multiaddr matches bind address: {}",
+            "On-chain multiaddr matches advertised address: {}",
             expected_multiaddr
         );
         return;

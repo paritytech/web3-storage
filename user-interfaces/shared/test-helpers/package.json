@@ -20,6 +20,6 @@
     "@types/node": "^25.9.2"
   },
   "peerDependencies": {
-    "@playwright/test": ">=1.59.0"
+    "@playwright/test": "^1.60.0"
   }
 }
