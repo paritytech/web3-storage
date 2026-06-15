@@ -145,16 +145,26 @@ impl SubxtChainClient {
         }
     }
 
-    /// Ensure the provider's on-chain multiaddr matches its actual bind address.
+    /// Ensure the provider's on-chain multiaddr matches the address it
+    /// advertises.
     ///
-    /// If the provider is registered and its recorded multiaddr differs from
-    /// `bind_addr`, submit an `update_provider_multiaddr` transaction. Reuses
-    /// this client's existing connection and signer rather than opening a new
-    /// one.
-    pub async fn sync_multiaddr(&self, provider_id: &str, bind_addr: &str) {
+    /// The advertised value is `public_multiaddr` when set (hosted deployments
+    /// behind a reverse proxy), otherwise one derived from `bind_addr` (local
+    /// dev). If the provider is registered and its recorded multiaddr differs,
+    /// submit an `update_provider_multiaddr` transaction. Reuses this client's
+    /// existing connection and signer rather than opening a new one.
+    pub async fn sync_multiaddr(
+        &self,
+        provider_id: &str,
+        bind_addr: &str,
+        public_multiaddr: Option<&str>,
+    ) {
         use subxt::dynamic::At;
 
-        let expected_multiaddr = Self::bind_addr_to_multiaddr(bind_addr);
+        let expected_multiaddr = match public_multiaddr {
+            Some(addr) => addr.to_string(),
+            None => Self::bind_addr_to_multiaddr(bind_addr),
+        };
 
         // Read current on-chain provider info
         let our_account: sp_core::crypto::AccountId32 =
@@ -223,7 +233,7 @@ impl SubxtChainClient {
 
         if current == expected_multiaddr {
             tracing::info!(
-                "On-chain multiaddr matches bind address: {}",
+                "On-chain multiaddr matches advertised address: {}",
                 expected_multiaddr
             );
             return;

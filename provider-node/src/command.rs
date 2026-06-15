@@ -125,12 +125,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
 
-    // Sync on-chain multiaddr with actual bind address. Reuses the chain
-    // client connected above, so this only runs when that connection succeeded
-    // (which also implies a signing key was provided).
+    // Sync the on-chain multiaddr. Reuses the chain client connected above, so
+    // this only runs when that connection succeeded (which also implies a
+    // signing key was provided). Advertise the public multiaddr when configured,
+    // otherwise derive one from the bind address.
     if let Some(chain_client) = &chain_client {
         chain_client
-            .sync_multiaddr(&state.provider_id, &cli.rpc.bind_addr)
+            .sync_multiaddr(
+                &state.provider_id,
+                &cli.rpc.bind_addr,
+                cli.rpc.public_multiaddr.as_deref(),
+            )
             .await;
     }
 
