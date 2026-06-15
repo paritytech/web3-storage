@@ -102,6 +102,7 @@
 pub mod admin;
 pub mod agreement;
 pub mod base;
+pub mod block_subscription;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
@@ -118,6 +119,9 @@ pub mod verification;
 pub use admin::AdminClient;
 pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
+pub use block_subscription::{
+    storage_provider_plugin, BlockSubscriber, EventPlugin, ParserPlugin, PluginError,
+};
 pub use challenger::ChallengerClient;
 pub use checkpoint::{
     AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
