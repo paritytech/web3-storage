@@ -19,6 +19,7 @@ pub mod fast_runtime_binary {
 }
 
 pub mod genesis_config_presets;
+pub mod migrations;
 pub mod paseo_constants;
 mod revive;
 mod storage;
@@ -265,7 +266,7 @@ impl frame_system::Config for Runtime {
     type SS58Prefix = SS58Prefix;
     type OnSetCode = cumulus_pallet_parachain_system::ParachainSetCode<Self>;
     type MaxConsumers = ConstU32<16>;
-    type SingleBlockMigrations = ();
+    type SingleBlockMigrations = migrations::Migrations;
     type MultiBlockMigrator = ();
     type PreInherents = ();
     type PostInherents = ();
