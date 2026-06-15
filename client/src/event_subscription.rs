@@ -137,14 +137,28 @@ pub enum StorageEvent {
     // ========================================================================
     // Agreement Events
     // ========================================================================
-    /// A storage agreement was requested.
-    AgreementRequested {
+    /// A primary storage agreement was established (provider-signed terms redeemed).
+    StorageAgreementEstablished {
         bucket_id: BucketId,
         provider: AccountId32,
-        requester: AccountId32,
+        owner: AccountId32,
         max_bytes: u64,
-        payment_locked: u128,
         duration: u32,
+        price_per_byte: u128,
+        expires_at: u32,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    /// A replica agreement was established (provider-signed replica terms redeemed).
+    ReplicaAgreementEstablished {
+        bucket_id: BucketId,
+        provider: AccountId32,
+        owner: AccountId32,
+        max_bytes: u64,
+        duration: u32,
+        price_per_byte: u128,
+        expires_at: u32,
         block_hash: H256,
         block_number: u32,
     },
@@ -227,7 +241,8 @@ impl StorageEvent {
             StorageEvent::ChallengeCreated { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::ProviderAddedToBucket { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::PrimaryProviderRemoved { bucket_id, .. } => Some(*bucket_id),
-            StorageEvent::AgreementRequested { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::StorageAgreementEstablished { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::ReplicaAgreementEstablished { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::AgreementAccepted { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::AgreementEnded { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::BucketCreated { bucket_id, .. } => Some(*bucket_id),
@@ -248,7 +263,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { provider, .. } => Some(provider),
             StorageEvent::ProviderAddedToBucket { provider, .. } => Some(provider),
             StorageEvent::PrimaryProviderRemoved { provider, .. } => Some(provider),
-            StorageEvent::AgreementRequested { provider, .. } => Some(provider),
+            StorageEvent::StorageAgreementEstablished { provider, .. } => Some(provider),
+            StorageEvent::ReplicaAgreementEstablished { provider, .. } => Some(provider),
             StorageEvent::AgreementAccepted { provider, .. } => Some(provider),
             StorageEvent::AgreementEnded { provider, .. } => Some(provider),
             StorageEvent::ReplicaSynced { provider, .. } => Some(provider),
@@ -266,7 +282,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { block_hash, .. } => *block_hash,
             StorageEvent::ProviderAddedToBucket { block_hash, .. } => *block_hash,
             StorageEvent::PrimaryProviderRemoved { block_hash, .. } => *block_hash,
-            StorageEvent::AgreementRequested { block_hash, .. } => *block_hash,
+            StorageEvent::StorageAgreementEstablished { block_hash, .. } => *block_hash,
+            StorageEvent::ReplicaAgreementEstablished { block_hash, .. } => *block_hash,
             StorageEvent::AgreementAccepted { block_hash, .. } => *block_hash,
             StorageEvent::AgreementEnded { block_hash, .. } => *block_hash,
             StorageEvent::BucketCreated { block_hash, .. } => *block_hash,
@@ -287,7 +304,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { block_number, .. } => *block_number,
             StorageEvent::ProviderAddedToBucket { block_number, .. } => *block_number,
             StorageEvent::PrimaryProviderRemoved { block_number, .. } => *block_number,
-            StorageEvent::AgreementRequested { block_number, .. } => *block_number,
+            StorageEvent::StorageAgreementEstablished { block_number, .. } => *block_number,
+            StorageEvent::ReplicaAgreementEstablished { block_number, .. } => *block_number,
             StorageEvent::AgreementAccepted { block_number, .. } => *block_number,
             StorageEvent::AgreementEnded { block_number, .. } => *block_number,
             StorageEvent::BucketCreated { block_number, .. } => *block_number,
@@ -317,7 +335,8 @@ impl StorageEvent {
     pub fn is_agreement_event(&self) -> bool {
         matches!(
             self,
-            StorageEvent::AgreementRequested { .. }
+            StorageEvent::StorageAgreementEstablished { .. }
+                | StorageEvent::ReplicaAgreementEstablished { .. }
                 | StorageEvent::AgreementAccepted { .. }
                 | StorageEvent::AgreementEnded { .. }
         )
@@ -435,7 +454,8 @@ impl EventFilter {
             StorageEvent::ChallengeCreated { .. }
             | StorageEvent::ChallengeDefended { .. }
             | StorageEvent::ChallengeSlashed { .. } => self.include_challenges,
-            StorageEvent::AgreementRequested { .. }
+            StorageEvent::StorageAgreementEstablished { .. }
+            | StorageEvent::ReplicaAgreementEstablished { .. }
             | StorageEvent::AgreementAccepted { .. }
             | StorageEvent::AgreementEnded { .. } => self.include_agreements,
             StorageEvent::BucketCreated { .. }
@@ -953,16 +973,34 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             }),
 
             // ── Agreements ────────────────────────────────────────────────────
-            "AgreementRequested" => Some(StorageEvent::AgreementRequested {
-                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
-                provider: scale_decode::field_account(&fields, "provider")?,
-                requester: scale_decode::field_account(&fields, "requester")?,
-                max_bytes: scale_decode::field_u64(&fields, "max_bytes")?,
-                payment_locked: scale_decode::field_u128(&fields, "payment_locked")?,
-                duration: scale_decode::field_u32(&fields, "duration")?,
-                block_hash,
-                block_number,
-            }),
+            "StorageAgreementEstablished" => {
+                let (max_bytes, duration, price_per_byte) = field_terms_scalars(&fields, "terms");
+                Some(StorageEvent::StorageAgreementEstablished {
+                    bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    owner: scale_decode::field_account(&fields, "owner")?,
+                    max_bytes,
+                    duration,
+                    price_per_byte,
+                    expires_at: scale_decode::field_u32(&fields, "expires_at")?,
+                    block_hash,
+                    block_number,
+                })
+            }
+            "ReplicaAgreementEstablished" => {
+                let (max_bytes, duration, price_per_byte) = field_terms_scalars(&fields, "terms");
+                Some(StorageEvent::ReplicaAgreementEstablished {
+                    bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                    provider: scale_decode::field_account(&fields, "provider")?,
+                    owner: scale_decode::field_account(&fields, "owner")?,
+                    max_bytes,
+                    duration,
+                    price_per_byte,
+                    expires_at: scale_decode::field_u32(&fields, "expires_at")?,
+                    block_hash,
+                    block_number,
+                })
+            }
             "AgreementAccepted" => Some(StorageEvent::AgreementAccepted {
                 bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
                 provider: scale_decode::field_account(&fields, "provider")?,
@@ -1022,6 +1060,30 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 // Parser-specific field helpers — these encode shapes from the StorageProvider pallet
 // (the `ChallengeId` struct and `RemovalReason` enum) and so stay alongside the parser
 // rather than in [`crate::scale_decode`].
+
+/// Read `max_bytes`, `duration`, and `price_per_byte` from a nested `AgreementTerms`
+/// composite. Returns `(0, 0, 0)` if the composite is absent; individual scalars default
+/// to 0 on decode failure so the outer event is never silently dropped.
+fn field_terms_scalars(fields: &scale_value::Composite<u32>, name: &str) -> (u64, u32, u128) {
+    let Some(terms) = fields.at(name) else {
+        return (0, 0, 0);
+    };
+    let max_bytes = terms
+        .at("max_bytes")
+        .and_then(|v| v.as_u128())
+        .map(|n| n as u64)
+        .unwrap_or(0);
+    let duration = terms
+        .at("duration")
+        .and_then(|v| v.as_u128())
+        .map(|n| n as u32)
+        .unwrap_or(0);
+    let price_per_byte = terms
+        .at("price_per_byte")
+        .and_then(|v| v.as_u128())
+        .unwrap_or(0);
+    (max_bytes, duration, price_per_byte)
+}
 
 /// Read the StorageProvider pallet's `ChallengeId` named composite as a `(deadline, index)`
 /// pair.
@@ -1145,5 +1207,49 @@ mod tests {
         assert_eq!(event.block_number(), 12345);
         assert!(event.is_checkpoint_event());
         assert!(!event.is_challenge_event());
+    }
+
+    #[test]
+    fn test_storage_agreement_established_helpers() {
+        let provider = AccountId32::new([2u8; 32]);
+        let owner = AccountId32::new([3u8; 32]);
+        let event = StorageEvent::StorageAgreementEstablished {
+            bucket_id: 7,
+            provider: provider.clone(),
+            owner,
+            max_bytes: 1024,
+            duration: 500,
+            price_per_byte: 1_000_000,
+            expires_at: 1000,
+            block_hash: H256::repeat_byte(0x01),
+            block_number: 999,
+        };
+        assert_eq!(event.bucket_id(), Some(7));
+        assert_eq!(event.provider(), Some(&provider));
+        assert_eq!(event.block_number(), 999);
+        assert!(event.is_agreement_event());
+        assert!(!event.is_checkpoint_event());
+    }
+
+    #[test]
+    fn test_replica_agreement_established_helpers() {
+        let provider = AccountId32::new([4u8; 32]);
+        let owner = AccountId32::new([5u8; 32]);
+        let event = StorageEvent::ReplicaAgreementEstablished {
+            bucket_id: 8,
+            provider: provider.clone(),
+            owner,
+            max_bytes: 2048,
+            duration: 300,
+            price_per_byte: 500_000,
+            expires_at: 800,
+            block_hash: H256::repeat_byte(0x02),
+            block_number: 750,
+        };
+        assert_eq!(event.bucket_id(), Some(8));
+        assert_eq!(event.provider(), Some(&provider));
+        assert_eq!(event.block_number(), 750);
+        assert!(event.is_agreement_event());
+        assert!(!event.is_checkpoint_event());
     }
 }

@@ -33,16 +33,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Register a plugin built from `StorageProviderEventParser`. Two equivalent
     // forms are shown:
-    let mut subscriber = BlockSubscriber::connect(&chain_ws).await?.register(
-        ParserPlugin::<StorageEvent, StorageProviderEventParser, _>::new(
-            "storage-provider",
-            |events: Vec<StorageEvent>| {
-                for ev in events {
-                    println!("[storage-provider] {ev:?}");
-                }
-            },
-        ),
-    );
+    let mut subscriber = BlockSubscriber::connect(&chain_ws)
+        .await?
+        .register(
+            ParserPlugin::<StorageEvent, StorageProviderEventParser, _>::new(
+                "storage-provider",
+                |events: Vec<StorageEvent>| {
+                    for ev in events {
+                        println!("[storage-provider] {ev:?}");
+                    }
+                },
+            ),
+        );
 
     subscriber.start().await?;
     println!(
