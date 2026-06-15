@@ -2,6 +2,12 @@
 
 Visual sequence diagrams for the core protocol flows in Scalable Web3 Storage.
 
+## S3 Bucket Creation
+
+| Diagram | Description |
+|---|---|
+| [S3 Bucket Creation](./s3-bucket-creation.md) | End-to-end flow: provider discovery, off-chain negotiation with term signing, single atomic on-chain extrinsic (Layer 0 bucket + agreement + S3 registry), and UI completion. |
+
 ## Checkpoint Flows
 
 How on-chain `BucketSnapshot` records are created, making providers liable for stored data.
