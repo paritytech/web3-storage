@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, FolderOpen, Plug, User } from "lucide-react";
+import { Archive, Plug, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   useIsConnected,
@@ -10,6 +10,7 @@ import {
   dismissCreation,
   type CreationStatus,
 } from "@/state";
+import ObjectBrowser from "@/components/ObjectBrowser";
 import EmptyState from "@/components/EmptyState";
 import NewBucketDialog from "@/components/NewBucketDialog";
 import ConnectDialog from "@/components/ConnectDialog";
@@ -101,13 +102,7 @@ export default function S3Page() {
     );
   }
 
-  return (
-    <EmptyState
-      icon={<FolderOpen className="h-12 w-12" />}
-      title={selectedBucket.name}
-      description="Object browser coming in the next PR."
-    />
-  );
+  return <ObjectBrowser />;
 }
 
 function CreationCard({
