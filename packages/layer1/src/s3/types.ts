@@ -1,5 +1,9 @@
 /** S3-style interface types (bucket/object storage). */
 
+import type { SignedTerms } from "@web3-storage/core";
+
+import type { ProviderChoice } from "../provider-url.js";
+
 export interface BucketInfo {
   s3BucketId: bigint;
   layer0BucketId: bigint;
@@ -20,13 +24,14 @@ export interface BucketRef {
 }
 
 export interface CreateBucketOptions {
-  minProviders?: number;
-}
-
-export interface CreateBucketWithStorageOptions {
+  /** Bytes the agreement covers — the negotiated terms' max_bytes. */
   maxCapacity: bigint;
+  /** Agreement duration in blocks — the negotiated terms' duration. */
   duration: number;
-  maxPayment: bigint;
+  /** Provider to negotiate with; auto-discovered (first accepting) when omitted. */
+  provider?: ProviderChoice;
+  /** Pre-negotiated terms (skips /negotiate). Requires provider.address. */
+  signedTerms?: SignedTerms;
 }
 
 export interface ObjectMetadata {

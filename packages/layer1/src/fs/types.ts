@@ -1,5 +1,9 @@
 /** File-system interface types (drive-backed storage). */
 
+import type { SignedTerms } from "@web3-storage/core";
+
+import type { ProviderChoice } from "../provider-url.js";
+
 export interface DriveInfo {
   driveId: bigint;
   bucketId: bigint;
@@ -10,15 +14,18 @@ export interface DriveInfo {
   createdAt: number;
   storagePeriod: number;
   expiresAt: number;
-  payment: bigint;
 }
 
 export interface CreateDriveOptions {
   name?: string;
+  /** Bytes the agreement covers — the negotiated terms' max_bytes. */
   maxCapacity: bigint;
+  /** Agreement duration in blocks — the negotiated terms' duration. */
   storagePeriod: number;
-  payment: bigint;
-  minProviders?: number;
+  /** Provider to negotiate with; auto-discovered (first accepting) when omitted. */
+  provider?: ProviderChoice;
+  /** Pre-negotiated terms (skips /negotiate). Requires provider.address. */
+  signedTerms?: SignedTerms;
 }
 
 export interface FsEntry {

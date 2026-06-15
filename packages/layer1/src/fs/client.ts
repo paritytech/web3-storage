@@ -33,7 +33,7 @@ import {
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import { ProviderUrlResolver } from "../provider-url.js";
+import { ProviderUrlResolver, resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketMember,
   CheckpointDuty,
@@ -85,6 +85,7 @@ export class FileSystemClient {
   private readonly onStatus: TxStatusListener | null;
   private readonly readOpts: { at: "best" | "finalized" };
   private readonly submitMode: "best" | "finalized";
+  private readonly creationUrlOverride?: string;
 
   constructor(opts: FileSystemClientOptions) {
     this.api = opts.api;
@@ -92,6 +93,7 @@ export class FileSystemClient {
     this.readOpts = opts.readOpts ?? { at: "finalized" };
     this.submitMode = opts.submitMode ?? "finalized";
     this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
+    this.creationUrlOverride = opts.providerUrl;
     this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
     this.onStatus = opts.onStatus ?? null;
   }
@@ -116,24 +118,29 @@ export class FileSystemClient {
 
   // ── Drive chain ops ─────────────────────────────────────────────────────
 
+  /**
+   * Create a drive via the negotiate -> establish flow: pick a provider
+   * (explicit `options.provider` or auto-discovered), POST /negotiate for
+   * signed terms (unless `options.signedTerms` is supplied), then redeem them
+   * in create_drive — which opens the underlying bucket + agreement atomically.
+   */
   async createDrive(options: CreateDriveOptions): Promise<{
     driveId: bigint;
     bucketId: bigint;
-    matchedProvider?: string;
+    provider: string;
   }> {
     const signer = this.requireSigner();
-    return createDriveTx(
-      this.api,
-      signer,
-      options.name ?? "",
-      {
-        max_capacity: options.maxCapacity,
-        storage_period: options.storagePeriod,
-        payment: options.payment,
-        min_providers: options.minProviders ?? undefined,
-      },
-      this.submitOpts(),
-    );
+    const { provider, signedTerms } = await resolveCreationTerms(this.api, {
+      owner: signer.address,
+      maxBytes: options.maxCapacity,
+      duration: options.storagePeriod,
+      provider: options.provider,
+      signedTerms: options.signedTerms,
+      urlOverride: this.creationUrlOverride,
+      readOpts: this.readOpts,
+      fetchOpts: this.fetchOpts,
+    });
+    return createDriveTx(this.api, signer, options.name ?? "", provider, signedTerms, this.submitOpts());
   }
 
   async getDrive(driveId: bigint): Promise<DriveInfo | null> {
@@ -148,7 +155,6 @@ export class FileSystemClient {
       createdAt: drive.created_at,
       storagePeriod: drive.storage_period,
       expiresAt: drive.expires_at,
-      payment: drive.payment,
     };
   }
 

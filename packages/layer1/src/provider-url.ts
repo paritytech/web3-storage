@@ -5,6 +5,13 @@
  */
 
 import {
+  negotiateTerms,
+  type HttpFetchOpts,
+  type NegotiateRequest,
+  type SignedTerms,
+} from "@web3-storage/core";
+import {
+  parseMultiaddrToUrl,
   resolveProviderEndpoint,
   waitForPrimaryProvider,
   type ParachainApi,
@@ -51,4 +58,106 @@ export class ProviderUrlResolver {
     this.cache.set(bucketId.toString(), url);
     return url;
   }
+}
+
+/** A provider to negotiate with: chain account + its HTTP(S) base URL. */
+export interface ProviderChoice {
+  address: string;
+  /** /negotiate base URL. Omitted means "resolve from the registered multiaddr". */
+  url?: string;
+}
+
+/**
+ * Pick an on-chain provider that is accepting primary agreements and exposes a
+ * resolvable HTTP endpoint. `urlOverride` (a dev/test provider URL) wins over
+ * the registered multiaddr — the local dev provider registers as the accepting
+ * provider, and all UIs/examples point at one URL. Throws when none qualifies.
+ */
+export async function discoverAcceptingProvider(
+  api: ParachainApi,
+  {
+    readOpts = { at: "finalized" },
+    urlOverride,
+  }: { readOpts?: { at: "best" | "finalized" }; urlOverride?: string } = {},
+): Promise<{ address: string; url: string }> {
+  const entries = await api.query.StorageProvider.Providers.getEntries(readOpts);
+  for (const entry of entries) {
+    const address = entry.keyArgs[0];
+    const provider = entry.value;
+    if (!provider?.settings?.accepting_primary) continue;
+    const url =
+      urlOverride ?? parseMultiaddrToUrl(new TextDecoder().decode(provider.multiaddr));
+    if (url) return { address, url };
+  }
+  throw new Error(
+    "no provider is accepting primary agreements (register one, or pass an explicit provider)",
+  );
+}
+
+export interface ResolveCreationTermsOpts {
+  owner: string;
+  maxBytes: bigint;
+  duration: number;
+  /** Explicit provider; auto-discovered when omitted. */
+  provider?: ProviderChoice;
+  /** Pre-negotiated terms (skips /negotiate); requires `provider.address`. */
+  signedTerms?: SignedTerms;
+  /** Dev/test provider URL — used for discovery and address-only providers. */
+  urlOverride?: string;
+  readOpts?: { at: "best" | "finalized" };
+  fetchOpts?: HttpFetchOpts;
+}
+
+/**
+ * The negotiate half of the negotiate -> establish flow for bucket/drive
+ * creation: pick a provider (explicit or discovered), POST /negotiate, and
+ * return the provider account + provider-signed terms ready for the establish_*
+ * / create_drive / create_s3_bucket extrinsics. Pass `signedTerms` to skip the
+ * HTTP round-trip entirely (the caller pre-negotiated).
+ */
+export async function resolveCreationTerms(
+  api: ParachainApi,
+  opts: ResolveCreationTermsOpts,
+): Promise<{ provider: { address: string }; signedTerms: SignedTerms }> {
+  if (opts.signedTerms) {
+    const address = opts.provider?.address;
+    if (!address) {
+      throw new Error("signedTerms requires provider.address (who signed the terms)");
+    }
+    return { provider: { address }, signedTerms: opts.signedTerms };
+  }
+
+  let choice: { address: string; url: string };
+  if (opts.provider?.address) {
+    const url = opts.provider.url ?? opts.urlOverride;
+    if (url) {
+      choice = { address: opts.provider.address, url };
+    } else {
+      // Address only: resolve its /negotiate URL from the registered multiaddr.
+      const info = await api.query.StorageProvider.Providers.getValue(
+        opts.provider.address,
+        opts.readOpts ?? { at: "finalized" },
+      );
+      const resolved = info ? parseMultiaddrToUrl(new TextDecoder().decode(info.multiaddr)) : null;
+      if (!resolved) {
+        throw new Error(`provider ${opts.provider.address} has no resolvable HTTP endpoint`);
+      }
+      choice = { address: opts.provider.address, url: resolved };
+    }
+  } else {
+    choice = await discoverAcceptingProvider(api, {
+      readOpts: opts.readOpts,
+      urlOverride: opts.urlOverride,
+    });
+  }
+
+  const request: NegotiateRequest = {
+    owner: opts.owner,
+    max_bytes: opts.maxBytes,
+    duration: opts.duration,
+    bucket_id: null,
+    replica_params: null,
+  };
+  const signedTerms = await negotiateTerms(choice.url, request, opts.fetchOpts);
+  return { provider: { address: choice.address }, signedTerms };
 }

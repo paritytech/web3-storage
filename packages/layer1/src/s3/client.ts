@@ -21,12 +21,10 @@ import {
 } from "@web3-storage/core";
 import {
   asHex,
-  createS3BucketWithStorage as createS3BucketWithStorageTx,
+  createS3Bucket as createS3BucketTx,
   deleteObjectMetadata as deleteObjectMetadataTx,
   deleteS3Bucket as deleteS3BucketTx,
   putObjectMetadata as putObjectMetadataTx,
-  requireOneEvent,
-  submitTx,
   type ChainSigner,
   type ParachainApi,
   type SubmitOpts,
@@ -34,12 +32,11 @@ import {
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import { ProviderUrlResolver } from "../provider-url.js";
+import { ProviderUrlResolver, resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketInfo,
   BucketRef,
   CreateBucketOptions,
-  CreateBucketWithStorageOptions,
   GetObjectResponse,
   ObjectMetadata,
   ObjectSummary,
@@ -79,6 +76,7 @@ export class S3Client {
   private readonly onStatus: TxStatusListener | null;
   private readonly readOpts: { at: "best" | "finalized" };
   private readonly submitMode: "best" | "finalized";
+  private readonly creationUrlOverride?: string;
 
   constructor(opts: S3ClientOptions) {
     this.api = opts.api;
@@ -86,6 +84,7 @@ export class S3Client {
     this.readOpts = opts.readOpts ?? { at: "finalized" };
     this.submitMode = opts.submitMode ?? "finalized";
     this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
+    this.creationUrlOverride = opts.providerUrl;
     this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
     this.onStatus = opts.onStatus ?? null;
   }
@@ -129,50 +128,42 @@ export class S3Client {
 
   // ── Bucket chain ops ────────────────────────────────────────────────────
 
-  /** Create a bucket without a storage agreement (agreement requested separately). */
-  async createBucket(name: string, opts: CreateBucketOptions = {}): Promise<BucketInfo> {
+  /**
+   * Create an S3 bucket via the negotiate -> establish flow: pick a provider
+   * (explicit `opts.provider` or auto-discovered), POST /negotiate for signed
+   * terms (unless `opts.signedTerms` is supplied), then redeem them in
+   * create_s3_bucket — which opens the underlying Layer 0 bucket + agreement
+   * atomically.
+   */
+  async createBucket(name: string, opts: CreateBucketOptions): Promise<BucketInfo> {
     this.validateBucketName(name);
     const signer = this.requireSigner();
-    const result = await submitTx(
-      this.api.tx.S3Registry.create_s3_bucket({
-        name: utf8(name),
-        min_providers: opts.minProviders ?? 1,
-      }),
-      signer.signer,
-      { label: "create_s3_bucket", ...this.submitOpts() },
-    );
-    const ev = requireOneEvent(
-      result.events,
-      this.api.event.S3Registry.S3BucketCreated,
-      "S3BucketCreated",
+    const { provider, signedTerms } = await resolveCreationTerms(this.api, {
+      owner: signer.address,
+      maxBytes: opts.maxCapacity,
+      duration: opts.duration,
+      provider: opts.provider,
+      signedTerms: opts.signedTerms,
+      urlOverride: this.creationUrlOverride,
+      readOpts: this.readOpts,
+      fetchOpts: this.fetchOpts,
+    });
+    const { s3BucketId, layer0BucketId } = await createS3BucketTx(
+      this.api,
+      signer,
+      name,
+      provider,
+      signedTerms,
+      this.submitOpts(),
     );
     return {
-      s3BucketId: ev.s3_bucket_id,
-      layer0BucketId: ev.layer0_bucket_id,
+      s3BucketId,
+      layer0BucketId,
       name,
       owner: signer.address,
       createdAt: 0,
       objectCount: 0,
     };
-  }
-
-  /** Create a bucket atomically with a storage agreement (auto-matched provider). */
-  async createBucketWithStorage(
-    name: string,
-    opts: CreateBucketWithStorageOptions,
-  ): Promise<{ s3BucketId: bigint; layer0BucketId: bigint; matchedProvider?: string }> {
-    this.validateBucketName(name);
-    return createS3BucketWithStorageTx(
-      this.api,
-      this.requireSigner(),
-      name,
-      {
-        max_capacity: opts.maxCapacity,
-        duration: opts.duration,
-        max_payment: opts.maxPayment,
-      },
-      this.submitOpts(),
-    );
   }
 
   async headBucket(name: string): Promise<BucketInfo | null> {
