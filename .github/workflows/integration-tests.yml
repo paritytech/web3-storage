@@ -309,16 +309,37 @@ jobs:
       # repository" via the dubious-ownership guard), and a content hash of
       # the one tracked snapshot is the precise signal anyway.
       - name: Check PAPI metadata is in sync with the runtime
+        id: papi-drift
         run: |
           META=user-interfaces/shared/papi/.papi/metadata/parachain.scale
           BEFORE=$(sha256sum "$META" | cut -d' ' -f1)
           pnpm --filter @web3-storage/papi run papi:generate
           AFTER=$(sha256sum "$META" | cut -d' ' -f1)
           if [ "$BEFORE" != "$AFTER" ]; then
-            echo "::error::Tracked PAPI metadata is stale (committed $BEFORE, live chain $AFTER). Run 'pnpm run papi:generate' against a current chain and commit the result."
+            # papi:generate just rewrote $META from the live chain. Preserve those
+            # bytes as an artifact so a runtime author can adopt them directly:
+            # SCALE metadata is NOT byte-reproducible across build environments,
+            # so the committed snapshot must come from CI, never a local macOS
+            # regen (which would only re-trip this check).
+            mkdir -p "$RUNNER_TEMP/fresh-papi-metadata"
+            cp "$META" "$RUNNER_TEMP/fresh-papi-metadata/parachain.scale"
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Tracked PAPI metadata is stale (committed $BEFORE, live chain $AFTER)."
+            echo "::error::If you changed the runtime, this failure is EXPECTED. Adopt this run's canonical bytes (do NOT regenerate locally):"
+            echo "::error::  gh run download ${GITHUB_RUN_ID} -n fresh-papi-metadata -D $(dirname "$META")"
+            echo "::error::  pnpm --filter @web3-storage/papi run papi:install   # regenerate descriptors from the snapshot (no chain needed)"
+            echo "::error::  git add user-interfaces/shared/papi/.papi && git commit -m 'chore(papi): refresh metadata for runtime change'"
             exit 1
           fi
           echo "Metadata in sync ($AFTER)"
+
+      - name: Upload fresh PAPI metadata (on drift)
+        if: always() && steps.papi-drift.outputs.drift == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fresh-papi-metadata
+          path: ${{ runner.temp }}/fresh-papi-metadata/parachain.scale
+          if-no-files-found: error
 
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
