@@ -146,6 +146,32 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
     t.into()
 }
 
+/// Build test externalities with custom balances and genesis providers.
+pub fn new_test_ext_with_genesis_providers(
+    balances: Vec<(u64, u64)>,
+    providers: Vec<crate::GenesisProvider<Test>>,
+) -> sp_io::TestExternalities {
+    let mut t = frame_system::GenesisConfig::<Test>::default()
+        .build_storage()
+        .unwrap();
+
+    pallet_balances::GenesisConfig::<Test> {
+        balances,
+        dev_accounts: None,
+    }
+    .assimilate_storage(&mut t)
+    .unwrap();
+
+    pallet_storage_provider::GenesisConfig::<Test> {
+        buckets: vec![],
+        providers,
+    }
+    .assimilate_storage(&mut t)
+    .unwrap();
+
+    t.into()
+}
+
 /// Run to a specific block number, calling both System and StorageProvider hooks.
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {

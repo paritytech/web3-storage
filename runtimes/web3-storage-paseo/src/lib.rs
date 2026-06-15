@@ -18,7 +18,8 @@ pub mod fast_runtime_binary {
     include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
 }
 
-mod genesis_config_presets;
+pub mod genesis_config_presets;
+pub mod migrations;
 pub mod paseo_constants;
 mod revive;
 mod storage;
@@ -182,10 +183,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 1,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // 0.2.0 -> 0_002_000. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `1`).
+    spec_version: 0_002_000,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 1,
 };
 
@@ -265,7 +269,7 @@ impl frame_system::Config for Runtime {
     type SS58Prefix = SS58Prefix;
     type OnSetCode = cumulus_pallet_parachain_system::ParachainSetCode<Self>;
     type MaxConsumers = ConstU32<16>;
-    type SingleBlockMigrations = ();
+    type SingleBlockMigrations = migrations::Migrations;
     type MultiBlockMigrator = ();
     type PreInherents = ();
     type PostInherents = ();
