@@ -608,3 +608,189 @@ fn respond_to_challenge_superseded_emits_defended_event() {
             .any(|r| r.event == expected_event));
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Challenge deposit escalation tests
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn challenge_deposit_escalates_with_active() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let bal_before = Balances::free_balance(3);
+
+        // First challenge: deposit = 100 * 2^0 = 100
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+        assert_eq!(Balances::free_balance(3), bal_before - 100);
+
+        // Second challenge (same challenger → provider, active=1): deposit = 100 * 2^1 = 200
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            1, // different leaf_index
+            0,
+        ));
+        assert_eq!(Balances::free_balance(3), bal_before - 100 - 200);
+    });
+}
+
+#[test]
+fn challenge_deposit_escalates_after_defense() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // First challenge: deposit = 100
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        let challenge_id = ChallengeId {
+            deadline: 101,
+            index: 0,
+        };
+
+        // Provider defends (Superseded)
+        run_to_block(2);
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            challenge_id,
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // active=0, failed=1 → next deposit = 100 * 2^1 = 200
+        let bal_after_defense = Balances::free_balance(3);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+        assert_eq!(Balances::free_balance(3), bal_after_defense - 200);
+    });
+}
+
+#[test]
+fn challenge_deposit_resets_on_slash() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // First challenge: deposit = 100
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        // Provider fails to respond → slashed at deadline
+        run_to_block(102);
+
+        // History should be cleared
+        assert_eq!(
+            crate::ChallengeHistory::<Test>::get(3, 2),
+            crate::ChallengerRecord::default()
+        );
+
+        // Need a new provider+agreement since provider 2 was slashed
+        register_provider(5, 200);
+        let bucket_id2 = setup_agreement(5, 1, 50, 200);
+        Buckets::<Test>::mutate(bucket_id2, |maybe_bucket| {
+            if let Some(bucket) = maybe_bucket {
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                    checkpoint_block: 102,
+                    primary_signers: vec![0x01],
+                });
+            }
+        });
+
+        // Challenge against a fresh provider starts at base again
+        let bal_before = Balances::free_balance(3);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id2,
+            5,
+            0,
+            0,
+        ));
+        assert_eq!(Balances::free_balance(3), bal_before - 100);
+    });
+}
+
+#[test]
+fn challenge_deposit_capped_at_256x() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Give challenger enough balance for the escalated deposit
+        let _ = <Balances as frame_support::traits::Currency<u64>>::deposit_creating(&3, 100_000);
+
+        // Artificially set failed to 9 (exponent 9 → capped at 8 → 256×)
+        crate::ChallengeHistory::<Test>::insert(
+            3u64,
+            2u64,
+            crate::ChallengerRecord {
+                active: 0,
+                failed: 9,
+            },
+        );
+
+        let bal_before = Balances::free_balance(3);
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+        // 100 * 2^min(9, 8) = 100 * 256 = 25600
+        assert_eq!(Balances::free_balance(3), bal_before - 25_600);
+    });
+}
+
+#[test]
+fn challenge_history_cleaned_up_on_slash() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Create challenge
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(3),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+
+        // Verify history exists
+        let record = crate::ChallengeHistory::<Test>::get(3, 2);
+        assert_eq!(record.active, 1);
+
+        // Provider fails → slashed
+        run_to_block(102);
+
+        // History entry should be fully removed
+        assert!(!crate::ChallengeHistory::<Test>::contains_key(3, 2));
+    });
+}

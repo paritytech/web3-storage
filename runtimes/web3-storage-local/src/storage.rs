@@ -16,6 +16,7 @@ use crate::{
 
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
+    pub const BaseChallengeDeposit: Balance = 100 * UNIT;
     pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
     pub const SettlementTimeout: BlockNumber = 24 * HOURS;
     pub const RequestTimeout: BlockNumber = 6 * HOURS;
@@ -75,6 +76,7 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxPrimaryProviders = ConstU32<5>;
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
+    type BaseChallengeDeposit = BaseChallengeDeposit;
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;

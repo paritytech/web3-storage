@@ -75,6 +75,7 @@ impl pallet_balances::Config for Test {
 
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000_000_000_000;
+    pub const BaseChallengeDeposit: Balance = 100;
     pub const MinStakePerByte: Balance = 1_000;
     pub const MaxMultiaddrLength: u32 = 128;
     pub const MaxMembers: u32 = 100;
@@ -100,6 +101,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxBucketsPerMember = ConstU32<100>;
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>;
+    type BaseChallengeDeposit = BaseChallengeDeposit;
     type ChallengeTimeout = ChallengeTimeout;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;

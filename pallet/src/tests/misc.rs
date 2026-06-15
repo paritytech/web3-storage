@@ -265,6 +265,7 @@ fn challenge_checkpoint_emits_event() {
             provider: 2,
             challenger: 3,
             respond_by: 101,
+            deposit: 100,
         });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()

@@ -117,6 +117,12 @@ pub mod pallet {
         #[pallet::constant]
         type MaxChunkSize: Get<u32>;
 
+        /// Base deposit required to create a challenge.
+        /// Actual deposit escalates exponentially per (challenger, provider)
+        /// pair: `base * 2^(active + failed)`, capped at 256× base.
+        #[pallet::constant]
+        type BaseChallengeDeposit: Get<BalanceOf<Self>>;
+
         /// Timeout for challenge response (e.g., ~48 hours in blocks).
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
@@ -205,6 +211,22 @@ pub mod pallet {
     #[pallet::getter(fn challenges)]
     pub type Challenges<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+
+    /// Per-(challenger, provider) escalation history.
+    ///
+    /// Tracks active and failed challenge counts so that the deposit for the
+    /// next challenge can be exponentially escalated. Cleared when the
+    /// challenger is vindicated (provider slashed).
+    #[pallet::storage]
+    pub type ChallengeHistory<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        T::AccountId, // challenger
+        Blake2_128Concat,
+        T::AccountId, // provider
+        ChallengerRecord,
+        ValueQuery,
+    >;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -515,6 +537,21 @@ pub mod pallet {
         pub deposit: BalanceOf<T>,
     }
 
+    /// Per-(challenger, provider) escalation record.
+    ///
+    /// Tracks how many unresolved (`active`) and wrongly-issued (`failed`)
+    /// challenges a challenger has against a specific provider. The deposit
+    /// for the next challenge is `BaseChallengeDeposit * 2^(active + failed)`,
+    /// capped at 256×. Cleared when the challenger is proven right (provider
+    /// slashed).
+    #[derive(Encode, Decode, Clone, Default, PartialEq, Eq, Debug, TypeInfo, MaxEncodedLen)]
+    pub struct ChallengerRecord {
+        /// Number of pending unresolved challenges.
+        pub active: u32,
+        /// Number of challenges where the provider defended (challenger was wrong).
+        pub failed: u32,
+    }
+
     /// Challenge response from provider.
     #[derive(
         CloneNoBound,
@@ -715,6 +752,7 @@ pub mod pallet {
             provider: T::AccountId,
             challenger: T::AccountId,
             respond_by: BlockNumberFor<T>,
+            deposit: BalanceOf<T>,
         },
         ChallengeDefended {
             challenge_id: ChallengeId<BlockNumberFor<T>>,
@@ -2562,6 +2600,18 @@ pub mod pallet {
                 Challenges::<T>::insert(challenge_id.deadline, challenges);
             }
 
+            // Provider defended → active-1, failed+1 for escalation tracking
+            ChallengeHistory::<T>::mutate(&challenge.challenger, &challenge.provider, |r| {
+                r.active = r.active.saturating_sub(1);
+                r.failed = r.failed.saturating_add(1);
+            });
+            // Clean up zero records to avoid storage bloat
+            if ChallengeHistory::<T>::get(&challenge.challenger, &challenge.provider)
+                == ChallengerRecord::default()
+            {
+                ChallengeHistory::<T>::remove(&challenge.challenger, &challenge.provider);
+            }
+
             // Calculate response time (blocks since challenge was created)
             let challenge_created_at = challenge_id
                 .deadline
@@ -3220,8 +3270,11 @@ pub mod pallet {
             leaf_index: u64,
             chunk_index: u64,
         ) -> DispatchResult {
-            // Calculate deposit (simplified - would be based on expected costs)
-            let deposit: BalanceOf<T> = 100u32.into();
+            // Escalating deposit: base * 2^(active + failed), capped at 256×.
+            let record = ChallengeHistory::<T>::get(&challenger, &provider);
+            let exponent = record.active.saturating_add(record.failed).min(8);
+            let multiplier: BalanceOf<T> = (1u32 << exponent).into();
+            let deposit = T::BaseChallengeDeposit::get().saturating_mul(multiplier);
 
             T::Currency::reserve(&challenger, deposit)?;
 
@@ -3246,6 +3299,11 @@ pub mod pallet {
                 idx
             });
 
+            // Track active challenge for escalation
+            ChallengeHistory::<T>::mutate(&challenger, &provider, |r| {
+                r.active = r.active.saturating_add(1);
+            });
+
             // Update provider stats
             Providers::<T>::mutate(&provider, |maybe_provider| {
                 if let Some(provider_info) = maybe_provider {
@@ -3262,6 +3320,7 @@ pub mod pallet {
                 provider,
                 challenger,
                 respond_by: deadline,
+                deposit,
             });
 
             Ok(())
@@ -3340,6 +3399,9 @@ pub mod pallet {
 
                 // The rest goes to treasury (burned by slash_reserved)
                 let _ = to_treasury; // Acknowledged
+
+                // Challenger was right — reset escalation for this provider
+                ChallengeHistory::<T>::remove(&challenge.challenger, &challenge.provider);
 
                 // Update provider stats
                 provider_info.stats.challenges_failed =
