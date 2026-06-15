@@ -182,7 +182,7 @@ export async function negotiateSigned(
       provider.address,
       READ_OPTS
     );
-    p = info?.settings?.price_per_byte ?? 1n;
+    p = info?.settings?.price_per_byte ?? 100n;
   }
   return negotiateTerms(providerUrl, {
     owner: owner.address,

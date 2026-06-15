@@ -76,6 +76,7 @@ async function main() {
       const { bucketId } = await negotiateAndEstablish(api, CHARLIE_PROVIDER_URL, dave, charlie, {
         maxBytes: 1_048_576n,
         duration: 100,
+        pricePerByte: 100n
       });
       const infoBefore = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
       assert.ok(infoBefore.committed_bytes > 0n, "Charlie should have committed_bytes > 0");
