@@ -9,12 +9,23 @@ import { getPolkadotSigner } from "polkadot-api/signer";
 import { parachain } from "@polkadot-api/descriptors";
 import { Binary, Enum } from "polkadot-api";
 import {
+  createS3Bucket,
   makeSigner,
+  negotiateTerms,
   parseMultiaddrToUrl,
   submitTx,
+  toSs58,
   type ChainSigner,
+  type SignedTerms,
 } from "@web3-storage/sdk";
 import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
+
+// Re-export the SDK negotiate primitives + type the create-bucket
+// components/hooks import from here, alongside the UI-side discovery types
+// defined below. `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl`.
+export { negotiateTerms };
+export type { SignedTerms };
+export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 import { EncryptionKey } from "./encryption";
 import { type Keypair, toHex } from "./crypto";
 
@@ -95,6 +106,36 @@ export interface AvailableProvider {
   maxDuration: number;
   acceptingPrimary: boolean;
   agreementsTotal: number;
+}
+
+/**
+ * A provider scored against storage requirements via the
+ * `find_matching_providers` runtime API. Carries a `matchScore` and
+ * `partialReason` per provider so the picker can rank "best fit" vs
+ * near-misses.
+ */
+export interface MatchingProviders extends AvailableProvider {
+  matchScore: number;
+  partialReason: string;
+  committedBytes: bigint;
+  replicaSyncPrice?: bigint;
+  acceptingExtensions: boolean;
+  registeredAt: number;
+  agreementsExtended: number;
+  agreementsNotExtended: number;
+  agreementsBurned: number;
+  challengesReceived: number;
+  challengesFailed: number;
+}
+
+export interface QueryMatchingProvidersParams {
+  query: {
+    bytesNeeded: bigint;
+    minDuration: number;
+    maxPricePerByte: bigint;
+    primaryOnly: boolean;
+  };
+  limit: number;
 }
 
 export interface PutObjectOptions {
@@ -340,53 +381,55 @@ export class StorageClient {
 
   // --- S3 Operations ---
 
-  async createBucket(name: string, options: CreateBucketOptions): Promise<BucketInfo> {
+  /**
+   * Redeem provider-signed agreement terms on chain to open a Layer-0 bucket
+   * + primary agreement and register the S3 metadata bucket on top — atomically
+   * in one extrinsic (via the SDK's `createS3Bucket`).
+   *
+   * **Step 2 of bucket creation.** Step 1 is the HTTP `negotiateTerms` call
+   * against the chosen provider; splitting the two lets a failed on-chain
+   * submit be retried without re-negotiating (terms valid until
+   * `terms.valid_until`). `providerUrl` is used only to prime the dev fallback
+   * cache for the first upload — the chain itself doesn't see it.
+   */
+  async submitCreateBucket(
+    name: string,
+    providerAccount: string,
+    providerUrl: string,
+    signed: SignedTerms,
+  ): Promise<BucketInfo> {
     this.ensureConnected();
     this.validateBucketName(name);
+    if (!this.chainSigner) throw new Error("Signer not set. Call setSigner() first.");
 
-    console.log("[StorageClient] createBucket:", name, options);
+    console.log(
+      "[StorageClient] submitCreateBucket:",
+      name,
+      "provider=",
+      providerAccount,
+      providerUrl,
+      "nonce=",
+      signed.terms.nonce,
+    );
 
-    // Create the S3 bucket (this also creates the Layer 0 bucket).
-    // Provider agreement is requested separately after creation.
-    const tx = this.api!.tx.S3Registry.create_s3_bucket({
-      name: Binary.fromText(name),
-      min_providers: 1,
-    });
+    const { s3BucketId, layer0BucketId } = await createS3Bucket(
+      this.api!,
+      this.chainSigner,
+      name,
+      { address: providerAccount },
+      signed,
+      { mode: "best" },
+    );
 
-    const result = await this.submitAndWatchBestBlock(tx);
-
-    // Extract bucket ID from events
-    let s3BucketId: bigint | null = null;
-    let layer0BucketId: bigint | null = null;
-    for (const event of result.events) {
-      if (event.type === "S3Registry" && event.value.type === "S3BucketCreated") {
-        s3BucketId = event.value.value.s3_bucket_id;
-        layer0BucketId = event.value.value.layer0_bucket_id;
-        break;
-      }
+    // Prime the dev fallback so the first upload skips on-chain resolution.
+    if (providerUrl) {
+      this.fallbackUrlCache.set(layer0BucketId.toString(), providerUrl);
     }
 
-    // Fallback: if events couldn't be decoded (stale descriptor), look up by name
-    if (s3BucketId === null) {
-      console.warn(
-        "[StorageClient] S3BucketCreated event not found in tx events (",
-        result.events.length, "events). Falling back to chain query."
-      );
-      const looked = await this.headBucket(name);
-      if (looked) {
-        return looked;
-      }
-      throw new Error(
-        "S3BucketCreated event not found and bucket lookup failed. " +
-        "The runtime descriptor may be stale — run: npx papi update"
-      );
-    }
-
-    // Return bucket info from the event data
     return {
       s3BucketId,
       name,
-      layer0BucketId: layer0BucketId ?? 0n,
+      layer0BucketId,
       owner: this.signerAddress!,
       createdAt: BigInt(Date.now()),
     };
@@ -890,24 +933,63 @@ export class StorageClient {
     return providers;
   }
 
-  async requestAgreementWithProvider(
-    bucketId: bigint,
-    providerAccount: string,
-    maxBytes: bigint,
-    duration: number,
-    maxPayment: bigint,
-  ): Promise<void> {
-    this.ensureConnected();
+  /**
+   * Score registered providers against the given storage requirements via the
+   * `find_matching_providers` runtime API. Unlike `listAvailableProviders` (a
+   * raw storage sweep), this returns a `matchScore` and `partialReason` per
+   * provider so the picker can surface "best fit" vs near-misses. Sorted by
+   * score descending.
+   */
+  async queryMatchingProviders(
+    query: QueryMatchingProvidersParams["query"],
+    limit: QueryMatchingProvidersParams["limit"] = 10,
+  ): Promise<MatchingProviders[]> {
+    if (!this.api) throw new Error("Not connected. Call connect() first.");
 
-    const tx = this.api!.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: providerAccount,
-      max_bytes: maxBytes,
-      duration,
-      max_payment: maxPayment,
-    });
+    const matches = await this.api.apis.StorageProviderApi.find_matching_providers(
+      {
+        bytes_needed: query.bytesNeeded,
+        min_duration: query.minDuration,
+        max_price_per_byte: query.maxPricePerByte,
+        primary_only: query.primaryOnly,
+      },
+      limit,
+    );
 
-    await this.submitAndWatchBestBlock(tx);
+    return matches
+      .map((match) => {
+        const info = match.info;
+        const maxCapacity = BigInt(info.max_capacity ?? 0);
+        const committedBytes = BigInt(info.committed_bytes ?? 0);
+        const availableCapacity =
+          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+        return {
+          account: toSs58(match.account),
+          multiaddr: new TextDecoder().decode(info.multiaddr),
+          stake: BigInt(info.stake ?? 0),
+          availableCapacity,
+          maxCapacity,
+          committedBytes,
+          pricePerByte: BigInt(info.price_per_byte ?? 0),
+          minDuration: info.min_duration ?? 0,
+          maxDuration: info.max_duration ?? 0,
+          acceptingPrimary: info.accepting_primary ?? false,
+          replicaSyncPrice:
+            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+          acceptingExtensions: info.accepting_extensions ?? false,
+          registeredAt: Number(info.registered_at ?? 0),
+          agreementsTotal: info.agreements_total ?? 0,
+          agreementsExtended: info.agreements_extended ?? 0,
+          agreementsNotExtended: info.agreements_not_extended ?? 0,
+          agreementsBurned: info.agreements_burned ?? 0,
+          challengesReceived: info.challenges_received ?? 0,
+          challengesFailed: info.challenges_failed ?? 0,
+          matchScore: match.match_score,
+          partialReason: match.partial_reason?.type ?? "",
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore);
   }
 
   // --- Helpers ---

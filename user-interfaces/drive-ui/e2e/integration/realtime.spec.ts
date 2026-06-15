@@ -47,8 +47,6 @@ test("DriveCreated cross-tab", async ({ localPage, browser }) => {
       name: `rt-create-${Date.now()}`,
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
-      payment: 120_000_000_000_000_000n,
-      minProviders: 1,
     });
 
     // Tab A also reflects (sanity).
@@ -71,8 +69,6 @@ test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
       name: `rt-delete-${Date.now()}`,
       maxCapacity: 10_000_000n,
       storagePeriod: 10_000,
-      payment: 120_000_000_000_000_000n,
-      minProviders: 1,
     });
     await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
       timeout: 90_000,

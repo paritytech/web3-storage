@@ -1,12 +1,30 @@
 import { waitForPrimaryProvider } from "@web3-storage/sdk";
-import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
+import { S3Client } from "@web3-storage/sdk/s3";
+import { FileSystemClient } from "@web3-storage/sdk/fs";
+import { getApi, submitExtrinsicBestBlock } from "./chain-api";
 import type { DevSigner } from "./signers";
+
+// Dev provider HTTP endpoint. The local provider node registers its multiaddr
+// as /ip4/127.0.0.1/tcp/3333, so the SDK clients could resolve this from chain
+// — but pinning it skips that lookup and matches how the UIs target the local
+// provider. Overridable for non-default test setups.
+const DEV_PROVIDER_URL = process.env.PROVIDER_URL ?? "http://127.0.0.1:3333";
+
+// Sensible defaults for test fixtures. Large enough to satisfy provider
+// capacity/duration checks, small enough to stay well under the dev stake.
+const DEFAULT_MAX_BYTES = 10_000_000n;
+const DEFAULT_DURATION = 10_000;
 
 // ─── S3 Buckets (console-ui) ─────────────────────────────────────────────────
 
 export interface CreateBucketOptions {
   name: string;
-  minProviders?: number;
+  /** Bytes to reserve. Default 10 MB. */
+  maxBytes?: bigint;
+  /** Agreement duration in blocks. Default 10_000. */
+  duration?: number;
+  /** Max price per byte per block to accept from the provider. */
+  pricePerByte?: bigint;
 }
 
 export interface BucketHandle {
@@ -15,26 +33,28 @@ export interface BucketHandle {
   name: string;
 }
 
+/**
+ * Create an S3 bucket via the negotiate → atomic establish flow: the SDK's
+ * S3Client auto-discovers the accepting dev provider, POSTs /negotiate for
+ * signed terms, then submits `create_s3_bucket(name, provider, terms, sig)`.
+ * Finalized submission (test-setup semantics) — the client defaults to
+ * `submitMode: "finalized"`. `pricePerByte` only caps acceptance; the
+ * provider signs its own listed price.
+ */
 export async function createBucketViaApi(
   signer: DevSigner,
   opts: CreateBucketOptions,
 ): Promise<BucketHandle> {
-  const api = getApi();
-  const nameBytes = new TextEncoder().encode(opts.name);
-  const result = await submitExtrinsic(
-    api.tx.S3Registry.create_s3_bucket({
-      name: nameBytes,
-      min_providers: opts.minProviders ?? 1,
-    }),
-    signer.signer,
-  );
-
-  const events = api.event.S3Registry.S3BucketCreated.filter(result.events as never);
-  if (events.length === 0) {
-    throw new Error("S3BucketCreated event not found");
-  }
-  const { s3_bucket_id, layer0_bucket_id } = events[0].payload;
-  return { s3BucketId: s3_bucket_id, layer0BucketId: layer0_bucket_id, name: opts.name };
+  const client = new S3Client({
+    api: getApi(),
+    signer,
+    providerUrl: DEV_PROVIDER_URL,
+  });
+  const { s3BucketId, layer0BucketId } = await client.createBucket(opts.name, {
+    maxCapacity: opts.maxBytes ?? DEFAULT_MAX_BYTES,
+    duration: opts.duration ?? DEFAULT_DURATION,
+  });
+  return { s3BucketId, layer0BucketId, name: opts.name };
 }
 
 export async function deleteBucketViaApi(signer: DevSigner, s3BucketId: bigint): Promise<void> {
@@ -85,10 +105,14 @@ export async function cleanupBuckets(signer: DevSigner): Promise<number> {
 
 export interface CreateDriveOptions {
   name?: string;
-  maxCapacity: bigint;
-  storagePeriod: number;
-  payment: bigint;
-  minProviders?: number;
+  /** Bytes to reserve. Default 10 MB. Alias: `maxBytes`. */
+  maxCapacity?: bigint;
+  maxBytes?: bigint;
+  /** Agreement duration in blocks. Default 10_000. Alias: `duration`. */
+  storagePeriod?: number;
+  duration?: number;
+  /** Max price per byte per block to accept from the provider. */
+  pricePerByte?: bigint;
 }
 
 export interface DriveHandle {
@@ -97,40 +121,34 @@ export interface DriveHandle {
   name: string | undefined;
 }
 
+/**
+ * Create a drive via the negotiate → atomic establish flow: the SDK's
+ * FileSystemClient auto-discovers the accepting dev provider, POSTs /negotiate
+ * for signed terms, then submits `create_drive(name, provider, terms, sig)`.
+ * Finalized submission (test-setup semantics) — the client defaults to
+ * `submitMode: "finalized"`. With the atomic establish the provider is primary
+ * immediately, so the `waitForPrimaryProvider` below resolves fast; it's kept
+ * as a guard against a misconfigured provider node.
+ */
 export async function createDriveViaApi(
   signer: DevSigner,
   opts: CreateDriveOptions,
 ): Promise<DriveHandle> {
   const api = getApi();
+  const client = new FileSystemClient({ api, signer, providerUrl: DEV_PROVIDER_URL });
 
-  const nameBytes = opts.name ? new TextEncoder().encode(opts.name) : undefined;
-  const result = await submitExtrinsic(
-    api.tx.DriveRegistry.create_drive({
-      name: nameBytes,
-      max_capacity: opts.maxCapacity,
-      storage_period: opts.storagePeriod,
-      payment: opts.payment,
-      min_providers: opts.minProviders ?? undefined,
-    }),
-    signer.signer,
-  );
+  const { driveId, bucketId } = await client.createDrive({
+    name: opts.name,
+    maxCapacity: opts.maxCapacity ?? opts.maxBytes ?? DEFAULT_MAX_BYTES,
+    storagePeriod: opts.storagePeriod ?? opts.duration ?? DEFAULT_DURATION,
+  });
+  const handle: DriveHandle = { driveId, bucketId, name: opts.name };
 
-  const created = api.event.DriveRegistry.DriveCreated.filter(result.events as never);
-  if (created.length === 0) throw new Error("DriveCreated event not found");
-  const { drive_id, bucket_id } = created[0].payload;
-  const handle: DriveHandle = { driveId: drive_id, bucketId: bucket_id, name: opts.name };
-
-  // create_drive auto-emits a request_agreement targeting the matched
-  // provider. Only the provider can call accept_agreement (the drive owner
-  // can't), so we wait for the provider node's auto-coordinator to settle
-  // it. The coordinator polls every ~6s; typical end-to-end is well under a
-  // minute, worst case ~50s under nonce contention from rapid prior cleanup.
-  // 90s absorbs the worst case (which we'd happily pay vs. a flake).
   try {
     await waitForPrimaryProvider(api, handle.bucketId, { timeoutMs: 90_000 });
   } catch (e) {
     throw new Error(
-      `createDriveViaApi: ${(e as Error).message} — provider node may not be running or not auto-accepting.`,
+      `createDriveViaApi: ${(e as Error).message} — provider node may not be running or not accepting agreements.`,
     );
   }
   return handle;

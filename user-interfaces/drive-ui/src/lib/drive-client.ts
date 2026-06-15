@@ -10,11 +10,28 @@
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
 import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
-import type { ChainSigner } from "@web3-storage/sdk";
+import {
+  buildSignedTermsArgs,
+  createDrive as createDriveTx,
+  negotiateTerms,
+  parseMultiaddrToUrl,
+  toSs58,
+  type ChainSigner,
+  type NegotiateRequest,
+  type SignedTerms,
+} from "@web3-storage/sdk";
 import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
+
+// Re-export the SDK negotiate primitives + types the create-drive components
+// (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
+export { buildSignedTermsArgs, negotiateTerms };
+export type { NegotiateRequest, SignedTerms };
+
+/** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
+export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
 export type {
   BucketMember,
@@ -40,6 +57,52 @@ export interface CheckpointInfo {
   startSeq: bigint;
   leafCount: bigint;
   checkpointBlock: number;
+}
+
+/**
+ * A registered provider as surfaced by the provider picker. UI-side discovery
+ * type (raw `StorageProvider.Providers` sweep) — stays in the UI, not the SDK.
+ */
+export interface AvailableProvider {
+  account: string;
+  multiaddr: string;
+  stake: bigint;
+  availableCapacity: bigint;
+  maxCapacity: bigint;
+  pricePerByte: bigint;
+  minDuration: number;
+  maxDuration: number;
+  acceptingPrimary: boolean;
+  agreementsTotal: number;
+}
+
+/**
+ * A provider scored against storage requirements via the
+ * `find_matching_providers` runtime API. Carries a `matchScore` and
+ * `partialReason` so the picker can rank "best fit" vs near-misses.
+ */
+export interface MatchingProviders extends AvailableProvider {
+  matchScore: number;
+  partialReason: string;
+  committedBytes: bigint;
+  replicaSyncPrice?: bigint;
+  acceptingExtensions: boolean;
+  registeredAt: number;
+  agreementsExtended: number;
+  agreementsNotExtended: number;
+  agreementsBurned: number;
+  challengesReceived: number;
+  challengesFailed: number;
+}
+
+export interface QueryMatchingProvidersParams {
+  query: {
+    bytesNeeded: bigint;
+    minDuration: number;
+    maxPricePerByte: bigint;
+    primaryOnly: boolean;
+  };
+  limit: number;
 }
 
 export class DriveClient {
@@ -164,7 +227,153 @@ export class DriveClient {
       createdAt: 0,
       storagePeriod: options.storagePeriod,
       expiresAt: 0,
-      payment: options.payment,
+    };
+  }
+
+  /**
+   * Walk `StorageProvider.Providers` storage and return all registered
+   * providers, sorted by free capacity descending. Used by the provider
+   * picker to surface candidates before negotiation. UI-side discovery — the
+   * SDK's `discoverAcceptingProvider` picks one; this lists them all.
+   */
+  async listAvailableProviders(): Promise<AvailableProvider[]> {
+    const api = this.requireApi();
+    const entries = await api.query.StorageProvider.Providers.getEntries();
+    const providers: AvailableProvider[] = [];
+
+    for (const entry of entries) {
+      const provider = entry.value;
+      const account = entry.keyArgs[0] as string;
+      const settings = provider.settings;
+
+      const multiaddrStr = new TextDecoder().decode(provider.multiaddr);
+      const maxCapacity = BigInt(settings.max_capacity ?? 0);
+      const committedBytes = BigInt(provider.committed_bytes ?? 0);
+      const availableCapacity =
+        maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+      providers.push({
+        account,
+        multiaddr: multiaddrStr,
+        stake: BigInt(provider.stake ?? 0),
+        availableCapacity,
+        maxCapacity,
+        pricePerByte: BigInt(settings.price_per_byte ?? 0),
+        minDuration: settings.min_duration ?? 0,
+        maxDuration: settings.max_duration ?? 0,
+        acceptingPrimary: settings.accepting_primary ?? false,
+        agreementsTotal: (provider.stats as { agreements_total?: number })?.agreements_total ?? 0,
+      });
+    }
+
+    providers.sort((a, b) => {
+      if (b.availableCapacity > a.availableCapacity) return 1;
+      if (b.availableCapacity < a.availableCapacity) return -1;
+      return 0;
+    });
+
+    return providers;
+  }
+
+  /**
+   * Score registered providers against the given storage requirements via the
+   * `find_matching_providers` runtime API. Returns a `matchScore` and
+   * `partialReason` per provider so the picker can rank candidates.
+   */
+  async queryMatchingProviders(
+    query: QueryMatchingProvidersParams["query"],
+    limit: QueryMatchingProvidersParams["limit"],
+  ): Promise<MatchingProviders[]> {
+    const api = this.requireApi();
+    const matches = await api.apis.StorageProviderApi.find_matching_providers(
+      {
+        bytes_needed: query.bytesNeeded,
+        min_duration: query.minDuration,
+        max_price_per_byte: query.maxPricePerByte,
+        primary_only: query.primaryOnly,
+      },
+      limit,
+    );
+
+    return matches
+      .map((match) => {
+        const info = match.info;
+        const maxCapacity = BigInt(info.max_capacity ?? 0);
+        const committedBytes = BigInt(info.committed_bytes ?? 0);
+        const availableCapacity =
+          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+
+        return {
+          account: toSs58(match.account),
+          multiaddr: new TextDecoder().decode(info.multiaddr),
+          stake: BigInt(info.stake ?? 0),
+          availableCapacity,
+          maxCapacity,
+          committedBytes,
+          pricePerByte: BigInt(info.price_per_byte ?? 0),
+          minDuration: info.min_duration ?? 0,
+          maxDuration: info.max_duration ?? 0,
+          acceptingPrimary: info.accepting_primary ?? false,
+          replicaSyncPrice:
+            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+          acceptingExtensions: info.accepting_extensions ?? false,
+          registeredAt: Number(info.registered_at ?? 0),
+          agreementsTotal: info.agreements_total ?? 0,
+          agreementsExtended: info.agreements_extended ?? 0,
+          agreementsNotExtended: info.agreements_not_extended ?? 0,
+          agreementsBurned: info.agreements_burned ?? 0,
+          challengesReceived: info.challenges_received ?? 0,
+          challengesFailed: info.challenges_failed ?? 0,
+          matchScore: match.match_score,
+          partialReason: match.partial_reason?.type ?? "",
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore);
+  }
+
+  /**
+   * Redeem provider-signed agreement terms on chain to open a Layer-0 bucket
+   * + primary agreement and register the drive on top — atomically in one
+   * extrinsic (via the SDK's `createDrive`).
+   *
+   * **Step 2 of drive creation.** Step 1 is the HTTP `negotiateTerms` call
+   * against the chosen provider; splitting the two lets a failed on-chain
+   * submit be retried without re-negotiating (terms valid until
+   * `terms.valid_until`). `providerUrl` is used only to prime the provider
+   * URL cache for the first upload.
+   */
+  async submitCreateDrive(
+    name: string | undefined,
+    providerAccount: string,
+    _providerUrl: string,
+    signed: SignedTerms,
+  ): Promise<DriveInfo> {
+    const api = this.requireApi();
+    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
+    const [publicKey] = ss58Decode(this.signerAddress);
+    const owner: ChainSigner = {
+      signer: this.signer,
+      address: this.signerAddress,
+      publicKey,
+    };
+
+    const { driveId, bucketId } = await createDriveTx(
+      api,
+      owner,
+      name ?? "",
+      { address: providerAccount },
+      signed,
+    );
+
+    return {
+      driveId,
+      bucketId,
+      owner: this.signerAddress,
+      name: name ?? null,
+      maxCapacity: BigInt(signed.terms.max_bytes),
+      createdAt: 0,
+      storagePeriod: signed.terms.duration,
+      expiresAt: 0,
     };
   }
 
