@@ -116,7 +116,7 @@ higher ceiling. Write latency is still bound by chain latency.
 
 ### The Deeper Problem: What Do Proofs Actually Guarantee?
 
-Filecoins proving ensures at a high cost that data is stored, but there is no
+Filecoin's proving ensures at a high cost that data is stored, but there is no
 guarantee at all that it will also be retrievable. A provider can provide all
 the required proofs and still not serve the data at all to anybody (or not at
 the necessary capacity).
