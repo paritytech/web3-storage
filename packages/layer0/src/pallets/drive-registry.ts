@@ -2,21 +2,31 @@
 
 import { Enum } from "polkadot-api";
 
+import type { SignedTerms } from "@web3-storage/core";
+
 import type { ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
 import { requireOneEvent, submitTx, type SubmitOpts } from "../tx.js";
+import { buildSignedTermsArgs } from "./storage-provider.js";
 
+/**
+ * Create a drive by redeeming provider-signed terms (#105). Layer 0's
+ * establish_storage_agreement_internal opens the underlying bucket + primary
+ * agreement atomically inside create_drive, so `provider`/`signed` come from a
+ * prior {@link negotiateTerms} against that provider's /negotiate endpoint.
+ */
 export async function createDrive(
   api: ParachainApi,
   owner: ChainSigner,
   name: string,
-  params: any,
+  provider: ChainSigner | { address: string },
+  signed: SignedTerms,
   opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
     api.tx.DriveRegistry.create_drive({
       name: new TextEncoder().encode(name),
-      ...params,
+      ...buildSignedTermsArgs(provider, signed),
     }),
     owner.signer,
     { label: "create_drive", ...opts },
@@ -26,13 +36,10 @@ export async function createDrive(
     api.event.DriveRegistry.DriveCreated,
     "DriveCreated",
   );
-  const requested = api.event.StorageProvider.AgreementRequested.filter(
-    result.events as never,
-  );
   return {
     driveId: event.drive_id,
     bucketId: event.bucket_id,
-    matchedProvider: requested[0]?.payload.provider,
+    provider: provider.address,
   };
 }
 

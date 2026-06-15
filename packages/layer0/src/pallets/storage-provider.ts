@@ -8,7 +8,9 @@
 
 import { Enum } from "polkadot-api";
 
-import { asHex, bytesEq, type ParachainApi } from "../address.js";
+import type { SignedTerms } from "@web3-storage/core";
+
+import { asHex, bytesEq, hexToBytes, type ParachainApi } from "../address.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -94,82 +96,116 @@ export async function ensureProviderRegistered(
   );
 }
 
-export async function createBucket(
-  api: ParachainApi,
-  signer: ChainSigner,
-  { minProviders = 1 }: { minProviders?: number } = {},
-  opts: SubmitOpts = {},
+const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
+  0: "Ed25519",
+  1: "Sr25519",
+  2: "ecdsa",
+  3: "eth",
+};
+
+/**
+ * Shape a provider's SignedTerms into the `{ provider, terms, sig }` argument
+ * the establish_* extrinsics (and create_drive / create_s3_bucket) expect. The
+ * signature arrives as a SCALE-encoded MultiSignature hex; strip its variant
+ * byte and re-wrap the raw bytes into the PAPI Enum.
+ */
+export function buildSignedTermsArgs(
+  provider: ChainSigner | { address: string },
+  signed: SignedTerms,
 ) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket({ min_providers: minProviders }),
-    signer.signer,
-    { label: "create_bucket", ...opts },
-  );
-  const event = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated",
-  );
-  return event.bucket_id;
+  const sigBytes = hexToBytes(signed.signature);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
+  if (!variantName) {
+    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
+  }
+  // The Sr25519 variant value is a fixed [u8; 64] — PAPI v2 takes it as 0x-hex
+  // (asHex), the same convention the checkpoint/challenge wrappers use.
+  const sig = Enum(variantName as never, asHex(sigBytes.slice(1)));
+  const t = signed.terms;
+  const terms = {
+    owner: t.owner,
+    max_bytes: BigInt(t.max_bytes),
+    duration: t.duration,
+    price_per_byte: BigInt(t.price_per_byte),
+    valid_until: t.valid_until,
+    nonce: BigInt(t.nonce),
+    bucket_id: t.bucket_id != null ? BigInt(t.bucket_id) : undefined,
+    replica_params: t.replica_params
+      ? {
+          sync_balance: BigInt(t.replica_params.sync_balance),
+          min_sync_interval: t.replica_params.min_sync_interval,
+        }
+      : undefined,
+  };
+  return { provider: provider.address, terms, sig };
 }
 
-export async function createBucketWithStorage(
+/**
+ * Redeem provider-signed terms via `establish_storage_agreement`: opens the
+ * bucket and its primary agreement atomically. Replaces the old create_bucket
+ * + request_agreement + accept_agreement dance (#105). `signed` comes from
+ * {@link negotiateTerms} against the provider's /negotiate endpoint.
+ */
+export async function establishStorageAgreement(
   api: ParachainApi,
   client: ChainSigner,
-  params: any,
+  provider: ChainSigner | { address: string },
+  signed: SignedTerms,
   opts: SubmitOpts = {},
 ) {
   const result = await submitTx(
-    api.tx.StorageProvider.create_bucket_with_storage(params),
+    api.tx.StorageProvider.establish_storage_agreement(buildSignedTermsArgs(provider, signed)),
     client.signer,
-    { label: "create_bucket_with_storage", ...opts },
+    { label: "establish_storage_agreement", ...opts },
   );
   const created = requireOneEvent(
     result.events,
     api.event.StorageProvider.BucketCreated,
     "BucketCreated",
   );
-  const accepted = requireOneEvent(
+  const established = requireOneEvent(
     result.events,
-    api.event.StorageProvider.AgreementAccepted,
-    "AgreementAccepted",
+    api.event.StorageProvider.StorageAgreementEstablished,
+    "StorageAgreementEstablished",
   );
   return {
     bucketId: created.bucket_id,
-    matchedProvider: accepted.provider,
-    expiresAt: accepted.expires_at,
+    provider: provider.address,
+    expiresAt: established.expires_at,
   };
 }
 
-export async function requestPrimaryAgreement(
+/**
+ * Redeem provider-signed replica terms via `establish_replica_agreement`:
+ * attaches a replica agreement to the bucket named in the signed terms
+ * (`signed.terms.bucket_id`), using the same off-chain quote flow.
+ */
+export async function establishReplicaAgreement(
   api: ParachainApi,
   client: ChainSigner,
   provider: ChainSigner | { address: string },
-  bucketId: bigint,
-  params: any,
+  signed: SignedTerms,
   opts: SubmitOpts = {},
 ) {
-  return submitTx(
-    api.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: provider.address,
-      ...params,
+  const args = buildSignedTermsArgs(provider, signed);
+  if (args.terms.bucket_id == null) {
+    throw new Error("replica agreement terms must carry a bucket_id");
+  }
+  const result = await submitTx(
+    api.tx.StorageProvider.establish_replica_agreement({
+      bucket_id: args.terms.bucket_id,
+      ...args,
     }),
     client.signer,
-    { label: "request_primary_agreement", ...opts },
+    { label: "establish_replica_agreement", ...opts },
   );
-}
-
-export async function acceptAgreement(
-  api: ParachainApi,
-  provider: ChainSigner,
-  bucketId: bigint,
-  opts: SubmitOpts = {},
-) {
-  return submitTx(
-    api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    { label: "accept_agreement", ...opts },
+  return requireOneEvent(
+    result.events,
+    api.event.StorageProvider.ReplicaAgreementEstablished,
+    "ReplicaAgreementEstablished",
   );
 }
 
@@ -414,36 +450,6 @@ export async function setMinProviders(
     }),
     admin.signer,
     { label: "set_min_providers", ...opts },
-  );
-}
-
-export async function rejectAgreement(
-  api: ParachainApi,
-  provider: ChainSigner,
-  bucketId: bigint,
-  opts: SubmitOpts = {},
-) {
-  return submitTx(
-    api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    { label: "reject_agreement", ...opts },
-  );
-}
-
-export async function withdrawAgreementRequest(
-  api: ParachainApi,
-  client: ChainSigner,
-  bucketId: bigint,
-  provider: ChainSigner | { address: string },
-  opts: SubmitOpts = {},
-) {
-  return submitTx(
-    api.tx.StorageProvider.withdraw_agreement_request({
-      bucket_id: bucketId,
-      provider: provider.address,
-    }),
-    client.signer,
-    { label: "withdraw_agreement_request", ...opts },
   );
 }
 

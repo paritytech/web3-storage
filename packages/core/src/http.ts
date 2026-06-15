@@ -90,3 +90,73 @@ export function signProviderRequest(
   const sigHex = toHex(sig);
   return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
 }
+
+// ── Off-chain agreement-term negotiation ────────────────────────────────────
+// The off-chain half of the negotiate -> establish flow (#105). The bucket
+// owner POSTs a quote to the provider node's /negotiate endpoint; the provider
+// signs AgreementTerms and returns them as SignedTerms, which the owner then
+// redeems on-chain via establish_storage_agreement / create_drive /
+// create_s3_bucket. Pure HTTP here — the SCALE/Enum shaping of the response
+// lives in layer0 (buildSignedTermsArgs), so core stays chain-free.
+
+/** Replica-sync parameters carried by replica agreement terms. */
+export interface ReplicaTermsWire {
+  sync_balance: bigint | number | string;
+  min_sync_interval: number;
+}
+
+/** A storage quote the provider is asked to sign (JSON wire shape). */
+export interface NegotiateRequest {
+  owner: string;
+  max_bytes: bigint | number | string;
+  duration: number;
+  price_per_byte?: bigint | number | string;
+  bucket_id?: bigint | number | string | null;
+  replica_params?: ReplicaTermsWire | null;
+}
+
+/** Provider-signed terms returned by POST /negotiate. */
+export interface SignedTerms {
+  terms: {
+    owner: string;
+    max_bytes: bigint | number | string;
+    duration: number;
+    price_per_byte: bigint | number | string;
+    valid_until: number;
+    nonce: bigint | number | string;
+    bucket_id?: bigint | number | string | null;
+    replica_params?: ReplicaTermsWire | null;
+  };
+  /** SCALE-encoded MultiSignature as 0x-hex, e.g. `0x01<64-byte sr25519 sig>`. */
+  signature: string;
+}
+
+/**
+ * POST /negotiate and return the provider-signed terms. bigint fields are
+ * serialized as decimal strings (the provider's serde accepts string-or-number
+ * for the u64/u128 fields). Single attempt by default: /negotiate allocates a
+ * provider-side nonce, so retrying a transient 5xx would waste nonces.
+ */
+export async function negotiateTerms(
+  providerUrl: string,
+  request: NegotiateRequest,
+  opts: HttpFetchOpts = {},
+): Promise<SignedTerms> {
+  const base = providerUrl.replace(/\/+$/, "");
+  const res = await httpFetch(
+    `${base}/negotiate`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+    },
+    { retries: 1, ...opts },
+  );
+  if (!res.ok) {
+    throw new HttpError(
+      res.status,
+      `/negotiate failed: ${res.status} ${await res.text().catch(() => "")}`,
+    );
+  }
+  return (await res.json()) as SignedTerms;
+}

@@ -56,37 +56,6 @@ export async function firstMatch<T>(
   }
 }
 
-/**
- * Wait until the pending AgreementRequest for `(providerAddress, bucketId)`
- * has been consumed — i.e. the provider has accepted it. The provider node's
- * agreement_coordinator polls every ~6s and auto-accepts, which races any
- * explicit `accept_agreement` extrinsic a caller might submit; if the
- * provider wins, the submit fails with `AgreementRequestNotFound`. Watching
- * for the request to disappear sidesteps the race entirely.
- */
-export async function waitForAgreementAcceptance(
-  api: ParachainApi,
-  providerAddress: string,
-  bucketId: bigint,
-  { timeoutMs = 60_000, onTick }: WaitOpts = {},
-): Promise<void> {
-  await firstMatch(
-    api.query.StorageProvider.AgreementRequests.watchValue(
-      bucketId,
-      providerAddress,
-      READ_OPTS,
-    ),
-    ({ value }) => value === undefined,
-    {
-      timeoutMs,
-      onTick,
-      description:
-        `provider ${providerAddress} to auto-accept the agreement request ` +
-        `for bucket ${bucketId} (is the provider node's agreement_coordinator running?)`,
-    },
-  );
-}
-
 type BucketValue = NonNullable<
   Awaited<ReturnType<ParachainApi["query"]["StorageProvider"]["Buckets"]["getValue"]>>
 >;
