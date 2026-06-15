@@ -226,3 +226,92 @@ fn establish_storage_agreement_fails_insufficient_stake() {
         );
     });
 }
+
+#[test]
+fn establish_storage_agreement_fails_when_terms_validity_too_long() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+
+        // valid_until one block past the cap (now=0, cap = 0 + RequestTimeout(50) = 50)
+        let pair = provider_signer(2);
+        let mut terms = primary_terms(1, 50, 100, 0);
+        terms.valid_until = 51;
+        let sig = sign_terms(&pair, &terms);
+
+        assert_noop!(
+            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            Error::<Test>::TermsValidityTooLong
+        );
+    });
+}
+
+#[test]
+fn re_register_replay_blocked_by_expiry() {
+    // Regression: the timing invariant RequestTimeout(50) < DeregisterAnnouncementPeriod(100)
+    // ensures a quote signed before deregistration has already expired by the time
+    // complete_deregister is callable and the provider can re-register.
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+
+        // Quote at block 0: valid_until = 0 + RequestTimeout(50) = 50.
+        let pair = provider_signer(2);
+        let terms = primary_terms(1, 50, 100, 0);
+        let sig = sign_terms(&pair, &terms);
+
+        // Announce deregistration (committed_bytes == 0).
+        // deregister_at = 0 + DeregisterAnnouncementPeriod(100) = block 100.
+        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
+            2
+        )));
+
+        // Advance to the deregistration block and complete it.
+        // complete_deregister wipes ProviderReplayStates[2].
+        run_to_block(100);
+        assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
+            2
+        )));
+
+        // Re-register under the same account with a fresh empty replay window.
+        register_provider(2, 200);
+
+        // At block 100 the old quote is expired (valid_until=50 < 100): TermsExpired
+        // fires before the signature check so key mismatch is irrelevant.
+        assert_noop!(
+            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            Error::<Test>::TermsExpired
+        );
+    });
+}
+
+#[test]
+fn early_terminated_agreement_nonce_not_reusable() {
+    // Regression guard: ending an agreement early does not clear the provider's
+    // replay window, so the original quote cannot be replayed afterwards.
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+
+        let (terms, sig) = signed_primary_terms(2, 1, 50, 100);
+
+        // Redeem the quote — nonce is consumed in ProviderReplayStates[2].
+        assert_ok!(StorageProvider::establish_storage_agreement(
+            RuntimeOrigin::signed(1),
+            2,
+            terms.clone(),
+            sig.clone()
+        ));
+
+        // Admin (owner = 1) early-terminates before the agreement expires.
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            0, // bucket_id
+            2,
+            storage_primitives::EndAction::Pay,
+        ));
+
+        // Replay window is intact; the same quote cannot be redeemed again.
+        assert_noop!(
+            StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
+            Error::<Test>::NonceAlreadyUsed
+        );
+    });
+}

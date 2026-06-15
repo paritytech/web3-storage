@@ -153,7 +153,8 @@ fn primary_terms(
         max_bytes,
         duration,
         price_per_byte: 0,
-        valid_until: 1_000_000_000,
+        valid_until: frame_system::Pallet::<Runtime>::block_number()
+            + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
         nonce,
         bucket_id: None,
         replica_params: None,
