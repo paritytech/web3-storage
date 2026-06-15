@@ -127,21 +127,39 @@ impl SubxtChainClient {
         format!("/ip4/{host}/tcp/{port}")
     }
 
-    /// Extract the raw bytes of a decoded `multiaddr` storage field.
-    fn extract_multiaddr_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
+    /// Extract the raw bytes of a decoded byte-sequence storage field
+    /// (e.g. a `Vec<u8>` / `BoundedVec<u8>`).
+    ///
+    /// subxt's dynamic decoder represents such a field either as a flat
+    /// sequence of byte primitives, or — for `BoundedVec` and similar newtype
+    /// wrappers — as a single-element composite whose inner value holds the
+    /// real sequence. We handle both, recursing through the wrapper layer. This
+    /// mirrors the decoder behind the typed `storage_client` read path, so the
+    /// shared connection here decodes a multiaddr exactly as that path would.
+    fn extract_byte_vec<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
         use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
         match &val.value {
-            // Sequence/composite of individual byte values
-            ValueDef::Composite(Composite::Unnamed(items)) => items
-                .iter()
-                .filter_map(|item| match &item.value {
-                    ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                    _ => None,
-                })
-                .collect(),
-            // Some subxt versions encode a single byte as a bare primitive
+            ValueDef::Composite(Composite::Unnamed(items)) => {
+                // Direct sequence of byte primitives.
+                let bytes: Vec<u8> = items
+                    .iter()
+                    .filter_map(|item| match &item.value {
+                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
+                        _ => None,
+                    })
+                    .collect();
+                if !items.is_empty() && bytes.len() == items.len() {
+                    return bytes;
+                }
+                // BoundedVec wrapper: a single inner field holds the sequence.
+                if items.len() == 1 {
+                    return Self::extract_byte_vec(&items[0]);
+                }
+                Vec::new()
+            }
+            // Some subxt versions encode a single byte as a bare primitive.
             ValueDef::Primitive(Primitive::U128(n)) => vec![*n as u8],
-            _ => vec![],
+            _ => Vec::new(),
         }
     }
 
@@ -221,12 +239,16 @@ impl SubxtChainClient {
                 }
             };
 
-            let bytes = Self::extract_multiaddr_bytes(multiaddr_val);
+            let bytes = Self::extract_byte_vec(multiaddr_val);
             if bytes.is_empty() {
+                // Couldn't decode the stored multiaddr. Skip rather than treat
+                // it as a mismatch — otherwise we'd submit a needless
+                // update_provider_multiaddr transaction on every startup.
                 tracing::warn!(
-                    "multiaddr decoded as empty, value structure: {:?}",
+                    "Could not decode on-chain multiaddr (value: {:?}); skipping sync",
                     multiaddr_val
                 );
+                return;
             }
             String::from_utf8_lossy(&bytes).to_string()
         };
@@ -711,23 +733,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
                 if let Ok(decoded) = value.to_value() {
                     if let Some(field0) = decoded.at(0) {
-                        if let ValueDef::Composite(Composite::Unnamed(multiaddr_bytes)) =
-                            &field0.value
-                        {
-                            let bytes: Vec<u8> = multiaddr_bytes
-                                .iter()
-                                .filter_map(|v| {
-                                    if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                        Some(*n as u8)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
-                            if !bytes.is_empty() {
-                                let multiaddr_str = String::from_utf8_lossy(&bytes);
-                                endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
-                            }
+                        let bytes = Self::extract_byte_vec(field0);
+                        if !bytes.is_empty() {
+                            let multiaddr_str = String::from_utf8_lossy(&bytes);
+                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
                         }
                     }
                 }
