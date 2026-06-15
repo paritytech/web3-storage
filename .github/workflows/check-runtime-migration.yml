@@ -25,10 +25,14 @@ permissions: {}
 
 jobs:
   set-image:
+    permissions:
+      contents: read
     uses: ./.github/workflows/set-image.yml
 
   runtime-matrix:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       runtime: ${{ steps.runtime.outputs.runtime }}
     name: Extract tasks from matrix
@@ -57,6 +61,8 @@ jobs:
     name: prepare-snapshot (${{ matrix.runtime.name }})
     needs: [set-image, runtime-matrix]
     runs-on: parity-default
+    permissions:
+      contents: read
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     strategy:
@@ -157,6 +163,8 @@ jobs:
     runs-on: parity-large
     timeout-minutes: 120
     if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: read
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     strategy:
