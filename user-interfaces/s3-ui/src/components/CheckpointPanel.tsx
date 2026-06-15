@@ -65,19 +65,19 @@ export default function CheckpointPanel() {
       <CardContent className="space-y-3">
         {/* Progress status card */}
         {status === "triggering" && (
-          <div className="flex items-center gap-2 rounded-md bg-blue-500/10 px-3 py-2 text-sm text-blue-600 dark:text-blue-400">
+          <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Sending checkpoint trigger...
           </div>
         )}
         {status === "polling" && (
-          <div className="flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+          <div className="flex items-center gap-2 rounded-md bg-orange-500/15 px-3 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Waiting for on-chain confirmation...
           </div>
         )}
         {status === "confirmed" && (
-          <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <div className="flex items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
             <CheckCircle2 className="h-3.5 w-3.5" />
             Checkpoint confirmed on-chain
           </div>
