@@ -2,6 +2,13 @@
 
 Visual sequence diagrams for the core protocol flows in Scalable Web3 Storage.
 
+## Provider Lifecycle
+
+| Diagram | Description |
+|---|---|
+| [Provider Registration](./provider-registration.md) | On-chain registration (stake locking, settings), provider node startup sequence, and adding stake. |
+| [Provider Deregistration](./provider-deregistration.md) | Two-step exit: announce (cooldown >= ChallengeTimeout), then complete (stake returned). Includes cancellation flow. |
+
 ## S3 Bucket Creation
 
 | Diagram | Description |
