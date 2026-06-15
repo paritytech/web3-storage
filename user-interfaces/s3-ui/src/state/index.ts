@@ -100,3 +100,16 @@ export {
   clearCheckpointState,
   type CheckpointStatus,
 } from "./checkpoint.state";
+
+// Challenge
+export {
+  useActiveChallenge,
+  useChallengeStatus,
+  useOpenChallenges,
+  useOpenChallengesLoading,
+  submitChallenge,
+  refreshOpenChallenges,
+  clearChallengeState,
+  type ChallengeStatus,
+  type ActiveChallenge,
+} from "./challenge.state";

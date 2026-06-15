@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Shield, RefreshCw, Loader2, CheckCircle2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Shield, RefreshCw, Loader2, CheckCircle2, Swords, XCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -10,9 +10,16 @@ import {
   useCheckpointStatus,
   refreshCheckpoint,
   triggerCheckpoint,
+  useOpenChallenges,
+  useOpenChallengesLoading,
+  refreshOpenChallenges,
+  useBlockNumber,
 } from "@/state";
+import { useActiveChallenge, useChallengeStatus } from "@/state/challenge.state";
 import { truncateHash } from "@/lib/utils";
 import { toast } from "@/components/ui/toaster";
+import { getS3Client } from "@/state";
+import ChallengeDialog from "./ChallengeDialog";
 
 export default function CheckpointPanel() {
   const selectedBucket = useSelectedBucket();
@@ -20,13 +27,29 @@ export default function CheckpointPanel() {
   const duty = useCheckpointDuty();
   const loading = useCheckpointLoading();
   const status = useCheckpointStatus();
+  const challengeStatus = useChallengeStatus();
+  const activeChallenge = useActiveChallenge();
+  const openChallenges = useOpenChallenges();
+  const challengesLoading = useOpenChallengesLoading();
+  const blockNumber = useBlockNumber();
+
+  const [challengeOpen, setChallengeOpen] = useState(false);
+  const [providers, setProviders] = useState<string[]>([]);
 
   const bucketId = selectedBucket?.layer0BucketId ?? null;
   const busy = status === "triggering" || status === "polling";
+  const challengeBusy = challengeStatus !== "idle";
 
   useEffect(() => {
     if (bucketId !== null) {
       refreshCheckpoint(bucketId).catch(() => {});
+      refreshOpenChallenges(bucketId).catch(() => {});
+      const client = getS3Client();
+      if (client.hasApi()) {
+        client.getBucketProviders(bucketId).then(setProviders).catch(() => setProviders([]));
+      }
+    } else {
+      setProviders([]);
     }
   }, [bucketId]);
 
@@ -55,15 +78,20 @@ export default function CheckpointPanel() {
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={() => bucketId !== null && refreshCheckpoint(bucketId)}
+            onClick={() => {
+              if (bucketId !== null) {
+                refreshCheckpoint(bucketId);
+                refreshOpenChallenges(bucketId);
+              }
+            }}
             disabled={loading || busy || bucketId === null}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${loading || challengesLoading ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Progress status card */}
+        {/* Checkpoint progress status */}
         {status === "triggering" && (
           <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -80,6 +108,26 @@ export default function CheckpointPanel() {
           <div className="flex items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
             <CheckCircle2 className="h-3.5 w-3.5" />
             Checkpoint confirmed on-chain
+          </div>
+        )}
+
+        {/* Challenge submission status banners */}
+        {challengeStatus === "submitting" && (
+          <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Submitting challenge...
+          </div>
+        )}
+        {challengeStatus === "defended" && (
+          <div className="flex items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Provider defended challenge successfully
+          </div>
+        )}
+        {challengeStatus === "slashed" && (
+          <div className="flex items-center gap-2 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-600 dark:text-red-400 font-medium">
+            <XCircle className="h-3.5 w-3.5" />
+            Provider failed to respond — slashed!
           </div>
         )}
 
@@ -117,20 +165,85 @@ export default function CheckpointPanel() {
           </div>
         )}
 
-        <Button
-          data-testid="trigger-checkpoint"
-          variant="outline"
-          size="sm"
-          onClick={handleTrigger}
-          disabled={loading || busy || bucketId === null}
-        >
-          {busy ? (
-            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Shield className="mr-2 h-3.5 w-3.5" />
-          )}
-          {busy ? "Processing..." : "Trigger Checkpoint"}
-        </Button>
+        {/* Open challenges list */}
+        {openChallenges.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Open Challenges ({openChallenges.length})
+            </p>
+            <div className="space-y-1.5">
+              {openChallenges.map((c) => {
+                const blocksLeft = blockNumber ? c.deadline - blockNumber : null;
+                const isExpired = blocksLeft !== null && blocksLeft <= 0;
+                return (
+                  <div
+                    key={`${c.deadline}-${c.index}`}
+                    className={`rounded-md border px-3 py-2 text-xs space-y-1 ${
+                      isExpired
+                        ? "border-red-200 bg-red-500/5"
+                        : "border-orange-200 bg-orange-500/5"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <Swords className="h-3 w-3" />
+                        Leaf {c.leafIndex.toString()}, Chunk {c.chunkIndex.toString()}
+                      </span>
+                      {isExpired ? (
+                        <span className="text-red-600 dark:text-red-400 font-medium">Expired</span>
+                      ) : blocksLeft !== null ? (
+                        <span className="text-orange-600 dark:text-orange-400">
+                          {blocksLeft} blocks left
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Provider: {truncateHash(c.provider, 6, 4)}</span>
+                      <span>Deadline: #{c.deadline}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      Challenger: {truncateHash(c.challenger, 6, 4)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button
+            data-testid="trigger-checkpoint"
+            variant="outline"
+            size="sm"
+            onClick={handleTrigger}
+            disabled={loading || busy || bucketId === null}
+          >
+            {busy ? (
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Shield className="mr-2 h-3.5 w-3.5" />
+            )}
+            {busy ? "Processing..." : "Trigger Checkpoint"}
+          </Button>
+
+          <Button
+            data-testid="challenge-provider"
+            variant="outline"
+            size="sm"
+            onClick={() => setChallengeOpen(true)}
+            disabled={!info || challengeBusy || bucketId === null}
+          >
+            <Swords className="mr-2 h-3.5 w-3.5" />
+            Challenge Provider
+          </Button>
+        </div>
+
+        <ChallengeDialog
+          open={challengeOpen}
+          onOpenChange={setChallengeOpen}
+          providers={providers}
+        />
       </CardContent>
     </Card>
   );
