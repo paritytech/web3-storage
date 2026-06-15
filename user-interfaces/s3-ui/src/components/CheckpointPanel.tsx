@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Shield, RefreshCw } from "lucide-react";
+import { Shield, RefreshCw, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -7,6 +7,7 @@ import {
   useCheckpointInfo,
   useCheckpointDuty,
   useCheckpointLoading,
+  useCheckpointStatus,
   refreshCheckpoint,
   triggerCheckpoint,
 } from "@/state";
@@ -18,8 +19,10 @@ export default function CheckpointPanel() {
   const info = useCheckpointInfo();
   const duty = useCheckpointDuty();
   const loading = useCheckpointLoading();
+  const status = useCheckpointStatus();
 
   const bucketId = selectedBucket?.layer0BucketId ?? null;
+  const busy = status === "triggering" || status === "polling";
 
   useEffect(() => {
     if (bucketId !== null) {
@@ -31,7 +34,6 @@ export default function CheckpointPanel() {
     if (bucketId === null) return;
     try {
       await triggerCheckpoint(bucketId);
-      toast({ title: "Checkpoint triggered", description: "Provider will process shortly." });
     } catch (err) {
       toast({
         title: "Checkpoint failed",
@@ -54,13 +56,33 @@ export default function CheckpointPanel() {
             size="icon"
             className="h-7 w-7"
             onClick={() => bucketId !== null && refreshCheckpoint(bucketId)}
-            disabled={loading || bucketId === null}
+            disabled={loading || busy || bucketId === null}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Progress status card */}
+        {status === "triggering" && (
+          <div className="flex items-center gap-2 rounded-md bg-blue-500/10 px-3 py-2 text-sm text-blue-600 dark:text-blue-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Sending checkpoint trigger...
+          </div>
+        )}
+        {status === "polling" && (
+          <div className="flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Waiting for on-chain confirmation...
+          </div>
+        )}
+        {status === "confirmed" && (
+          <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Checkpoint confirmed on-chain
+          </div>
+        )}
+
         {info ? (
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div>
@@ -100,10 +122,14 @@ export default function CheckpointPanel() {
           variant="outline"
           size="sm"
           onClick={handleTrigger}
-          disabled={loading || bucketId === null}
+          disabled={loading || busy || bucketId === null}
         >
-          <Shield className="mr-2 h-3.5 w-3.5" />
-          Trigger Checkpoint
+          {busy ? (
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Shield className="mr-2 h-3.5 w-3.5" />
+          )}
+          {busy ? "Processing..." : "Trigger Checkpoint"}
         </Button>
       </CardContent>
     </Card>
