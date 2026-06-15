@@ -1089,8 +1089,7 @@ impl CheckpointManager {
 
     /// Parse a libp2p multiaddr to an HTTP(S) base URL.
     ///
-    /// Mirrors the TS `parseMultiaddrToUrl` for the forms the provider node
-    /// registers on chain:
+    /// Handles the two forms the provider node registers on chain:
     /// - `/ip4/<host>/tcp/<port>` (also `ip6`/`dns4`/`dns6`/`dns`)
     ///   → `http://<host>:<port>`
     /// - `/dns4/<host>/tcp/443/tls/http/http-path/<path>`
@@ -1099,6 +1098,12 @@ impl CheckpointManager {
     /// A `tls` (or `https`/`wss`) segment selects `https`; the default port for
     /// the scheme (`443` https, `80` http) is elided; an `http-path/<segment>`
     /// appends a percent-decoded path; `ip6` hosts are bracketed.
+    ///
+    /// This is a deliberately narrow projection covering the addresses this
+    /// system writes, not a full multiaddr grammar: it does not replicate every
+    /// quirk of the TS side's `@multiformats/multiaddr-to-uri` (e.g. a bare
+    /// `tcp/443` is treated as http here, and a trailing `/p2p/...` is ignored
+    /// rather than rejected).
     fn parse_multiaddr_to_http(multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
         /// Minimal percent-decoder for `http-path` segments (`%XX`).
         fn percent_decode(s: &str) -> String {
@@ -1167,11 +1172,12 @@ impl CheckpointManager {
         };
 
         let default_port = if tls { 443 } else { 80 };
-        if port == default_port {
-            Ok(format!("{scheme}://{host}{path}"))
+        let port_suffix = if port == default_port {
+            String::new()
         } else {
-            Ok(format!("{scheme}://{host}:{port}{path}"))
-        }
+            format!(":{port}")
+        };
+        Ok(format!("{scheme}://{host}{port_suffix}{path}"))
     }
 
     /// Update the provider cache.

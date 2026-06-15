@@ -90,37 +90,45 @@ fn storage_parachain_genesis(
     })
 }
 
+/// Shared base for the `local_testnet` and `previewnet` presets: Alice+Bob
+/// collators, all well-known endowed accounts, the two genesis buckets and
+/// Alice as sudo. The presets differ only in their genesis providers, which is
+/// passed in.
+fn testnet_genesis(genesis_providers: Vec<GenesisProvider<Runtime>>) -> serde_json::Value {
+    storage_parachain_genesis(
+        // initial collators.
+        vec![
+            (
+                Sr25519Keyring::Alice.to_account_id(),
+                Sr25519Keyring::Alice.public().into(),
+            ),
+            (
+                Sr25519Keyring::Bob.to_account_id(),
+                Sr25519Keyring::Bob.public().into(),
+            ),
+        ],
+        Sr25519Keyring::well_known()
+            .map(|k| k.to_account_id())
+            .collect(),
+        UNIT * 10_000_000_000_000,
+        WEB3_STORAGE_PARA_ID,
+        // Sudo
+        Some(Sr25519Keyring::Alice.to_account_id()),
+        // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
+        vec![
+            (Sr25519Keyring::Bob.to_account_id(), 1),
+            (Sr25519Keyring::Bob.to_account_id(), 1),
+        ],
+        genesis_providers,
+    )
+}
+
 /// Provides the JSON representation of predefined genesis config for given `id`.
 pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
     let patch = match id.as_ref() {
-        sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET => storage_parachain_genesis(
-            // initial collators.
-            vec![
-                (
-                    Sr25519Keyring::Alice.to_account_id(),
-                    Sr25519Keyring::Alice.public().into(),
-                ),
-                (
-                    Sr25519Keyring::Bob.to_account_id(),
-                    Sr25519Keyring::Bob.public().into(),
-                ),
-            ],
-            Sr25519Keyring::well_known()
-                .map(|k| k.to_account_id())
-                .collect(),
-            UNIT * 10_000_000_000_000,
-            WEB3_STORAGE_PARA_ID,
-            // Sudo
-            Some(Sr25519Keyring::Alice.to_account_id()),
-            // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
-            vec![
-                (Sr25519Keyring::Bob.to_account_id(), 1),
-                (Sr25519Keyring::Bob.to_account_id(), 1),
-            ],
-            // No genesis providers: local flows (`just demo`, examples/papi)
-            // register the provider themselves.
-            vec![],
-        ),
+        // No genesis providers: local flows (`just demo`, examples/papi)
+        // register the provider themselves.
+        sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET => testnet_genesis(vec![]),
         sp_genesis_builder::DEV_RUNTIME_PRESET => storage_parachain_genesis(
             // initial collators.
             vec![(
@@ -148,31 +156,7 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
         ),
         // Same as local_testnet, plus the PreviewNet default provider so a
         // PreviewNet wipe does not require manually re-registering it.
-        PREVIEWNET_RUNTIME_PRESET => storage_parachain_genesis(
-            vec![
-                (
-                    Sr25519Keyring::Alice.to_account_id(),
-                    Sr25519Keyring::Alice.public().into(),
-                ),
-                (
-                    Sr25519Keyring::Bob.to_account_id(),
-                    Sr25519Keyring::Bob.public().into(),
-                ),
-            ],
-            Sr25519Keyring::well_known()
-                .map(|k| k.to_account_id())
-                .collect(),
-            UNIT * 10_000_000_000_000,
-            WEB3_STORAGE_PARA_ID,
-            // Sudo
-            Some(Sr25519Keyring::Alice.to_account_id()),
-            // Genesis buckets: creates bucket_id=0 and bucket_id=1 (admin, min_providers)
-            vec![
-                (Sr25519Keyring::Bob.to_account_id(), 1),
-                (Sr25519Keyring::Bob.to_account_id(), 1),
-            ],
-            vec![previewnet_genesis_provider()],
-        ),
+        PREVIEWNET_RUNTIME_PRESET => testnet_genesis(vec![previewnet_genesis_provider()]),
         _ => return None,
     };
 

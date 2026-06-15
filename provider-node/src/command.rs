@@ -391,7 +391,7 @@ async fn sync_multiaddr_on_chain(
 
     if current == expected_multiaddr {
         tracing::info!(
-            "On-chain multiaddr matches bind address: {}",
+            "On-chain multiaddr matches advertised address: {}",
             expected_multiaddr
         );
         return;
