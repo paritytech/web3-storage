@@ -11,6 +11,8 @@ use dashmap::DashMap;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_primitives::Role;
+use subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::OnceCell;
 
 /// Caller identity extracted from a signed request.
 #[derive(Debug, Clone)]
@@ -106,23 +108,43 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
 /// Chain-backed membership resolver using subxt dynamic queries.
 pub struct ChainMembershipResolver {
     chain_rpc: String,
+    /// Lazily-established chain connection, reused across lookups.
+    ///
+    /// `OnlineClient` is an `Arc`-backed handle over a single WebSocket
+    /// connection and a metadata cache, so connecting is the expensive part
+    /// (network handshake + metadata download). We connect on the first
+    /// lookup and reuse the same client for every subsequent one instead of
+    /// reconnecting per request. If the first attempt fails the cell stays
+    /// empty, so the next lookup retries.
+    api: OnceCell<OnlineClient<PolkadotConfig>>,
 }
 
 impl ChainMembershipResolver {
     pub fn new(chain_rpc: String) -> Self {
-        Self { chain_rpc }
+        Self {
+            chain_rpc,
+            api: OnceCell::new(),
+        }
+    }
+
+    /// Return the shared chain client, connecting on first use.
+    async fn api(&self) -> Result<&OnlineClient<PolkadotConfig>, String> {
+        self.api
+            .get_or_try_init(|| async {
+                OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
+                    .await
+                    .map_err(|e| format!("Failed to connect to chain: {e}"))
+            })
+            .await
     }
 }
 
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        use subxt::dynamic::At;
-        use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
+        use subxt::dynamic::{At, Value};
 
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
-            .await
-            .map_err(|e| format!("Failed to connect to chain: {e}"))?;
+        let api = self.api().await?;
 
         let storage_query = subxt::dynamic::storage(
             "StorageProvider",
