@@ -1099,11 +1099,9 @@ impl CheckpointManager {
     /// the scheme (`443` https, `80` http) is elided; an `http-path/<segment>`
     /// appends a percent-decoded path; `ip6` hosts are bracketed.
     ///
-    /// This is a deliberately narrow projection covering the addresses this
-    /// system writes, not a full multiaddr grammar: it does not replicate every
-    /// quirk of the TS side's `@multiformats/multiaddr-to-uri` (e.g. a bare
-    /// `tcp/443` is treated as http here, and a trailing `/p2p/...` is ignored
-    /// rather than rejected).
+    /// Deliberately narrow: it covers the addresses this system writes, not the
+    /// full multiaddr grammar (a bare `tcp/443` stays http, a trailing
+    /// `/p2p/...` is ignored), so it is not a drop-in match for the TS side.
     fn parse_multiaddr_to_http(multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
         /// Minimal percent-decoder for `http-path` segments (`%XX`).
         fn percent_decode(s: &str) -> String {

@@ -154,8 +154,6 @@ pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
             // register the provider themselves.
             vec![],
         ),
-        // Same as local_testnet, plus the PreviewNet default provider so a
-        // PreviewNet wipe does not require manually re-registering it.
         PREVIEWNET_RUNTIME_PRESET => testnet_genesis(vec![previewnet_genesis_provider()]),
         _ => return None,
     };
