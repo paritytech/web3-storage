@@ -1236,7 +1236,10 @@ fn previewnet_preset_registers_default_provider() {
 
         let provider = pallet_storage_provider::Providers::<Runtime>::get(&alice)
             .expect("PreviewNet default provider must be registered at genesis");
-        assert_eq!(provider.multiaddr.to_vec(), b"/ip4/127.0.0.1/tcp/3333");
+        assert_eq!(
+            provider.multiaddr.to_vec(),
+            b"/dns4/previewnet.substrate.dev/tcp/443/tls/http/http-path/web3-storage-provider"
+        );
         assert_eq!(
             provider.public_key.to_vec(),
             Sr25519Keyring::Alice.to_raw_public_vec()

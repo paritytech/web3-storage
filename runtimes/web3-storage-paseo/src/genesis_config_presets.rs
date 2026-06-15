@@ -19,14 +19,18 @@ pub const PREVIEWNET_RUNTIME_PRESET: &str = "previewnet";
 /// The PreviewNet default provider (the PPN sidecar, running as //Alice).
 ///
 /// Values mirror the provider registered on the live chain so a PreviewNet
-/// wipe re-creates the same on-chain state. The multiaddr matches the
-/// sidecar's bind-derived value byte-for-byte so its multiaddr-sync submits
-/// no update at startup; switching it to the public endpoint is tracked in
-/// issue #169.
+/// wipe re-creates the same on-chain state. The multiaddr is the public,
+/// TLS-terminated endpoint so on-chain provider discovery resolves to the
+/// hosted provider rather than a client's own machine (issue #169). The
+/// sidecar must be started with the matching `--public-multiaddr` so its
+/// multiaddr-sync maintains this value instead of reverting it to the
+/// bind-derived `/ip4/127.0.0.1/tcp/3333`.
 fn previewnet_genesis_provider() -> GenesisProvider<Runtime> {
     GenesisProvider {
         account: Sr25519Keyring::Alice.to_account_id(),
-        multiaddr: b"/ip4/127.0.0.1/tcp/3333".to_vec(),
+        multiaddr:
+            b"/dns4/previewnet.substrate.dev/tcp/443/tls/http/http-path/web3-storage-provider"
+                .to_vec(),
         public_key: Sr25519Keyring::Alice.to_raw_public_vec(),
         stake: 1_200_000_000_000 * UNIT,
         settings: ProviderSettings {
