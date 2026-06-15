@@ -1,7 +1,8 @@
 //! Basic Usage Example for File System Client
 //!
 //! This example demonstrates:
-//! - Creating a drive with storage infrastructure
+//! - Negotiating signed agreement terms with a provider
+//! - Creating a drive (atomically opens bucket + primary agreement)
 //! - Creating directories
 //! - Uploading files
 //! - Listing directory contents
@@ -10,90 +11,115 @@
 //! Prerequisites:
 //! 1. Start the blockchain: `just start-chain`
 //! 2. Start a provider node: `just start-provider`
-//! 3. With both running, run `just demo` once to register the provider and
-//!    open an agreement (or do the equivalent steps manually in Polkadot.js).
+//! 3. Provider must be registered with `accepting_primary = true` (run `just demo`
+//!    once or register manually via Polkadot.js).
 //!
 //! Run this example:
 //! ```bash
-//! cargo run --example basic_usage
+//! cargo run --example basic_usage [chain_ws] [provider_url]
 //! ```
 
 use file_system_client::FileSystemClient;
+use sp_runtime::AccountId32;
+use std::env;
+use storage_client::{NegotiateRequest, ProviderClient};
+use subxt_signer::sr25519::dev as dev_signer;
+
+const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
+const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
     tracing_subscriber::fmt::init();
+
+    let args: Vec<String> = env::args().collect();
+    let chain_ws = args.get(1).map(|s| s.as_str()).unwrap_or(DEFAULT_CHAIN_WS);
+    let provider_url = args
+        .get(2)
+        .map(|s| s.as_str())
+        .unwrap_or(DEFAULT_PROVIDER_URL);
 
     println!("🚀 File System Client - Basic Usage Example\n");
     println!("{}", "=".repeat(60));
+    println!("Chain WebSocket: {chain_ws}");
+    println!("Provider URL: {provider_url}");
 
     // === STEP 1: Create the client ===
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
-    let mut fs_client = FileSystemClient::new(
-        "ws://127.0.0.1:2222",   // Parachain WebSocket endpoint
-        "http://127.0.0.1:3333", // Provider HTTP endpoint
-    )
-    .await?
-    .with_dev_signer("alice") // Use Alice for testing
-    .await?;
+    let mut fs_client = FileSystemClient::new(chain_ws, provider_url)
+        .await?
+        .with_dev_signer("alice") // Use Alice for testing
+        .await?;
+
+    let owner: AccountId32 = dev_signer::alice().public_key().0.into();
+    let provider = ProviderClient::fetch_provider_id(provider_url).await?;
+    println!("  Provider account (from /info): {provider}");
 
     println!("✅ Connected successfully!");
 
-    // === STEP 2: Create a drive ===
-    println!("\n📁 Step 2: Creating a new drive...");
+    // === STEP 2: Negotiate signed terms with the provider ===
+    println!("\n🤝 Step 2: Negotiating signed agreement terms...");
+
+    let signed = ProviderClient::negotiate_terms(
+        provider_url,
+        &NegotiateRequest {
+            owner: owner.clone(),
+            max_bytes: 10_000_000_000, // 10 GB
+            duration: 500,             // 500 blocks
+            price_per_byte: 1,
+            replica_params: None,
+            bucket_id: None,
+        },
+    )
+    .await?;
+
+    println!(
+        "✅ Provider signed terms: nonce={}, valid_until={}",
+        signed.terms.nonce, signed.terms.valid_until
+    );
+
+    // === STEP 3: Create a drive ===
+    println!("\n📁 Step 3: Creating a new drive...");
 
     let drive_id = fs_client
         .create_drive(
-            Some("My Documents"), // Drive name
-            10_000_000_000,       // 10 GB capacity
-            500,                  // 500 blocks duration
-            1_000_000_000_000,    // 1 token payment (12 decimals)
-            None,                 // Auto-determine providers
+            Some("My Documents"),
+            provider,
+            signed.terms,
+            signed.signature,
         )
         .await?;
 
     println!("✅ Drive created with ID: {drive_id}");
-    println!("   Name: My Documents");
-    println!("   Capacity: 10 GB");
-    println!("   Duration: 500 blocks");
 
-    // Note: In a real scenario, you'd need to wait for bucket creation and agreement setup
-    // For this example, we'll assume that's done (via manual setup or scripts)
+    // === STEP 4: Create directories ===
+    println!("\n📂 Step 4: Creating directory structure...");
 
-    // === STEP 3: Create directories ===
-    println!("\n📂 Step 3: Creating directory structure...");
+    let bucket_id = fs_client.get_bucket_id(drive_id).await?;
+    println!("   Associated bucket: ID = {bucket_id}");
 
-    // Get bucket_id from drive (you'd normally query this from chain)
-    // For now, we use a placeholder
-    let bucket_id = 1u64; // This should come from the drive info
-
-    // Create /documents directory
     println!("   Creating /documents...");
     fs_client
         .create_directory(drive_id, "/documents", bucket_id)
         .await?;
     println!("   ✅ Created /documents");
 
-    // Create /documents/work subdirectory
     println!("   Creating /documents/work...");
     fs_client
         .create_directory(drive_id, "/documents/work", bucket_id)
         .await?;
     println!("   ✅ Created /documents/work");
 
-    // Create /photos directory
     println!("   Creating /photos...");
     fs_client
         .create_directory(drive_id, "/photos", bucket_id)
         .await?;
     println!("   ✅ Created /photos");
 
-    // === STEP 4: Upload files ===
-    println!("\n📝 Step 4: Uploading files...");
+    // === STEP 5: Upload files ===
+    println!("\n📝 Step 5: Uploading files...");
 
-    // Upload a text file
     let readme_content = b"# My Documents\n\nWelcome to my decentralized file system!\n\nThis is a demo of Layer 1 file system built on Scalable Web3 Storage.";
     println!(
         "   Uploading /README.md ({} bytes)...",
@@ -132,8 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("   ✅ Uploaded /documents/notes.txt");
 
-    // === STEP 5: List directory contents ===
-    println!("\n📋 Step 5: Listing directory contents...");
+    // === STEP 6: List directory contents ===
+    println!("\n📋 Step 6: Listing directory contents...");
 
     // List root directory
     println!("\n   Contents of /:");
@@ -176,8 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // === STEP 6: Download and verify files ===
-    println!("\n⬇️  Step 6: Downloading and verifying files...");
+    // === STEP 7: Download and verify files ===
+    println!("\n⬇️  Step 7: Downloading and verifying files...");
 
     // Download README.md
     println!("\n   Downloading /README.md...");

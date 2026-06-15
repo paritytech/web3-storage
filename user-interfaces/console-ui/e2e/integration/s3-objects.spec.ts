@@ -1,29 +1,27 @@
 /**
  * S3 object operations spec.
  *
- * One bucket created via api in beforeAll (faster than walking the UI flow);
- * tests upload / download bytes / delete reuse it.
+ * One bucket created via the actual UI flow in beforeAll
+ * (negotiate-with-provider → create_s3_bucket); tests upload / download
+ * bytes / delete reuse it.
  */
 import { test, expect } from "../fixtures";
-import {
-  Alice,
-  cleanupBuckets,
-  createBucketViaApi,
-} from "@web3-storage/test-helpers";
+import { Alice, cleanupBuckets } from "@web3-storage/test-helpers";
+import { createBucketInFreshContext } from "../helpers/createBucketViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 let bucketName: string;
 
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
+test.beforeAll(async ({ browser }) => {
+  test.setTimeout(180_000);
   bucketName = `objects-${Date.now()}`;
-  await createBucketViaApi(Alice, { name: bucketName });
+  await createBucketInFreshContext(browser, bucketName);
 });
 
 test.afterAll(async () => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await cleanupBuckets(Alice);
 });
 
