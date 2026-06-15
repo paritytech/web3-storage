@@ -657,7 +657,7 @@ Proof-of-DOT (detailed in [issue #6173](https://github.com/paritytech/polkadot-s
 **Distinction from Proof of Personhood:** Proof-of-DOT allows multiple identities per person (if they pay for each).
 It's designed for abundant resources (bandwidth, connections) where we want sustainable economics and fast verification
 (network level). Proof of Personhood is for truly scarce resources (votes, airdrops) where one-per-human matters
-(blockchain level). They complement each other: proven persons could get DOT for Proof-of-DOT registration for free.
+(blockchain level). They complement each other: proven people could get DOT for Proof-of-DOT registration for free.
 
 ### How Competition Drives Quality
 
