@@ -143,24 +143,28 @@ impl SubstrateClient {
 
     /// Create an S3 bucket.
     ///
-    /// This creates both the Layer 0 bucket and the S3 bucket in a single transaction.
-    /// The `min_providers` parameter specifies the minimum number of storage providers.
+    /// `terms` + `sig` are the provider-signed agreement bundle returned by
+    /// [`storage_client::ProviderClient::negotiate_terms`]. Layer 0 verifies
+    /// the signature inside `establish_storage_agreement_internal`; the
+    /// underlying bucket + primary agreement open atomically alongside the
+    /// S3 bucket.
     pub async fn create_s3_bucket(
         &self,
         name: &str,
-        min_providers: u32,
+        provider: AccountId32,
+        terms: &storage_client::AgreementTermsOf,
+        sig: &sp_runtime::MultiSignature,
     ) -> std::result::Result<S3BucketId, String> {
-        debug!(
-            "Creating S3 bucket: {} (min_providers={})",
-            name, min_providers
-        );
+        debug!("Creating S3 bucket: {}", name);
 
         let tx = subxt::dynamic::tx(
             PALLET_NAME,
             "create_s3_bucket",
             vec![
                 Value::from_bytes(name.as_bytes()),
-                Value::u128(min_providers as u128),
+                Value::from_bytes(provider.as_ref() as &[u8]),
+                storage_client::substrate::extrinsics::dynamic_agreement_terms(terms),
+                storage_client::substrate::extrinsics::dynamic_multi_signature(sig),
             ],
         );
 

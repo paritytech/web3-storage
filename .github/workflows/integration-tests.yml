@@ -31,7 +31,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -86,7 +86,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -139,7 +139,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -155,14 +155,21 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Register providers on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          echo "//Charlie" > /tmp/charlie-key && chmod 600 /tmp/charlie-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3334 /ip4/127.0.0.1/tcp/3334 /tmp/charlie-key
+
+      - name: Start provider (inmemory) and wait for health
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider-inmemory.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -190,6 +197,7 @@ jobs:
           name: zombienet-smoke-test-logs
           path: |
             /tmp/zombienet.log
+            /tmp/provider-inmemory.log
             /tmp/provider.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
@@ -213,7 +221,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -271,7 +279,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -287,14 +295,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (inmemory)
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (inmemory)
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -382,7 +394,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -435,7 +447,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -480,14 +492,18 @@ jobs:
         with:
           log-file: /tmp/omni-node.log
 
-      - name: Start provider (inmemory)
+      - name: Register provider on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (inmemory) and wait for health
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -538,7 +554,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -588,7 +604,7 @@ jobs:
       # contents land back at their original paths (provider binary + per-runtime
       # wbuild wasm consumed by the chain-spec script).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -606,7 +622,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
         with:
           version: 10
 
@@ -633,14 +649,18 @@ jobs:
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
 
-      - name: Start provider (Alice, inmemory)
+      - name: Register providers on-chain
         run: |
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
+          cargo run --release -p storage-client --example register_provider \
+            ws://127.0.0.1:2222 http://127.0.0.1:3333 /ip4/127.0.0.1/tcp/3333 /tmp/alice-key
+
+      - name: Start provider (Alice, inmemory)
+        run: |
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-agreement-coordinator --enable-checkpoint-coordinator \
-            > /tmp/provider.log 2>&1 &
+            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -710,7 +730,7 @@ jobs:
           key: coverage-baseline-latest
 
       - name: Download PR coverage artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: e2e-coverage
           path: /tmp/pr-coverage

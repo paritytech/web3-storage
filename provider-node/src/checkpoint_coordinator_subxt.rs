@@ -2,34 +2,24 @@
 
 use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
 use crate::Error;
-use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use subxt::dynamic::Value;
 use subxt::ext::scale_value::value;
+use subxt_signer::sr25519;
 
 /// Production implementation that talks to the chain via subxt.
 pub struct SubxtCheckpointChainClient {
     api: subxt::OnlineClient<subxt::PolkadotConfig>,
-    signer: subxt_signer::sr25519::Keypair,
+    signer: sr25519::Keypair,
 }
 
 impl SubxtCheckpointChainClient {
     /// Connect to the chain and create a signer from the seed URI.
-    pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {
+    pub async fn connect(chain_ws_url: &str, signer: sr25519::Keypair) -> Result<Self, Error> {
         let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
             .await
             .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
 
-        let uri: subxt_signer::SecretUri = seed
-            .parse()
-            .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
-            .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
-
-        tracing::info!(
-            "Checkpoint coordinator signer: {}",
-            sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
-        );
         tracing::info!("Checkpoint coordinator connected to {}", chain_ws_url);
 
         Ok(Self { api, signer })

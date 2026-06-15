@@ -480,38 +480,6 @@ export function fmtRole(role) {
   return role.type ?? JSON.stringify(role);
 }
 
-/**
- * Wait until the pending AgreementRequest for `(providerAddress, bucketId)`
- * has been consumed — i.e. the provider has accepted it. The provider node's
- * agreement_coordinator polls every ~6s and auto-accepts, which races any
- * explicit `accept_agreement` extrinsic the demo might submit; if the
- * provider wins, the demo's submit fails with `AgreementRequestNotFound`.
- *
- * Polling instead of submitting sidesteps the race entirely.
- */
-export async function waitForAgreementAcceptance(
-  api,
-  providerAddress,
-  bucketId,
-  { timeoutMs = 60_000, pollMs = 1_000 } = {}
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const req = await api.query.StorageProvider.AgreementRequests.getValue(
-      bucketId,
-      providerAddress,
-      READ_OPTS
-    );
-    if (!req) return;
-    await new Promise((r) => setTimeout(r, pollMs));
-  }
-  throw new Error(
-    `Timed out after ${timeoutMs}ms waiting for provider ${providerAddress} ` +
-      `to auto-accept the agreement request for bucket ${bucketId}. ` +
-      `Is the provider node's agreement_coordinator running?`
-  );
-}
-
 export async function printBucketMembers(api, bucketId, label = "members") {
   const bucket = await api.query.StorageProvider.Buckets.getValue(
     bucketId,
@@ -562,16 +530,14 @@ const KNOWN_DEV_SEEDS = [
 ];
 
 /**
- * Make `keep` the only provider that will be picked by auto-matching
- * extrinsics (`create_bucket_with_storage`, `create_s3_bucket_with_storage`,
- * `create_drive`).
+ * Make `keep` the only `accepting_primary` provider among the dev keys.
  *
- * The Layer 1 paths select via `query_available_providers[0]`, which iterates
- * `Providers` in storage-hash order — non-deterministic across AccountIds.
- * When CI registers a second provider, the auto-match flips between them at
- * random and demos that assume a specific provider signed the checkpoint
- * fail intermittently with `ProviderNotInSnapshot` or
- * `AgreementRequestNotFound`.
+ * Agreements are now opened against a provider the caller chose explicitly
+ * (it negotiates signed terms with one specific node), so selection is no
+ * longer ambiguous. But demos still query/score providers and assume a
+ * specific node signed the checkpoint; a stray second accepting provider
+ * left over from an earlier workflow can make those reads non-deterministic.
+ * Silencing the others keeps the chain state predictable across the suite.
  *
  * This helper iterates the known dev seeds, finds any provider that is
  * currently registered and `accepting_primary`, and (if it isn't the keep

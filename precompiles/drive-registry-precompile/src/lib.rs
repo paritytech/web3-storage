@@ -48,6 +48,35 @@ where
     })
 }
 
+/// Rebuild the pallet's [`AgreementTermsOf`](pallet_storage_provider::AgreementTermsOf)
+/// from its Solidity mirror so the SCALE encoding matches the payload the
+/// provider signed.
+fn decode_terms<T>(
+    terms: &IDriveRegistry::PrimitiveAgreementTerms,
+) -> Result<pallet_storage_provider::AgreementTermsOf<T>, Error>
+where
+    T: pallet_storage_provider::Config,
+    BalanceOf<T>: From<u128>,
+    BlockNumberFor<T>: From<u32>,
+{
+    Ok(storage_primitives::AgreementTerms {
+        owner: decode_account::<T>(&terms.owner.0)?,
+        max_bytes: terms.maxBytes,
+        duration: BlockNumberFor::<T>::from(terms.duration),
+        price_per_byte: BalanceOf::<T>::from(terms.pricePerByte),
+        valid_until: BlockNumberFor::<T>::from(terms.validUntil),
+        nonce: terms.nonce,
+        bucket_id: terms.hasBucketId.then_some(terms.bucketId),
+        replica_params: terms
+            .hasReplicaParams
+            .then(|| storage_primitives::ReplicaTerms {
+                sync_balance: BalanceOf::<T>::from(terms.replicaParams.syncBalance),
+                min_sync_interval: BlockNumberFor::<T>::from(terms.replicaParams.minSyncInterval),
+                sync_price: BalanceOf::<T>::from(terms.replicaParams.syncPrice),
+            }),
+    })
+}
+
 fn decode_role(tag: u8) -> Result<Role, Error> {
     match tag {
         0 => Ok(Role::Admin),
@@ -98,30 +127,35 @@ where
         match input {
             IDriveRegistryCalls::createDrive(IDriveRegistry::createDriveCall {
                 name,
-                maxCapacity,
-                storagePeriod,
-                payment,
-                minProviders,
+                provider,
+                terms,
+                signature,
             }) => {
                 env.charge(<Runtime as pallet_drive_registry::Config>::WeightInfo::create_drive())?;
-                let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
+                let provider = decode_account::<Runtime>(&provider.0)?;
+                let terms = decode_terms::<Runtime>(terms)?;
+                let sig =
+                    sp_runtime::MultiSignature::decode(&mut signature.as_ref()).map_err(|e| {
+                        revert(
+                            &e,
+                            "Invalid signature encoding: expected SCALE-encoded MultiSignature",
+                        )
+                    })?;
                 let name_opt = if name.is_empty() {
                     None
                 } else {
                     Some(name.as_bytes().to_vec())
                 };
-                let min_providers_opt = if *minProviders == 0 {
-                    None
-                } else {
-                    Some(*minProviders)
-                };
+                // `NextDriveId` is incremented inside the extrinsic; capture
+                // the pre-dispatch value so we can return the id assigned to
+                // this call.
+                let drive_id = pallet_drive_registry::NextDriveId::<Runtime>::get();
                 pallet_drive_registry::Pallet::<Runtime>::create_drive(
                     frame_origin,
                     name_opt,
-                    *maxCapacity,
-                    BlockNumberFor::<Runtime>::from(*storagePeriod),
-                    BalanceOf::<Runtime>::from(*payment),
-                    min_providers_opt,
+                    provider,
+                    terms,
+                    sig,
                 )
                 .map_err(|e| revert(&e, "createDrive failed"))?;
                 Ok(drive_id.abi_encode())

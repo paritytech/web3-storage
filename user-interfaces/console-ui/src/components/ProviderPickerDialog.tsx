@@ -4,14 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { RefreshCw, X, Server } from "lucide-react";
 import { useStorage } from "@/hooks/useStorage";
 import { formatBytes, truncateHash, formatTokens } from "@/lib/utils";
-import type { AvailableProvider } from "@/lib/storage";
+import type { AvailableProvider, MatchingProviders } from "@/lib/storage";
 
 interface ProviderPickerDialogProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (providerAccount: string) => void;
+  onSelect: (provider: AvailableProvider) => void;
   requiredCapacity: bigint;
   requiredDuration: number;
+  requiredPricePerByte: bigint;
 }
 
 export default function ProviderPickerDialog({
@@ -20,9 +21,10 @@ export default function ProviderPickerDialog({
   onSelect,
   requiredCapacity,
   requiredDuration,
+  requiredPricePerByte,
 }: ProviderPickerDialogProps) {
-  const { listAvailableProviders } = useStorage();
-  const [providers, setProviders] = useState<AvailableProvider[]>([]);
+  const { queryMatchingProviders } = useStorage();
+  const [providers, setProviders] = useState<MatchingProviders[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +38,12 @@ export default function ProviderPickerDialog({
     setLoading(true);
     setError(null);
     try {
-      const list = await listAvailableProviders();
+      const list = await queryMatchingProviders({
+        primaryOnly: true,
+        maxPricePerByte: requiredPricePerByte,
+        bytesNeeded: requiredCapacity,
+        minDuration: requiredDuration,
+      });
       setProviders(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load providers");
@@ -47,16 +54,32 @@ export default function ProviderPickerDialog({
 
   if (!open) return null;
 
+  const humanizeReason = (reason: string): string => {
+    switch (reason) {
+      case "PriceTooHigh":
+        return "Price above your max";
+      case "InsufficientCapacity":
+        return "Limited capacity";
+      case "DurationMismatch":
+        return "Duration mismatch";
+      case "NotAccepting":
+        return "Not accepting primary";
+      default:
+        return reason;
+    }
+  };
+
   const getDisabledReason = (p: AvailableProvider): string | null => {
     if (!p.acceptingPrimary) return "Not accepting";
-    if (p.availableCapacity < requiredCapacity) return "Capacity full";
+    // `maxCapacity === 0n` means unlimited — skip the capacity check.
+    if (p.maxCapacity !== 0n && p.availableCapacity < requiredCapacity) return "Capacity full";
     if (requiredDuration < p.minDuration) return "Duration too short";
     if (p.maxDuration > 0 && requiredDuration > p.maxDuration) return "Duration too long";
     return null;
   };
 
   return (
-    <Card className="border-2">
+    <Card className="border-2" data-testid="provider-picker">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
@@ -102,6 +125,9 @@ export default function ProviderPickerDialog({
                       Account
                     </th>
                     <th className="px-3 py-2 text-left text-xs font-medium">
+                      Match
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
                       Available
                     </th>
                     <th className="px-3 py-2 text-left text-xs font-medium">
@@ -111,7 +137,7 @@ export default function ProviderPickerDialog({
                       Duration
                     </th>
                     <th className="px-3 py-2 text-left text-xs font-medium">
-                      Agreements
+                      Reputation
                     </th>
                     <th className="px-3 py-2 text-right text-xs font-medium w-24">
                       Action
@@ -122,13 +148,15 @@ export default function ProviderPickerDialog({
                   {providers.map((p) => {
                     const reason = getDisabledReason(p);
                     const disabled = reason !== null;
-                    const utilization =
-                      p.maxCapacity > 0n
-                        ? Number(
-                            ((p.maxCapacity - p.availableCapacity) * 100n) /
-                              p.maxCapacity,
-                          )
-                        : 0;
+                    // `max_capacity == 0` is the substrate convention for
+                    // "unlimited" (see runtime ProviderSettings docs).
+                    const unlimited = p.maxCapacity === 0n;
+                    const utilization = unlimited
+                      ? 0
+                      : Number(
+                          ((p.maxCapacity - p.availableCapacity) * 100n) /
+                            p.maxCapacity,
+                        );
                     return (
                       <tr
                         key={p.account}
@@ -140,17 +168,37 @@ export default function ProviderPickerDialog({
                           </span>
                         </td>
                         <td className="px-3 py-2">
-                          <div className="space-y-1">
-                            <span className="text-xs">
-                              {formatBytes(Number(p.availableCapacity))}
-                            </span>
-                            <div className="h-1 w-16 rounded-full bg-secondary">
-                              <div
-                                className="h-full rounded-full bg-primary transition-all"
-                                style={{ width: `${utilization}%` }}
-                              />
-                            </div>
+                          <div className="text-xs font-medium">
+                            {p.matchScore}/100
                           </div>
+                          {p.partialReason ? (
+                            <div className="text-xs text-amber-600">
+                              {humanizeReason(p.partialReason)}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              Best fit
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {unlimited ? (
+                            <span className="text-xs text-muted-foreground">
+                              Unlimited
+                            </span>
+                          ) : (
+                            <div className="space-y-1">
+                              <span className="text-xs">
+                                {formatBytes(Number(p.availableCapacity))}
+                              </span>
+                              <div className="h-1 w-16 rounded-full bg-secondary">
+                                <div
+                                  className="h-full rounded-full bg-primary transition-all"
+                                  style={{ width: `${utilization}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-xs">
                           {formatTokens(p.pricePerByte)}
@@ -159,7 +207,17 @@ export default function ProviderPickerDialog({
                           {p.minDuration}–{p.maxDuration || "\u221E"}
                         </td>
                         <td className="px-3 py-2 text-xs">
-                          {p.agreementsTotal}
+                          <div>{p.agreementsTotal} agreements</div>
+                          <div
+                            className={
+                              p.challengesFailed > 0
+                                ? "text-red-500"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {p.challengesFailed}/{p.challengesReceived} challenges
+                            failed
+                          </div>
                         </td>
                         <td className="px-3 py-2 text-right">
                           {disabled ? (
@@ -168,10 +226,11 @@ export default function ProviderPickerDialog({
                             </span>
                           ) : (
                             <Button
+                              data-testid="provider-picker-select"
                               variant="outline"
                               size="sm"
                               className="h-7 text-xs"
-                              onClick={() => onSelect(p.account)}
+                              onClick={() => onSelect(p)}
                             >
                               Select
                             </Button>

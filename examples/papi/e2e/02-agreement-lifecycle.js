@@ -3,28 +3,33 @@
  *
  * Accounts: //Alice (provider), //Bob (client), //Charlie (non-party)
  *
- * Tests: request, accept, reject, withdraw, end (Pay/Burn).
+ * Agreements are opened by redeeming provider-signed terms via
+ * `establish_storage_agreement` — the bucket is created atomically and there
+ * is no separate request/accept/reject/withdraw step. Tests cover establish,
+ * end (Pay/Burn), and the on-chain/off-chain rejections that replace the old
+ * request-flow failures.
  *
  * Usage: node e2e/02-agreement-lifecycle.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
-import {
-  createBucket,
-  endAgreement,
-  rejectAgreement,
-  requestPrimaryAgreement,
-  withdrawAgreementRequest,
-} from "../api.js";
+import { Enum } from "@polkadot-api/substrate-bindings";
+import { buildSignedTermsArgs, endAgreement, negotiateTerms } from "../api.js";
 import {
   ensureProviderRegistered,
   makeSigner,
   READ_OPTS,
   sameAddress,
-  waitForAgreementAcceptance,
   waitForBlock,
 } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
+import {
+  getFree,
+  negotiateAndEstablish,
+  negotiateSigned,
+  runSuite,
+  setupChain,
+  submitTxExpectFailure,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -38,102 +43,51 @@ async function main() {
   const { papi, api } = await setupChain(CHAIN_WS);
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
-  // Shared state across tests
-  let mainBucketId;
-  let rejectBucketId;
-  let withdrawBucketId;
-  let burnBucketId;
-
   const maxBytes = 1_048_576n; // 1 MiB
   const duration = 10;
-  const maxPayment = maxBytes * BigInt(duration) * 10n;
 
   const tests = [];
 
   // ── Success ───────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "2.1 Request primary agreement",
+    name: "2.1 Establish storage agreement",
     fn: async () => {
-      mainBucketId = await createBucket(api, client);
-      const result = await requestPrimaryAgreement(api, client, provider, mainBucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      const events = api.event.StorageProvider.AgreementRequested.filter(result.events);
-      assert.strictEqual(events.length, 1, "Expected AgreementRequested event");
-    },
-  });
-
-  tests.push({
-    name: "2.2 Accept agreement (auto-accept)",
-    fn: async () => {
-      await waitForAgreementAcceptance(api, provider.address, mainBucketId);
-      const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
-        mainBucketId,
-        provider.address,
-        READ_OPTS
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        { maxBytes, duration }
       );
-      assert.ok(agreement, "Agreement should exist after acceptance");
-      const bucket = await api.query.StorageProvider.Buckets.getValue(mainBucketId, READ_OPTS);
+      // Bucket created with the client as admin and the provider as primary.
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
         bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
         "Provider should be in primary_providers"
       );
-    },
-  });
-
-  tests.push({
-    name: "2.3 Reject agreement",
-    fn: async () => {
-      rejectBucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, rejectBucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      const balAfterRequest = await getFree(api, client);
-      const result = await rejectAgreement(api, provider, rejectBucketId);
-      const events = api.event.StorageProvider.AgreementRejected.filter(result.events);
-      assert.strictEqual(events.length, 1, "Expected AgreementRejected event");
-      // Locked payment is returned after reject. Balance should increase
-      // compared to after the request (client still lost tx fees for
-      // create_bucket + request, but the reserved payment is unreserved).
-      const balAfterReject = await getFree(api, client);
-      assert.ok(
-        balAfterReject > balAfterRequest,
-        `Balance should increase after reject: ${balAfterReject} > ${balAfterRequest}`
-      );
-      const req = await api.query.StorageProvider.AgreementRequests.getValue(
-        rejectBucketId,
+      const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
         provider.address,
         READ_OPTS
       );
-      assert.strictEqual(req, undefined, "Request should be gone after reject");
+      assert.ok(agreement, "Agreement should exist immediately after establish");
+      assert.strictEqual(agreement.max_bytes, maxBytes, "max_bytes should match the signed terms");
     },
   });
 
   tests.push({
-    name: "2.4 Withdraw agreement request",
+    name: "2.2 End agreement (Pay)",
     fn: async () => {
-      withdrawBucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, withdrawBucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      const result = await withdrawAgreementRequest(api, client, withdrawBucketId, provider);
-      const events = api.event.StorageProvider.AgreementRequestWithdrawn.filter(result.events);
-      assert.strictEqual(events.length, 1, "Expected AgreementRequestWithdrawn event");
-    },
-  });
-
-  tests.push({
-    name: "2.5 End agreement (Pay)",
-    fn: async () => {
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        { maxBytes, duration }
+      );
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
-        mainBucketId,
+        bucketId,
         provider.address,
         READ_OPTS
       );
@@ -141,14 +95,14 @@ async function main() {
       console.log("    Waiting for expiry at block %d...", expiresAt);
       await waitForBlock(papi, expiresAt);
       const provBefore = await getFree(api, provider);
-      await endAgreement(api, client, provider, mainBucketId, "Pay");
+      await endAgreement(api, client, provider, bucketId, "Pay");
       const provAfter = await getFree(api, provider);
       assert.ok(provAfter > provBefore, "Provider balance should increase after Pay");
     },
   });
 
   tests.push({
-    name: "2.6 End agreement (Burn)",
+    name: "2.3 End agreement (Burn)",
     fn: async () => {
       // Use larger max_bytes so payment_locked (= price_per_byte × max_bytes × duration)
       // exceeds the existential deposit. With price_per_byte=1 and duration=10:
@@ -156,22 +110,21 @@ async function main() {
       // Otherwise the treasury transfer fails with Token::BelowMinimum when the
       // treasury account doesn't exist yet.
       const burnMaxBytes = 1_073_741_824n; // 1 GiB
-      const burnMaxPayment = burnMaxBytes * BigInt(duration) * 10n;
-      burnBucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, burnBucketId, {
-        max_bytes: burnMaxBytes,
-        duration,
-        max_payment: burnMaxPayment,
-      });
-      await waitForAgreementAcceptance(api, provider.address, burnBucketId);
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        { maxBytes: burnMaxBytes, duration }
+      );
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
-        burnBucketId,
+        bucketId,
         provider.address,
         READ_OPTS
       );
       console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
       await waitForBlock(papi, Number(agreement.expires_at));
-      const result = await endAgreement(api, client, provider, burnBucketId, "Burn", { burn_percent: 100 });
+      const result = await endAgreement(api, client, provider, bucketId, "Burn", { burn_percent: 100 });
       const events = api.event.StorageProvider.AgreementEnded.filter(result.events);
       assert.strictEqual(events.length, 1, "Expected AgreementEnded event");
     },
@@ -180,103 +133,124 @@ async function main() {
   // ── Failure ───────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "2.7 Payment too low",
+    name: "2.4 Non-owner ends agreement",
     fn: async () => {
-      const bucketId = await createBucket(api, client);
-      const tx = api.tx.StorageProvider.request_primary_agreement({
-        bucket_id: bucketId,
-        provider: provider.address,
-        max_bytes: maxBytes,
-        duration,
-        max_payment: 1n, // Way too low
-      });
-      await submitTxExpectFailure(tx, client.signer, "PaymentExceedsMax", "2.7");
-    },
-  });
-
-  tests.push({
-    name: "2.8 Duration too short",
-    fn: async () => {
-      const bucketId = await createBucket(api, client);
-      const tx = api.tx.StorageProvider.request_primary_agreement({
-        bucket_id: bucketId,
-        provider: provider.address,
-        max_bytes: maxBytes,
-        duration: 1, // Below min_duration
-        max_payment: maxPayment,
-      });
-      await submitTxExpectFailure(tx, client.signer, "DurationTooShort", "2.8");
-    },
-  });
-
-  tests.push({
-    name: "2.9 Duration too long",
-    fn: async () => {
-      const bucketId = await createBucket(api, client);
-      const tx = api.tx.StorageProvider.request_primary_agreement({
-        bucket_id: bucketId,
-        provider: provider.address,
-        max_bytes: maxBytes,
-        duration: 999_999_999,
-        max_payment: maxBytes * 999_999_999n * 10n,
-      });
-      await submitTxExpectFailure(tx, client.signer, "DurationTooLong", "2.9");
-    },
-  });
-
-  tests.push({
-    name: "2.10 Duplicate agreement request",
-    fn: async () => {
-      const bucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, bucketId, {
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      // Second request for the same provider+bucket should fail.
-      const tx = api.tx.StorageProvider.request_primary_agreement({
-        bucket_id: bucketId,
-        provider: provider.address,
-        max_bytes: maxBytes,
-        duration,
-        max_payment: maxPayment,
-      });
-      await submitTxExpectFailure(tx, client.signer, "AgreementRequestAlreadyExists", "2.10");
-    },
-  });
-
-  tests.push({
-    name: "2.11 Accept non-existent request",
-    fn: async () => {
-      const emptyBucket = await createBucket(api, client);
-      const tx = api.tx.StorageProvider.accept_agreement({ bucket_id: emptyBucket });
-      await submitTxExpectFailure(tx, provider.signer, "AgreementRequestNotFound", "2.11");
-    },
-  });
-
-  tests.push({
-    name: "2.12 Non-owner ends agreement",
-    fn: async () => {
-      // Create a fresh agreement for this test.
-      const bucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, bucketId, {
-        max_bytes: maxBytes,
-        duration: 50,
-        max_payment: maxBytes * 50n * 10n,
-      });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        { maxBytes, duration: 50 }
+      );
       // Charlie is not bucket admin — should fail.
       const tx = api.tx.StorageProvider.end_agreement({
         bucket_id: bucketId,
         provider: provider.address,
-        action: (await import("@polkadot-api/substrate-bindings")).Enum("Pay"),
+        action: Enum("Pay"),
       });
-      await submitTxExpectFailure(tx, charlie.signer, "NotBucketAdmin", "2.12");
+      await submitTxExpectFailure(tx, charlie.signer, "NotBucketAdmin", "2.4");
+    },
+  });
+
+  tests.push({
+    name: "2.5 Owner mismatch on redeem",
+    fn: async () => {
+      // Terms are signed for Bob; Charlie must not be able to redeem them.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+      });
+      const tx = api.tx.StorageProvider.establish_storage_agreement(
+        buildSignedTermsArgs(provider, signed)
+      );
+      await submitTxExpectFailure(tx, charlie.signer, "TermsOwnerMismatch", "2.5");
+    },
+  });
+
+  tests.push({
+    name: "2.6 Nonce replay rejected",
+    fn: async () => {
+      // Redeem a quote once, then replay the exact same signed bundle.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes,
+        duration,
+      });
+      const args = buildSignedTermsArgs(provider, signed);
+      await api.tx.StorageProvider.establish_storage_agreement(args)
+        .signAndSubmit(client.signer);
+      const replay = api.tx.StorageProvider.establish_storage_agreement(args);
+      await submitTxExpectFailure(replay, client.signer, "NonceAlreadyUsed", "2.6");
+    },
+  });
+
+  tests.push({
+    name: "2.7 Provider refuses duration too short",
+    fn: async () => {
+      // The provider node signs only within its [min_duration, max_duration]
+      // window, so an out-of-range quote is rejected off-chain (HTTP 422).
+      await assertNegotiateRejects(
+        () => negotiateSigned(api, PROVIDER_URL, client, provider, { maxBytes, duration: 1 }),
+        "duration_out_of_bounds",
+        "2.7"
+      );
+    },
+  });
+
+  tests.push({
+    name: "2.8 Provider refuses duration too long",
+    fn: async () => {
+      await assertNegotiateRejects(
+        () => negotiateSigned(api, PROVIDER_URL, client, provider, {
+          maxBytes,
+          duration: 999_999_999,
+        }),
+        "duration_out_of_bounds",
+        "2.8"
+      );
+    },
+  });
+
+  tests.push({
+    name: "2.9 Provider refuses price below listed",
+    fn: async () => {
+      // The node refuses to sign terms priced below its listed
+      // price_per_byte (Alice lists 1), since the chain treats its
+      // signature as consent to those terms.
+      await assertNegotiateRejects(
+        () =>
+          negotiateTerms(PROVIDER_URL, {
+            owner: client.address,
+            max_bytes: maxBytes,
+            duration,
+            price_per_byte: 0n,
+            replica_params: null,
+            bucket_id: null,
+          }),
+        "price_below_listed",
+        "2.9"
+      );
     },
   });
 
   await runSuite("02 — Agreement Lifecycle", tests, { api, papi });
   papi.destroy();
+}
+
+/**
+ * Assert that a `/negotiate` call rejects with the expected error code. The
+ * `negotiateTerms` helper throws `"/negotiate failed: <status> <body>"` on a
+ * non-2xx response, and the body carries the machine-readable error string.
+ */
+async function assertNegotiateRejects(fn, expectedError, label) {
+  try {
+    await fn();
+  } catch (err) {
+    if (err.message && err.message.includes(expectedError)) return;
+    throw new Error(
+      `${label}: expected /negotiate to reject with "${expectedError}", got "${err.message}"`
+    );
+  }
+  throw new Error(`${label}: expected /negotiate to reject with "${expectedError}", but it succeeded`);
 }
 
 main().catch((err) => {

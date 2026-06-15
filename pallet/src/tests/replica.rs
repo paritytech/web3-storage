@@ -1,5 +1,5 @@
 use super::*;
-use storage_primitives::ReplicaRequestParams;
+use storage_primitives::agreement_term::ReplicaTerms;
 
 fn setup_provider_with_replicas(provider: u64, stake: u64) {
     register_provider_with_settings(
@@ -14,52 +14,64 @@ fn setup_provider_with_replicas(provider: u64, stake: u64) {
 }
 
 #[test]
-fn request_agreement_replica_works() {
+fn establish_replica_agreement_works() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 0);
 
         let balance_before = Balances::free_balance(1);
 
-        assert_ok!(StorageProvider::request_agreement(
-            RuntimeOrigin::signed(1),
-            0,
+        setup_replica_agreement(
             2,
+            1,
+            bucket_id,
             50,
             100,
-            10000,
-            ReplicaRequestParams {
+            ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
-            }
-        ));
+                sync_price: 10,
+            },
+        );
 
-        let request = AgreementRequests::<Test>::get(0, 2).unwrap();
-        assert!(request.replica_params.is_some());
-        // Payment + sync_balance should be reserved
-        assert!(Balances::free_balance(1) < balance_before);
+        let agreement = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
+        assert!(matches!(
+            agreement.role,
+            storage_primitives::ProviderRole::Replica { .. }
+        ));
+        // sync_balance (price is 0, so only the sync balance) is reserved.
+        assert_eq!(Balances::free_balance(1), balance_before - 100);
     });
 }
 
 #[test]
-fn request_agreement_fails_no_replica_sync_price() {
+fn establish_replica_agreement_fails_no_replica_sync_price() {
     new_test_ext().execute_with(|| {
         // Provider without replica_sync_price
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 0);
 
-        assert_noop!(
-            StorageProvider::request_agreement(
+        // The sync-price check runs after the nonce window advances, so
+        // storage is mutated even on failure — assert the error only.
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            bucket_id,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_err!(
+            StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),
-                0,
+                bucket_id,
                 2,
-                50,
-                100,
-                10000,
-                ReplicaRequestParams {
-                    sync_balance: 100,
-                    min_sync_interval: 10,
-                }
+                terms,
+                sig
             ),
             Error::<Test>::ProviderNotAcceptingReplicas
         );
@@ -67,28 +79,35 @@ fn request_agreement_fails_no_replica_sync_price() {
 }
 
 #[test]
-fn request_agreement_fails_deregister_announced() {
+fn establish_replica_agreement_fails_deregister_announced() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 0);
 
         // Announce deregistration
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             2
         )));
 
-        assert_noop!(
-            StorageProvider::request_agreement(
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            bucket_id,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_err!(
+            StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),
-                0,
+                bucket_id,
                 2,
-                50,
-                100,
-                10000,
-                ReplicaRequestParams {
-                    sync_balance: 100,
-                    min_sync_interval: 10,
-                }
+                terms,
+                sig
             ),
             Error::<Test>::DeregisterAnnounced
         );
@@ -96,38 +115,135 @@ fn request_agreement_fails_deregister_announced() {
 }
 
 #[test]
-fn request_agreement_fails_duplicate() {
+fn establish_replica_agreement_fails_duplicate() {
     new_test_ext().execute_with(|| {
         setup_provider_with_replicas(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 0);
 
-        assert_ok!(StorageProvider::request_agreement(
-            RuntimeOrigin::signed(1),
-            0,
+        setup_replica_agreement(
             2,
+            1,
+            bucket_id,
             50,
             100,
-            10000,
-            ReplicaRequestParams {
+            ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
-            }
-        ));
+                sync_price: 10,
+            },
+        );
+
+        // A second quote (fresh nonce) for the same (bucket, provider)
+        // pair is rejected before any state changes.
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            bucket_id,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_noop!(
+            StorageProvider::establish_replica_agreement(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                terms,
+                sig
+            ),
+            Error::<Test>::AgreementAlreadyExists
+        );
+    });
+}
+
+#[test]
+fn establish_replica_agreement_fails_bucket_not_found() {
+    new_test_ext().execute_with(|| {
+        setup_provider_with_replicas(2, 200);
+
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            999, // non-existent bucket
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_noop!(
+            StorageProvider::establish_replica_agreement(
+                RuntimeOrigin::signed(1),
+                999,
+                2,
+                terms,
+                sig
+            ),
+            Error::<Test>::BucketNotFound
+        );
+    });
+}
+
+#[test]
+fn establish_replica_agreement_fails_terms_bucket_mismatch() {
+    new_test_ext().execute_with(|| {
+        setup_provider_with_replicas(2, 200);
+        let bucket_id = create_bucket(1, 0);
+        let other_bucket = create_bucket(1, 0);
+
+        // Quote bound to a different bucket than the extrinsic targets.
+        let (terms, sig) = signed_replica_terms(
+            2,
+            1,
+            other_bucket,
+            50,
+            100,
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 10,
+            },
+        );
+        assert_noop!(
+            StorageProvider::establish_replica_agreement(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                terms,
+                sig
+            ),
+            Error::<Test>::TermsBucketMismatch
+        );
+    });
+}
+
+#[test]
+fn establish_replica_agreement_fails_missing_replica_terms() {
+    new_test_ext().execute_with(|| {
+        setup_provider_with_replicas(2, 200);
+        let bucket_id = create_bucket(1, 0);
+
+        // Bucket-bound terms without replica params.
+        let pair = provider_signer(2);
+        let mut terms = primary_terms(1, 50, 100, 0);
+        terms.bucket_id = Some(bucket_id);
+        let sig = sign_terms(&pair, &terms);
 
         assert_noop!(
-            StorageProvider::request_agreement(
+            StorageProvider::establish_replica_agreement(
                 RuntimeOrigin::signed(1),
-                0,
+                bucket_id,
                 2,
-                50,
-                100,
-                10000,
-                ReplicaRequestParams {
-                    sync_balance: 100,
-                    min_sync_interval: 10,
-                }
+                terms,
+                sig
             ),
-            Error::<Test>::AgreementRequestAlreadyExists
+            Error::<Test>::MissingReplicaTerms
         );
     });
 }
@@ -177,23 +293,18 @@ fn top_up_replica_sync_balance_works() {
         register_provider(3, 200);
         let bucket_id = setup_agreement(3, 1, 50, 200);
 
-        // Request replica agreement
-        assert_ok!(StorageProvider::request_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
+        setup_replica_agreement(
             2,
+            1,
+            bucket_id,
             50,
             200,
-            10000,
-            ReplicaRequestParams {
+            ReplicaTerms {
                 sync_balance: 100,
                 min_sync_interval: 10,
-            }
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(2),
-            bucket_id
-        ));
+                sync_price: 10,
+            },
+        );
 
         let agreement_before = StorageAgreements::<Test>::get(bucket_id, 2).unwrap();
         let sync_balance_before = match &agreement_before.role {
@@ -220,10 +331,15 @@ fn top_up_replica_sync_balance_works() {
 #[test]
 fn top_up_replica_sync_balance_fails_no_agreement() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 0);
 
         assert_noop!(
-            StorageProvider::top_up_replica_sync_balance(RuntimeOrigin::signed(1), 0, 2, 100),
+            StorageProvider::top_up_replica_sync_balance(
+                RuntimeOrigin::signed(1),
+                bucket_id,
+                2,
+                100
+            ),
             Error::<Test>::AgreementNotFound
         );
     });
@@ -256,23 +372,19 @@ fn setup_replica_with_snapshot() -> u64 {
         }
     });
 
-    // Request and accept replica agreement for provider 2
-    assert_ok!(StorageProvider::request_agreement(
-        RuntimeOrigin::signed(1),
-        bucket_id,
+    // Establish a replica agreement for provider 2 via provider-signed terms.
+    setup_replica_agreement(
         2,
+        1,
+        bucket_id,
         50,
         200,
-        10000,
-        ReplicaRequestParams {
+        ReplicaTerms {
             sync_balance: 500,
             min_sync_interval: 10,
-        }
-    ));
-    assert_ok!(StorageProvider::accept_agreement(
-        RuntimeOrigin::signed(2),
-        bucket_id,
-    ));
+            sync_price: 10,
+        },
+    );
 
     bucket_id
 }
@@ -382,23 +494,19 @@ fn confirm_replica_sync_fails_insufficient_balance() {
             }
         });
 
-        // Request replica with sync_balance < sync_price
-        assert_ok!(StorageProvider::request_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
+        // Establish replica with sync_balance < sync_price
+        setup_replica_agreement(
             2,
+            1,
+            bucket_id,
             50,
             200,
-            10000,
-            ReplicaRequestParams {
+            ReplicaTerms {
                 sync_balance: 5, // Less than sync_price (10)
                 min_sync_interval: 10,
-            }
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(2),
-            bucket_id,
-        ));
+                sync_price: 10,
+            },
+        );
 
         let mut roots = [None; 7];
         roots[0] = Some(sp_core::H256::repeat_byte(0xAB));
