@@ -671,7 +671,7 @@ export class StorageClient {
 
     const response = await fetch(
       `${providerUrl}/s3/${Number(bucketId)}/object?key=${encodeURIComponent(key)}`,
-      { method: "PUT", headers, body: uploadData },
+      { method: "PUT", headers, body: uploadData as Uint8Array<ArrayBuffer> },
     );
 
     if (!response.ok) {
@@ -700,7 +700,7 @@ export class StorageClient {
     if (this.encryptionKey) {
       const encrypted = new Uint8Array(await response.arrayBuffer());
       const decrypted = await this.encryptionKey.decrypt(encrypted);
-      return new Blob([decrypted]);
+      return new Blob([decrypted as Uint8Array<ArrayBuffer>]);
     }
 
     return response.blob();

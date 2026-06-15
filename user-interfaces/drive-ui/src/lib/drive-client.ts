@@ -613,7 +613,7 @@ export class DriveClient {
       {
         method: "PUT",
         headers: { "Content-Type": options.contentType || "application/octet-stream" },
-        body: data,
+        body: data as Uint8Array<ArrayBuffer>,
         signal: options.signal,
       },
     );
