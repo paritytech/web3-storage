@@ -3750,7 +3750,7 @@ pub mod pallet {
         /// `ProviderSettings::default()`) and genesis build (which passes the
         /// full settings, since post-genesis there is no one to call
         /// `update_provider_settings`).
-        pub fn register_provider_internal(
+        pub(crate) fn register_provider_internal(
             who: &T::AccountId,
             multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
             public_key: BoundedVec<u8, ConstU32<64>>,
