@@ -6,11 +6,8 @@
  * `name` is the only user-supplied content we can round-trip.
  */
 import { test, expect } from "../fixtures";
-import {
-  Bob,
-  cleanupDrives,
-  getApi,
-} from "@web3-storage/test-helpers";
+import { Bob, cleanupDrives, getApi } from "@web3-storage/test-helpers";
+import { waitForLatestDriveId } from '../helpers/createDriveViaUi';
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -21,6 +18,7 @@ test.setTimeout(180_000);
 // nonce, which then refuses to accept_agreement for our drives.
 
 test.afterEach(async () => {
+  test.setTimeout(180_000);
   await cleanupDrives(Bob);
 });
 
@@ -28,25 +26,8 @@ async function fillBaseFields(page: import("@playwright/test").Page, name: strin
   await page.getByTestId("new-drive-button").click();
   await expect(page.getByTestId("new-drive-dialog")).toBeVisible();
   await page.getByTestId("new-drive-name").fill(name);
-  // Capacity / duration / payment / min-providers — defaults are fine for these tests.
-}
-
-/**
- * Wait for a freshly-created drive to land in Bob's UserDrives. Returns
- * the latest drive id. Fresh chain's first drive has id 0n which is falsy
- * in JS — poll on `length`, then read the id outside the poll.
- */
-async function waitForCreatedDriveId(): Promise<bigint> {
-  const api = getApi();
-  await expect.poll(
-    async () => {
-      const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
-      return ids.length;
-    },
-    { timeout: 120_000, intervals: [1000, 2000, 3000] },
-  ).toBeGreaterThan(0);
-  const ids = await api.query.DriveRegistry.UserDrives.getValue(Bob.address);
-  return ids[ids.length - 1];
+  await page.getByTestId("new-drive-price").fill("100");
+  // Capacity / duration — defaults are fine for these tests
 }
 
 async function expectDriveOnChain(driveId: bigint, expectedName: string) {
@@ -60,8 +41,15 @@ async function expectDriveOnChain(driveId: bigint, expectedName: string) {
 test("drive lands on chain with the user-supplied name", async ({ localPage }) => {
   const name = `create-${Date.now()}`;
   await fillBaseFields(localPage, name);
-  await localPage.getByTestId("new-drive-submit").click();
+  await localPage.getByTestId("find-matching-providers").click();
+  // Provider picker is embedded in the create dialog — picking a provider
+  // IS the submit. globalSetup registered Alice as the lone provider, so
+  // the first row is always the one we want.
+  await expect(localPage.getByTestId("provider-picker")).toBeVisible({
+    timeout: 30_000,
+  });
+  await localPage.getByTestId("provider-picker-select").first().click();
 
-  const driveId = await waitForCreatedDriveId();
+  const driveId = await waitForLatestDriveId();
   await expectDriveOnChain(driveId, name);
 });

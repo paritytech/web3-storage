@@ -44,14 +44,22 @@ pub mod pallet {
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Verify, Zero};
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplicaRequestParams, Role, HISTORICAL_ROOT_PRIMES,
+        ProviderRole, RemovalReason, ReplayError, ReplayWindow, Role, HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
+    /// Provider-signed agreement quote bound to this pallet's account, balance,
+    /// and block-number types.
+    pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
+        <T as frame_system::Config>::AccountId,
+        BalanceOf<T>,
+        BlockNumberFor<T>,
+    >;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -159,6 +167,13 @@ pub mod pallet {
     #[pallet::getter(fn providers)]
     pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
+    /// Per-provider sliding replay window over signed agreement-term nonces.
+    /// See [`storage_primitives::ReplayWindow`] for the bit layout
+    #[pallet::storage]
+    #[pallet::getter(fn provider_replay_states)]
+    pub type ProviderReplayStates<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ReplayWindow, ValueQuery>;
+
     /// Monotonically increasing bucket ID counter.
     #[pallet::storage]
     #[pallet::getter(fn next_bucket_id)]
@@ -180,18 +195,6 @@ pub mod pallet {
         Blake2_128Concat,
         T::AccountId,
         StorageAgreement<T>,
-    >;
-
-    /// Pending agreement requests (bucket → provider → request).
-    #[pallet::storage]
-    #[pallet::getter(fn agreement_requests)]
-    pub type AgreementRequests<T: Config> = StorageDoubleMap<
-        _,
-        Blake2_128Concat,
-        BucketId,
-        Blake2_128Concat,
-        T::AccountId,
-        AgreementRequest<T>,
     >;
 
     /// Pending challenges indexed by deadline block.
@@ -319,7 +322,7 @@ pub mod pallet {
                 .expect("genesis provider registration should not fail");
             }
             for (admin, min_providers) in &self.buckets {
-                Pallet::<T>::create_bucket_internal(admin, *min_providers)
+                Pallet::<T>::create_bucket_internal(admin, *min_providers, None)
                     .expect("genesis bucket creation should not fail");
             }
         }
@@ -488,24 +491,6 @@ pub mod pallet {
         pub started_at: BlockNumberFor<T>,
     }
 
-    /// Pending agreement request.
-    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
-    #[scale_info(skip_type_params(T))]
-    pub struct AgreementRequest<T: Config> {
-        /// Who requested the agreement.
-        pub requester: T::AccountId,
-        /// Maximum bytes requested.
-        pub max_bytes: u64,
-        /// Payment locked by requester.
-        pub payment_locked: BalanceOf<T>,
-        /// Requested duration.
-        pub duration: BlockNumberFor<T>,
-        /// Block at which request expires.
-        pub expires_at: BlockNumberFor<T>,
-        /// Replica-specific parameters, None for primary agreements.
-        pub replica_params: Option<ReplicaRequestParams<BalanceOf<T>, BlockNumberFor<T>>>,
-    }
-
     /// Active challenge against a provider.
     #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
     #[scale_info(skip_type_params(T))]
@@ -668,28 +653,10 @@ pub mod pallet {
         },
 
         // Agreement events
-        AgreementRequested {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            requester: T::AccountId,
-            max_bytes: u64,
-            payment_locked: BalanceOf<T>,
-            duration: BlockNumberFor<T>,
-        },
         AgreementAccepted {
             bucket_id: BucketId,
             provider: T::AccountId,
             expires_at: BlockNumberFor<T>,
-        },
-        AgreementRejected {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            payment_returned: BalanceOf<T>,
-        },
-        AgreementRequestWithdrawn {
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            payment_returned: BalanceOf<T>,
         },
         AgreementToppedUp {
             bucket_id: BucketId,
@@ -719,6 +686,24 @@ pub mod pallet {
             bucket_id: BucketId,
             provider: T::AccountId,
             payment_to_provider: BalanceOf<T>,
+        },
+        /// Owner redeemed provider-signed terms; bucket created and agreement
+        /// opened atomically.
+        StorageAgreementEstablished {
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            owner: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            expires_at: BlockNumberFor<T>,
+        },
+        /// Owner redeemed provider-signed replica terms; replica agreement
+        /// opened against an existing bucket.
+        ReplicaAgreementEstablished {
+            bucket_id: BucketId,
+            provider: T::AccountId,
+            owner: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            expires_at: BlockNumberFor<T>,
         },
 
         // Challenge events
@@ -798,8 +783,7 @@ pub mod pallet {
         CapacityExceeded,
         /// Stake insufficient to back declared capacity.
         InsufficientStakeForCapacity,
-        /// Provider settings specify `min_duration > max_duration`, which
-        /// would silently brick the provider in `find_matching_provider`.
+        /// Provider settings specify `min_duration > max_duration
         MinDurationExceedsMaxDuration,
         /// Provider has already announced a deregistration; the action is
         /// rejected until they complete or cancel it.
@@ -827,9 +811,7 @@ pub mod pallet {
 
         // Agreement errors
         AgreementNotFound,
-        AgreementRequestNotFound,
         AgreementAlreadyExists,
-        AgreementRequestAlreadyExists,
         AgreementExpired,
         AgreementNotExpired,
         AgreementExtensionsBlocked,
@@ -837,7 +819,6 @@ pub mod pallet {
         DurationTooShort,
         DurationTooLong,
         PaymentExceedsMax,
-        RequestExpired,
         CannotTerminateReplica,
         SettlementWindowPassed,
 
@@ -892,9 +873,28 @@ pub mod pallet {
         /// Account is a member of too many buckets.
         TooManyBucketsForMember,
 
-        // Auto-matching errors
-        /// No provider found matching the storage requirements.
-        NoMatchingProvider,
+        // establish_storage_agreement errors
+        /// Provider signature over the SCALE-encoded terms is invalid.
+        InvalidProviderSignature,
+        /// Signed terms have passed their `valid_until` block.
+        TermsExpired,
+        /// The terms' nonce has already been consumed inside the provider's
+        /// replay window.
+        NonceAlreadyUsed,
+        /// The terms' nonce is older than the provider's replay window
+        /// (distance from `hsn` ≥ [`storage_primitives::REPLAY_WINDOW_BITS`]).
+        NonceTooOld,
+        /// The terms' declared owner does not match the extrinsic origin.
+        TermsOwnerMismatch,
+        /// Replica terms missing from a signed quote redeemed as a replica
+        /// agreement.
+        MissingReplicaTerms,
+        /// The terms' bucket binding does not match the redeeming extrinsic:
+        /// primary terms must carry no bucket, replica terms must name the
+        /// targeted bucket.
+        TermsBucketMismatch,
+        /// Storage agreement requested 0 byte
+        InvalidMaxBytesRequest,
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1059,6 +1059,7 @@ pub mod pallet {
 
             T::Currency::unreserve(&who, provider.stake);
             Providers::<T>::remove(&who);
+            ProviderReplayStates::<T>::remove(&who);
 
             Self::deposit_event(Event::ProviderDeregistered {
                 provider: who,
@@ -1206,166 +1207,24 @@ pub mod pallet {
         // Bucket Management
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Create a new bucket.
-        #[pallet::call_index(10)]
-        #[pallet::weight(T::WeightInfo::create_bucket())]
-        pub fn create_bucket(origin: OriginFor<T>, min_providers: u32) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            let bucket_id = NextBucketId::<T>::get();
-            NextBucketId::<T>::put(bucket_id.saturating_add(1));
-
-            let admin_member = Member {
-                account: who.clone(),
-                role: Role::Admin,
-            };
-
-            let mut members = BoundedVec::new();
-            members
-                .try_push(admin_member)
-                .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-            let bucket = Bucket {
-                members,
-                frozen_start_seq: None,
-                min_providers,
-                primary_providers: BoundedVec::new(),
-                snapshot: None,
-                historical_roots: [(0, H256::zero()); 6],
-                total_snapshots: 0,
-            };
-
-            Buckets::<T>::insert(bucket_id, bucket);
-
-            // Update reverse index for creator
-            MemberBuckets::<T>::try_mutate(&who, |buckets| {
-                buckets
-                    .try_push(bucket_id)
-                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
-            })?;
-
-            Self::deposit_event(Event::BucketCreated {
-                bucket_id,
-                admin: who,
-            });
-
-            Ok(())
-        }
-
-        /// Create a new bucket with storage requirements and auto-match to a provider.
+        /// Redeem provider-signed terms: create a bucket + primary agreement
+        /// in a single call.
         ///
-        /// This is the preferred way to create a bucket with storage. The system
-        /// automatically finds a matching provider based on your requirements and
-        /// creates both the bucket and agreement in one atomic operation.
-        ///
-        /// Providers who set `accepting_primary: true` have pre-consented to accepting
-        /// agreements within their stated parameters (capacity, price, duration).
-        #[pallet::call_index(16)]
-        #[pallet::weight(T::WeightInfo::create_bucket_with_storage())]
-        pub fn create_bucket_with_storage(
+        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] off-chain;
+        /// the owner submits it here. The pallet verifies the signature,
+        /// rejects replays via the provider's sliding nonce window, then runs
+        /// the standard provider/capacity/stake checks and opens the
+        /// agreement.
+        #[pallet::call_index(17)]
+        #[pallet::weight(T::WeightInfo::establish_storage_agreement())]
+        pub fn establish_storage_agreement(
             origin: OriginFor<T>,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-            max_price_per_byte: BalanceOf<T>,
+            provider: T::AccountId,
+            terms: AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            // Find a matching provider
-            let (provider, provider_info) =
-                Self::find_matching_provider(max_bytes, duration, max_price_per_byte)?;
-
-            // Calculate payment using provider's actual price
-            let payment = Self::calculate_payment(
-                provider_info.settings.price_per_byte,
-                max_bytes,
-                duration,
-            )?;
-
-            // Reserve funds from caller
-            T::Currency::reserve(&who, payment)?;
-
-            // Create the bucket
-            let bucket_id = NextBucketId::<T>::get();
-            NextBucketId::<T>::put(bucket_id.saturating_add(1));
-
-            let admin_member = Member {
-                account: who.clone(),
-                role: Role::Admin,
-            };
-
-            let mut members = BoundedVec::new();
-            members
-                .try_push(admin_member)
-                .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-            let mut primary_providers = BoundedVec::new();
-            primary_providers
-                .try_push(provider.clone())
-                .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
-
-            let bucket = Bucket {
-                members,
-                frozen_start_seq: None,
-                min_providers: 1,
-                primary_providers,
-                snapshot: None,
-                historical_roots: [(0, H256::zero()); 6],
-                total_snapshots: 0,
-            };
-
-            Buckets::<T>::insert(bucket_id, bucket);
-
-            // Update reverse index for creator
-            MemberBuckets::<T>::try_mutate(&who, |buckets| {
-                buckets
-                    .try_push(bucket_id)
-                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
-            })?;
-
-            // Create the agreement
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let expires_at = current_block.saturating_add(duration);
-
-            let agreement = StorageAgreement {
-                owner: who.clone(),
-                max_bytes,
-                payment_locked: payment,
-                price_per_byte: provider_info.settings.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Primary,
-                started_at: current_block,
-            };
-
-            // Update provider's committed_bytes
-            Providers::<T>::mutate(&provider, |maybe_provider| {
-                if let Some(provider_info) = maybe_provider {
-                    provider_info.committed_bytes =
-                        provider_info.committed_bytes.saturating_add(max_bytes);
-                    provider_info.stats.agreements_total =
-                        provider_info.stats.agreements_total.saturating_add(1);
-                }
-            });
-
-            StorageAgreements::<T>::insert(bucket_id, &provider, agreement);
-
-            // Emit events
-            Self::deposit_event(Event::BucketCreated {
-                bucket_id,
-                admin: who.clone(),
-            });
-
-            Self::deposit_event(Event::AgreementAccepted {
-                bucket_id,
-                provider: provider.clone(),
-                expires_at,
-            });
-
-            Self::deposit_event(Event::ProviderAddedToBucket {
-                bucket_id,
-                provider,
-            });
-
+            Self::establish_storage_agreement_internal(&who, &provider, terms, &sig)?;
             Ok(())
         }
 
@@ -1592,343 +1451,25 @@ pub mod pallet {
         // Storage Agreements
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Request a replica storage agreement.
+        /// Redeem provider-signed terms for a replica storage agreement.
+        ///
+        /// The provider signs a SCALE-encoded [`AgreementTermsOf<T>`] with
+        /// `replica_params: Some(_)` off-chain; the owner submits it here.
+        /// The pallet verifies the signature, rejects replays via the
+        /// provider's sliding nonce window, then runs the standard
+        /// provider/capacity/stake checks and opens the replica agreement on
+        /// an existing bucket.
         #[pallet::call_index(20)]
-        #[pallet::weight(T::WeightInfo::request_agreement())]
-        pub fn request_agreement(
+        #[pallet::weight(T::WeightInfo::establish_replica_agreement())]
+        pub fn establish_replica_agreement(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-            max_payment: BalanceOf<T>,
-            replica_params: ReplicaRequestParams<BalanceOf<T>, BlockNumberFor<T>>,
+            terms: AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            ensure!(
-                Buckets::<T>::contains_key(bucket_id),
-                Error::<T>::BucketNotFound
-            );
-
-            let provider_info =
-                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::ensure_provider_active(&provider_info)?;
-
-            ensure!(
-                provider_info.settings.replica_sync_price.is_some(),
-                Error::<T>::ProviderNotAcceptingReplicas
-            );
-
-            Self::validate_duration(&provider_info.settings, duration)?;
-
-            // Calculate payment
-            let payment = Self::calculate_payment(
-                provider_info.settings.price_per_byte,
-                max_bytes,
-                duration,
-            )?;
-            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
-
-            // Total to lock = storage payment + sync balance
-            let total_lock = payment
-                .checked_add(&replica_params.sync_balance)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-
-            // Reserve funds
-            T::Currency::reserve(&who, total_lock)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
-
-            let request = AgreementRequest {
-                requester: who.clone(),
-                max_bytes,
-                payment_locked: payment,
-                duration,
-                expires_at,
-                replica_params: Some(replica_params),
-            };
-
-            ensure!(
-                !AgreementRequests::<T>::contains_key(bucket_id, &provider),
-                Error::<T>::AgreementRequestAlreadyExists
-            );
-
-            AgreementRequests::<T>::insert(bucket_id, &provider, request);
-
-            Self::deposit_event(Event::AgreementRequested {
-                bucket_id,
-                provider,
-                requester: who,
-                max_bytes,
-                payment_locked: payment,
-                duration,
-            });
-
-            Ok(())
-        }
-
-        /// Request a primary storage agreement (admin only).
-        #[pallet::call_index(21)]
-        #[pallet::weight(T::WeightInfo::request_primary_agreement())]
-        pub fn request_primary_agreement(
-            origin: OriginFor<T>,
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-            max_payment: BalanceOf<T>,
-        ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-
-            Self::ensure_admin(&who, &bucket)?;
-
-            // Check primary provider limit
-            ensure!(
-                bucket.primary_providers.len() < T::MaxPrimaryProviders::get() as usize,
-                Error::<T>::MaxPrimaryProvidersReached
-            );
-
-            let provider_info =
-                Providers::<T>::get(&provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::ensure_provider_active(&provider_info)?;
-
-            ensure!(
-                provider_info.settings.accepting_primary,
-                Error::<T>::ProviderNotAcceptingPrimary
-            );
-
-            Self::validate_duration(&provider_info.settings, duration)?;
-
-            let payment = Self::calculate_payment(
-                provider_info.settings.price_per_byte,
-                max_bytes,
-                duration,
-            )?;
-            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
-
-            T::Currency::reserve(&who, payment)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
-
-            let request = AgreementRequest {
-                requester: who.clone(),
-                max_bytes,
-                payment_locked: payment,
-                duration,
-                expires_at,
-                replica_params: None, // Primary agreement
-            };
-
-            ensure!(
-                !AgreementRequests::<T>::contains_key(bucket_id, &provider),
-                Error::<T>::AgreementRequestAlreadyExists
-            );
-
-            AgreementRequests::<T>::insert(bucket_id, &provider, request);
-
-            Self::deposit_event(Event::AgreementRequested {
-                bucket_id,
-                provider,
-                requester: who,
-                max_bytes,
-                payment_locked: payment,
-                duration,
-            });
-
-            Ok(())
-        }
-
-        /// Accept a pending agreement request.
-        #[pallet::call_index(22)]
-        #[pallet::weight(T::WeightInfo::accept_agreement())]
-        pub fn accept_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            let provider_info = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::ensure_provider_active(&provider_info)?;
-
-            let request = AgreementRequests::<T>::take(bucket_id, &who)
-                .ok_or(Error::<T>::AgreementRequestNotFound)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-            ensure!(
-                current_block <= request.expires_at,
-                Error::<T>::RequestExpired
-            );
-
-            let expires_at = current_block.saturating_add(request.duration);
-
-            // Create the role based on whether replica params exist
-            let role = if let Some(replica_params) = request.replica_params {
-                let provider_info =
-                    Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
-                let sync_price = provider_info
-                    .settings
-                    .replica_sync_price
-                    .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
-
-                ProviderRole::Replica {
-                    sync_balance: replica_params.sync_balance,
-                    sync_price,
-                    min_sync_interval: replica_params.min_sync_interval,
-                    last_sync: None,
-                }
-            } else {
-                // Primary: add to bucket's primary_providers
-                Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                    let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-                    bucket
-                        .primary_providers
-                        .try_push(who.clone())
-                        .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
-                    Ok(())
-                })?;
-
-                ProviderRole::Primary
-            };
-
-            let provider_info = Providers::<T>::get(&who).ok_or(Error::<T>::ProviderNotFound)?;
-
-            // Enforce stake-to-bytes ratio
-            // New commitment = existing + requested
-            let new_committed_bytes = provider_info
-                .committed_bytes
-                .checked_add(request.max_bytes)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-
-            // Check capacity constraint (if max_capacity > 0)
-            if provider_info.settings.max_capacity > 0 {
-                ensure!(
-                    new_committed_bytes <= provider_info.settings.max_capacity,
-                    Error::<T>::CapacityExceeded
-                );
-            }
-
-            // Required stake = committed_bytes * min_stake_per_byte
-            // Using saturated multiplication to avoid overflow
-            use sp_runtime::traits::SaturatedConversion;
-            let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
-            let required_stake = T::MinStakePerByte::get()
-                .checked_mul(&bytes_as_balance)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-
-            ensure!(
-                provider_info.stake >= required_stake,
-                Error::<T>::InsufficientStakeForBytes
-            );
-
-            let agreement = StorageAgreement {
-                owner: request.requester,
-                max_bytes: request.max_bytes,
-                payment_locked: request.payment_locked,
-                price_per_byte: provider_info.settings.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role,
-                started_at: current_block,
-            };
-
-            // Update provider stats
-            Providers::<T>::mutate(&who, |maybe_provider| {
-                if let Some(provider) = maybe_provider {
-                    provider.committed_bytes =
-                        provider.committed_bytes.saturating_add(request.max_bytes);
-                    provider.stats.agreements_total =
-                        provider.stats.agreements_total.saturating_add(1);
-                    provider.stats.total_bytes_committed = provider
-                        .stats
-                        .total_bytes_committed
-                        .saturating_add(request.max_bytes);
-                }
-            });
-
-            StorageAgreements::<T>::insert(bucket_id, &who, agreement);
-
-            Self::deposit_event(Event::AgreementAccepted {
-                bucket_id,
-                provider: who.clone(),
-                expires_at,
-            });
-
-            Self::deposit_event(Event::ProviderAddedToBucket {
-                bucket_id,
-                provider: who,
-            });
-
-            Ok(())
-        }
-
-        /// Reject a pending agreement request.
-        #[pallet::call_index(23)]
-        #[pallet::weight(T::WeightInfo::reject_agreement())]
-        pub fn reject_agreement(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            let request = AgreementRequests::<T>::take(bucket_id, &who)
-                .ok_or(Error::<T>::AgreementRequestNotFound)?;
-
-            // Calculate total locked (storage payment + sync balance for replicas)
-            let total_locked = if let Some(ref replica_params) = request.replica_params {
-                request
-                    .payment_locked
-                    .checked_add(&replica_params.sync_balance)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?
-            } else {
-                request.payment_locked
-            };
-
-            // Return funds to requester
-            T::Currency::unreserve(&request.requester, total_locked);
-
-            Self::deposit_event(Event::AgreementRejected {
-                bucket_id,
-                provider: who,
-                payment_returned: total_locked,
-            });
-
-            Ok(())
-        }
-
-        /// Withdraw a pending agreement request.
-        #[pallet::call_index(24)]
-        #[pallet::weight(T::WeightInfo::withdraw_agreement_request())]
-        pub fn withdraw_agreement_request(
-            origin: OriginFor<T>,
-            bucket_id: BucketId,
-            provider: T::AccountId,
-        ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            let request = AgreementRequests::<T>::get(bucket_id, &provider)
-                .ok_or(Error::<T>::AgreementRequestNotFound)?;
-
-            ensure!(request.requester == who, Error::<T>::NotAgreementOwner);
-
-            AgreementRequests::<T>::remove(bucket_id, &provider);
-
-            // Calculate total locked
-            let total_locked = if let Some(ref replica_params) = request.replica_params {
-                request
-                    .payment_locked
-                    .checked_add(&replica_params.sync_balance)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?
-            } else {
-                request.payment_locked
-            };
-
-            T::Currency::unreserve(&who, total_locked);
-
-            Self::deposit_event(Event::AgreementRequestWithdrawn {
-                bucket_id,
-                provider,
-                payment_returned: total_locked,
-            });
-
+            Self::establish_replica_agreement_internal(&who, bucket_id, &provider, terms, &sig)?;
             Ok(())
         }
 
@@ -3259,6 +2800,45 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Verify a provider signature over a SCALE-encoded
+        /// [`AgreementTermsOf<T>`]. The signed payload is
+        /// `blake2_256(context | terms.encode())`, where `context` is the
+        /// domain-separation prefix for the redemption path
+        /// ([`storage_primitives::PRIMARY_TERM_CONTEXT`] or
+        /// [`storage_primitives::REPLICA_TERM_CONTEXT`]) — the caller, not
+        /// the terms, decides it, so a quote signed for one flavour can
+        /// never be redeemed as the other.
+        fn verify_terms_signature(
+            provider_info: &ProviderInfo<T>,
+            terms: &AgreementTermsOf<T>,
+            sig: &sp_runtime::MultiSignature,
+            context: &[u8],
+        ) -> DispatchResult {
+            let public_key_bytes = provider_info.public_key.as_slice();
+            let account_id = match sig {
+                sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
+                    ensure!(public_key_bytes.len() == 32, Error::<T>::InvalidPublicKey);
+                    let mut key_bytes = [0u8; 32];
+                    key_bytes.copy_from_slice(public_key_bytes);
+                    sp_runtime::AccountId32::new(key_bytes)
+                }
+                sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
+                    ensure!(public_key_bytes.len() == 33, Error::<T>::InvalidPublicKey);
+                    let hash = sp_io::hashing::blake2_256(public_key_bytes);
+                    sp_runtime::AccountId32::new(hash)
+                }
+            };
+
+            let mut payload = context.to_vec();
+            terms.encode_to(&mut payload);
+            let hash = sp_io::hashing::blake2_256(&payload);
+            ensure!(
+                sig.verify(&hash[..], &account_id),
+                Error::<T>::InvalidProviderSignature
+            );
+            Ok(())
+        }
+
         fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
             ensure!(
                 bucket
@@ -3423,7 +3003,6 @@ pub mod pallet {
         ) -> Result<BalanceOf<T>, DispatchError> {
             // payment = price_per_byte * max_bytes * duration
             // Use saturated_from for type conversions
-            use sp_runtime::traits::SaturatedConversion;
             let bytes_balance: BalanceOf<T> = max_bytes.saturated_into();
             let duration_u128: u128 = duration.saturated_into();
             let duration_balance: BalanceOf<T> = duration_u128.saturated_into();
@@ -3432,87 +3011,6 @@ pub mod pallet {
                 .checked_mul(&bytes_balance)
                 .and_then(|p| p.checked_mul(&duration_balance))
                 .ok_or(Error::<T>::ArithmeticOverflow.into())
-        }
-
-        /// Find a provider matching the storage requirements.
-        ///
-        /// Returns the best matching provider that:
-        /// - Is accepting primary agreements
-        /// - Has sufficient available capacity
-        /// - Has price at or below max_price_per_byte
-        /// - Accepts the requested duration
-        /// - Has sufficient stake to back the additional bytes
-        fn find_matching_provider(
-            bytes_needed: u64,
-            duration: BlockNumberFor<T>,
-            max_price_per_byte: BalanceOf<T>,
-        ) -> Result<(T::AccountId, ProviderInfo<T>), DispatchError> {
-            use sp_runtime::traits::SaturatedConversion;
-
-            let mut best_match: Option<(T::AccountId, ProviderInfo<T>, BalanceOf<T>)> = None;
-
-            for (account, info) in Providers::<T>::iter() {
-                // Skip providers in the middle of deregistering. The flag
-                // check below also catches this (announce forces it false),
-                // but check explicitly so we don't depend on flag-mutation
-                // ordering for the security guarantee.
-                if info.deregister_at.is_some() {
-                    continue;
-                }
-
-                // Must be accepting primary agreements
-                if !info.settings.accepting_primary {
-                    continue;
-                }
-
-                // Check duration constraints
-                if duration < info.settings.min_duration || duration > info.settings.max_duration {
-                    continue;
-                }
-
-                // Check price constraint
-                if info.settings.price_per_byte > max_price_per_byte {
-                    continue;
-                }
-
-                // Check capacity constraint
-                let max_capacity = info.settings.max_capacity;
-                if max_capacity > 0 {
-                    let available = max_capacity.saturating_sub(info.committed_bytes);
-                    if available < bytes_needed {
-                        continue;
-                    }
-                }
-
-                // Check stake constraint (can they back the additional bytes?)
-                let new_committed = info.committed_bytes.saturating_add(bytes_needed);
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                if let Some(required_stake) =
-                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
-                {
-                    if info.stake < required_stake {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-
-                // This provider matches! Track best by lowest price
-                let price = info.settings.price_per_byte;
-                match &best_match {
-                    None => {
-                        best_match = Some((account, info, price));
-                    }
-                    Some((_, _, best_price)) if price < *best_price => {
-                        best_match = Some((account, info, price));
-                    }
-                    _ => {}
-                }
-            }
-
-            best_match
-                .map(|(account, info, _)| (account, info))
-                .ok_or(Error::<T>::NoMatchingProvider.into())
         }
 
         fn finalize_agreement(
@@ -3637,7 +3135,6 @@ pub mod pallet {
                 let refund_to_owner = if remaining_blocks > Zero::zero() {
                     let total_duration = agreement.expires_at.saturating_sub(agreement.started_at);
                     if total_duration > Zero::zero() {
-                        use sp_runtime::traits::SaturatedConversion;
                         let remaining_u128: u128 = remaining_blocks.saturated_into();
                         let total_u128: u128 = total_duration.saturated_into();
                         let payment_u128: u128 = agreement.payment_locked.saturated_into();
@@ -3701,28 +3198,6 @@ pub mod pallet {
             for member in &bucket.members {
                 MemberBuckets::<T>::mutate(&member.account, |buckets| {
                     buckets.retain(|id| *id != bucket_id);
-                });
-            }
-
-            // Drain any still-pending AgreementRequests for this bucket and
-            // refund the requesters' locked funds. Without this the entries
-            // outlive the bucket and the provider's auto-coordinator keeps
-            // trying to accept them, every accept reverting with
-            // BucketNotFound and jamming the coordinator's queue.
-            for (provider, request) in AgreementRequests::<T>::drain_prefix(bucket_id) {
-                let total_locked = if let Some(ref replica_params) = request.replica_params {
-                    request
-                        .payment_locked
-                        .checked_add(&replica_params.sync_balance)
-                        .unwrap_or(request.payment_locked)
-                } else {
-                    request.payment_locked
-                };
-                T::Currency::unreserve(&request.requester, total_locked);
-                Self::deposit_event(Event::AgreementRequestWithdrawn {
-                    bucket_id,
-                    provider,
-                    payment_returned: total_locked,
                 });
             }
 
@@ -3889,7 +3364,6 @@ pub mod pallet {
         ///
         /// Window 0 starts at block 0, window 1 at block `interval`, etc.
         fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
-            use sp_runtime::traits::SaturatedConversion;
             if interval.is_zero() {
                 return 0;
             }
@@ -3900,7 +3374,6 @@ pub mod pallet {
 
         /// Calculate the start block for a given checkpoint window.
         fn window_start_block(window: u64, interval: BlockNumberFor<T>) -> BlockNumberFor<T> {
-            use sp_runtime::traits::SaturatedConversion;
             let interval_num: u64 = interval.saturated_into();
             let start: u64 = window.saturating_mul(interval_num);
             start.saturated_into()
@@ -3956,8 +3429,6 @@ pub mod pallet {
         pub fn query_provider_info(
             provider: &T::AccountId,
         ) -> Option<crate::runtime_api::ProviderInfoResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::get(provider).map(|info| {
                 let max_capacity = info.settings.max_capacity;
                 let available_capacity = if max_capacity > 0 {
@@ -3998,8 +3469,6 @@ pub mod pallet {
             offset: u32,
             limit: u32,
         ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::iter()
                 .skip(offset as usize)
                 .take(limit as usize)
@@ -4046,8 +3515,6 @@ pub mod pallet {
         pub fn query_bucket_info(
             bucket_id: BucketId,
         ) -> Option<crate::runtime_api::BucketResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Buckets::<T>::get(bucket_id).map(|bucket| crate::runtime_api::BucketResponse {
                 bucket_id,
                 members: bucket
@@ -4088,8 +3555,6 @@ pub mod pallet {
             bucket_id: BucketId,
             provider: &T::AccountId,
         ) -> Option<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
                 crate::runtime_api::AgreementResponse {
                     owner: agreement.owner.encode(),
@@ -4123,8 +3588,6 @@ pub mod pallet {
         pub fn query_bucket_agreements(
             bucket_id: BucketId,
         ) -> Vec<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::iter_prefix(bucket_id)
                 .map(
                     |(provider, agreement)| crate::runtime_api::AgreementResponse {
@@ -4168,8 +3631,6 @@ pub mod pallet {
         pub fn query_provider_agreements(
             provider: &T::AccountId,
         ) -> Vec<crate::runtime_api::AgreementResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
                 .map(
@@ -4206,8 +3667,6 @@ pub mod pallet {
         pub fn query_challenges_at(
             block: BlockNumberFor<T>,
         ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Challenges::<T>::get(block)
                 .unwrap_or_default()
                 .iter()
@@ -4227,8 +3686,6 @@ pub mod pallet {
 
         /// Check if provider can accept additional bytes.
         pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
-            use sp_runtime::traits::SaturatedConversion;
-
             if let Some(provider_info) = Providers::<T>::get(provider) {
                 let new_committed_bytes = provider_info
                     .committed_bytes
@@ -4337,6 +3794,7 @@ pub mod pallet {
             };
 
             Providers::<T>::insert(who, provider_info);
+            ProviderReplayStates::<T>::insert(who, ReplayWindow::default());
 
             Self::deposit_event(Event::ProviderRegistered {
                 provider: who.clone(),
@@ -4356,13 +3814,20 @@ pub mod pallet {
         /// with the specified account as admin.
         ///
         /// Parameters:
-        /// - `admin`: Account that will be the bucket admin
-        /// - `min_providers`: Minimum number of providers required
+        /// - `admin`: Account that will be the bucket admin.
+        /// - `min_providers`: Minimum number of primary providers required to
+        ///   sign each checkpoint.
+        /// - `initial_primary`: Optional provider to seed as the bucket's
+        ///   first `primary_providers` entry. Used by
+        ///   `establish_storage_agreement_internal` to atomically create the
+        ///   bucket together with its primary agreement; pass `None` for
+        ///   buckets that will register primaries later.
         ///
         /// Returns: bucket_id
         pub fn create_bucket_internal(
             admin: &T::AccountId,
             min_providers: u32,
+            initial_primary: Option<&T::AccountId>,
         ) -> Result<BucketId, DispatchError> {
             let bucket_id = NextBucketId::<T>::get();
             NextBucketId::<T>::put(bucket_id.saturating_add(1));
@@ -4377,11 +3842,18 @@ pub mod pallet {
                 .try_push(admin_member)
                 .map_err(|_| Error::<T>::MaxMembersReached)?;
 
+            let mut primary_providers = BoundedVec::new();
+            if let Some(p) = initial_primary {
+                primary_providers
+                    .try_push(p.clone())
+                    .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
+            }
+
             let bucket = Bucket {
                 members,
                 frozen_start_seq: None,
                 min_providers,
-                primary_providers: BoundedVec::new(),
+                primary_providers,
                 snapshot: None,
                 historical_roots: [(0, H256::zero()); 6],
                 total_snapshots: 0,
@@ -4404,168 +3876,274 @@ pub mod pallet {
             Ok(bucket_id)
         }
 
-        /// Request a primary storage agreement internally (for use by other pallets).
+        /// Redeem provider-signed terms (used directly by the
+        /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
+        /// fold bucket creation into their own flows).
         ///
-        /// This creates a primary storage agreement without requiring admin origin check.
-        ///
-        /// Parameters:
-        /// - `owner`: Account that owns the agreement and will pay for it
-        /// - `bucket_id`: Target bucket
-        /// - `provider`: Provider to store data
-        /// - `max_bytes`: Maximum storage size
-        /// - `duration`: Storage duration in blocks
-        /// - `max_payment`: Maximum payment willing to pay
-        pub fn request_primary_agreement_internal(
+        /// Verifies the signature, advances the provider's replay window,
+        /// then runs the same provider/capacity/stake checks as
+        /// `create_bucket_with_storage` before creating the bucket + primary
+        /// agreement.
+        pub fn establish_storage_agreement_internal(
             owner: &T::AccountId,
-            bucket_id: BucketId,
             provider: &T::AccountId,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-            max_payment: BalanceOf<T>,
-        ) -> DispatchResult {
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
+            terms: AgreementTermsOf<T>,
+            sig: &sp_runtime::MultiSignature,
+        ) -> Result<BucketId, DispatchError> {
+            // Origin must match the owner the provider signed for.
+            ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
 
-            // Check primary provider limit
-            ensure!(
-                bucket.primary_providers.len() < T::MaxPrimaryProviders::get() as usize,
-                Error::<T>::MaxPrimaryProvidersReached
-            );
+            // Primary terms must not be bound to an existing bucket — the
+            // bucket is created at redemption.
+            ensure!(terms.bucket_id.is_none(), Error::<T>::TermsBucketMismatch);
 
+            // Request's terms.max_bytes must greater than 0
+            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
+
+            // Quote must not be stale.
+            let current_block = frame_system::Pallet::<T>::block_number();
+            ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+
+            // Provider lookup + signature check over
+            // blake2_256(PRIMARY_TERM_CONTEXT | SCALE(terms)).
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::ensure_provider_active(&provider_info)?;
+            Self::verify_terms_signature(
+                &provider_info,
+                &terms,
+                sig,
+                storage_primitives::PRIMARY_TERM_CONTEXT,
+            )?;
 
+            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
+            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
+                window.try_accept(terms.nonce).map_err(|e| match e {
+                    ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
+                    ReplayError::TooOld => Error::<T>::NonceTooOld,
+                })?;
+                Ok(())
+            })?;
+
+            // Validate on-chain provider's state then create bucket
+            Self::ensure_provider_active(&provider_info)?;
             ensure!(
                 provider_info.settings.accepting_primary,
                 Error::<T>::ProviderNotAcceptingPrimary
             );
+            Self::validate_duration(&provider_info.settings, terms.duration)?;
 
-            Self::validate_duration(&provider_info.settings, duration)?;
+            let new_committed = provider_info
+                .committed_bytes
+                .checked_add(terms.max_bytes)
+                .ok_or(Error::<T>::ArithmeticOverflow)?;
+            if provider_info.settings.max_capacity > 0 {
+                ensure!(
+                    new_committed <= provider_info.settings.max_capacity,
+                    Error::<T>::CapacityExceeded
+                );
+            }
 
-            let payment = Self::calculate_payment(
-                provider_info.settings.price_per_byte,
-                max_bytes,
-                duration,
-            )?;
-            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
+            {
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let required_stake = T::MinStakePerByte::get()
+                    .checked_mul(&bytes_as_balance)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
+                ensure!(
+                    provider_info.stake >= required_stake,
+                    Error::<T>::InsufficientStakeForBytes
+                );
+            }
 
+            // Pay at the price the provider signed for.
+            let payment =
+                Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
             T::Currency::reserve(owner, payment)?;
 
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
+            // Bucket creation folded in: owner is sole admin, provider is the
+            // bucket's single primary. `create_bucket_internal` emits
+            // `BucketCreated` for us.
+            let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
 
-            let request = AgreementRequest {
-                requester: owner.clone(),
-                max_bytes,
+            let expires_at = current_block.saturating_add(terms.duration);
+            let agreement = StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
                 payment_locked: payment,
-                duration,
+                price_per_byte: terms.price_per_byte,
                 expires_at,
-                replica_params: None, // Primary agreement
+                extensions_blocked: false,
+                role: ProviderRole::Primary,
+                started_at: current_block,
             };
 
-            ensure!(
-                !AgreementRequests::<T>::contains_key(bucket_id, provider),
-                Error::<T>::AgreementRequestAlreadyExists
-            );
+            Providers::<T>::mutate(provider, |maybe_provider| {
+                if let Some(p) = maybe_provider {
+                    p.committed_bytes = new_committed;
+                    p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                    p.stats.total_bytes_committed = p
+                        .stats
+                        .total_bytes_committed
+                        .saturating_add(terms.max_bytes);
+                }
+            });
+            StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
-            AgreementRequests::<T>::insert(bucket_id, provider, request);
-
-            Self::deposit_event(Event::AgreementRequested {
+            Self::deposit_event(Event::StorageAgreementEstablished {
                 bucket_id,
                 provider: provider.clone(),
-                requester: owner.clone(),
-                max_bytes,
-                payment_locked: payment,
-                duration,
+                owner: owner.clone(),
+                terms,
+                expires_at,
             });
 
-            Ok(())
+            Ok(bucket_id)
         }
 
-        /// Request a replica storage agreement internally (for use by other pallets).
+        /// Redeem provider-signed terms for a replica agreement (used directly
+        /// by the `establish_replica_agreement` extrinsic and by higher-layer
+        /// pallets that fold replica establishment into their own flows).
         ///
-        /// This creates a replica storage agreement without requiring origin check.
-        ///
-        /// Parameters:
-        /// - `owner`: Account that owns the agreement and will pay for it
-        /// - `bucket_id`: Target bucket
-        /// - `provider`: Provider to store replica
-        /// - `max_bytes`: Maximum storage size
-        /// - `duration`: Storage duration in blocks
-        /// - `max_payment`: Maximum payment willing to pay
-        /// - `sync_balance`: Balance reserved for sync operations
-        pub fn request_replica_agreement_internal(
+        /// Verifies the signature, advances the provider's replay window, then
+        /// runs the provider/capacity/stake checks before opening the replica
+        /// agreement on an existing bucket. `terms.replica_params` must be
+        /// `Some(_)`.
+        pub fn establish_replica_agreement_internal(
             owner: &T::AccountId,
             bucket_id: BucketId,
             provider: &T::AccountId,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-            max_payment: BalanceOf<T>,
-            sync_balance: BalanceOf<T>,
+            terms: AgreementTermsOf<T>,
+            sig: &sp_runtime::MultiSignature,
         ) -> DispatchResult {
+            // Origin must match the owner the provider signed for.
+            ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
+
+            // The provider's signed quote must be bound to the bucket this
+            // extrinsic targets.
+            ensure!(
+                terms.bucket_id == Some(bucket_id),
+                Error::<T>::TermsBucketMismatch
+            );
+
+            // Request's terms.max_bytes must greater than 0
+            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
+
+            // Quote must not be stale.
+            let current_block = frame_system::Pallet::<T>::block_number();
+            ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+
+            // Target bucket must exist.
             ensure!(
                 Buckets::<T>::contains_key(bucket_id),
                 Error::<T>::BucketNotFound
             );
 
+            // No existing agreement for (bucket, provider).
+            ensure!(
+                !StorageAgreements::<T>::contains_key(bucket_id, provider),
+                Error::<T>::AgreementAlreadyExists
+            );
+
+            // Replica terms must be present for a replica agreement.
+            let replica_terms = terms
+                .replica_params
+                .as_ref()
+                .ok_or(Error::<T>::MissingReplicaTerms)?
+                .clone();
+
+            // Provider lookup + signature check over
+            // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
             let provider_info =
                 Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::ensure_provider_active(&provider_info)?;
-
-            ensure!(
-                provider_info.settings.replica_sync_price.is_some(),
-                Error::<T>::ProviderNotAcceptingReplicas
-            );
-
-            Self::validate_duration(&provider_info.settings, duration)?;
-
-            // Calculate payment
-            let payment = Self::calculate_payment(
-                provider_info.settings.price_per_byte,
-                max_bytes,
-                duration,
+            Self::verify_terms_signature(
+                &provider_info,
+                &terms,
+                sig,
+                storage_primitives::REPLICA_TERM_CONTEXT,
             )?;
-            ensure!(payment <= max_payment, Error::<T>::PaymentExceedsMax);
 
-            // Total to lock = storage payment + sync balance
-            let total_lock = payment
-                .checked_add(&sync_balance)
+            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
+            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
+                window.try_accept(terms.nonce).map_err(|e| match e {
+                    ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
+                    ReplayError::TooOld => Error::<T>::NonceTooOld,
+                })?;
+                Ok(())
+            })?;
+
+            // Validate on-chain provider's state.
+            Self::ensure_provider_active(&provider_info)?;
+            // Provider is no longer accept replica node
+            let _ = provider_info
+                .settings
+                .replica_sync_price
+                .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
+            Self::validate_duration(&provider_info.settings, terms.duration)?;
+
+            let new_committed = provider_info
+                .committed_bytes
+                .checked_add(terms.max_bytes)
                 .ok_or(Error::<T>::ArithmeticOverflow)?;
+            if provider_info.settings.max_capacity > 0 {
+                ensure!(
+                    new_committed <= provider_info.settings.max_capacity,
+                    Error::<T>::CapacityExceeded
+                );
+            }
 
-            // Reserve funds
+            {
+                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
+                let required_stake = T::MinStakePerByte::get()
+                    .checked_mul(&bytes_as_balance)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
+                ensure!(
+                    provider_info.stake >= required_stake,
+                    Error::<T>::InsufficientStakeForBytes
+                );
+            }
+
+            // Pay at the price the provider signed for, plus the sync balance.
+            let payment =
+                Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
+            let total_lock = payment
+                .checked_add(&replica_terms.sync_balance)
+                .ok_or(Error::<T>::ArithmeticOverflow)?;
             T::Currency::reserve(owner, total_lock)?;
 
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let expires_at = current_block.saturating_add(T::RequestTimeout::get());
-
-            let replica_params = ReplicaRequestParams {
-                sync_balance,
-                min_sync_interval: duration / 10u32.into(), // Sync every 10% of duration
-            };
-
-            let request = AgreementRequest {
-                requester: owner.clone(),
-                max_bytes,
+            let expires_at = current_block.saturating_add(terms.duration);
+            let agreement = StorageAgreement {
+                owner: owner.clone(),
+                max_bytes: terms.max_bytes,
                 payment_locked: payment,
-                duration,
+                price_per_byte: terms.price_per_byte,
                 expires_at,
-                replica_params: Some(replica_params),
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: replica_terms.sync_balance,
+                    sync_price: replica_terms.sync_price,
+                    min_sync_interval: replica_terms.min_sync_interval,
+                    last_sync: None,
+                },
+                started_at: current_block,
             };
 
-            ensure!(
-                !AgreementRequests::<T>::contains_key(bucket_id, provider),
-                Error::<T>::AgreementRequestAlreadyExists
-            );
+            Providers::<T>::mutate(provider, |maybe_provider| {
+                if let Some(p) = maybe_provider {
+                    p.committed_bytes = new_committed;
+                    p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
+                    p.stats.total_bytes_committed = p
+                        .stats
+                        .total_bytes_committed
+                        .saturating_add(terms.max_bytes);
+                }
+            });
+            StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
-            AgreementRequests::<T>::insert(bucket_id, provider, request);
-
-            Self::deposit_event(Event::AgreementRequested {
+            Self::deposit_event(Event::ReplicaAgreementEstablished {
                 bucket_id,
                 provider: provider.clone(),
-                requester: owner.clone(),
-                max_bytes,
-                payment_locked: total_lock,
-                duration,
+                owner: owner.clone(),
+                terms,
+                expires_at,
             });
 
             Ok(())
@@ -4617,7 +4195,6 @@ pub mod pallet {
             limit: u32,
         ) -> Vec<crate::runtime_api::MatchedProvider> {
             use crate::runtime_api::{MatchedProvider, PartialMatchReason};
-            use sp_runtime::traits::SaturatedConversion;
 
             let mut results: Vec<MatchedProvider> = Vec::new();
 
@@ -4734,8 +4311,6 @@ pub mod pallet {
             offset: u32,
             limit: u32,
         ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            use sp_runtime::traits::SaturatedConversion;
-
             Providers::<T>::iter()
                 .filter(|(_, info)| {
                     // Check accepting status

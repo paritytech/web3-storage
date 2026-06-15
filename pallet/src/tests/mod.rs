@@ -1,7 +1,7 @@
 //! Tests for the storage provider pallet.
 
 use crate::{mock::*, *};
-use frame_support::{assert_noop, assert_ok};
+use frame_support::{assert_err, assert_noop, assert_ok};
 use storage_primitives::{ProviderRole, Role};
 
 /// Helper function to create a test public key (32 bytes).

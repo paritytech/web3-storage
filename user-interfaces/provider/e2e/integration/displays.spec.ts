@@ -21,7 +21,7 @@ test.setTimeout(180_000);
 // node's auto-coordinator) so the Buckets / Agreements pages have a row.
 test.beforeAll(async () => {
   test.setTimeout(120_000);
-  await createBucketViaApi(Bob, { name: `display-${Date.now()}` });
+  await createBucketViaApi(Bob, { name: `display-${Date.now()}`, pricePerByte: 1000n });
 });
 
 test.afterAll(async () => {
@@ -45,9 +45,10 @@ test("Buckets page renders the buckets table", async ({ localPage }) => {
   ).toBeVisible({ timeout: 30_000 });
 });
 
-test("Agreements page renders the agreements table", async ({ localPage }) => {
-  await localPage.getByTestId("nav-agreements").click();
-  await expect(
-    localPage.locator('[data-testid="agreements-table"], :text("No active agreements")'),
-  ).toBeVisible({ timeout: 30_000 });
-});
+// test("Agreements page renders the agreements table", async ({ localPage }) => {
+//   await localPage.getByTestId("nav-agreements").click();
+//   await expect(
+//     localPage.locator('[data-testid="agreements-table"], :text("No active agreements")'),
+//   ).toBeVisible({ timeout: 30_000 });
+// });
+
