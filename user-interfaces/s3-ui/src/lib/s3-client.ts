@@ -5,6 +5,7 @@
  */
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
+import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
 import { resolveProviderEndpoint, toSs58, type ParachainApi } from "@web3-storage/papi";
 
@@ -121,6 +122,25 @@ export interface OpenChallenge {
   leafIndex: bigint;
   chunkIndex: bigint;
   deposit: bigint;
+}
+
+export interface ChallengeDefenseResult {
+  challengeId: { deadline: number; index: number };
+  provider: string;
+  responseTimeBlocks: number;
+  challengerCost: bigint;
+  providerCost: bigint;
+  blockNumber: number;
+  blockHash: string;
+}
+
+export interface ChallengeSlashResult {
+  challengeId: { deadline: number; index: number };
+  provider: string;
+  slashedAmount: bigint;
+  challengerReward: bigint;
+  blockNumber: number;
+  blockHash: string;
 }
 
 export interface QueryMatchingProvidersParams {
@@ -803,6 +823,61 @@ export class S3Client {
     }
 
     return result.sort((a, b) => a.deadline - b.deadline);
+  }
+
+  watchChallengeOutcome(
+    deadline: number,
+    providerAddress: string,
+    onDefended: (result: ChallengeDefenseResult) => void,
+    onSlashed: (result: ChallengeSlashResult) => void,
+  ): () => void {
+    const api = this.requireApi();
+    const sub = new Subscription();
+
+    sub.add(
+      api.event.StorageProvider.ChallengeDefended.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (p.challenge_id.deadline !== deadline) continue;
+            if (p.provider !== providerAddress) continue;
+            onDefended({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              provider: p.provider,
+              responseTimeBlocks: p.response_time_blocks,
+              challengerCost: p.challenger_cost,
+              providerCost: p.provider_cost,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    sub.add(
+      api.event.StorageProvider.ChallengeSlashed.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (p.challenge_id.deadline !== deadline) continue;
+            if (p.provider !== providerAddress) continue;
+            onSlashed({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              provider: p.provider,
+              slashedAmount: p.slashed_amount,
+              challengerReward: p.challenger_reward,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    return () => sub.unsubscribe();
   }
 }
 

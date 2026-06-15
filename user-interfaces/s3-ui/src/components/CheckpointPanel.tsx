@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Shield, RefreshCw, Loader2, CheckCircle2, Swords, XCircle, AlertTriangle } from "lucide-react";
+import { Shield, RefreshCw, Loader2, CheckCircle2, Swords, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -15,13 +15,18 @@ import {
   refreshOpenChallenges,
   useBlockNumber,
 } from "@/state";
-import { useActiveChallenge, useChallengeStatus } from "@/state/challenge.state";
+import { useActiveChallenge, useChallengeStatus, useChallengeHistory } from "@/state/challenge.state";
 import { truncateHash } from "@/lib/utils";
 import { toast } from "@/components/ui/toaster";
 import { getS3Client } from "@/state";
 import ChallengeDialog from "./ChallengeDialog";
+import ChallengeOutcomeDialog from "./ChallengeOutcomeDialog";
 
-export default function CheckpointPanel() {
+interface CheckpointPanelProps {
+  onShowHistory?: () => void;
+}
+
+export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps) {
   const selectedBucket = useSelectedBucket();
   const info = useCheckpointInfo();
   const duty = useCheckpointDuty();
@@ -33,12 +38,18 @@ export default function CheckpointPanel() {
   const challengesLoading = useOpenChallengesLoading();
   const blockNumber = useBlockNumber();
 
+  const allHistory = useChallengeHistory();
+
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [providers, setProviders] = useState<string[]>([]);
 
   const bucketId = selectedBucket?.layer0BucketId ?? null;
   const busy = status === "triggering" || status === "polling";
   const challengeBusy = challengeStatus !== "idle";
+
+  const history = bucketId !== null
+    ? allHistory.filter((e) => e.bucketId === bucketId.toString())
+    : allHistory;
 
   useEffect(() => {
     if (bucketId !== null) {
@@ -111,23 +122,17 @@ export default function CheckpointPanel() {
           </div>
         )}
 
-        {/* Challenge submission status banners */}
+        {/* Challenge submission status */}
         {challengeStatus === "submitting" && (
           <div className="flex items-center gap-2 rounded-md bg-blue-500/15 px-3 py-2 text-sm text-blue-600 dark:text-blue-400 font-medium">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Submitting challenge...
           </div>
         )}
-        {challengeStatus === "defended" && (
-          <div className="flex items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Provider defended challenge successfully
-          </div>
-        )}
-        {challengeStatus === "slashed" && (
-          <div className="flex items-center gap-2 rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-600 dark:text-red-400 font-medium">
-            <XCircle className="h-3.5 w-3.5" />
-            Provider failed to respond — slashed!
+        {challengeStatus === "submitted" && (
+          <div className="flex items-center gap-2 rounded-md bg-orange-500/15 px-3 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Watching for response...
           </div>
         )}
 
@@ -175,13 +180,19 @@ export default function CheckpointPanel() {
               {openChallenges.map((c) => {
                 const blocksLeft = blockNumber ? c.deadline - blockNumber : null;
                 const isExpired = blocksLeft !== null && blocksLeft <= 0;
+                const isWatching =
+                  activeChallenge?.status === "submitted" &&
+                  activeChallenge.challengeId.deadline === c.deadline &&
+                  activeChallenge.challengeId.index === c.index;
                 return (
                   <div
                     key={`${c.deadline}-${c.index}`}
                     className={`rounded-md border px-3 py-2 text-xs space-y-1 ${
-                      isExpired
-                        ? "border-red-200 bg-red-500/5"
-                        : "border-orange-200 bg-orange-500/5"
+                      isWatching
+                        ? "border-blue-200 bg-blue-500/5"
+                        : isExpired
+                          ? "border-red-200 bg-red-500/5"
+                          : "border-orange-200 bg-orange-500/5"
                     }`}
                   >
                     <div className="flex items-center justify-between">
@@ -189,7 +200,12 @@ export default function CheckpointPanel() {
                         <Swords className="h-3 w-3" />
                         Leaf {c.leafIndex.toString()}, Chunk {c.chunkIndex.toString()}
                       </span>
-                      {isExpired ? (
+                      {isWatching ? (
+                        <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Watching...
+                        </span>
+                      ) : isExpired ? (
                         <span className="text-red-600 dark:text-red-400 font-medium">Expired</span>
                       ) : blocksLeft !== null ? (
                         <span className="text-orange-600 dark:text-orange-400">
@@ -237,6 +253,17 @@ export default function CheckpointPanel() {
             <Swords className="mr-2 h-3.5 w-3.5" />
             Challenge Provider
           </Button>
+
+          <Button
+            data-testid="challenge-history"
+            variant="outline"
+            size="sm"
+            onClick={onShowHistory}
+            disabled={history.length === 0 || !onShowHistory}
+          >
+            <History className="mr-2 h-3.5 w-3.5" />
+            History ({history.length})
+          </Button>
         </div>
 
         <ChallengeDialog
@@ -244,6 +271,7 @@ export default function CheckpointPanel() {
           onOpenChange={setChallengeOpen}
           providers={providers}
         />
+        <ChallengeOutcomeDialog />
       </CardContent>
     </Card>
   );
