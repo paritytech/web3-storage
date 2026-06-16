@@ -54,6 +54,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./EmptyState";
 import CheckpointPanel from "./CheckpointPanel";
 import EncryptionPanel from "./EncryptionPanel";
+import ChallengeHistoryPanel from "./ChallengeHistoryPanel";
 
 /**
  * Derive virtual folders and files from flat S3 object keys.
@@ -96,6 +97,7 @@ export default function ObjectBrowser() {
   const [objectToDelete, setObjectToDelete] = useState<string | null>(null);
   const [showCheckpoint, setShowCheckpoint] = useState(false);
   const [showEncryption, setShowEncryption] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [dropFile, setDropFile] = useState<File | null>(null);
 
@@ -261,12 +263,19 @@ export default function ObjectBrowser() {
 
         {showCheckpoint && (
           <div className="pt-4">
-            <CheckpointPanel />
+            <CheckpointPanel onShowHistory={() => setShowHistory(true)} />
           </div>
         )}
 
-        {/* Object list */}
-        <div className="flex-1 pt-4">
+        {/* Object list or challenge history */}
+        {showHistory ? (
+          <div className="flex-1 pt-4">
+            <ChallengeHistoryPanel
+              bucketId={selectedBucket.layer0BucketId ?? null}
+              onClose={() => setShowHistory(false)}
+            />
+          </div>
+        ) : <div className="flex-1 pt-4">
           {loading && folders.length === 0 && files.length === 0 ? (
             <div className="flex items-center justify-center py-16">
               <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -308,7 +317,7 @@ export default function ObjectBrowser() {
               onCopyKey={handleCopyKey}
             />
           )}
-        </div>
+        </div>}
       </div>
 
       <UploadObjectDialog

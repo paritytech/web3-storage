@@ -5,6 +5,7 @@
  */
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
+import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
 import { resolveProviderEndpoint, toSs58, type ParachainApi } from "@web3-storage/papi";
 
@@ -105,6 +106,41 @@ export interface CheckpointDuty {
   startSeq: number;
   leafCount: number;
   ready: boolean;
+}
+
+export interface ChallengeResult {
+  challengeId: { deadline: number; index: number };
+  respondBy: number;
+}
+
+export interface OpenChallenge {
+  deadline: number;
+  index: number;
+  bucketId: bigint;
+  provider: string;
+  challenger: string;
+  leafIndex: bigint;
+  chunkIndex: bigint;
+  deposit: bigint;
+}
+
+export interface ChallengeDefenseResult {
+  challengeId: { deadline: number; index: number };
+  provider: string;
+  responseTimeBlocks: number;
+  challengerCost: bigint;
+  providerCost: bigint;
+  blockNumber: number;
+  blockHash: string;
+}
+
+export interface ChallengeSlashResult {
+  challengeId: { deadline: number; index: number };
+  provider: string;
+  slashedAmount: bigint;
+  challengerReward: bigint;
+  blockNumber: number;
+  blockHash: string;
 }
 
 export interface QueryMatchingProvidersParams {
@@ -697,6 +733,151 @@ export class S3Client {
     if (!response.ok) {
       throw new Error(`Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`);
     }
+  }
+
+  // ── Challenge ──────────────────────────────────────────────────────────
+
+  async getBucketProviders(bucketId: bigint): Promise<string[]> {
+    const api = this.requireApi();
+    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
+    if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
+    const providers: string[] = bucket.primary_providers ?? [];
+    if (providers.length === 0) {
+      throw new Error(`Bucket ${bucketId} has no primary providers`);
+    }
+    return providers;
+  }
+
+  async challengeCheckpoint(
+    bucketId: bigint,
+    provider: string,
+    leafIndex: bigint,
+    chunkIndex: bigint,
+  ): Promise<ChallengeResult> {
+    const api = this.requireApi();
+    const tx = api.tx.StorageProvider.challenge_checkpoint({
+      bucket_id: bucketId,
+      provider,
+      leaf_index: leafIndex,
+      chunk_index: chunkIndex,
+    });
+
+    const result = await this.submit(tx);
+
+    const created = api.event.StorageProvider.ChallengeCreated.filter(result.events);
+    if (created.length === 0) {
+      throw new Error("ChallengeCreated event not found in transaction result");
+    }
+    const { challenge_id, respond_by } = created[0]!.payload;
+    return {
+      challengeId: { deadline: challenge_id.deadline, index: challenge_id.index },
+      respondBy: respond_by,
+    };
+  }
+
+  async getLeafChunkCount(bucketId: bigint, leafIndex: bigint): Promise<number> {
+    const providerUrl = await this.getProviderUrl(bucketId);
+    const params = new URLSearchParams({
+      bucket_id: Number(bucketId).toString(),
+      leaf_index: leafIndex.toString(),
+    });
+    const response = await httpFetch(`${providerUrl}/mmr_proof?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(`MMR proof request failed: ${response.status}`);
+    }
+    const result = await response.json();
+    const dataSize: number = result.leaf?.data_size ?? 0;
+    const chunkSize = 262144; // 256 KiB — DEFAULT_CHUNK_SIZE
+    return dataSize === 0 ? 1 : Math.ceil(dataSize / chunkSize);
+  }
+
+  async isChallengeActive(deadline: number): Promise<boolean> {
+    const api = this.requireApi();
+    const challenges = await api.query.StorageProvider.Challenges.getValue(deadline);
+    return challenges !== undefined && challenges.length > 0;
+  }
+
+  async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
+    const api = this.requireApi();
+    const entries = await api.query.StorageProvider.Challenges.getEntries();
+    const result: OpenChallenge[] = [];
+
+    for (const entry of entries) {
+      const deadline = entry.keyArgs[0] as number;
+      const challenges = entry.value;
+      for (let i = 0; i < challenges.length; i++) {
+        const c = challenges[i]!;
+        if (c.bucket_id === bucketId) {
+          result.push({
+            deadline,
+            index: i,
+            bucketId: c.bucket_id,
+            provider: c.provider,
+            challenger: c.challenger,
+            leafIndex: c.leaf_index,
+            chunkIndex: c.chunk_index,
+            deposit: c.deposit,
+          });
+        }
+      }
+    }
+
+    return result.sort((a, b) => a.deadline - b.deadline);
+  }
+
+  watchChallengeOutcome(
+    deadline: number,
+    providerAddress: string,
+    onDefended: (result: ChallengeDefenseResult) => void,
+    onSlashed: (result: ChallengeSlashResult) => void,
+  ): () => void {
+    const api = this.requireApi();
+    const sub = new Subscription();
+
+    sub.add(
+      api.event.StorageProvider.ChallengeDefended.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (p.challenge_id.deadline !== deadline) continue;
+            if (p.provider !== providerAddress) continue;
+            onDefended({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              provider: p.provider,
+              responseTimeBlocks: p.response_time_blocks,
+              challengerCost: p.challenger_cost,
+              providerCost: p.provider_cost,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    sub.add(
+      api.event.StorageProvider.ChallengeSlashed.watch().subscribe({
+        next: ({ block, events }) => {
+          for (const ev of events) {
+            const p = ev.payload;
+            if (p.challenge_id.deadline !== deadline) continue;
+            if (p.provider !== providerAddress) continue;
+            onSlashed({
+              challengeId: { deadline: p.challenge_id.deadline, index: p.challenge_id.index },
+              provider: p.provider,
+              slashedAmount: p.slashed_amount,
+              challengerReward: p.challenger_reward,
+              blockNumber: block.number,
+              blockHash: block.hash,
+            });
+          }
+        },
+        error: () => {},
+      }),
+    );
+
+    return () => sub.unsubscribe();
   }
 }
 
