@@ -24,10 +24,10 @@ jobs:
     outputs:
       ui: ${{ steps.filter.outputs.ui }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
         id: filter
         with:
           filters: |
@@ -41,14 +41,14 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
         with:
           version: 10
 
@@ -77,19 +77,19 @@ jobs:
         include:
           - ui: drive-ui
             filter: "@web3-storage/drive-ui"
-          - ui: console-ui
-            filter: "@web3-storage/console-ui"
+          - ui: s3-ui
+            filter: "@web3-storage/s3-ui"
           - ui: provider
             filter: provider-dashboard
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
         with:
           version: 10
 
@@ -117,7 +117,7 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
