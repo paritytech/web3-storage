@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
-const ghBase = process.env.VITE_BASE_PATH || "/";
+const ghBase = process.env.GITHUB_PAGES ? "/web3-storage/s3/" : "/";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
