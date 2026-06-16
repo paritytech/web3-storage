@@ -94,7 +94,31 @@ export {
   useCheckpointInfo,
   useCheckpointDuty,
   useCheckpointLoading,
+  useCheckpointStatus,
   refreshCheckpoint,
   triggerCheckpoint,
   clearCheckpointState,
+  type CheckpointStatus,
 } from "./checkpoint.state";
+
+// Challenge
+export {
+  useActiveChallenge,
+  useChallengeStatus,
+  useOpenChallenges,
+  useOpenChallengesLoading,
+  useChallengeHistory,
+  useChallengeHistoryLoading,
+  useShowOutcomeModal,
+  submitChallenge,
+  refreshOpenChallenges,
+  refreshChallengeHistory,
+  clearChallengeState,
+  dismissChallengeResult,
+  clearChallengeHistory,
+  type ChallengeStatus,
+  type ActiveChallenge,
+  type ChallengeDefenseDetails,
+  type ChallengeSlashDetails,
+  type ChallengeHistoryEntry,
+} from "./challenge.state";
