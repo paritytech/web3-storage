@@ -190,14 +190,6 @@ function startEventWatch(
 
   const key = watchKey(challengeId.deadline, provider);
 
-  // Build a snapshot of the challenge info for the closure — independent of activeChallenge$
-  const challengeSnapshot: ActiveChallenge = {
-    challengeId,
-    respondBy: 0,
-    status: "submitted",
-    bucketId,
-  };
-
   const onDefended = (result: ChallengeDefenseResult): void => {
     stopPolling(key);
     stopEventWatch(key);
