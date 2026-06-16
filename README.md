@@ -1,13 +1,13 @@
 # Scalable Web3 Storage
 
-> [!WARNING]                                                                                                                            
-> This is a reference implementation provided for research, experimentation, and developer education. This code has not been audited. It is actively under development and may contain bugs, vulnerabilities, or incomplete features. It is not recommended for production use without independent review. Use at your own risk.
+> [!WARNING]
+> This is a prototype/proof-of-concept. It has **not been audited**, is under active development, and is not production-ready. Use at your own risk.
 
 A decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE-GPL3)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE-APACHE2)
-[![Security: unaudited](https://img.shields.io/badge/security-unaudited-red.svg)](https://github.com/paritytech/polkadot-bulletin-chain/security) 
+[![Security: unaudited](https://img.shields.io/badge/security-unaudited-red.svg)](https://github.com/paritytech/web3-storage/security)
 [![Status: prototype](https://img.shields.io/badge/status-experimental-yellow.svg)](#)
 [![Substrate](https://img.shields.io/badge/built%20with-Substrate-green.svg)](#)
 
