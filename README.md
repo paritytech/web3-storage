@@ -9,7 +9,7 @@ A decentralized storage system built on Substrate with game-theoretic guarantees
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE-APACHE2)
 [![Security: unaudited](https://img.shields.io/badge/security-unaudited-red.svg)](https://github.com/paritytech/polkadot-bulletin-chain/security) 
 [![Status: prototype](https://img.shields.io/badge/status-experimental-yellow.svg)](#)
-[![Polkadot SDK](https://img.shields.io/badge/built%20with-Polkadot%20SDK-green.svg)](#)
+[![Substrate](https://img.shields.io/badge/built%20with-Polkadot%20SDK-green.svg)](#)
 
 ## What It Does
 
