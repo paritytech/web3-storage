@@ -84,7 +84,7 @@ The system handles all of this automatically!
 
 #### 1. Ensure Runtime Configuration
 
-Check that the runtime has proper configuration in `runtime/src/lib.rs`:
+Check that the runtime has proper configuration in `runtimes/web3-storage-local/src/lib.rs`:
 
 ```rust
 impl pallet_drive_registry::Config for Runtime {
