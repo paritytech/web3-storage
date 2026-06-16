@@ -48,6 +48,7 @@ jobs:
           filters: |
             runtime:
               - 'runtime/**'
+              - 'runtimes/**'
               - 'pallet/**'
               - 'primitives/**'
               - 'storage-interfaces/**/pallet-*/**'
@@ -57,6 +58,8 @@ jobs:
 
   runtime-matrix:
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.runtime == 'true'
     permissions:
       contents: read
     outputs:
