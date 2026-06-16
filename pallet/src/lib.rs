@@ -515,6 +515,7 @@ pub mod pallet {
         },
         ProviderMultiaddrUpdated {
             provider: T::AccountId,
+            multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
         },
         ExtensionsBlocked {
             bucket_id: BucketId,
@@ -1142,11 +1143,14 @@ pub mod pallet {
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
 
-                provider.multiaddr = multiaddr;
+                provider.multiaddr = multiaddr.clone();
                 Ok(())
             })?;
 
-            Self::deposit_event(Event::ProviderMultiaddrUpdated { provider: who });
+            Self::deposit_event(Event::ProviderMultiaddrUpdated {
+                provider: who,
+                multiaddr,
+            });
 
             Ok(())
         }

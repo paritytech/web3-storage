@@ -134,6 +134,22 @@ pub enum StorageEvent {
         block_number: u32,
     },
 
+    /// A provider updated its on-chain settings (pricing, capacity, availability).
+    ProviderSettingsUpdated {
+        provider: AccountId32,
+        block_hash: H256,
+        block_number: u32,
+        provider_settings: crate::ProviderSettings,
+    },
+
+    /// A provider updated its on-chain multiaddr.
+    ProviderMultiaddrUpdated {
+        provider: AccountId32,
+        multiaddr: String,
+        block_hash: H256,
+        block_number: u32,
+    },
+
     // ========================================================================
     // Agreement Events
     // ========================================================================
@@ -263,6 +279,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { provider, .. } => Some(provider),
             StorageEvent::ProviderAddedToBucket { provider, .. } => Some(provider),
             StorageEvent::PrimaryProviderRemoved { provider, .. } => Some(provider),
+            StorageEvent::ProviderSettingsUpdated { provider, .. } => Some(provider),
+            StorageEvent::ProviderMultiaddrUpdated { provider, .. } => Some(provider),
             StorageEvent::StorageAgreementEstablished { provider, .. } => Some(provider),
             StorageEvent::ReplicaAgreementEstablished { provider, .. } => Some(provider),
             StorageEvent::AgreementAccepted { provider, .. } => Some(provider),
@@ -282,6 +300,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { block_hash, .. } => *block_hash,
             StorageEvent::ProviderAddedToBucket { block_hash, .. } => *block_hash,
             StorageEvent::PrimaryProviderRemoved { block_hash, .. } => *block_hash,
+            StorageEvent::ProviderSettingsUpdated { block_hash, .. } => *block_hash,
+            StorageEvent::ProviderMultiaddrUpdated { block_hash, .. } => *block_hash,
             StorageEvent::StorageAgreementEstablished { block_hash, .. } => *block_hash,
             StorageEvent::ReplicaAgreementEstablished { block_hash, .. } => *block_hash,
             StorageEvent::AgreementAccepted { block_hash, .. } => *block_hash,
@@ -304,6 +324,8 @@ impl StorageEvent {
             StorageEvent::ProviderRegistered { block_number, .. } => *block_number,
             StorageEvent::ProviderAddedToBucket { block_number, .. } => *block_number,
             StorageEvent::PrimaryProviderRemoved { block_number, .. } => *block_number,
+            StorageEvent::ProviderSettingsUpdated { block_number, .. } => *block_number,
+            StorageEvent::ProviderMultiaddrUpdated { block_number, .. } => *block_number,
             StorageEvent::StorageAgreementEstablished { block_number, .. } => *block_number,
             StorageEvent::ReplicaAgreementEstablished { block_number, .. } => *block_number,
             StorageEvent::AgreementAccepted { block_number, .. } => *block_number,
@@ -463,7 +485,9 @@ impl EventFilter {
             | StorageEvent::BucketDeleted { .. } => self.include_bucket_lifecycle,
             StorageEvent::ProviderRegistered { .. }
             | StorageEvent::ProviderAddedToBucket { .. }
-            | StorageEvent::PrimaryProviderRemoved { .. } => self.include_provider_events,
+            | StorageEvent::PrimaryProviderRemoved { .. }
+            | StorageEvent::ProviderSettingsUpdated { .. }
+            | StorageEvent::ProviderMultiaddrUpdated { .. } => self.include_provider_events,
             StorageEvent::ReplicaSynced { .. } => self.include_replica_events,
             StorageEvent::Unknown { .. } => self.include_unknown,
         }
@@ -851,6 +875,28 @@ pub trait EventParser<EventType> {
             })
             .collect()
     }
+
+    /// Parse all events from a block, returning only the ones
+    /// that [`parse_event_detail`] accepts.
+    ///
+    /// The default implementation iterates the collection and calls
+    /// [`parse_event_detail`] for each event, so implementors rarely need to
+    /// override this.
+    ///
+    /// [`parse_event_detail`]: EventParser::parse_event_detail
+    fn from_block_events(
+        events: &subxt::events::Events<PolkadotConfig>,
+        block_hash: H256,
+        block_number: u32,
+    ) -> Vec<EventType> {
+        events
+            .iter()
+            .filter_map(|result| {
+                let event = result.ok()?;
+                Self::parse_event_detail(&event, block_hash, block_number)
+            })
+            .collect()
+    }
 }
 
 /// Parser for converting raw subxt events into typed [`StorageEvent`]s.
@@ -971,6 +1017,22 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 block_hash,
                 block_number,
             }),
+            "ProviderSettingsUpdated" => Some(StorageEvent::ProviderSettingsUpdated {
+                provider: scale_decode::field_account(&fields, "provider")?,
+                provider_settings: field_provider_settings(&fields, "settings")?,
+                block_hash,
+                block_number,
+            }),
+            "ProviderMultiaddrUpdated" => Some(StorageEvent::ProviderMultiaddrUpdated {
+                provider: scale_decode::field_account(&fields, "provider")?,
+                multiaddr: String::from_utf8_lossy(&scale_decode::field_bytes(
+                    &fields,
+                    "multiaddr",
+                )?)
+                .into_owned(),
+                block_hash,
+                block_number,
+            }),
 
             // ── Agreements ────────────────────────────────────────────────────
             "StorageAgreementEstablished" => {
@@ -1048,7 +1110,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 
             // ── Everything else ───────────────────────────────────────────────
             other => Some(StorageEvent::Unknown {
-                pallet: "StorageProvider".to_string(),
+                pallet: PALLET_NAME.to_string(),
                 variant: other.to_string(),
                 block_hash,
                 block_number,
@@ -1092,6 +1154,30 @@ fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Optio
     let deadline = v.at("deadline")?.as_u128()? as u32;
     let index = v.at("index")?.as_u128()? as u16;
     Some((deadline, index))
+}
+
+/// Read the StorageProvider pallet's `ProviderSettings` named composite into the client-side
+/// [`crate::ProviderSettings`]. Returns `None` if a required field is missing or mistyped.
+fn field_provider_settings(
+    fields: &scale_value::Composite<u32>,
+    name: &str,
+) -> Option<crate::ProviderSettings> {
+    let settings = fields.at(name)?;
+    let replica_sync_price = match settings.at("replica_sync_price").map(|v| &v.value) {
+        Some(scale_value::ValueDef::Variant(var)) if var.name == "Some" => {
+            var.values.values().next().and_then(|v| v.as_u128())
+        }
+        _ => None,
+    };
+    Some(crate::ProviderSettings {
+        price_per_byte: settings.at("price_per_byte")?.as_u128()?,
+        min_duration: settings.at("min_duration")?.as_u128()? as u32,
+        max_duration: settings.at("max_duration")?.as_u128()? as u32,
+        accepting_primary: settings.at("accepting_primary")?.as_bool()?,
+        replica_sync_price,
+        accepting_extensions: settings.at("accepting_extensions")?.as_bool()?,
+        max_capacity: settings.at("max_capacity")?.as_u128()? as u64,
+    })
 }
 
 /// Read a `RemovalReason`-shaped variant field, falling back to `"Unknown"` when the field

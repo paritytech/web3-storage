@@ -842,6 +842,21 @@ pub struct ProviderSettings {
     pub max_capacity: u64,
 }
 
+/// Mirror StorageProvider::ProviderSettings
+impl Default for ProviderSettings {
+    fn default() -> Self {
+        Self {
+            min_duration: 0,
+            max_duration: u32::MAX,
+            price_per_byte: 0,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 0, // 0 = unlimited (backward compatible)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AgreementRequest {
     pub bucket_id: BucketId,
