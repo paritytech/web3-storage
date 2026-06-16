@@ -7,7 +7,7 @@ on:
     branches: [main, dev]
   # Re-scan unchanged code for newly-published advisories / leaks.
   schedule:
-    - cron: '17 6 * * 1'
+    - cron: '17 6 * * *'
   workflow_dispatch:
 
 permissions:
