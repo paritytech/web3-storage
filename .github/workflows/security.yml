@@ -1,0 +1,92 @@
+name: Security
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  # Re-scan unchanged code for newly-published advisories / leaks.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.29.0
+
+jobs:
+  set-image:
+    uses: ./.github/workflows/set-image.yml
+
+  # cargo-deny ships in the ci-unified image; version is pinned by the image tag.
+  cargo-deny:
+    name: Dependency audit (cargo-deny)
+    runs-on: parity-default
+    timeout-minutes: 20
+    needs: [set-image]
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check licenses, bans, sources
+        run: cargo deny --locked check licenses bans sources
+
+      # Advisory DB drifts over time, so keep it non-blocking on PRs.
+      - name: Check advisories
+        run: cargo deny --locked check advisories
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+
+  # gitleaks is not in ci-unified and needs no Rust toolchain — run it standalone.
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0 # full history so every commit is scanned
+          persist-credentials: false
+
+      - name: Cache gitleaks
+        id: cache-gitleaks
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.local/bin/gitleaks
+          key: gitleaks-${{ env.GITLEAKS_VERSION }}-${{ runner.os }}
+
+      # Install the binary, not the action — the action needs a license secret in an org.
+      - name: Install gitleaks
+        if: steps.cache-gitleaks.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C ~/.local/bin gitleaks
+          chmod +x ~/.local/bin/gitleaks
+
+      # .gitleaksignore is honored automatically; --redact keeps matches out of logs.
+      - name: Scan for secrets
+        run: ~/.local/bin/gitleaks detect --source . --redact --no-banner --verbose
+
+  # Aggregate gate — require this in branch protection (mirrors `basic-checks`).
+  security:
+    name: Security
+    needs: [cargo-deny, gitleaks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Security checks failed or were cancelled"
+          exit 1
