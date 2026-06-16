@@ -21,15 +21,19 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        LOG_FILE: ${{ inputs.log-file }}
+        STARTUP_DELAY: ${{ inputs.startup-delay }}
       run: |
-        nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native ${{ inputs.config }} \
-          > ${{ inputs.log-file }} 2>&1 &
+        nohup env PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native "$CONFIG" \
+          > "$LOG_FILE" 2>&1 &
         ZOMBIE_PID=$!
-        echo "Waiting ${{ inputs.startup-delay }}s for zombienet to set up nodes..."
-        sleep ${{ inputs.startup-delay }}
+        echo "Waiting ${STARTUP_DELAY}s for zombienet to set up nodes..."
+        sleep "$STARTUP_DELAY"
         if ! kill -0 $ZOMBIE_PID 2>/dev/null; then
           echo "ERROR: zombienet exited early"
-          cat "${{ inputs.log-file }}" || true
+          cat "$LOG_FILE" || true
           exit 1
         fi
         echo "Zombienet is running (PID $ZOMBIE_PID)"

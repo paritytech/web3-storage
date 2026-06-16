@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration tests for `StorageUserClient`.
 //!
 //! Each test spins up a real in-process provider node on a random port so

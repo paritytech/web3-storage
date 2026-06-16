@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { createClient, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";

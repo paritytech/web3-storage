@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider Client - For storage providers managing their operations.
 //!
 //! This client provides operations for:
@@ -144,16 +146,7 @@ impl ProviderClient {
 
         // Decode top-level fields.
         let multiaddr = named_field(&value, "multiaddr")
-            .map(|v| match &v.value {
-                ValueDef::Composite(Composite::Unnamed(items)) => {
-                    let bytes: Vec<u8> = items
-                        .iter()
-                        .filter_map(|b| b.as_u128().map(|n| n as u8))
-                        .collect();
-                    String::from_utf8_lossy(&bytes).into_owned()
-                }
-                _ => String::new(),
-            })
+            .map(|v| String::from_utf8_lossy(&decode_byte_vec(v)).into_owned())
             .unwrap_or_default();
 
         let stake = named_field(&value, "stake")
@@ -307,126 +300,96 @@ impl ProviderClient {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // Agreement Management
+    // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Accept a storage agreement request for a bucket.
-    ///
-    /// This commits you to storing data for the specified bucket.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use storage_client::ProviderClient;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
-    /// client.accept_agreement(1).await?;
-    /// println!("Agreement accepted!");
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn accept_agreement(&self, bucket_id: BucketId) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
-        tracing::info!(
-            "Accepting agreement for bucket {} as provider {}",
-            bucket_id,
-            self.provider_account
-        );
-
-        // Create and submit the extrinsic
-        let tx = extrinsics::accept_agreement(bucket_id);
-
-        let tx_progress = chain
-            .api()
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-        tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-
-        tracing::info!("Agreement accepted successfully");
-        Ok(())
-    }
-
-    /// List all pending agreement requests for this provider.
-    pub async fn list_pending_requests(&self) -> ClientResult<Vec<AgreementRequest>> {
-        let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
-
-        let storage = chain
+    /// Read a provider's on-chain `ProviderReplayState.hsn`. Returns
+    /// `Ok(None)` if the provider has no replay state yet (never signed
+    /// any terms).
+    pub async fn fetch_replay_hsn(
+        chain_ws_url: &str,
+        provider: &AccountId32,
+    ) -> ClientResult<Option<u64>> {
+        let chain = SubstrateClient::connect(chain_ws_url).await?;
+        let thunk = chain
             .api()
             .storage()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::agreement_requests_for_provider(&provider_account))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::provider_replay_state(provider))
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate requests: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
 
-        let mut requests = Vec::new();
+        let Some(thunk) = thunk else {
+            return Ok(None);
+        };
+        let decoded = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
+        Ok(named_field(&decoded, "hsn")
+            .and_then(|v| v.as_u128())
+            .map(|h| h as u64))
+    }
 
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+    /// Negotiate provider-signed agreement terms over HTTP.
+    ///
+    /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
+    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
+    pub async fn negotiate_terms(
+        provider_url: &str,
+        req: &crate::agreement::NegotiateRequest,
+    ) -> ClientResult<crate::agreement::SignedTerms> {
+        let url = format!("{}/negotiate", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .post(&url)
+            .json(req)
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
 
-            // bucket_id is encoded at offset 96 in the full storage key
-            // layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(provider)=16]
-            //         [provider=32][blake2_128(bucket_id)=16][bucket_id=8]
-            let key = &kv.key_bytes;
-            if key.len() < 104 {
-                continue;
-            }
-            let bucket_id =
-                u64::from_le_bytes(key[96..104].try_into().unwrap_or([0u8; 8])) as BucketId;
-
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement request: {e}");
-                    continue;
-                }
-            };
-
-            let requester = named_field(&value, "requester")
-                .and_then(decode_account_bytes)
-                .map(|b| format!("0x{}", hex::encode(b)))
-                .unwrap_or_default();
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let payment_locked = named_field(&value, "payment_locked")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0);
-
-            let duration = named_field(&value, "duration")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            requests.push(AgreementRequest {
-                bucket_id,
-                requester,
-                max_bytes,
-                payment_locked,
-                duration,
-                expires_at,
-            });
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /negotiate with status {}",
+                response.status()
+            )));
         }
 
-        Ok(requests)
+        response
+            .json::<crate::agreement::SignedTerms>()
+            .await
+            .map_err(ClientError::Http)
+    }
+
+    /// Fetch a provider node's identity from its `/info` HTTP endpoint.
+    ///
+    /// Returns the provider's account as an [`AccountId32`], parsed from the
+    /// SS58 string the node reports. Useful for discovering the provider's
+    /// on-chain account without hardcoding it.
+    pub async fn fetch_provider_id(provider_url: &str) -> ClientResult<AccountId32> {
+        let url = format!("{}/info", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /info with status {}",
+                response.status()
+            )));
+        }
+
+        let info: serde_json::Value = response.json().await.map_err(ClientError::Http)?;
+
+        let provider_id = info["provider_id"].as_str().ok_or_else(|| {
+            ClientError::Chain("provider /info response missing string `provider_id` field".into())
+        })?;
+
+        SubstrateClient::parse_account(provider_id)
+            .map_err(|e| ClientError::Chain(format!("invalid provider_id from /info: {e}")))
     }
 
     /// List all active agreements for this provider.
@@ -840,6 +803,31 @@ fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<V
         }
         _ => None,
     }
+}
+
+/// Decode a `Vec<u8>` / `BoundedVec<u8, _>` from a scale_value composite.
+///
+/// `BoundedVec<T, N>` serializes its `TypeInfo` as a 1-field unnamed composite
+/// wrapping the inner `Vec<T>`, so scale_value surfaces it as
+/// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
+/// if present, then collects the bytes.
+fn decode_byte_vec(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
+    let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
+        return Vec::new();
+    };
+    // Direct sequence of byte primitives.
+    let bytes: Vec<u8> = items
+        .iter()
+        .filter_map(|b| b.as_u128().map(|n| n as u8))
+        .collect();
+    if !items.is_empty() && bytes.len() == items.len() {
+        return bytes;
+    }
+    // BoundedVec wrapper: single inner field holds the actual sequence.
+    if items.len() == 1 {
+        return decode_byte_vec(&items[0]);
+    }
+    Vec::new()
 }
 
 // Types

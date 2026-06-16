@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Runtime API for querying storage provider pallet state.
 //!
 //! This provides read-only queries for applications to discover providers,

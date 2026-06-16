@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * File operations specs.
  *
@@ -6,11 +8,8 @@
  * deterministic window — without the route intercept, the tests race.
  */
 import { test, expect } from "../fixtures";
-import {
-  Bob,
-  cleanupDrives,
-  createDriveViaApi,
-} from "@web3-storage/test-helpers";
+import { Bob, cleanupDrives } from "@web3-storage/test-helpers";
+import { createDriveViaUi } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -20,18 +19,10 @@ test.afterEach(async () => {
 });
 
 async function selectFreshDrive(page: import("@playwright/test").Page) {
-  const drive = await createDriveViaApi(Bob, {
-    name: `file-ops-${Date.now()}`,
-    maxCapacity: 100_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-    commitStrategy: { type: "Immediate" },
-  });
-  await page.reload();
-  await page.getByTestId(`drive-list-item-${drive.driveId}`).click();
+  const driveId = await createDriveViaUi(page, `file-ops-${Date.now()}`);
+  await page.getByTestId(`drive-list-item-${driveId}`).click();
   await expect(page.getByTestId("file-browser")).toBeVisible();
-  return drive;
+  return { driveId };
 }
 
 test("multi-file upload appears in entries table", async ({ localPage }) => {

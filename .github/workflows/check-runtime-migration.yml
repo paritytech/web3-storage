@@ -1,0 +1,275 @@
+name: Check Runtime Migrations
+
+# Snapshots are taken from the
+# `uris` declared per runtime in scripts/runtimes-matrix.json — runtimes with no
+# `uris` are skipped until they have a live endpoint.
+#
+# If you add more jobs, ensure that you add them as required to the
+# "confirmMigrationsPassed" job at the end of this file.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *' # Daily at 5 AM UTC — refresh cached snapshots
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# drop permissions for default token
+permissions: {}
+
+jobs:
+  set-image:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/set-image.yml
+
+  # Skip migration checks when only docs/non-runtime files changed.
+  # Always runs on schedule (snapshot refresh) and workflow_dispatch.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      runtime: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || steps.filter.outputs.runtime == 'true' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        id: filter
+        with:
+          filters: |
+            runtime:
+              - 'runtimes/**'
+              - 'pallet/**'
+              - 'primitives/**'
+              - 'storage-interfaces/**/pallet-*/**'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/check-runtime-migration.yml'
+
+  runtime-matrix:
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.runtime == 'true'
+    permissions:
+      contents: read
+    outputs:
+      runtime: ${{ steps.runtime.outputs.runtime }}
+    name: Extract tasks from matrix
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - id: runtime
+        shell: bash
+        run: |
+          # Run a migration check for every runtime that declares a live `ws://`
+          # / `wss://` endpoint in `uris`. Runtimes with no real endpoint (empty
+          # `uris` or a `TODO:` placeholder) are skipped.
+          FILTER='[.[] | select(([.uris[]? | select(startswith("ws"))] | length) > 0)]'
+          SKIP_FILTER='[.[] | select(([.uris[]? | select(startswith("ws"))] | length) == 0)]'
+          TASKS=$(jq "$FILTER" scripts/runtimes-matrix.json)
+          SKIPPED_TASKS=$(jq "$SKIP_FILTER" scripts/runtimes-matrix.json)
+          echo "--- Running the following tasks ---"
+          echo "$TASKS"
+          echo "--- Skipping runtimes with no live ws(s) endpoint ---"
+          echo "$SKIPPED_TASKS"
+          TASKS=$(echo "$TASKS" | jq -c .)
+          echo "runtime=$TASKS" >> $GITHUB_OUTPUT
+
+  prepare-snapshots:
+    name: prepare-snapshot (${{ matrix.runtime.name }})
+    needs: [set-image, runtime-matrix]
+    runs-on: parity-default
+    permissions:
+      contents: read
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      # Snapshot lookup uses a deliberately-non-matching primary `key:` so
+      # `restore-keys` always falls through to the most recent dated entry.
+      # With `lookup-only` the snapshot isn't restored — we just decide whether
+      # to regenerate. `cache-matched-key` is empty iff nothing was found, which
+      # is also the case on the daily `schedule` (lookup skipped) so the
+      # snapshot is force-refreshed nightly.
+      - name: Check if snapshot exists in cache
+        id: cache-restore
+        if: github.event_name != 'schedule'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          lookup-only: true
+          path: snapshot.raw
+          key: try-runtime-snapshot-${{ matrix.runtime.name }}
+          restore-keys: |
+            try-runtime-snapshot-${{ matrix.runtime.name }}-
+          fail-on-cache-miss: false
+
+      - name: Install just
+        if: steps.cache-restore.outputs.cache-matched-key == ''
+        run: cargo install just --locked || true
+
+      - name: Cache try-runtime binary
+        if: steps.cache-restore.outputs.cache-matched-key == ''
+        id: try-runtime-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .bin/try-runtime
+          key: try-runtime-cli-${{ env.TRY_RUNTIME_VERSION }}
+
+      - name: Download try-runtime
+        if: steps.cache-restore.outputs.cache-matched-key == '' && steps.try-runtime-cache.outputs.cache-hit != 'true'
+        run: just download-try-runtime
+
+      - name: Generate snapshot for ${{ matrix.runtime.name }}
+        if: steps.cache-restore.outputs.cache-matched-key == ''
+        shell: bash
+        env:
+          RUNTIME_NAME: ${{ matrix.runtime.name }}
+          RUNTIME_URIS_JSON: ${{ toJSON(matrix.runtime.uris) }}
+        run: |
+          echo "Generating snapshot for $RUNTIME_NAME..."
+
+          URI_ARGS=()
+          while IFS= read -r uri; do
+            URI_ARGS+=(--uri "$uri")
+          done < <(echo "$RUNTIME_URIS_JSON" | jq -r '.[] | select(startswith("ws"))')
+          echo "Using URIs: ${URI_ARGS[*]}"
+
+          for i in {1..10}; do
+            echo "Snapshot creation attempt $i/10"
+            if .bin/try-runtime create-snapshot "${URI_ARGS[@]}" -- snapshot.raw; then
+              if [ -f "snapshot.raw" ] && [ -s "snapshot.raw" ]; then
+                echo "Snapshot created successfully"
+                break
+              fi
+            fi
+            echo "Snapshot creation failed, attempt $i/10"
+            rm -f snapshot.raw
+            if [ "$i" -eq 10 ]; then
+              echo "All snapshot creation attempts failed"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Get Date
+        id: get-date
+        if: steps.cache-restore.outputs.cache-matched-key == ''
+        run: echo "today=$(/bin/date -u "+%Y%m%d")" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Save snapshot to cache
+        if: steps.cache-restore.outputs.cache-matched-key == ''
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: snapshot.raw
+          key: try-runtime-snapshot-${{ matrix.runtime.name }}-${{ steps.get-date.outputs.today }}
+
+  check-migrations:
+    name: check-migration (${{ matrix.runtime.name }})
+    needs: [set-image, runtime-matrix, prepare-snapshots, changes]
+    runs-on: parity-large
+    timeout-minutes: 120
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && needs.changes.outputs.runtime == 'true'
+    permissions:
+      contents: read
+    container:
+      image: ${{ needs.set-image.outputs.CI_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "check-migration-${{ matrix.runtime.name }}"
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' }}
+
+      - name: Install just
+        run: cargo install just --locked || true
+
+      - name: Cache try-runtime binary
+        id: try-runtime-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .bin/try-runtime
+          key: try-runtime-cli-${{ env.TRY_RUNTIME_VERSION }}
+
+      - name: Download try-runtime
+        if: steps.try-runtime-cache.outputs.cache-hit != 'true'
+        run: just download-try-runtime
+
+      - name: Restore snapshot from cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: snapshot.raw
+          key: try-runtime-snapshot-${{ matrix.runtime.name }}-
+          fail-on-cache-miss: true
+
+      - name: Run ${{ matrix.runtime.name }} Runtime Checks
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ matrix.runtime.package }}
+          TRY_RUNTIME_SPEC_NAME_CHECK: ${{ matrix.runtime.try_runtime.spec_name_check }}
+          TRY_RUNTIME_EXTRA_FLAGS: ${{ matrix.runtime.try_runtime.extra_flags }}
+        run: |
+          .bin/try-runtime --version
+
+          FEATURES="try-runtime"
+          echo "Setting features: ${FEATURES}"
+          cargo build --release -p "$PACKAGE_NAME" --features "$FEATURES" -q --locked
+
+          RUNTIME_BLOB_NAME=$(echo "$PACKAGE_NAME" | sed 's/-/_/g').compact.compressed.wasm
+          RUNTIME_BLOB_PATH="./target/release/wbuild/$PACKAGE_NAME/$RUNTIME_BLOB_NAME"
+          export RUST_LOG=remote-ext=debug,runtime=trace
+
+          (set -x; .bin/try-runtime \
+            --runtime "$RUNTIME_BLOB_PATH" \
+            $TRY_RUNTIME_SPEC_NAME_CHECK \
+            on-runtime-upgrade --checks="all" \
+            $TRY_RUNTIME_EXTRA_FLAGS \
+            snap --path snapshot.raw)
+
+  # This will only run if all the jobs in its "needs" array passed.
+  # Add this as the required job in branch protection: if the matrix changes
+  # size (new runtimes get added) it will still require every check to succeed.
+  # If you add more jobs, remember to add them to the "needs" array.
+  confirmMigrationsPassed:
+    runs-on: ubuntu-latest
+    name: All migrations passed
+    if: always() && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    needs: [changes, runtime-matrix, prepare-snapshots, check-migrations]
+    steps:
+      - name: Decide outcome
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - run: echo '### Good job! All the migrations passed 🚀' >> $GITHUB_STEP_SUMMARY

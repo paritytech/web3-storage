@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Client-side encryption for data at rest.
 //!
 //! Encrypts data BEFORE upload so providers store only ciphertext — zero knowledge

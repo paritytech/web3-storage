@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * E2E Workflow 03 — S3 Bucket and Objects
  *
@@ -10,8 +12,9 @@
 
 import assert from "node:assert";
 import {
+  buildSignedTermsArgs,
   copyObjectMetadata,
-  createS3BucketWithStorage,
+  createS3Bucket,
   deleteObjectMetadata,
   deleteS3Bucket,
   putChunk,
@@ -22,14 +25,30 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   READ_OPTS,
-  sameAddress,
   toHex,
-  waitForAgreementAcceptance,
 } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+import {
+  negotiateSigned,
+  runSuite,
+  submitTxExpectFailure,
+  setupChain,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
+
+/**
+ * Create an S3 bucket: negotiate provider-signed terms, then redeem them via
+ * `create_s3_bucket`, which opens the underlying Layer 0 bucket + primary
+ * agreement atomically. Returns `{ s3BucketId, layer0BucketId }`.
+ */
+async function createS3BucketWithStorage(api, providerUrl, client, provider, name, { maxBytes, duration }) {
+  const signed = await negotiateSigned(api, providerUrl, client, provider, {
+    maxBytes,
+    duration,
+  });
+  return createS3Bucket(api, client, name, provider, signed);
+}
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -51,20 +70,18 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const duration = 100;
-      const result = await createS3BucketWithStorage(api, client, bucketName, {
-        max_capacity: maxCapacity,
-        duration,
-        max_payment: maxCapacity * BigInt(duration) * 10n,
-      });
+      const result = await createS3BucketWithStorage(
+        api,
+        PROVIDER_URL,
+        client,
+        provider,
+        bucketName,
+        { maxBytes: maxCapacity, duration }
+      );
       s3BucketId = result.s3BucketId;
       layer0BucketId = result.layer0BucketId;
       assert.ok(s3BucketId !== undefined, "s3_bucket_id should be returned");
       assert.ok(layer0BucketId !== undefined, "layer0_bucket_id should be returned");
-      assert.ok(
-        sameAddress(result.matchedProvider, provider.address),
-        "Should match expected provider"
-      );
-      await waitForAgreementAcceptance(api, provider.address, layer0BucketId);
     },
   });
 
@@ -172,15 +189,12 @@ async function main() {
       const duration = 100;
       const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
         api,
+        PROVIDER_URL,
         client,
+        provider,
         name2,
-        {
-          max_capacity: maxCapacity,
-          duration,
-          max_payment: maxCapacity * BigInt(duration) * 10n,
-        }
+        { maxBytes: maxCapacity, duration }
       );
-      await waitForAgreementAcceptance(api, provider.address, l0);
       const obj = await putChunk(PROVIDER_URL, l0, "not empty");
       await putObjectMetadata(api, client, bid, "file.txt", obj, "text/plain");
       const tx = api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: bid });
@@ -197,17 +211,14 @@ async function main() {
       const name3 = `e2e-03c-${Date.now()}`.slice(0, 63);
       const maxCapacity = 1_048_576n;
       const duration = 100;
-      const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
+      const { s3BucketId: bid } = await createS3BucketWithStorage(
         api,
+        PROVIDER_URL,
         client,
+        provider,
         name3,
-        {
-          max_capacity: maxCapacity,
-          duration,
-          max_payment: maxCapacity * BigInt(duration) * 10n,
-        }
+        { maxBytes: maxCapacity, duration }
       );
-      await waitForAgreementAcceptance(api, provider.address, l0);
       const tx = api.tx.S3Registry.delete_object_metadata({
         s3_bucket_id: bid,
         key: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
@@ -226,19 +237,21 @@ async function main() {
       const dupName = `e2e-03dup-${Date.now()}`.slice(0, 63);
       const maxCapacity = 1_048_576n;
       const duration = 100;
-      const maxPay = maxCapacity * BigInt(duration) * 10n;
-      await createS3BucketWithStorage(api, client, dupName, {
-        max_capacity: maxCapacity,
+      await createS3BucketWithStorage(api, PROVIDER_URL, client, provider, dupName, {
+        maxBytes: maxCapacity,
         duration,
-        max_payment: maxPay,
       });
-      const tx = api.tx.S3Registry.create_s3_bucket_with_storage({
+      // A second create with the same name fails atomically — even with a
+      // fresh, valid signed quote.
+      const signed = await negotiateSigned(api, PROVIDER_URL, client, provider, {
+        maxBytes: maxCapacity,
+        duration,
+      });
+      const tx = api.tx.S3Registry.create_s3_bucket({
         name: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
           new TextEncoder().encode(dupName)
         ),
-        max_capacity: maxCapacity,
-        duration,
-        max_payment: maxPay,
+        ...buildSignedTermsArgs(provider, signed),
       });
       await submitTxExpectFailure(tx, client.signer, "BucketNameExists", "3.9");
     },
@@ -254,15 +267,12 @@ async function main() {
       const duration = 100;
       const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
         api,
+        PROVIDER_URL,
         client,
+        provider,
         edgeName,
-        {
-          max_capacity: maxCapacity,
-          duration,
-          max_payment: maxCapacity * BigInt(duration) * 10n,
-        }
+        { maxBytes: maxCapacity, duration }
       );
-      await waitForAgreementAcceptance(api, provider.address, l0);
       const obj = await putChunk(PROVIDER_URL, l0, "deep nested");
       await putObjectMetadata(api, client, bid, "a/b/c/d.txt", obj, "text/plain");
       const stored = await api.query.S3Registry.Objects.getValue(
@@ -287,15 +297,12 @@ async function main() {
       const duration = 100;
       const { s3BucketId: bid, layer0BucketId: l0 } = await createS3BucketWithStorage(
         api,
+        PROVIDER_URL,
         client,
+        provider,
         upsertName,
-        {
-          max_capacity: maxCapacity,
-          duration,
-          max_payment: maxCapacity * BigInt(duration) * 10n,
-        }
+        { maxBytes: maxCapacity, duration }
       );
-      await waitForAgreementAcceptance(api, provider.address, l0);
       const obj1 = await putChunk(PROVIDER_URL, l0, "version 1");
       await putObjectMetadata(api, client, bid, "file.txt", obj1, "text/plain");
       const obj2 = await putChunk(PROVIDER_URL, l0, "version 2 updated");

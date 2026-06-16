@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
-import { Loader2, CheckCircle2, XCircle, RefreshCw, Clock, AlertTriangle } from "lucide-react";
+import { CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,35 +12,38 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  canRetryCreation,
   createDrive,
-  useCreations,
   dismissCreation,
+  getSignerAddress,
+  retryCreation,
+  useCreations,
   type CreationStatus,
 } from "@/state";
+import {
+  negotiateTerms,
+  parseMultiaddrToHttp,
+  type AvailableProvider,
+  type SignedTerms,
+} from "@/lib/drive-client";
 import { formatBytes } from "@/lib/utils";
+import ProviderPickerPanel from "./ProviderPickerPanel";
 
 interface NewDriveDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-function formatElapsed(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  return `${min}m ${rem}s`;
-}
-
 function CreationStatusCard({
   item,
   onDismiss,
+  onRetry,
 }: {
   item: CreationStatus;
   onDismiss: (id: string) => void;
+  onRetry?: (id: string) => void;
 }) {
   const isDismissible = item.stage === "ready" || item.stage === "failed";
-  const showElapsed = item.stage === "waiting" || item.stage === "created";
 
   return (
     <div
@@ -62,26 +67,22 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium truncate">{item.name}</p>
-            {showElapsed && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="h-3 w-3" />
-                {formatElapsed(item.elapsedMs)}
-              </span>
-            )}
-          </div>
+          <p className="text-sm font-medium truncate">{item.name}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {item.stage === "submitting" && "Submitting transaction to blockchain..."}
-            {item.stage === "created" && "Drive created on-chain. Setting up storage agreement..."}
-            {item.stage === "waiting" && (item.statusMessage || "Waiting for provider to accept...")}
+            {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Drive is ready to use"}
             {item.stage === "failed" && (item.error || "Something went wrong")}
           </p>
-          {item.stage === "waiting" && item.elapsedMs > 60000 && (
-            <div className="flex items-center gap-1 mt-1 text-xs text-amber-600">
-              <AlertTriangle className="h-3 w-3" />
-              <span>Taking longer than expected</span>
+          {item.stage === "failed" && onRetry && (
+            <div className="mt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRetry(item.id)}
+              >
+                <RefreshCw className="mr-2 h-3 w-3" />
+                Retry on-chain submit
+              </Button>
             </div>
           )}
         </div>
@@ -103,125 +104,173 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
   const creations = useCreations();
 
   const [name, setName] = useState("");
-  const [capacity, setCapacity] = useState("10000000");
+  const [capacity, setCapacity] = useState("10485760");
   const [duration, setDuration] = useState("10000");
-  const [payment, setPayment] = useState("120000000000000000");
-  const [minProviders, setMinProviders] = useState("1");
-  const [creating, setCreating] = useState(false);
+  const [pricePerByte, setPricePerByte] = useState("0");
+  const [submitting, setSubmitting] = useState(false);
+  const [negotiateError, setNegotiateError] = useState<string | null>(null);
+  const [isShowProviderPicker, setIsShowProviderPicker] = useState<boolean>(false);
 
-  const handleCreate = async () => {
-    setCreating(true);
+  /**
+   * Clicking a provider's Select button IS the submit action. Negotiate
+   * signed terms with the provider here, then hand them + the form values
+   * to the state hook, which runs the `submit_create_drive` chain submit.
+   */
+  const handleProviderSelect = async (provider: AvailableProvider) => {
+    setSubmitting(true);
+    setNegotiateError(null);
     try {
-      await createDrive({
+      const url = parseMultiaddrToHttp(provider.multiaddr);
+      if (!url) {
+        setNegotiateError(
+          `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
+        );
+        return;
+      }
+
+      const owner = getSignerAddress();
+      if (!owner) {
+        setNegotiateError("Signer not set");
+        return;
+      }
+
+      // Failure here means re-negotiate from scratch on retry.
+      let signed: SignedTerms;
+      try {
+        signed = await negotiateTerms(url, {
+          owner,
+          max_bytes: BigInt(capacity),
+          duration: parseInt(duration, 10),
+          price_per_byte: BigInt(pricePerByte || "0"),
+          replica_params: null,
+          bucket_id: null,
+        });
+      } catch (err) {
+        setNegotiateError(
+          err instanceof Error ? err.message : "Failed to negotiate with provider",
+        );
+        return;
+      }
+
+      const drive = await createDrive({
         name: name || undefined,
-        maxCapacity: BigInt(capacity),
-        storagePeriod: parseInt(duration, 10),
-        payment: BigInt(payment),
-        minProviders: Math.max(1, Math.min(10, parseInt(minProviders, 10) || 1)),
+        provider,
+        url,
+        signed,
       });
-      setName("");
-      onOpenChange(false);
-    } catch {
-      /* error handled in state via creations$ */
+      if (drive) {
+        setName("");
+        onOpenChange(false);
+      }
     } finally {
-      setCreating(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" data-testid="new-drive-dialog">
-        <DialogHeader>
-          <DialogTitle>Create New Drive</DialogTitle>
-          <DialogDescription>
-            Set up a new decentralized drive for your files.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Drive Name</label>
-            <Input
-              data-testid="new-drive-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Documents"
-            />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Capacity (bytes)</label>
-              <Input
-                data-testid="new-drive-capacity"
-                type="number"
-                value={capacity}
-                onChange={(e) => setCapacity(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                {formatBytes(parseInt(capacity, 10) || 0)}
-              </p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Duration (blocks)</label>
-              <Input
-                data-testid="new-drive-duration"
-                type="number"
-                value={duration}
-                onChange={(e) => setDuration(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Max Payment</label>
-              <Input
-                data-testid="new-drive-payment"
-                type="number"
-                value={payment}
-                onChange={(e) => setPayment(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Min Providers</label>
-              <Input
-                data-testid="new-drive-min-providers"
-                type="number"
-                min={1}
-                max={10}
-                value={minProviders}
-                onChange={(e) => setMinProviders(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">1–10 required</p>
-            </div>
-          </div>
-
-          {creations.length > 0 && (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-3xl" data-testid="new-drive-dialog">
+          <DialogHeader>
+            <DialogTitle>Create New Drive</DialogTitle>
+            <DialogDescription>
+              Set up a new decentralized drive for your files.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
             <div className="space-y-2">
-              {creations.map((item) => (
-                <CreationStatusCard
-                  key={item.id}
-                  item={item}
-                  onDismiss={dismissCreation}
-                />
-              ))}
+              <label className="text-sm font-medium">Drive Name</label>
+              <Input
+                data-testid="new-drive-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Documents"
+              />
             </div>
-          )}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button data-testid="new-drive-submit" onClick={handleCreate} disabled={creating}>
-              {creating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Capacity (bytes)</label>
+                <Input
+                  data-testid="new-drive-capacity"
+                  type="number"
+                  value={capacity}
+                  onChange={(e) => setCapacity(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {formatBytes(parseInt(capacity, 10) || 0)}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Duration (blocks)</label>
+                <Input
+                  data-testid="new-drive-duration"
+                  type="number"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Price per byte (per block)</label>
+                <Input
+                  data-testid="new-drive-price"
+                  type="number"
+                  min="0"
+                  value={pricePerByte}
+                  onChange={(e) => setPricePerByte(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {
+              isShowProviderPicker ? (
+                <ProviderPickerPanel
+                  onSelect={handleProviderSelect}
+                  requiredCapacity={BigInt(capacity || "0")}
+                  requiredDuration={parseInt(duration, 10) || 0}
+                  requiredPricePerByte={BigInt(pricePerByte || "0")}
+                  disabled={submitting}
+                />
               ) : (
-                "Create Drive"
-              )}
-            </Button>
+                <Button data-testid="find-matching-providers" onClick={() => setIsShowProviderPicker(true)}>
+                  Find matching Providers
+                </Button>
+              )
+            }
+
+            {negotiateError && (
+              <p data-testid="negotiate-error" className="text-sm text-red-600">
+                {negotiateError}
+              </p>
+            )}
+
+            {creations.length > 0 && (
+              <div className="space-y-2">
+                {creations.map((item) => (
+                  <CreationStatusCard
+                    key={item.id}
+                    item={item}
+                    onDismiss={dismissCreation}
+                    onRetry={
+                      canRetryCreation(item.id)
+                        ? (id) => {
+                            void retryCreation(id);
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+            </div>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

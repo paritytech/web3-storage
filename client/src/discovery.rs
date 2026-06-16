@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Discovery Client - For finding and matching storage providers.
 //!
 //! This client provides operations for:
@@ -64,7 +66,7 @@ pub struct MatchedProvider {
 }
 
 /// Provider information for discovery.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderInfo {
     /// Network address for connecting.
     pub multiaddr: String,

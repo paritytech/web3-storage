@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { Binary, Enum } from "@polkadot-api/substrate-bindings";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
@@ -36,11 +38,76 @@ export async function updateProviderSettings(api, provider, settings) {
   );
 }
 
-export async function createBucket(api, signer, { minProviders = 1 } = {}) {
+/**
+ * POST /negotiate on the provider node; returns the SignedTerms bundle the
+ * owner redeems via `establish_storage_agreement`.
+ */
+export async function negotiateTerms(providerUrl, request) {
+  const res = await fetch(`${providerUrl}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `/negotiate failed: ${res.status} ${await res.text().catch(() => "")}`
+    );
+  }
+  return res.json();
+}
+
+/**
+ * Submit `establish_storage_agreement` with provider-signed terms.
+ *
+ * `signed.signature` is the SCALE-encoded `MultiSignature` as hex, e.g.
+ * `0x00<64-byte-sig>` for Sr25519. Strip the variant prefix and wrap the
+ * raw 64 bytes back into the PAPI Enum.
+ */
+const MULTI_SIGNATURE_VARIANT = Object.freeze({
+  0: "Ed25519",
+  1: "Sr25519",
+  2: "ecdsa",
+  3: "eth",
+});
+
+/**
+  * Build the agreement terms and sign it
+ */
+export function buildSignedTermsArgs(provider, signed) {
+  const sigBytes = hexToBytes(signed.signature);
+  if (sigBytes.length < 1) {
+    throw new Error("signature too short to contain a MultiSignature variant byte");
+  }
+  const variantIdx = sigBytes[0];
+  const variantName = MULTI_SIGNATURE_VARIANT[variantIdx];
+  if (!variantName) {
+    throw new Error(`unknown MultiSignature variant byte: ${variantIdx}`);
+  }
+  const sig = Enum(variantName, Binary.fromBytes(sigBytes.slice(1)));
+
+  const t = signed.terms;
+  const terms = {
+    owner: t.owner,
+    max_bytes: BigInt(t.max_bytes),
+    duration: t.duration,
+    price_per_byte: BigInt(t.price_per_byte),
+    valid_until: t.valid_until,
+    nonce: BigInt(t.nonce),
+    bucket_id: t.bucket_id != null ? BigInt(t.bucket_id) : undefined,
+    replica_params: t.replica_params ?? undefined,
+  };
+  return { provider: provider.address, terms, sig };
+}
+
+export async function establishStorageAgreement(api, client, provider, signed) {
   const result = await submitTx(
-    api.tx.StorageProvider.create_bucket({ min_providers: minProviders }),
-    signer.signer,
-    "create_bucket"
+    api.tx.StorageProvider.establish_storage_agreement(
+      buildSignedTermsArgs(provider, signed)
+    ),
+    client.signer,
+    "establish_storage_agreement"
   );
   const event = requireOneEvent(
     result.events,
@@ -48,49 +115,6 @@ export async function createBucket(api, signer, { minProviders = 1 } = {}) {
     "BucketCreated"
   );
   return event.bucket_id;
-}
-
-export async function createBucketWithStorage(api, client, params) {
-  const result = await submitTx(
-    api.tx.StorageProvider.create_bucket_with_storage(params),
-    client.signer,
-    "create_bucket_with_storage"
-  );
-  const created = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.BucketCreated,
-    "BucketCreated"
-  );
-  const accepted = requireOneEvent(
-    result.events,
-    api.event.StorageProvider.AgreementAccepted,
-    "AgreementAccepted"
-  );
-  return {
-    bucketId: created.bucket_id,
-    matchedProvider: accepted.provider,
-    expiresAt: accepted.expires_at,
-  };
-}
-
-export async function requestPrimaryAgreement(api, client, provider, bucketId, params) {
-  return submitTx(
-    api.tx.StorageProvider.request_primary_agreement({
-      bucket_id: bucketId,
-      provider: provider.address,
-      ...params,
-    }),
-    client.signer,
-    "request_primary_agreement"
-  );
-}
-
-export async function acceptAgreement(api, provider, bucketId) {
-  return submitTx(
-    api.tx.StorageProvider.accept_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    "accept_agreement"
-  );
 }
 
 export async function setMember(api, admin, bucketId, member, role) {
@@ -259,25 +283,6 @@ export async function setMinProviders(api, admin, bucketId, minProviders) {
   );
 }
 
-export async function rejectAgreement(api, provider, bucketId) {
-  return submitTx(
-    api.tx.StorageProvider.reject_agreement({ bucket_id: bucketId }),
-    provider.signer,
-    "reject_agreement"
-  );
-}
-
-export async function withdrawAgreementRequest(api, client, bucketId, provider) {
-  return submitTx(
-    api.tx.StorageProvider.withdraw_agreement_request({
-      bucket_id: bucketId,
-      provider: provider.address,
-    }),
-    client.signer,
-    "withdraw_agreement_request"
-  );
-}
-
 export async function claimExpiredAgreement(api, caller, bucketId, provider) {
   return submitTx(
     api.tx.StorageProvider.claim_expired_agreement({
@@ -429,11 +434,17 @@ export async function reportMissedCheckpoint(api, reporter, bucketId, window) {
 // DriveRegistry pallet (Layer 1 — file system)
 // ============================================================================
 
-export async function createDrive(api, owner, name, params) {
+/**
+ * Create a drive by redeeming provider-signed terms.
+ *
+ * Layer 0's `establish_storage_agreement_internal` opens the underlying
+ * bucket + primary agreement atomically inside `create_drive`.
+ */
+export async function createDrive(api, owner, name, provider, signed) {
   const result = await submitTx(
     api.tx.DriveRegistry.create_drive({
       name: Binary.fromBytes(new TextEncoder().encode(name)),
-      ...params,
+      ...buildSignedTermsArgs(provider, signed),
     }),
     owner.signer,
     "create_drive"
@@ -443,13 +454,9 @@ export async function createDrive(api, owner, name, params) {
     api.event.DriveRegistry.DriveCreated,
     "DriveCreated"
   );
-  const requested = api.event.StorageProvider.AgreementRequested.filter(
-    result.events
-  );
   return {
     driveId: event.drive_id,
     bucketId: event.bucket_id,
-    matchedProvider: requested[0]?.provider,
   };
 }
 
@@ -503,27 +510,29 @@ export async function deleteDrive(api, owner, driveId) {
 // S3Registry pallet (Layer 1 — S3-style objects)
 // ============================================================================
 
-export async function createS3BucketWithStorage(api, client, name, params) {
+/**
+ * Create an S3 bucket by redeeming provider-signed terms.
+ *
+ * Layer 0's `establish_storage_agreement_internal` opens the underlying
+ * Layer 0 bucket + primary agreement atomically inside `create_s3_bucket`.
+ */
+export async function createS3Bucket(api, client, name, provider, signed) {
   const result = await submitTx(
-    api.tx.S3Registry.create_s3_bucket_with_storage({
+    api.tx.S3Registry.create_s3_bucket({
       name: Binary.fromBytes(new TextEncoder().encode(name)),
-      ...params,
+      ...buildSignedTermsArgs(provider, signed),
     }),
     client.signer,
-    "create_s3_bucket_with_storage"
+    "create_s3_bucket"
   );
   const event = requireOneEvent(
     result.events,
     api.event.S3Registry.S3BucketCreated,
     "S3BucketCreated"
   );
-  const requested = api.event.StorageProvider.AgreementRequested.filter(
-    result.events
-  );
   return {
     s3BucketId: event.s3_bucket_id,
     layer0BucketId: event.layer0_bucket_id,
-    matchedProvider: requested[0]?.provider,
   };
 }
 

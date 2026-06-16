@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Smart-contract end-to-end demo for the `SharedTeamDrive` example dApp.
  *
@@ -42,6 +44,8 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
+  h160ToSubstrate,
+  negotiatePrecompileTerms,
 } from "./sc-api.js";
 
 const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientArgs();
@@ -69,8 +73,9 @@ async function main() {
     const member = makeSigner("//Charlie");
 
     console.log("\n[setup] provider + Revive account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, providerUrl, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -96,14 +101,21 @@ async function main() {
     const deployed = await deployContract(api, client, bytecode);
     console.log("  contract:", deployed.address);
 
-    // 2) createTeam{value: 10 UNIT} — the contract becomes the drive owner.
-    console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', 1MiB, 50 blocks, …)");
+    // 2) createTeam{value: 10 UNIT} — the contract becomes the drive owner,
+    //    so the terms are negotiated with the contract's substrate-mapped
+    //    account as owner; msg.value funds that account's payment reserve.
+    console.log("\n[2/4] createTeam{value: 10 UNIT}('team-cov', provider, terms[1MiB×50], sig)");
+    const contractAccount = h160ToSubstrate(deployed.addressBytes);
+    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+      maxBytes: 1n << 20n, // 1 MiB capacity
+      duration: 50,
+      pricePerByte: PRICE_PER_BYTE,
+    });
     const createData = encodeCall(abi, "createTeam", [
       "team-cov",
-      1n << 20n, // 1 MiB capacity
-      50,
-      UNIT, // payment to lock
-      0, // minProviders=0 → None
+      toHex(provider.publicKey),
+      signed.terms,
+      signed.signature,
     ]);
     let r = await callContract(api, client, deployed.addressBytes, createData, {
       value: 10n * UNIT,

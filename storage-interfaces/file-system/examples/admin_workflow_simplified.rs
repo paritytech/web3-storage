@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Admin Workflow Example: System Management and Monitoring
 //!
 //! In the simplified model where buckets are auto-created when users create drives,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `pallet_revive` precompile exposing `pallet_s3_registry` to Solidity
 //! contracts.
 //!
@@ -11,6 +13,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
+use codec::Decode;
 use core::{fmt, marker::PhantomData, num::NonZero};
 use frame_support::dispatch::RawOrigin;
 use frame_system::pallet_prelude::BlockNumberFor;
@@ -34,6 +37,49 @@ const LOG_TARGET: &str = "web3-storage::s3-registry-precompile";
 fn revert(error: &impl fmt::Debug, message: &str) -> Error {
     error!(target: LOG_TARGET, ?error, "{}", message);
     Error::Revert(message.into())
+}
+
+/// Decode a Solidity `bytes32` as a substrate `AccountId`. Our runtimes use
+/// `AccountId32`, whose SCALE encoding is the raw 32 bytes — `Decode` matches.
+fn decode_account<T>(bytes: &[u8; 32]) -> Result<T::AccountId, Error>
+where
+    T: frame_system::Config,
+{
+    T::AccountId::decode(&mut &bytes[..]).map_err(|e| {
+        revert(
+            &e,
+            "Invalid account encoding: expected 32-byte substrate AccountId",
+        )
+    })
+}
+
+/// Rebuild the pallet's [`AgreementTermsOf`](pallet_storage_provider::AgreementTermsOf)
+/// from its Solidity mirror so the SCALE encoding matches the payload the
+/// provider signed.
+fn decode_terms<T>(
+    terms: &IS3Registry::PrimitiveAgreementTerms,
+) -> Result<pallet_storage_provider::AgreementTermsOf<T>, Error>
+where
+    T: pallet_storage_provider::Config,
+    BalanceOf<T>: From<u128>,
+    BlockNumberFor<T>: From<u32>,
+{
+    Ok(storage_primitives::AgreementTerms {
+        owner: decode_account::<T>(&terms.owner.0)?,
+        max_bytes: terms.maxBytes,
+        duration: BlockNumberFor::<T>::from(terms.duration),
+        price_per_byte: BalanceOf::<T>::from(terms.pricePerByte),
+        valid_until: BlockNumberFor::<T>::from(terms.validUntil),
+        nonce: terms.nonce,
+        bucket_id: terms.hasBucketId.then_some(terms.bucketId),
+        replica_params: terms
+            .hasReplicaParams
+            .then(|| storage_primitives::ReplicaTerms {
+                sync_balance: BalanceOf::<T>::from(terms.replicaParams.syncBalance),
+                min_sync_interval: BlockNumberFor::<T>::from(terms.replicaParams.minSyncInterval),
+                sync_price: BalanceOf::<T>::from(terms.replicaParams.syncPrice),
+            }),
+    })
 }
 
 /// Precompile wrapping `pallet_s3_registry`'s public extrinsics.
@@ -73,39 +119,34 @@ where
         match input {
             IS3RegistryCalls::createS3Bucket(IS3Registry::createS3BucketCall {
                 name,
-                minProviders,
+                provider,
+                terms,
+                signature,
             }) => {
                 env.charge(
                     <Runtime as pallet_s3_registry::Config>::WeightInfo::create_s3_bucket(),
                 )?;
+                let provider = decode_account::<Runtime>(&provider.0)?;
+                let terms = decode_terms::<Runtime>(terms)?;
+                let sig =
+                    sp_runtime::MultiSignature::decode(&mut signature.as_ref()).map_err(|e| {
+                        revert(
+                            &e,
+                            "Invalid signature encoding: expected SCALE-encoded MultiSignature",
+                        )
+                    })?;
+                // `NextS3BucketId` is incremented inside the extrinsic; capture
+                // the pre-dispatch value so we can return the id assigned to
+                // this call.
                 let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
                 pallet_s3_registry::Pallet::<Runtime>::create_s3_bucket(
                     frame_origin,
                     name.as_bytes().to_vec(),
-                    *minProviders,
+                    provider,
+                    terms,
+                    sig,
                 )
                 .map_err(|e| revert(&e, "createS3Bucket failed"))?;
-                Ok(s3_bucket_id.abi_encode())
-            }
-
-            IS3RegistryCalls::createS3BucketWithStorage(
-                IS3Registry::createS3BucketWithStorageCall {
-                    name,
-                    maxCapacity,
-                    duration,
-                    maxPayment,
-                },
-            ) => {
-                env.charge(<Runtime as pallet_s3_registry::Config>::WeightInfo::create_s3_bucket_with_storage())?;
-                let s3_bucket_id = pallet_s3_registry::NextS3BucketId::<Runtime>::get();
-                pallet_s3_registry::Pallet::<Runtime>::create_s3_bucket_with_storage(
-                    frame_origin,
-                    name.as_bytes().to_vec(),
-                    *maxCapacity,
-                    BlockNumberFor::<Runtime>::from(*duration),
-                    BalanceOf::<Runtime>::from(*maxPayment),
-                )
-                .map_err(|e| revert(&e, "createS3BucketWithStorage failed"))?;
                 Ok(s3_bucket_id.abi_encode())
             }
 

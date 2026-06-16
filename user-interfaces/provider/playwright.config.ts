@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({

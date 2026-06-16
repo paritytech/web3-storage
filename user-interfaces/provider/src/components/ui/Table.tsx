@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { cn } from '@/utils/cn'
 
 interface TableProps extends React.HTMLAttributes<HTMLTableElement> {}
