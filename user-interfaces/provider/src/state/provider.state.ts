@@ -35,6 +35,7 @@ export interface ProviderInfo {
   bucketCount: number
   registeredAt: number
   multiaddr?: string
+  deregisterAt?: number
 }
 
 export interface ProviderSettings {
@@ -442,6 +443,59 @@ export async function addStake(
 }
 
 /**
+ * Announce intent to de-register (step 1 of 2).
+ * Requires no active agreements (committed_bytes == 0).
+ */
+export async function deregisterProvider(
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitDeregisterProvider } = await import('@/lib/chain-client')
+    await submitDeregisterProvider(signer, onProgress)
+
+    // Reload from chain to reflect deregisterAt and frozen settings
+    const address = providerInfo$.getValue()?.account
+    if (address) await loadProviderData(address)
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'De-registration announcement failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
+ * Complete de-registration (step 2 of 2).
+ * Requires cooldown period to have elapsed.
+ */
+export async function completeDeregister(
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitCompleteDeregister } = await import('@/lib/chain-client')
+    await submitCompleteDeregister(signer, onProgress)
+
+    // Provider no longer exists — clear all state
+    clearProviderState()
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'De-registration completion failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
  * Respond to a challenge (submits extrinsic via wallet)
  */
 export async function respondToChallenge(
@@ -503,6 +557,7 @@ function convertProviderInfo(address: string, chain: OnChainProviderInfo): Provi
     bucketCount: chain.activeBuckets,
     registeredAt: chain.registeredAt,
     multiaddr: chain.multiaddr,
+    deregisterAt: chain.deregisterAt,
   }
 }
 
@@ -609,6 +664,8 @@ export const providerActions = {
   updateSettings,
   updateMultiaddr,
   addStake,
+  deregisterProvider,
+  completeDeregister,
   respondToChallenge,
   clearProviderState,
 }
