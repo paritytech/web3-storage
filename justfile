@@ -210,7 +210,7 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
-start-n-reg-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
+register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
     just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
     just register-provider "{{KEYFILE}}"
 
