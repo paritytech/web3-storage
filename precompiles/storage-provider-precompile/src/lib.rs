@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `pallet_revive` precompile exposing the client-side bucket lifecycle of
 //! `pallet_storage_provider` to Solidity contracts.
 //!

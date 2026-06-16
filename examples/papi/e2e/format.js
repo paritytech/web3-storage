@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Tiny helper extracted so both common.js and e2e/helpers.js can format
  * PAPI dispatch errors without creating a circular dependency.

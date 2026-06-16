@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
 //! This module provides a background service that:

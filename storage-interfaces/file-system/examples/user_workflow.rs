@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! User Workflow Example: Using storage for files
 //!
 //! This example demonstrates the user flow in the bucket-based model.

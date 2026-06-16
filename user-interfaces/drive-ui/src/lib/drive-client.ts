@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive Client — wraps DriveRegistry pallet + StorageProvider pallet + provider
  * HTTP endpoints. Stateless w.r.t. connection: takes a `ParachainApi` and a

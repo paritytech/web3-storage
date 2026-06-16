@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! S3 CI Integration Test
 //!
 //! This test is designed to run in CI after the infrastructure is set up

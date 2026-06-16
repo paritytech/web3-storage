@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for genesis-registered providers.
 
 use super::*;

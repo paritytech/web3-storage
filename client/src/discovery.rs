@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Discovery Client - For finding and matching storage providers.
 //!
 //! This client provides operations for:

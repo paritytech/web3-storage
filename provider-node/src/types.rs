@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};

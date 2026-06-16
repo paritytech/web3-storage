@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration tests for checkpoint-related provider behaviour.
 //!
 //! These tests require an in-process provider node and verify operations

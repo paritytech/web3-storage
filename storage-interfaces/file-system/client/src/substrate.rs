@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Substrate blockchain integration for Drive Registry.
 //!
 //! This module provides blockchain interaction using subxt with dynamic dispatch.

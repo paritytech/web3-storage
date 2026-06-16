@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { Header } from '@/components/Header'

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Weight functions for the storage parachain runtime.
 //!
 //! Weights are auto-generated using benchmarking.

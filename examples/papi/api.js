@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { Binary, Enum } from "@polkadot-api/substrate-bindings";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {

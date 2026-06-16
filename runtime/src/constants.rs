@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Web3 Storage Parachain runtime constants used by this runtime.
 
 /// System parachain IDs (standard across Polkadot/Paseo system chains).

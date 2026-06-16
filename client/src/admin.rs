@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Admin Client - For bucket administrators managing buckets and agreements.
 //!
 //! This client provides operations for:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
 import { HardDrive, MoreHorizontal, Plus, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
