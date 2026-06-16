@@ -1,0 +1,15 @@
+# All findings are well-known Substrate development accounts (Alice, Bob, etc.)
+# used in chain specs and documentation — not real secrets.
+
+# Alice's SS58 address in genesis chain specs
+a8829e9e6e82f235be67103d3ced5f0be8e632fc:zombienet/storage-local-spec.json:generic-api-key:105
+ebab9789e0a12d49dc89713bf6d74f67d89c7460:chain-specs/storage-local.json:generic-api-key:26
+865d2deed77a4b2fdb5a28999e38eadeb5e7dc2b:chain-specs/storage-rococo.json:generic-api-key:58
+b8f1c040408903b47c8d1c2f42015a301f0d7c88:scripts/genesis-patch.json:generic-api-key:34
+d1c4b2d63a2c25136cc06e30495438f911d946d9:scripts/genesis-patch.json:generic-api-key:34
+dfb793c101c6a872ebed54701d1c4e339573f105:scripts/genesis-patch.json:generic-api-key:34
+b72a3d9f77f1257b3cee601a9bd096879c02e0d9:scripts/genesis-patch.json:generic-api-key:34
+
+# Alice/Bob public keys in testing documentation
+d7234303b34d5b3f153ff5dbdc4a95555f6d707c:docs/testing/MANUAL_TESTING_GUIDE.md:generic-api-key:294
+d7234303b34d5b3f153ff5dbdc4a95555f6d707c:docs/testing/MANUAL_TESTING_GUIDE.md:generic-api-key:298
