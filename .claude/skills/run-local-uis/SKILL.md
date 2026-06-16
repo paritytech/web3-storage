@@ -1,6 +1,6 @@
 ---
 name: run-local-uis
-description: Start all four UIs (landing + console-ui + drive-ui + provider-dashboard) locally with hot reload and print the ports table. Use when the user says "run locally", "run the UIs", "start the UIs", "spin up the UIs", or similar — covers any time the goal is to drive the user-interfaces apps in a browser, including verifying changes to the shared network-picker, the landing page, or any individual UI.
+description: Start all five UIs (landing + console-ui + drive-ui + provider-dashboard + s3-ui) locally with hot reload and print the ports table. Use when the user says "run locally", "run the UIs", "start the UIs", "spin up the UIs", or similar — covers any time the goal is to drive the user-interfaces apps in a browser, including verifying changes to the shared network-picker, the landing page, or any individual UI.
 ---
 
 Spin up every `user-interfaces/` app on its dedicated port with Vite HMR, then
@@ -18,6 +18,7 @@ in-memory and rewrites the card links to point at the local dev ports.
 | Console UI | http://127.0.0.1:5173/ | `@web3-storage/console-ui` |
 | Drive UI | http://127.0.0.1:5174/ | `@web3-storage/drive-ui` |
 | Provider Dashboard | http://127.0.0.1:5175/ | `provider-dashboard` |
+| S3 UI | http://127.0.0.1:5177/ | `@web3-storage/s3-ui` |
 
 These ports are the canonical ones — `user-interfaces/README.md` and each
 app's `vite.config.ts` are aligned to them. 5176 is reserved for the landing
@@ -29,7 +30,7 @@ page by this skill.
    already has running:
 
    ```bash
-   for p in 5173 5174 5175 5176; do
+   for p in 5173 5174 5175 5176 5177; do
      ss -ltn "sport = :$p" 2>/dev/null | grep -q LISTEN && echo "$p: up" || echo "$p: free"
    done
    ```
@@ -57,6 +58,11 @@ page by this skill.
      > /tmp/run-local-uis/provider.log 2>&1 &
    disown
 
+   # S3 UI — vite.config.ts pins 5177
+   nohup pnpm --filter @web3-storage/s3-ui run dev -- --host 127.0.0.1 \
+     > /tmp/run-local-uis/s3-ui.log 2>&1 &
+   disown
+
    # Landing — no package.json. Borrow any per-app vite binary (they're all
    # the same version) and point it at this skill's config, which substitutes
    # __NETWORKS_JSON__ etc. in-memory and rewrites card links to the dev ports.
@@ -73,7 +79,7 @@ page by this skill.
 
    ```bash
    sleep 5
-   ss -ltn 2>/dev/null | grep -E ':51(73|74|75|76)\b'
+   ss -ltn 2>/dev/null | grep -E ':51(73|74|75|76|77)\b'
    ```
 
    If a port is still missing, `tail -30 /tmp/run-local-uis/<app>.log` to find
@@ -88,7 +94,7 @@ page by this skill.
    ```bash
    body=$(curl -s --max-time 5 http://127.0.0.1:5176/)
    echo "stale placeholders: $(grep -cE '__(NETWORKS_JSON|DEFAULT_NETWORK_ID|VALID_IDS_JSON)__' <<<"$body")"
-   echo "stale relative cards: $(grep -cE \"['\\\"]\\\\./(console|provider|drive)/['\\\"]\" <<<"$body")"
+   echo "stale relative cards: $(grep -cE \"['\\\"]\\\\./(console|provider|drive|s3)/['\\\"]\" <<<"$body")"
    ```
 
    Both counts should be `0`.
@@ -104,7 +110,7 @@ page by this skill.
    and silently kills your shell):
 
    ```bash
-   for p in 5173 5174 5175 5176; do
+   for p in 5173 5174 5175 5176 5177; do
      pid=$(ss -ltnp 2>/dev/null | sed -n "s/.*:$p .*pid=\([0-9]*\).*/\1/p" | head -1)
      [ -n "$pid" ] && kill "$pid"
    done

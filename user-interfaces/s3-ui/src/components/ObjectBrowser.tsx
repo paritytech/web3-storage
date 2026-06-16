@@ -13,6 +13,8 @@ import {
   LayoutGrid,
   LayoutList,
   Loader2,
+  Shield,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +38,7 @@ import {
   useS3Loading,
   useUploading,
   useViewMode,
+  useEncryptionKey,
   setViewMode,
   navigateToPrefix,
   refreshObjects,
@@ -49,6 +52,9 @@ import UploadZone from "./UploadZone";
 import UploadObjectDialog from "./UploadObjectDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import EmptyState from "./EmptyState";
+import CheckpointPanel from "./CheckpointPanel";
+import EncryptionPanel from "./EncryptionPanel";
+import ChallengeHistoryPanel from "./ChallengeHistoryPanel";
 
 /**
  * Derive virtual folders and files from flat S3 object keys.
@@ -86,8 +92,12 @@ export default function ObjectBrowser() {
   const loading = useS3Loading();
   const uploading = useUploading();
   const viewMode = useViewMode();
+  const encryptionKey = useEncryptionKey();
 
   const [objectToDelete, setObjectToDelete] = useState<string | null>(null);
+  const [showCheckpoint, setShowCheckpoint] = useState(false);
+  const [showEncryption, setShowEncryption] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [dropFile, setDropFile] = useState<File | null>(null);
 
@@ -200,6 +210,26 @@ export default function ObjectBrowser() {
             </Button>
             <div className="w-px h-6 bg-border mx-1" />
             <Button
+              data-testid="encryption-toggle"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setShowEncryption(!showEncryption)}
+              title={encryptionKey ? "Encryption enabled" : "Encryption"}
+            >
+              <Lock className={`h-4 w-4 ${encryptionKey ? "text-amber-500" : showEncryption ? "text-primary" : ""}`} />
+            </Button>
+            <Button
+              data-testid="checkpoint-toggle"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setShowCheckpoint(!showCheckpoint)}
+              title="Checkpoint"
+            >
+              <Shield className={`h-4 w-4 ${showCheckpoint ? "text-primary" : ""}`} />
+            </Button>
+            <Button
               data-testid="view-mode-toggle"
               variant="ghost"
               size="icon"
@@ -225,8 +255,27 @@ export default function ObjectBrowser() {
           </div>
         </div>
 
-        {/* Object list */}
-        <div className="flex-1 pt-4">
+        {showEncryption && (
+          <div className="pt-4">
+            <EncryptionPanel />
+          </div>
+        )}
+
+        {showCheckpoint && (
+          <div className="pt-4">
+            <CheckpointPanel onShowHistory={() => setShowHistory(true)} />
+          </div>
+        )}
+
+        {/* Object list or challenge history */}
+        {showHistory ? (
+          <div className="flex-1 pt-4">
+            <ChallengeHistoryPanel
+              bucketId={selectedBucket.layer0BucketId ?? null}
+              onClose={() => setShowHistory(false)}
+            />
+          </div>
+        ) : <div className="flex-1 pt-4">
           {loading && folders.length === 0 && files.length === 0 ? (
             <div className="flex items-center justify-center py-16">
               <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -268,7 +317,7 @@ export default function ObjectBrowser() {
               onCopyKey={handleCopyKey}
             />
           )}
-        </div>
+        </div>}
       </div>
 
       <UploadObjectDialog
