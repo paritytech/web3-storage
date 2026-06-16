@@ -204,11 +204,6 @@
       <div class="error" id="landing-picker-error" role="alert" hidden></div>
     </div>
     <div class="cards">
-      <a href="./console/" class="card" data-app="console" data-testid="landing-card-console">
-        <div class="icon">&#x1F4E6;</div>
-        <h2>Storage Console</h2>
-        <p>Create S3 buckets, upload and download objects, manage permissions, and explore blockchain events.</p>
-      </a>
       <a href="./provider/" class="card" data-app="provider" data-testid="landing-card-provider">
         <div class="icon">&#x1F5A5;</div>
         <h2>Provider Dashboard</h2>
@@ -231,7 +226,6 @@
     // from the same origin (https://paritytech.github.io/web3-storage/<app>/).
     // The local dev landing copy rewrites these to absolute Vite dev-server URLs.
     var BASES = {
-      console: './console/',
       provider: './provider/',
       drive: './drive/',
       s3: './s3/',
