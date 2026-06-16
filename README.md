@@ -318,6 +318,12 @@ The security policy for this project is governed by the
 [paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
 If you discover a vulnerability, please follow the responsible disclosure process described there.
 
+## Security
+
+The security policy for this project is governed by the
+[paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
+If you discover a vulnerability, please follow the responsible disclosure process described there.
+
 ## License
 
 This project is dual-licensed:
