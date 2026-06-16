@@ -309,11 +309,14 @@ For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKS
 
 ## Contributing
 
-1. Read [CLAUDE.md](./CLAUDE.md) - Project overview, build commands, and code review guidelines
-2. Read the [Architecture Design](./docs/design/scalable-web3-storage.md)
-3. Check [Implementation Details](./docs/design/scalable-web3-storage-implementation.md)
-4. Run tests: `cargo test`
-5. Follow existing code style: `cargo fmt --check`
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions, PR process,
+code style, and licensing details.
+
+## Security
+
+The security policy for this project is governed by the
+[paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
+If you discover a vulnerability, please follow the responsible disclosure process described there.
 
 ## Security
 
