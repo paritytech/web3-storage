@@ -14,17 +14,6 @@ interface ProviderPickerPanelProps {
   disabled?: boolean;
 }
 
-function humanizeReason(reason: string): string {
-  const map: Record<string, string> = {
-    PriceTooHigh: "Price too high",
-    InsufficientCapacity: "Insufficient capacity",
-    DurationTooShort: "Duration too short",
-    DurationTooLong: "Duration too long",
-    NotAccepting: "Not accepting",
-  };
-  return map[reason] || reason || "";
-}
-
 export default function ProviderPickerPanel({
   onSelect,
   requiredCapacity,
