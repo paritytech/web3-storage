@@ -20,7 +20,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@polkadot-api/cli": "^0.20.4"
+    "@polkadot-api/cli": "^0.20.4",
     "c8": "^10.1.3"
   }
 }
