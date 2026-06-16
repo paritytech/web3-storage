@@ -18,7 +18,7 @@
     .container { max-width: 800px; padding: 2rem; text-align: center; }
     h1 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; }
     .subtitle { color: #888; font-size: 1.1rem; margin-bottom: 3rem; }
-    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+    .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
     .card {
       background: #1a1a2e;
       border: 1px solid #2a2a3e;
@@ -219,6 +219,11 @@
         <h2>Drive</h2>
         <p>File manager interface. Create drives, browse directories, upload and download files.</p>
       </a>
+      <a href="./s3/" class="card" data-app="s3" data-testid="landing-card-s3">
+        <div class="icon">&#x1FAA3;</div>
+        <h2>S3 Storage</h2>
+        <p>Amazon S3-compatible object storage on the decentralized web. Create buckets, manage objects, and browse prefixes.</p>
+      </a>
     </div>
   </div>
   <script>
@@ -229,6 +234,7 @@
       console: './console/',
       provider: './provider/',
       drive: './drive/',
+      s3: './s3/',
     };
     // Network constants — auto-substituted from
     // user-interfaces/shared/network-config/src/{networks,types}.ts by
