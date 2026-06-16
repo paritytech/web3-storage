@@ -18,7 +18,8 @@ pub mod fast_runtime_binary {
     include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
 }
 
-mod genesis_config_presets;
+pub mod genesis_config_presets;
+pub mod migrations;
 pub mod paseo_constants;
 mod revive;
 mod storage;
@@ -124,11 +125,6 @@ pub type SignedBlock = generic::SignedBlock<Block>;
 pub type BlockId = generic::BlockId<Block>;
 
 /// The SignedExtension to the basic transaction logic.
-///
-/// The trailing `pallet_revive::evm::tx_extension::SetOrigin` lets the runtime
-/// accept Ethereum-signed transactions via `pallet_revive::eth_transact` —
-/// `SetOrigin` recovers the signer's `H160` from the signature and maps it to
-/// a substrate `AccountId32` (see [`crate::revive::EthExtraImpl`]).
 pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
     Runtime,
     (
@@ -140,6 +136,8 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_system::CheckNonce<Runtime>,
         frame_system::CheckWeight<Runtime>,
         pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+        frame_metadata_hash_extension::CheckMetadataHash<Runtime>,
+        // lets the runtime accept Ethereum-signed transactions via `pallet_revive::eth_transact`
         pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
     ),
 >;
@@ -185,10 +183,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 2,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // 0.2.0 -> 2_000. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `1`).
+    spec_version: 2_000,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 1,
 };
 
@@ -268,7 +269,7 @@ impl frame_system::Config for Runtime {
     type SS58Prefix = SS58Prefix;
     type OnSetCode = cumulus_pallet_parachain_system::ParachainSetCode<Self>;
     type MaxConsumers = ConstU32<16>;
-    type SingleBlockMigrations = ();
+    type SingleBlockMigrations = migrations::Migrations;
     type MultiBlockMigrator = ();
     type PreInherents = ();
     type PostInherents = ();

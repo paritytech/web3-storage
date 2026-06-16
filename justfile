@@ -5,10 +5,17 @@
 # Or on macOS:
 #   brew install just
 
+# Tool versions come from .github/env — the single source of truth shared with
+# CI. Shell-exported vars still override file values.
+set dotenv-load := true
+set dotenv-filename := ".github/env"
+
 # Polkadot SDK version (matches Cargo.toml tag)
-polkadot_version := "polkadot-stable2603"
+polkadot_version := env("POLKADOT_SDK_VERSION")
 # Zombienet version
-zombienet_version := "v0.4.11"
+zombienet_version := env("ZOMBIENET_VERSION")
+# try-runtime CLI version (for runtime migration checks)
+try_runtime_version := env("TRY_RUNTIME_VERSION")
 
 # Detect OS and architecture
 os := `uname -s | tr '[:upper:]' '[:lower:]'`
@@ -18,6 +25,9 @@ arch := `uname -m`
 polkadot_sdk_base := "https://github.com/paritytech/polkadot-sdk/releases/download/" + polkadot_version + "/"
 darwin_suffix := if os == "darwin" { "-aarch64-apple-darwin" } else { "" }
 zombienet_asset := if os == "darwin" { "zombie-cli-aarch64-apple-darwin" } else { "zombie-cli-x86_64-unknown-linux-musl" }
+try_runtime_base := "https://github.com/paritytech/try-runtime-cli/releases/download/" + try_runtime_version + "/"
+try_runtime_asset := if os == "darwin" { "try-runtime-aarch64-apple-darwin" } else { "try-runtime-x86_64-unknown-linux-musl" }
+try_runtime_sha256 := if os == "darwin" { env("TRY_RUNTIME_AARCH64_APPLE_DARWIN_SHA256", "") } else { env("TRY_RUNTIME_X86_64_UNKNOWN_LINUX_MUSL_SHA256", "") }
 
 # Network ports (override with: just PROVIDER_PORT=3001 start-provider)
 RELAY_PORT := "9900"
@@ -51,7 +61,7 @@ build-provider:
     cargo build --release -p storage-provider-node
 
 [private]
-_download BIN URL:
+_download BIN URL SHA256="":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p .bin
@@ -72,6 +82,15 @@ _download BIN URL:
         fi
         sleep $((attempt * 5))
     done
+    if [[ -n "{{SHA256}}" ]]; then
+        actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum .bin/{{BIN}}; else shasum -a 256 .bin/{{BIN}}; fi | cut -d' ' -f1)
+        if [[ "$actual" != "{{SHA256}}" ]]; then
+            echo "Checksum mismatch for {{BIN}}: expected {{SHA256}}, got $actual"
+            rm -f .bin/{{BIN}}
+            exit 1
+        fi
+        echo "{{BIN}} checksum verified"
+    fi
     chmod +x .bin/{{BIN}}
     echo "{{BIN}} downloaded to .bin/{{BIN}}"
 
@@ -87,6 +106,9 @@ download-zombienet: (_download "zombienet" "https://github.com/paritytech/zombie
 
 # Download frame-omni-bencher (for benchmarks / `/cmd bench`)
 download-frame-omni-bencher: (_download "frame-omni-bencher" polkadot_sdk_base + "frame-omni-bencher" + darwin_suffix)
+
+# Download try-runtime CLI (for runtime migration checks)
+download-try-runtime: (_download "try-runtime" (try_runtime_base + try_runtime_asset) try_runtime_sha256)
 
 [private]
 _download-polkadot: (_download "polkadot" polkadot_sdk_base + "polkadot" + darwin_suffix) (_download "polkadot-execute-worker" polkadot_sdk_base + "polkadot-execute-worker" + darwin_suffix) (_download "polkadot-prepare-worker" polkadot_sdk_base + "polkadot-prepare-worker" + darwin_suffix)
@@ -124,6 +146,35 @@ start-paseo-chain: check build-paseo-runtime
     echo ""
     PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/storage-paseo-local.toml
 
+# Start a standalone dev chain with 2s blocks for E2E testing (no relay chain).
+# Blocks finalize instantly — much faster than zombienet for automated tests.
+# The runtime build command and chain-spec script are read from
+# scripts/runtimes-matrix.json so a local run matches the CI e2e job exactly.
+# Defaults to web3-storage-paseo (what CI's e2e job uses).
+start-e2e-chain RUNTIME="web3-storage-paseo": check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BUILD_CMD=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .build_command // empty' scripts/runtimes-matrix.json)
+    SPEC_SCRIPT=$(jq -r --arg r "{{ RUNTIME }}" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
+    if [ -z "$BUILD_CMD" ] || [ -z "$SPEC_SCRIPT" ]; then
+        echo "Unknown runtime '{{ RUNTIME }}' (no match with build_command + chain_spec_script in scripts/runtimes-matrix.json)"
+        exit 1
+    fi
+    just "$BUILD_CMD"
+    echo ""
+    echo "=== Starting E2E Dev Chain ({{ RUNTIME }}, 2s blocks, no relay chain) ==="
+    echo ""
+    SPEC_FILE="/tmp/e2e-chain-spec.json"
+    "$SPEC_SCRIPT" > "$SPEC_FILE"
+    .bin/polkadot-omni-node \
+        --chain "$SPEC_FILE" \
+        --alice --tmp \
+        --unsafe-force-node-key-generation \
+        --dev-block-time 2000 \
+        --rpc-port {{ CHAIN_PORT }} \
+        --rpc-cors all \
+        -lruntime=info
+
 # Start the storage provider node
 # Examples:
 #   just start-provider                                       # inmemory, //Alice key, port 3333
@@ -158,7 +209,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --storage-mode "{{MODE}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}" \
-        --enable-agreement-coordinator \
         --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
@@ -286,40 +336,36 @@ papi-setup:
     npm run papi:generate
 
 # ============================================================
-# PAPI single-purpose demos
+# PAPI standalone demos (not covered by E2E suite)
 # ============================================================
-# Each script exercises one pallet workflow via the typed PAPI client.
-# All assume the chain (and the provider, for non-read-only ones) is running.
-
-# Bucket ACL flow: create_bucket -> set_member -> promote -> remove_member (pure on-chain)
-papi-bucket-membership ADMIN="//Alice" WRITER="//Eve" READER="//Ferdie": papi-setup
-    node examples/papi/bucket-membership.js "{{ CHAIN_WS }}" "{{ ADMIN }}" "{{ WRITER }}" "{{ READER }}"
 
 # Marketplace-style read-only walk of the Providers storage map
 papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
     node examples/papi/provider-discovery.js "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
 
-# Atomic create_bucket_with_storage -> upload -> checkpoint -> freeze_bucket
-papi-bucket-with-storage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/bucket-with-storage.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
-# S3 registry workflow: create_s3_bucket -> put/copy/delete object metadata -> delete_s3_bucket
-papi-s3-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/s3-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
-# Drive registry workflow: create_drive -> share -> unshare -> delete_drive
-papi-drive-lifecycle PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" OWNER_SEED="//Bob" MEMBER_SEED="//Ferdie": papi-setup
-    node examples/papi/drive-lifecycle.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ OWNER_SEED }}" "{{ MEMBER_SEED }}"
-
-# Provider-initiated checkpoint + reward flow: configure_checkpoint_window ->
-# fund_checkpoint_pool -> provider_checkpoint -> claim_checkpoint_rewards.
-papi-checkpoint-rewards PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node examples/papi/checkpoint-rewards.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
-
 # Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
 # wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
 papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/checkpoint-missed.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# ============================================================
+# E2E Test Suite
+# ============================================================
+
+# Run comprehensive E2E test suite (all 10 workflows sequentially)
+e2e PROVIDER_URL=PROVIDER_URL: papi-setup
+    cd examples/papi && npx c8 --reporter=text --reporter=json --report-dir=coverage node e2e/runner.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+
+# Run a single E2E workflow by number (e.g. just e2e-single 01)
+e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FILE=$(ls examples/papi/e2e/{{ NUM }}-*.js 2>/dev/null | head -1)
+    if [ -z "$FILE" ]; then
+        echo "No workflow file matching examples/papi/e2e/{{ NUM }}-*.js"
+        exit 1
+    fi
+    node "$FILE" "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # ============================================================
 # File System (Layer 1)

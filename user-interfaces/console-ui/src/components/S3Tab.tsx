@@ -26,7 +26,8 @@ import { useStorage } from "@/hooks/useStorage";
 import { toast } from "@/components/ui/toaster";
 import { formatBytes, truncateHash } from "@/lib/utils";
 import { isSameAddress } from "@web3-storage/papi";
-import type { BucketInfo, S3ObjectInfo } from "@/lib/storage";
+import type { AvailableProvider, BucketInfo, S3ObjectInfo, SignedTerms } from "@/lib/storage";
+import { negotiateTerms, parseMultiaddrToHttp } from "@/lib/storage";
 import { EncryptionKey, bytesToHex } from "@/lib/encryption";
 import CreationStatusCard, { type CreationStatusItem } from "./CreationStatusCard";
 import ProviderPickerDialog from "./ProviderPickerDialog";
@@ -42,15 +43,13 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     buckets,
     loading,
     refreshBuckets,
-    createBucket,
+    submitCreateBucket,
     deleteBucket,
     putObject,
     listObjects,
     deleteObject,
     downloadS3Object,
     signerAddress,
-    waitForProvider,
-    requestAgreementWithProvider,
     fetchBucketMembers,
     setEncryption,
     isEncrypted,
@@ -62,17 +61,17 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
   const [loadingObjects, setLoadingObjects] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Create bucket dialog
+  // Create bucket dialog. Defaults: 10 MiB capacity, 10k blocks duration.
   const [showCreateBucket, setShowCreateBucket] = useState(false);
   const [newBucketName, setNewBucketName] = useState("");
-  // Defaults: 10 MB capacity (10 × 2^20 bytes), 10k blocks duration
-  // maxPayment must cover: price_per_byte(1e6) × capacity × duration × 1.2 buffer
   const [bucketCapacity, setBucketCapacity] = useState("10485760");
   const [bucketDuration, setBucketDuration] = useState("10000");
-  const [bucketMaxPayment, setBucketMaxPayment] = useState("120000000000000000");
+  const [bucketPricePerByte, setBucketPricePerByte] = useState("0");
+  const [creating, setCreating] = useState(false);
+
   // Creation status tracking
   const [creations, setCreations] = useState<CreationStatusItem[]>([]);
-  const [pickerTarget, setPickerTarget] = useState<CreationStatusItem | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Role-based access
   const [userRole, setUserRole] = useState<UserRole>(null);
@@ -190,34 +189,71 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
     return true;
   };
 
-  const waitAndTrack = async (creationId: string, layer0BucketId: bigint): Promise<boolean> => {
-    updateCreation(creationId, { stage: "waiting", elapsedMs: 0 });
-    try {
-      await waitForProvider(layer0BucketId, (status, elapsedMs) => {
-        updateCreation(creationId, { statusMessage: status, elapsedMs });
-      });
-      updateCreation(creationId, { stage: "ready" });
-      return true;
-    } catch (err) {
-      updateCreation(creationId, {
-        stage: "failed",
-        error: err instanceof Error ? err.message : "Provider did not accept. Try choosing a provider manually.",
-      });
-      return false;
-    }
-  };
-
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const handleCreateBucket = async () => {
+  // Step 1: validate the form, then open the provider picker.
+  // (Bucket creation requires a provider-signed agreement up front — the
+  // chain no longer auto-discovers, and the bucket cannot exist without it.)
+  const handleCreateBucket = () => {
     if (!newBucketName.trim() || !validateBucketName(newBucketName)) {
       toast({ title: "Error", description: "Invalid bucket name (3-63 chars, lowercase, S3 rules)", variant: "destructive" });
+      return;
+    }
+    setCreateError(null);
+    setPickerOpen(true);
+  };
+
+  // Per-creation retry context. Lets a failed on-chain submit be retried
+  // with the same signed terms — no need to bother the provider again
+  // (and burn a nonce) just because the tx fee estimation hiccuped or the
+  // user was momentarily disconnected. Cleared once the bucket is ready.
+  interface RetryCtx {
+    name: string;
+    provider: AvailableProvider;
+    url: string;
+    signed: SignedTerms;
+  }
+  const retryCtxRef = useRef<Map<string, RetryCtx>>(new Map());
+
+  // Submit `create_s3_bucket` with already-negotiated signed terms. Used
+  // both by the first attempt and by the retry button on a failed card.
+  const runChainSubmit = useCallback(async (creationId: string, ctx: RetryCtx) => {
+    updateCreation(creationId, { stage: "submitting", error: undefined });
+    try {
+      const bucket = await submitCreateBucket(ctx.name, ctx.provider.account, ctx.url, ctx.signed);
+      updateCreation(creationId, { stage: "ready", bucketId: bucket.layer0BucketId });
+      retryCtxRef.current.delete(creationId);
+      setSelectedBucket(bucket);
+      setShowCreateBucket(false);
+      setNewBucketName("");
+      toast({ title: "Success", description: `Bucket "${bucket.name}" created` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create bucket";
+      let errorMsg = msg;
+      // Show friendly error for common cases
+      if (msg.includes("NoProvidersAvailable")) {
+        errorMsg = "No storage providers available. Make sure a provider is running and accepting agreements.";
+      }
+      updateCreation(creationId, { stage: "failed", error: errorMsg });
+    } finally {
+      setCreating(false);
+    }
+  }, [submitCreateBucket, updateCreation]);
+
+  // Step 2 (orchestration): caller picked a provider. Negotiate signed
+  // terms over HTTP, then submit on chain. Negotiation and submission are
+  // tracked as one CreationStatusItem but stored in two separate stages
+  // so a chain failure can be retried without re-negotiating.
+  const handleProviderSelect = async (provider: AvailableProvider) => {
+    setPickerOpen(false);
+    const url = parseMultiaddrToHttp(provider.multiaddr);
+    if (!url) {
+      setCreateError(`Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`);
       return;
     }
 
     const creationId = crypto.randomUUID();
     const name = newBucketName;
-
     setCreations(prev => [...prev, {
       id: creationId,
       name,
@@ -226,63 +262,46 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       elapsedMs: 0,
       createdAt: Date.now(),
     }]);
+    setCreating(true);
 
-    // Close the form so the user sees the status card
-    setShowCreateBucket(false);
-    setNewBucketName("");
-    setCreateError(null);
-
+    // Phase A: negotiate. Failure here means re-negotiate from scratch on retry.
+    let signed: SignedTerms;
     try {
-      const bucket = await createBucket(name, {
-        capacity: BigInt(bucketCapacity),
+      signed = await negotiateTerms(url, {
+        owner: signerAddress!,
+        max_bytes: BigInt(bucketCapacity),
         duration: parseInt(bucketDuration, 10),
-        maxPayment: BigInt(bucketMaxPayment),
-      });
-
-      updateCreation(creationId, { stage: "created", bucketId: bucket.layer0BucketId });
-
-      // Poll for provider acceptance in the background
-      waitAndTrack(creationId, bucket.layer0BucketId).then((ready) => {
-        if (!ready) return;
-        // Provider accepted — select the bucket and refresh the list
-        refreshBuckets();
-        setSelectedBucket(bucket);
-        onBucketSelect?.(bucket.layer0BucketId);
+        price_per_byte: BigInt(bucketPricePerByte || "0"),
+        replica_params: null,
+        bucket_id: null,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create bucket";
-      let errorMsg = msg;
-      if (msg.includes("NoProvidersAvailable")) {
-        errorMsg = "No storage providers available. Make sure a provider is running and accepting agreements.";
-      }
-      updateCreation(creationId, { stage: "failed", error: errorMsg });
+      const msg = err instanceof Error ? err.message : "Failed to negotiate with provider";
+      updateCreation(creationId, { stage: "failed", error: msg });
+      setCreateError(msg);
+      setCreating(false);
+      return;
     }
+
+    // Phase B: chain submit. Stash retry context first so a failure leaves
+    // a retry handle attached to the CreationStatusItem.
+    const ctx: RetryCtx = { name, provider, url, signed };
+    retryCtxRef.current.set(creationId, ctx);
+    await runChainSubmit(creationId, ctx);
   };
 
-  const handleProviderSelect = async (providerAccount: string) => {
-    const bucketId = pickerTarget?.bucketId;
-    if (!pickerTarget || !bucketId) return;
-    const itemId = pickerTarget.id;
-    setPickerTarget(null);
-
-    updateCreation(itemId, { stage: "submitting", error: undefined });
-    try {
-      await requestAgreementWithProvider(
-        bucketId,
-        providerAccount,
-        BigInt(bucketCapacity),
-        parseInt(bucketDuration, 10),
-        BigInt(bucketMaxPayment),
-      );
-      updateCreation(itemId, { stage: "created" });
-      waitAndTrack(itemId, bucketId);
-    } catch (err) {
-      updateCreation(itemId, {
-        stage: "failed",
-        error: err instanceof Error ? err.message : "Agreement request failed",
-      });
+  // Retry handler attached to failed CreationStatusItems. If we have the
+  // signed terms cached, re-fire just the chain submit; otherwise the user
+  // has to start over (covered by the picker).
+  const handleRetryCreation = useCallback((itemId: string) => {
+    const ctx = retryCtxRef.current.get(itemId);
+    if (!ctx) {
+      toast({ title: "Cannot retry", description: "Negotiation context expired — start a new bucket creation.", variant: "destructive" });
+      return;
     }
-  };
+    setCreating(true);
+    void runChainSubmit(itemId, ctx);
+  }, [runChainSubmit]);
 
   const handleGenerateKey = async () => {
     const { rawKey } = await EncryptionKey.generate();
@@ -472,16 +491,22 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
                 <Input data-testid="s3-bucket-duration-input" type="number" value={bucketDuration} onChange={(e) => setBucketDuration(e.target.value)} />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium">Max Payment</label>
-                <Input data-testid="s3-bucket-maxpayment-input" type="number" value={bucketMaxPayment} onChange={(e) => setBucketMaxPayment(e.target.value)} />
+                <label className="text-xs font-medium">Price per byte (per block)</label>
+                <Input
+                  data-testid="s3-bucket-price-input"
+                  type="number"
+                  min="0"
+                  value={bucketPricePerByte}
+                  onChange={(e) => setBucketPricePerByte(e.target.value)}
+                />
               </div>
             </div>
             {createError && (
               <p data-testid="s3-create-error" className="text-sm text-destructive">{createError}</p>
             )}
             <div className="flex gap-2">
-              <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={loading}>
-                Create
+              <Button data-testid="s3-create-submit" onClick={handleCreateBucket} disabled={creating || loading}>
+                Choose Provider & Create
               </Button>
               <Button data-testid="s3-create-cancel" variant="ghost" onClick={() => { setShowCreateBucket(false); setCreateError(null); }}>Cancel</Button>
             </div>
@@ -489,24 +514,25 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
         </Card>
       )}
 
-      {/* Creation status cards */}
+      {/* Creation status cards (submitting → ready | failed) */}
       {creations.map(item => (
         <CreationStatusCard
           key={item.id}
           item={item}
           onDismiss={dismissCreation}
-          onChooseProvider={(item) => setPickerTarget(item)}
+          onRetry={retryCtxRef.current.has(item.id) ? handleRetryCreation : undefined}
         />
       ))}
 
-      {/* Provider picker dialog */}
-      {pickerTarget && (
+      {/* Provider picker dialog — opens up front, before any chain tx */}
+      {pickerOpen && (
         <ProviderPickerDialog
           open={true}
-          onClose={() => setPickerTarget(null)}
+          onClose={() => setPickerOpen(false)}
           onSelect={handleProviderSelect}
           requiredCapacity={BigInt(bucketCapacity)}
           requiredDuration={parseInt(bucketDuration, 10)}
+          requiredPricePerByte={BigInt(bucketPricePerByte || "0")}
         />
       )}
 

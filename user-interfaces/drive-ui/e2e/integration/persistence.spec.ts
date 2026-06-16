@@ -10,30 +10,30 @@
  * (saves ~30s of provider settlement per duplicate create).
  */
 import { test, expect } from "../fixtures";
-import { Bob, createDriveViaApi, cleanupDrives, type DriveHandle } from "@web3-storage/test-helpers";
+import { Bob, cleanupDrives } from "@web3-storage/test-helpers";
+import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-let sharedDrive: DriveHandle | null = null;
+let sharedDriveId: bigint | null = null;
+
+test.beforeAll(async ({ browser }) => {
+  test.setTimeout(120_000);
+  sharedDriveId = await createDriveInFreshContext(browser, `persistence-${Date.now()}`);
+});
 
 test.afterAll(async () => {
   test.setTimeout(60_000);
   await cleanupDrives(Bob);
-  sharedDrive = null;
+  sharedDriveId = null;
 });
 
-async function getOrCreateDrive(): Promise<DriveHandle> {
-  if (sharedDrive) return sharedDrive;
-  sharedDrive = await createDriveViaApi(Bob, {
-    name: `persistence-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-    commitStrategy: { type: "Batched", interval: 100 },
-  });
-  return sharedDrive;
+function requireDriveId(): bigint {
+  if (sharedDriveId === null) {
+    throw new Error("sharedDriveId not initialized — beforeAll did not run");
+  }
+  return sharedDriveId;
 }
 
 test("endpoint selection persists across reload", async ({ localPage }) => {
@@ -63,28 +63,28 @@ test("account name persists across reload", async ({ localPage }) => {
 test("view mode toggle persists across reload", async ({ localPage }) => {
   // The view mode toggle is in the file-browser; only renders when a drive is
   // selected.
-  const drive = await getOrCreateDrive();
+  const driveId = requireDriveId();
 
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${drive.driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
   const toggle = localPage.getByTestId("view-mode-toggle");
   await expect(toggle).toBeVisible();
   // Capture current mode (text varies per toggle UI), click to toggle, reload, verify.
   await toggle.click();
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${drive.driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
   // After reload, the same drive should be selected (selected-drive persists too).
-  await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible();
+  await expect(localPage.getByTestId(`drive-list-item-${driveId}`)).toBeVisible();
   // localStorage drive-ui-view-mode should be "grid" after one toggle from default "list".
   const stored = await localPage.evaluate(() => localStorage.getItem("drive-ui-view-mode"));
   expect(stored === "grid" || stored === "list").toBe(true);
 });
 
 test("selected drive persists across reload", async ({ localPage }) => {
-  const drive = await getOrCreateDrive();
+  const driveId = requireDriveId();
 
   await localPage.reload();
-  await localPage.getByTestId(`drive-list-item-${drive.driveId}`).click();
+  await localPage.getByTestId(`drive-list-item-${driveId}`).click();
   await expect(localPage.getByTestId("file-browser")).toBeVisible();
   await localPage.reload();
   // After reload, file-browser should still be visible (drive auto-selected).
@@ -92,5 +92,5 @@ test("selected drive persists across reload", async ({ localPage }) => {
   const stored = await localPage.evaluate(() =>
     localStorage.getItem("drive-ui-selected-drive"),
   );
-  expect(stored).toBe(drive.driveId.toString());
+  expect(stored).toBe(driveId.toString());
 });

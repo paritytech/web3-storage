@@ -158,29 +158,17 @@ impl S3Client {
 
     /// Create a new S3 bucket.
     ///
-    /// This creates both the underlying Layer 0 storage bucket and the S3 metadata bucket
-    /// in a single transaction. The Layer 0 bucket is created automatically.
-    ///
-    /// Parameters:
-    /// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
-    pub async fn create_bucket(&self, name: &str) -> Result<BucketInfo> {
-        self.create_bucket_with_options(name, 1).await
-    }
-
-    /// Create a new S3 bucket with custom options.
-    ///
-    /// Parameters:
-    /// - `name`: Bucket name (S3 naming rules: 3-63 chars, lowercase alphanumeric + hyphens)
-    /// - `min_providers`: Minimum number of storage providers required
-    pub async fn create_bucket_with_options(
+    /// `terms` + `sig` are the provider-signed agreement bundle returned by
+    /// [`storage_client::ProviderClient::negotiate_terms`]. The Layer 0 bucket
+    /// + primary agreement open atomically alongside the S3 bucket.
+    pub async fn create_bucket(
         &self,
         name: &str,
-        min_providers: u32,
+        provider: sp_runtime::AccountId32,
+        terms: storage_client::AgreementTermsOf,
+        sig: sp_runtime::MultiSignature,
     ) -> Result<BucketInfo> {
-        info!(
-            "Creating bucket: {} (min_providers={})",
-            name, min_providers
-        );
+        info!("Creating bucket: {}", name);
 
         if !validate_bucket_name(name.as_bytes()) {
             return Err(S3ClientError::InvalidBucketName(name.to_string()));
@@ -190,7 +178,7 @@ impl S3Client {
         // The pallet validates name uniqueness, so no need to pre-check.
         let s3_bucket_id = self
             .substrate_client
-            .create_s3_bucket(name, min_providers)
+            .create_s3_bucket(name, provider, &terms, &sig)
             .await
             .map_err(S3ClientError::ChainError)?;
 

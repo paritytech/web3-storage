@@ -32,7 +32,9 @@ export class EncryptionKey {
     }
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
-      rawKey,
+      // TS 6.0 types `Uint8Array` as `Uint8Array<ArrayBufferLike>`, but Web Crypto
+      // wants an `ArrayBuffer`-backed view; browser buffers are never shared.
+      rawKey as Uint8Array<ArrayBuffer>,
       { name: "AES-GCM", length: 256 },
       false,
       ["encrypt", "decrypt"],
@@ -56,7 +58,7 @@ export class EncryptionKey {
     const ciphertext = await crypto.subtle.encrypt(
       { name: "AES-GCM", iv },
       this.cryptoKey,
-      plaintext,
+      plaintext as Uint8Array<ArrayBuffer>,
     );
 
     const out = new Uint8Array(1 + IV_SIZE + ciphertext.byteLength);

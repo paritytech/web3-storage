@@ -13,6 +13,12 @@ use core::fmt::Debug;
 use scale_info::TypeInfo;
 use sp_core::H256;
 
+pub mod agreement_term;
+pub mod provider_replay_state;
+
+pub use agreement_term::*;
+pub use provider_replay_state::*;
+
 /// Bucket ID is a stable, unique identifier (not an index into a collection).
 /// Using u64 ensures IDs never get reused even if buckets are deleted.
 pub type BucketId = u64;
@@ -133,18 +139,6 @@ pub enum RemovalReason {
     AdminTerminated,
     /// Agreement expired naturally
     Expired,
-}
-
-/// Parameters specific to replica agreement requests.
-#[derive(
-    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ReplicaRequestParams<Balance, BlockNumber> {
-    /// Initial sync balance to fund per-sync payments
-    pub sync_balance: Balance,
-    /// Minimum blocks between sync confirmations.
-    pub min_sync_interval: BlockNumber,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

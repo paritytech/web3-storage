@@ -69,6 +69,9 @@ export {
   deleteEntry,
   createFolder,
   createDrive,
+  retryCreation,
+  canRetryCreation,
+  listAvailableProviders,
   deleteDrive,
   fetchMembers,
   addMember,
@@ -78,7 +81,12 @@ export {
   getSelectedDrive,
   getCurrentPath,
 } from "./drive.state";
-export type { CreationStage, CreationStatus, ViewMode } from "./drive.state";
+export type {
+  CreationStage,
+  CreationStatus,
+  CreateDriveInput,
+  ViewMode,
+} from "./drive.state";
 
 export {
   useCheckpointInfo,

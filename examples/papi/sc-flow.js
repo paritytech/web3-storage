@@ -39,6 +39,7 @@ import {
   ensureSoleAcceptingProvider,
   makeSigner,
   parseProviderClientArgs,
+  READ_OPTS,
   requireOneEvent,
   toHex,
   waitForBlockProduction,
@@ -51,6 +52,8 @@ import {
   deployContract,
   encodeCall,
   ensureAccountMapped,
+  h160ToSubstrate,
+  negotiatePrecompileTerms,
 } from "./sc-api.js";
 
 const {
@@ -68,7 +71,6 @@ const CONTRACT_KEY = "StorageMarketplace.sol:StorageMarketplace";
 // the deployer's funded balance, large enough to exercise upload + challenge.
 const MAX_BYTES = 1024n; // 1 KiB
 const DURATION = 50; // blocks
-const MAX_PRICE_PER_BYTE = 100n; // upper bound; provider's actual is 1
 const UNIT = 10n ** 12n; // matches runtime constant
 const FUND_VALUE = 5n * UNIT; // contract gets 5 UNIT; payment ~ 51200 atomic, vast headroom
 
@@ -87,18 +89,16 @@ async function main() {
     const provider = makeSigner(PROVIDER_SEED);
     const client = makeSigner(CLIENT_SEED);
 
-    // 1) Provider setup. Sets accepting_primary so create_bucket_with_storage
-    //    can auto-match, and pricePerByte=1 so payment math is trivial. We
-    //    also have to register both the deployer and caller with pallet_revive
+    // 1) Provider setup. Sets accepting_primary + pricePerByte=1 so payment
+    //    math is trivial, and silences every other dev-key provider so only
+    //    the provider we negotiate with holds agreements. We also have to
+    //    register both the deployer and caller with pallet_revive
     //    (`map_account`) — substrate-native accounts can't dispatch contract
     //    calls or be the target of value transfers until they're mapped.
-    // 1) Provider setup. Sets accepting_primary so create_bucket_with_storage
-    //    can auto-match, and silences every other dev-key provider so the
-    //    auto-match is deterministic (in CI other demos register //Charlie
-    //    and //Ferdie before this script runs).
     console.log("\n[1/6] Provider setup + Revive account mapping…");
+    const PRICE_PER_BYTE = 1n;
     await ensureProviderRegistered(api, provider, PROVIDER_URL, {
-      pricePerByte: 1n,
+      pricePerByte: PRICE_PER_BYTE,
       maxDuration: 100_000,
     });
     await ensureSoleAcceptingProvider(api, provider);
@@ -125,13 +125,21 @@ async function main() {
     const deployed = await deployContract(api, provider, bytecode);
     console.log("  contract:", deployed.address);
 
-    // 4) //Bob buys storage. msg.value funds the contract's substrate account;
-    //    the precompile then reserves the agreement payment from that balance.
-    console.log("\n[4/6] buyStorage{value: 5 UNIT}(maxBytes=1KiB, duration=50, …)…");
+    // 4) //Bob buys storage. The terms are negotiated off-chain with the
+    //    provider using the *contract's* substrate-mapped account as owner
+    //    (the contract is the precompile caller); msg.value funds that
+    //    account so the precompile can reserve the agreement payment.
+    console.log("\n[4/6] buyStorage{value: 5 UNIT}(provider, terms[1KiB×50], sig)…");
+    const contractAccount = h160ToSubstrate(deployed.addressBytes);
+    const signed = await negotiatePrecompileTerms(PROVIDER_URL, contractAccount, {
+      maxBytes: MAX_BYTES,
+      duration: DURATION,
+      pricePerByte: PRICE_PER_BYTE,
+    });
     const buyData = encodeCall(abi, "buyStorage", [
-      MAX_BYTES,
-      DURATION,
-      MAX_PRICE_PER_BYTE,
+      toHex(provider.publicKey),
+      signed.terms,
+      signed.signature,
     ]);
     const buyResult = await callContract(api, client, deployed.addressBytes, buyData, {
       value: FUND_VALUE,
@@ -182,16 +190,18 @@ async function main() {
       bucketId,
       toHex(providerBytes32),
     ]);
-    const freeBefore = (await api.query.System.Account.getValue(provider.address))
-      .data.free;
+    const freeBefore = (
+      await api.query.System.Account.getValue(provider.address, READ_OPTS)
+    ).data.free;
     const endResult = await callContract(
       api,
       client,
       deployed.addressBytes,
       endData
     );
-    const freeAfter = (await api.query.System.Account.getValue(provider.address))
-      .data.free;
+    const freeAfter = (
+      await api.query.System.Account.getValue(provider.address, READ_OPTS)
+    ).data.free;
     const earned = freeAfter - freeBefore;
     console.log("  provider earned:", earned.toString(), "atomic units");
     assert.ok(earned > 0n, `expected provider to earn tokens, got ${earned}`);

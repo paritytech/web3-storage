@@ -11,6 +11,8 @@ use dashmap::DashMap;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_primitives::Role;
+use subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::OnceCell;
 
 /// Caller identity extracted from a signed request.
 #[derive(Debug, Clone)]
@@ -35,14 +37,9 @@ struct CachedMembership {
 }
 
 /// Trait for resolving bucket membership (enables mocking in tests).
-#[allow(clippy::type_complexity)]
+#[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
-    fn fetch_members(
-        &self,
-        bucket_id: u64,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<(AccountId32, Role)>, String>> + Send + '_>,
-    >;
+    async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String>;
 }
 
 /// Membership cache backed by chain queries via subxt.
@@ -111,83 +108,94 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
 /// Chain-backed membership resolver using subxt dynamic queries.
 pub struct ChainMembershipResolver {
     chain_rpc: String,
+    /// Lazily-established chain connection, reused across lookups.
+    ///
+    /// `OnlineClient` is an `Arc`-backed handle over a single WebSocket
+    /// connection and a metadata cache, so connecting is the expensive part
+    /// (network handshake + metadata download). We connect on the first
+    /// lookup and reuse the same client for every subsequent one instead of
+    /// reconnecting per request. If the first attempt fails the cell stays
+    /// empty, so the next lookup retries.
+    api: OnceCell<OnlineClient<PolkadotConfig>>,
 }
 
 impl ChainMembershipResolver {
     pub fn new(chain_rpc: String) -> Self {
-        Self { chain_rpc }
+        Self {
+            chain_rpc,
+            api: OnceCell::new(),
+        }
+    }
+
+    /// Return the shared chain client, connecting on first use.
+    async fn api(&self) -> Result<&OnlineClient<PolkadotConfig>, String> {
+        self.api
+            .get_or_try_init(|| async {
+                OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
+                    .await
+                    .map_err(|e| format!("Failed to connect to chain: {e}"))
+            })
+            .await
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
-    fn fetch_members(
-        &self,
-        bucket_id: u64,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<(AccountId32, Role)>, String>> + Send + '_>,
-    > {
-        let chain_rpc = self.chain_rpc.clone();
-        Box::pin(async move {
-            use subxt::dynamic::At;
-            use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
+    async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        use subxt::dynamic::{At, Value};
 
-            let api = OnlineClient::<PolkadotConfig>::from_url(&chain_rpc)
-                .await
-                .map_err(|e| format!("Failed to connect to chain: {e}"))?;
+        let api = self.api().await?;
 
-            let storage_query = subxt::dynamic::storage(
-                "StorageProvider",
-                "Buckets",
-                vec![Value::u128(bucket_id as u128)],
-            );
+        let storage_query = subxt::dynamic::storage(
+            "StorageProvider",
+            "Buckets",
+            vec![Value::u128(bucket_id as u128)],
+        );
 
-            let result = api
-                .storage()
-                .at_latest()
-                .await
-                .map_err(|e| format!("Failed to get storage: {e}"))?
-                .fetch(&storage_query)
-                .await
-                .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
+        let result = api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| format!("Failed to get storage: {e}"))?
+            .fetch(&storage_query)
+            .await
+            .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
 
-            let bucket_value = match result {
-                Some(v) => v,
-                None => return Ok(vec![]),
-            };
+        let bucket_value = match result {
+            Some(v) => v,
+            None => return Ok(vec![]),
+        };
 
-            let decoded = bucket_value
-                .to_value()
-                .map_err(|e| format!("Failed to decode bucket: {e}"))?;
+        let decoded = bucket_value
+            .to_value()
+            .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
-            let members_val = match decoded.at("members") {
-                Some(v) => v,
-                None => return Ok(vec![]),
-            };
+        let members_val = match decoded.at("members") {
+            Some(v) => v,
+            None => return Ok(vec![]),
+        };
 
-            let mut members = Vec::new();
-            if let subxt::ext::scale_value::ValueDef::Composite(
-                subxt::ext::scale_value::Composite::Unnamed(items),
-            ) = &members_val.value
-            {
-                for item in items {
-                    let account_val = item.at("account");
-                    let role_val = item.at("role");
+        let mut members = Vec::new();
+        if let subxt::ext::scale_value::ValueDef::Composite(
+            subxt::ext::scale_value::Composite::Unnamed(items),
+        ) = &members_val.value
+        {
+            for item in items {
+                let account_val = item.at("account");
+                let role_val = item.at("role");
 
-                    if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
-                        // Extract account bytes
-                        let account_bytes = extract_account_bytes(account_v);
-                        if let Some(bytes) = account_bytes {
-                            let account = AccountId32::from(bytes);
-                            let role = extract_role(role_v);
-                            members.push((account, role));
-                        }
+                if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
+                    let account_bytes = extract_account_bytes(account_v);
+                    if let Some(bytes) = account_bytes {
+                        let account = AccountId32::from(bytes);
+                        let role = extract_role(role_v);
+                        members.push((account, role));
                     }
                 }
             }
+        }
 
-            Ok(members)
-        })
+        Ok(members)
     }
 }
 

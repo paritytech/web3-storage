@@ -69,6 +69,37 @@ pub enum Error {
 
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
+
+    #[error("Provider is not accepting new primary agreements")]
+    NotAcceptingPrimary,
+
+    #[error("Provider is not accepting replica agreements")]
+    NotAcceptingReplicas,
+
+    #[error("Proposed price_per_byte {proposed} is below the provider's listed price {listed}")]
+    PriceBelowListed { proposed: u128, listed: u128 },
+
+    #[error("Duration {duration} is outside the provider's bounds [{min}, {max}]")]
+    DurationOutOfBounds { duration: u32, min: u32, max: u32 },
+
+    #[error(
+        "Requested {requested} bytes exceeds remaining capacity \
+         ({committed} of {max_capacity} bytes committed)"
+    )]
+    CapacityExceeded {
+        requested: u64,
+        committed: u64,
+        max_capacity: u64,
+    },
+
+    #[error("Provider on-chain info unavailable; cannot validate terms")]
+    ProviderInfoUnavailable,
+
+    #[error("Storage agreement requested 0 byte")]
+    InvalidMaxBytesRequest,
+
+    #[error("Too many requests")]
+    RateLimited,
 }
 
 #[derive(Serialize)]
@@ -213,8 +244,207 @@ impl IntoResponse for Error {
                     })),
                 },
             ),
+            Error::NotAcceptingPrimary => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "not_accepting_primary".to_string(),
+                    details: None,
+                },
+            ),
+            Error::NotAcceptingReplicas => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "not_accepting_replicas".to_string(),
+                    details: None,
+                },
+            ),
+            Error::PriceBelowListed { proposed, listed } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "price_below_listed".to_string(),
+                    // u128 doesn't fit serde_json numbers; send as strings.
+                    details: Some(serde_json::json!({
+                        "proposed": proposed.to_string(),
+                        "listed": listed.to_string(),
+                    })),
+                },
+            ),
+            Error::DurationOutOfBounds { duration, min, max } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "duration_out_of_bounds".to_string(),
+                    details: Some(serde_json::json!({
+                        "duration": duration,
+                        "min": min,
+                        "max": max,
+                    })),
+                },
+            ),
+            Error::CapacityExceeded {
+                requested,
+                committed,
+                max_capacity,
+            } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "capacity_exceeded".to_string(),
+                    details: Some(serde_json::json!({
+                        "requested": requested,
+                        "committed": committed,
+                        "max_capacity": max_capacity,
+                    })),
+                },
+            ),
+            Error::InvalidMaxBytesRequest => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "invalid_max_bytes_request".to_string(),
+                    details: None,
+                },
+            ),
+            Error::ProviderInfoUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "provider_info_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider's on-chain registration info is not loaded; \
+                                    cannot validate agreement terms"
+                    })),
+                },
+            ),
+            Error::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorResponse {
+                    error: "rate_limited".to_string(),
+                    details: None,
+                },
+            ),
         };
 
         (status, Json(error_response)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    fn status_of(err: Error) -> StatusCode {
+        err.into_response().status()
+    }
+
+    #[test]
+    fn test_all_error_variants_status_codes() {
+        assert_eq!(
+            status_of(Error::NodeNotFound("x".into())),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::ChildrenMissing(vec![])),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::QuotaExceeded { used: 0, max: 0 }),
+            StatusCode::INSUFFICIENT_STORAGE
+        );
+        assert_eq!(status_of(Error::BucketNotFound(1)), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(Error::RootNotFound("x".into())),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::InvalidHash {
+                expected: "a".into(),
+                actual: "b".into()
+            }),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(status_of(Error::InvalidSignature), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_of(Error::NotAuthorized("x".into())),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            status_of(Error::Storage("x".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::Internal("x".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            status_of(Error::Serialization("x".into())),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::ObjectNotFound {
+                bucket_id: 1,
+                key: "k".into()
+            }),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::InvalidObjectKey("k".into())),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::FileNotFound {
+                bucket_id: 1,
+                path: "/a".into()
+            }),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(Error::NotAFile {
+                bucket_id: 1,
+                path: "/a".into()
+            }),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            status_of(Error::InvalidPath("p".into())),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(status_of(Error::AuthRequired), StatusCode::UNAUTHORIZED);
+        assert_eq!(status_of(Error::TimestampExpired), StatusCode::UNAUTHORIZED);
+        assert_eq!(status_of(Error::InsufficientRole), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(Error::SigningUnavailable),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn test_error_response_json_structure() {
+        let resp = Error::NodeNotFound("0xabc".into()).into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::NOT_FOUND);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "not_found");
+        assert!(json.get("details").is_some());
+        assert_eq!(json["details"]["hash"], "0xabc");
+    }
+
+    #[test]
+    fn test_signing_unavailable_503() {
+        let resp = Error::SigningUnavailable.into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "signing_unavailable");
+        assert!(json["details"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no signing key"));
     }
 }
