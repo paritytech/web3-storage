@@ -791,10 +791,11 @@ async fn negotiate_terms(
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+
     let nonce_counter = state
         .nonce_counter
         .as_ref()
-        .ok_or(Error::SigningUnavailable)?;
+        .ok_or(Error::ChainStateNotReady)?;
 
     let current_block = state
         .chain_state

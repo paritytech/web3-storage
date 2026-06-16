@@ -67,7 +67,7 @@ async function setupAgreement(api, providerUrl, client, provider) {
     owner: client.address,
     max_bytes: maxBytes,
     duration,
-    price_per_byte: 1n,
+    price_per_byte: 100n,
     replica_params: null,
     bucket_id: null,
   });

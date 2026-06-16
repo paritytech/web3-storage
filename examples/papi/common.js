@@ -238,11 +238,11 @@ const TX_MODE_CONFIG = {
   },
   [TX_MODE_IN_BLOCK]: {
     match: (ev) => ev.type === "txBestBlocksState" && ev.found,
-    log: (label, ev) => `📦 ${label} included in block ${ev.block.hash}`,
+    log: (label, ev) => `📦 ${label} included in block hash ${ev.block.hash} - block number ${ev.block.number}`,
   },
   [TX_MODE_FINALIZED_BLOCK]: {
     match: (ev) => ev.type === "finalized",
-    log: (label, ev) => `📦 ${label} finalized in block ${ev.block.hash}`,
+    log: (label, ev) => `📦 ${label} finalized in block ${ev.block.hash} - block number ${ev.block.number}`,
   },
 };
 
@@ -432,7 +432,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
 } = {}) {
   // Import lazily to break the common.js <-> api.js circular import. Both
   // modules finish initialization before this function ever runs.
-  const { registerProvider, updateProviderSettings } = await import("./api.js");
+  const { registerProvider, updateProviderSettings, getProviderNodeInfo } = await import("./api.js");
   const existing = await api.query.StorageProvider.Providers.getValue(
     provider.address,
     READ_OPTS
@@ -457,7 +457,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     }
   }
   // Always (re)apply settings so price/acceptance are correct for this demo.
-  await updateProviderSettings(api, provider, {
+  const providerSettings = {
     min_duration: 10,
     max_duration: maxDuration,
     price_per_byte: pricePerByte,
@@ -465,7 +465,23 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     replica_sync_price: undefined,
     accepting_extensions: true,
     max_capacity: 0n,
-  });
+  }
+  await updateProviderSettings(api, provider, providerSettings);
+
+  // wait for provider-node fully sync data
+  let providerInfo = await getProviderNodeInfo(providerUrl);
+  const expectedProviderInfo = stringify(providerSettings);
+  while (!providerInfo.provider_registration_info || stringify(providerInfo.provider_registration_info) !== expectedProviderInfo) {
+    await new Promise((r) => setTimeout(r, 3000));
+    providerInfo = await getProviderNodeInfo(providerUrl);
+  }
+}
+
+function stringify(object) {
+  if (!object) return "";
+  return JSON.stringify(object, (_k, v) =>
+    typeof v === "bigint" ? v.toString() : v,
+  )
 }
 
 function bytesEq(a, b) {

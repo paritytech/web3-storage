@@ -369,22 +369,26 @@ async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter 
             return None;
         }
     };
+
+    let counter = NonceCounter::new(1);
+
     match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
         .await
     {
         Ok(Some(hsn)) => {
+            // provider already had ProviderReplayState
             tracing::info!(
                 "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
                 hsn,
                 provider_id,
             );
-            let counter = NonceCounter::new(1);
             counter.bootstrap_from_hsn(hsn);
             Some(Arc::new(counter))
         }
         Ok(None) => {
+            // new provider || non-provider but will be a provider
             tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
-            None
+            Some(Arc::new(counter))
         }
         Err(e) => {
             tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);

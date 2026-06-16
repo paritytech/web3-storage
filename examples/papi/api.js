@@ -57,6 +57,22 @@ export async function negotiateTerms(providerUrl, request) {
 }
 
 /**
+ * GET /info on the provider node
+ */
+export async function getProviderNodeInfo(providerUrl) {
+  const res = await fetch(`${providerUrl}/info`, {
+    method: "GET",
+    headers: { "content-type": "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `/info failed: ${res.status} ${await res.text().catch(() => "")}`
+    );
+  }
+  return res.json();
+}
+
+/**
  * Submit `establish_storage_agreement` with provider-signed terms.
  *
  * `signed.signature` is the SCALE-encoded `MultiSignature` as hex, e.g.

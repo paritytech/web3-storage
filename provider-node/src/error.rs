@@ -242,8 +242,7 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "signing_unavailable".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "provider node has no signing key configured; \
-                                    start with --keyfile to enable signing-bound endpoints"
+                        "message": "provider node is not ready for negotiation request."
                     })),
                 },
             ),
