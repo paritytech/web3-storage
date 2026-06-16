@@ -211,8 +211,8 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
 
 # Register on-chain then start the provider node (original behavior)
 start-n-reg-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
-    just register-provider "{{KEYFILE}}"
     just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
+    just register-provider "{{KEYFILE}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
 # Called automatically by start-n-reg-provider, or run standalone.
