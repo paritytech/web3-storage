@@ -17,9 +17,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  GITLEAKS_VERSION: 8.29.0
-
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -61,6 +58,9 @@ jobs:
         with:
           fetch-depth: 0 # full history so every commit is scanned
           persist-credentials: false
+
+      - name: Load common environment variables via env file
+        run: cat .github/env >> "$GITHUB_ENV"
 
       - name: Cache gitleaks
         id: cache-gitleaks
