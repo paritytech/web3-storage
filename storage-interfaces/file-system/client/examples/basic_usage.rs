@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Basic Usage Example for File System Client
 //!
 //! This example demonstrates:

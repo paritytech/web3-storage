@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the challenge responder.
 
 use super::{test_state, wait_for, ALICE_SS58};

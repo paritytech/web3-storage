@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Checkpoint Manager for automated multi-provider checkpoint coordination.
 //!
 //! This module provides a reusable checkpoint management system that can be

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useCallback } from "react";
 import {
   Upload,

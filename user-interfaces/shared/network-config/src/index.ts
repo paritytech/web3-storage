@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 export type { NetworkId, NetworkConfig } from './types'
 export {
   LOCAL_NETWORK,

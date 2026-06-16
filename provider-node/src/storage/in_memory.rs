@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! In-memory storage backend for the provider node.
 //!
 //! This provides a simple in-memory storage implementation.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { Binary, Enum } from "polkadot-api";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";
 import { Alice, type DevSigner } from "./signers";

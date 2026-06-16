@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Paseo Web3 Storage Parachain Runtime genesis config presets
 
 use crate::paseo_constants::currency::UNIT;

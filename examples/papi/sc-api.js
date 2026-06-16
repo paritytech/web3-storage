@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,
  * call a function on it, and read back contract-emitted events. Uses viem

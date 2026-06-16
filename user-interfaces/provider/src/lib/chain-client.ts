@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Chain Client - Direct blockchain interaction via WebSocket.
  *

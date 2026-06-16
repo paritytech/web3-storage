@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests that exercise the HTTP API with DiskStorage (RocksDB).
 //!
 //! These mirror the core flows in `api_integration.rs` but use the persistent

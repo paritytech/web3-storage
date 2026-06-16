@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Substrate client integration using subxt.
 //!
 //! This module provides a wrapper around subxt for interacting with

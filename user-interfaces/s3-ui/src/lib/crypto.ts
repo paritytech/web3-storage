@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * PAPI-native crypto helpers: seed -> sr25519 keypair, SS58 encode/validate.
  *

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Checkpoint Coordinator - Provider-initiated checkpoint coordination.
 //!
 //! This module provides a background service that coordinates with other

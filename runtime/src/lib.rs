@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Storage Parachain Runtime
 //!
 //! A minimal parachain runtime that includes the storage provider pallet

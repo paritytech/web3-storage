@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider-signed agreement terms — wire format + client-side signing helper.
 //!
 //! * Runtime-specific [`AgreementTermsOf`] alias the client uses to

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Base client infrastructure for connecting to the storage system.
 //!
 //! Provides common functionality shared across all client types:

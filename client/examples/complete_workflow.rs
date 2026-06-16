@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Complete workflow example demonstrating all client types.
 //!
 //!   1. Start the chain:        just start-chain

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration tests for `DiscoveryClient`.
 //!
 //! All tests are read-only (no extrinsics submitted). They use `chain_setup`

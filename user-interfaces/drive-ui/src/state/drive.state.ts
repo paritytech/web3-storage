@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive State - file system orchestration over a DriveClient.
  *

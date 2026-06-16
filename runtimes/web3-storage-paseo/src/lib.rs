@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Paseo Web3 Storage Parachain.
 //!
 //! A minimal parachain runtime that includes the storage provider pallet
