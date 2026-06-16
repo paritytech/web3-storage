@@ -104,6 +104,12 @@ export interface ResolveCreationTermsOpts {
   signedTerms?: SignedTerms;
   /** Dev/test provider URL — used for discovery and address-only providers. */
   urlOverride?: string;
+  /**
+   * Price the request quotes. The provider's /negotiate requires this field
+   * and validates it against its listed price; defaults to the chosen
+   * provider's on-chain `price_per_byte`.
+   */
+  pricePerByte?: bigint;
   readOpts?: { at: "best" | "finalized" };
   fetchOpts?: HttpFetchOpts;
 }
@@ -151,10 +157,22 @@ export async function resolveCreationTerms(
     });
   }
 
+  // /negotiate requires price_per_byte and validates it against the provider's
+  // listed price; default to the provider's current on-chain setting.
+  let pricePerByte = opts.pricePerByte;
+  if (pricePerByte == null) {
+    const info = await api.query.StorageProvider.Providers.getValue(
+      choice.address,
+      opts.readOpts ?? { at: "finalized" },
+    );
+    pricePerByte = info?.settings?.price_per_byte ?? 1n;
+  }
+
   const request: NegotiateRequest = {
     owner: opts.owner,
     max_bytes: opts.maxBytes,
     duration: opts.duration,
+    price_per_byte: pricePerByte,
     bucket_id: null,
     replica_params: null,
   };
