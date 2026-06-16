@@ -986,13 +986,6 @@ pub mod pallet {
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
 
-                // While deregister announcement is in flight, settings are
-                // frozen — otherwise the provider could re-enable
-                // `accepting_primary` and start absorbing new agreements
-                // during the wait window. The caller must `cancel_deregister`
-                // first.
-                Self::ensure_provider_active(provider)?;
-
                 Self::validate_settings(&settings, provider.committed_bytes, provider.stake)?;
 
                 provider.settings = settings.clone();
@@ -3646,7 +3639,6 @@ pub mod pallet {
                     registered_at: current_block,
                     ..Default::default()
                 },
-                deregister_at: None,
             };
 
             Providers::<T>::insert(who, provider_info);
