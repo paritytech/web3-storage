@@ -179,127 +179,106 @@ jobs:
           shared-key: "web3-storage-cache-coverage"
           save-if: false
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
-
-      - name: Measure PR coverage
+      - name: Install coverage tools
         run: |
-          PALLET_COV=$(cargo llvm-cov --lib \
-            -p pallet-storage-provider \
-            -p pallet-drive-registry \
-            -p pallet-s3-registry \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          if [ -z "$PALLET_COV" ]; then
-            echo "ERROR: Failed to measure pallet coverage (build or test failure?)"
+          set -euo pipefail
+          cargo install cargo-llvm-cov --locked
+          # diff-cover drives the patch-coverage gate below.
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "::error::python3 not available in CI image; cannot install diff-cover"
             exit 1
           fi
-          echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
-          echo "PR pallet coverage: ${PALLET_COV}%"
+          python3 -m pip install --quiet --disable-pip-version-check --user "diff-cover>=9,<10" \
+            || python3 -m pip install --quiet --disable-pip-version-check --break-system-packages "diff-cover>=9,<10"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-          cargo llvm-cov clean --workspace 2>/dev/null || true
-
-          # Discover available integration test targets from filesystem
-          TEST_FLAGS=""
-          for f in provider-node/tests/*_integration.rs; do
-            [ -f "$f" ] || continue
-            t=$(basename "$f" .rs)
-            TEST_FLAGS="$TEST_FLAGS --test $t"
-          done
-
-          if [ -n "$TEST_FLAGS" ]; then
-            PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
-              -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
-              --summary-only 2>&1 \
-              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          else
-            PROVIDER_COV=0
-          fi
-          echo "PR_PROVIDER_COV=$PROVIDER_COV" >> $GITHUB_ENV
-          echo "PR provider coverage: ${PROVIDER_COV}%"
-
-      - name: Measure base branch coverage
+      - name: Measure coverage
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Coverage exclusions, anchored by path/name: generated code, pure-type
+          # primitives, and the chain-access layer that can only run against a live
+          # chain. Migrating these to a path/module-based exclusion is tracked in #178.
+          COV_IGNORE: '(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|bechmarking\.rs|/primitives/|subxt_client\.rs|_subxt\.rs|checkpoint_coordinator\.rs|replica_sync_coordinator\.rs|replica_sync\.rs|challenge_responder\.rs|/command\.rs|/cli\.rs|/main\.rs)'
         run: |
-          # Container user differs from repo owner; allow git operations
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git stash --include-untracked 2>/dev/null || true
-          git checkout "$BASE_SHA"
+          set -euo pipefail
 
-          cargo llvm-cov clean --workspace 2>/dev/null || true
-
-          BASE_PALLET_COV=$(cargo llvm-cov --lib \
+          # Build + run the relevant tests once. A build/test failure aborts here
+          # (no silent zero-coverage fallthrough like the old gate).
+          cargo llvm-cov --no-report \
             -p pallet-storage-provider \
             -p pallet-drive-registry \
             -p pallet-s3-registry \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          if [ -z "$BASE_PALLET_COV" ]; then
-            echo "ERROR: Failed to measure base pallet coverage (build or test failure?)"
+            -p storage-provider-node
+
+          # Render the collected data in several formats without re-running tests.
+          cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex "$COV_IGNORE"
+          cargo llvm-cov report --html --output-dir target/llvm-cov-html --ignore-filename-regex "$COV_IGNORE"
+          cargo llvm-cov report --ignore-filename-regex "$COV_IGNORE" | tee coverage-summary.txt
+
+          if [ ! -s lcov.info ]; then
+            echo "::error::lcov.info is empty — coverage generation failed"
             exit 1
           fi
-          echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
-          echo "Base pallet coverage: ${BASE_PALLET_COV}%"
 
-          cargo llvm-cov clean --workspace 2>/dev/null || true
+          # Make lcov source paths repo-relative so diff-cover matches git paths.
+          sed -i "s|SF:${GITHUB_WORKSPACE}/|SF:|g" lcov.info
 
-          # Discover available integration test targets from filesystem
-          TEST_FLAGS=""
-          for f in provider-node/tests/*_integration.rs; do
-            [ -f "$f" ] || continue
-            t=$(basename "$f" .rs)
-            TEST_FLAGS="$TEST_FLAGS --test $t"
-          done
+          # Per-file table -> job summary (collapsed) for at-a-glance diagnosis.
+          {
+            echo "## Rust coverage (per file)"
+            echo ""
+            echo "<details><summary>Full table</summary>"
+            echo ""
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ -n "$TEST_FLAGS" ]; then
-            BASE_PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
-              -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
-              --summary-only 2>&1 \
-              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          else
-            BASE_PROVIDER_COV=0
-          fi
-          echo "BASE_PROVIDER_COV=$BASE_PROVIDER_COV" >> $GITHUB_ENV
-          echo "Base provider coverage: ${BASE_PROVIDER_COV}%"
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage
+          path: |
+            lcov.info
+            target/llvm-cov-html
+          if-no-files-found: warn
 
-          git checkout -
-          git stash pop 2>/dev/null || true
-
-      - name: Compare coverage
+      - name: Patch coverage gate
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Minimum coverage of the lines this PR changes. Tune as the suite grows.
+          MIN_PATCH_COV: '80'
         run: |
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "  Rust Coverage (PR vs base)"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Make origin/<base> available for the diff. The checkout is full-depth
+          # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
+          git fetch --no-tags origin "$BASE_REF"
 
-          FAILED=0
-          for COMPONENT in PALLET PROVIDER; do
-            eval "PR_VAL=\$PR_${COMPONENT}_COV"
-            eval "BASE_VAL=\$BASE_${COMPONENT}_COV"
-            LABEL=$(echo "$COMPONENT" | tr '[:upper:]' '[:lower:]')
-            # Treat empty values as 0
-            PR_VAL="${PR_VAL:-0}"
-            BASE_VAL="${BASE_VAL:-0}"
-            DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
-            if [ "$DECREASED" = "1" ]; then
-              echo "FAIL: $LABEL coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"
-              FAILED=1
-            else
-              echo "PASS: $LABEL coverage: ${BASE_VAL}% → ${PR_VAL}%"
-            fi
-          done
+          # Gate only on lines changed by this PR: refactors/renames of already
+          # covered (or excluded) code never move the number, and the report names
+          # the exact uncovered lines.
+          set +e
+          diff-cover lcov.info \
+            --compare-branch "origin/${BASE_REF}" \
+            --fail-under "$MIN_PATCH_COV" \
+            --show-uncovered \
+            --markdown-report patch-coverage.md
+          STATUS=$?
+          set -e
 
-          echo ""
-          if [ "$FAILED" = "1" ]; then
-            echo "Coverage decreased — add tests to cover new or modified code."
+          {
+            echo "## Patch coverage vs \`${BASE_REF}\` (gate: ${MIN_PATCH_COV}%)"
+            echo ""
+            if [ -s patch-coverage.md ]; then cat patch-coverage.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::Patch coverage below ${MIN_PATCH_COV}% — add tests for the new/changed lines listed in the job summary."
             exit 1
           fi
+          echo "Patch coverage meets the ${MIN_PATCH_COV}% threshold."
 
   # Aggregate gate — the stable check to require in branch protection, instead
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
