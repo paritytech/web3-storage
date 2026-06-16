@@ -47,7 +47,6 @@ jobs:
         with:
           filters: |
             runtime:
-              - 'runtime/**'
               - 'runtimes/**'
               - 'pallet/**'
               - 'primitives/**'

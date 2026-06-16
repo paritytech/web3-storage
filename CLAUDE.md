@@ -206,9 +206,11 @@ web3-storage/
 ├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
 │   ├── src/lib.rs             # Core pallet implementation
 │   └── Cargo.toml             # Pallet dependencies
-├── runtime/                    # Parachain runtime
-│   ├── src/lib.rs             # Runtime configuration
-│   └── Cargo.toml             # Runtime dependencies
+├── runtimes/                   # Parachain runtimes
+│   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
+│   │   ├── src/lib.rs         # Runtime configuration
+│   │   └── Cargo.toml         # Runtime dependencies
+│   └── web3-storage-paseo/     # Paseo testnet runtime (storage-paseo-runtime)
 ├── provider-node/              # Off-chain HTTP storage server
 │   ├── src/                   # Provider implementation
 │   │   ├── main.rs           # Server entry point
@@ -266,7 +268,7 @@ web3-storage/
 
 **Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
-**Runtime (`runtime/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
+**Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
 **Provider Node (`provider-node/`)**: Off-chain HTTP server that:
 - Stores data chunks locally
@@ -374,7 +376,7 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtime/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
 
 ```rust
 // Token decimals
