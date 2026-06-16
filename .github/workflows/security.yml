@@ -33,7 +33,9 @@ jobs:
           persist-credentials: false
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked --version ">=0.16.4"
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-deny
 
       - name: Check licenses, bans, sources
         run: cargo deny --locked check licenses bans sources
