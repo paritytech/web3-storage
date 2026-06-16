@@ -1,5 +1,12 @@
 # Scalable Web3 Storage
 
+[![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE-GPL3)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE-APACHE2)
+[![CI](https://github.com/paritytech/web3-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/paritytech/web3-storage/actions/workflows/ci.yml)
+
+> [!WARNING]
+> This is a prototype/proof-of-concept. It is not production-ready and should not be used in production environments.
+
 A decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
 
 ## What It Does
@@ -306,6 +313,21 @@ For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKS
 4. Run tests: `cargo test`
 5. Follow existing code style: `cargo fmt --check`
 
+## Security
+
+The security policy for this project is governed by the
+[paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
+If you discover a vulnerability, please follow the responsible disclosure process described there.
+
 ## License
 
-Apache-2.0
+This project is dual-licensed:
+
+- **Runtime, provider node, and user-interface applications** are licensed under
+  [GPL-3.0-only](LICENSE-GPL3).
+- **Pallets, primitives, client SDKs, and shared libraries** are licensed under
+  [Apache-2.0](LICENSE-APACHE2).
+
+Each crate and package declares its applicable license in its `Cargo.toml` or
+`package.json`. See the individual LICENSE files at the repository root for the
+full license texts.

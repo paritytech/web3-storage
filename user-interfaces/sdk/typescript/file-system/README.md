@@ -167,4 +167,4 @@ interface UploadResult {
 
 ## License
 
-Apache-2.0
+[Apache-2.0](../../../../LICENSE-APACHE2)
