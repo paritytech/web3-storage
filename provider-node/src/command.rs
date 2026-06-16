@@ -7,12 +7,12 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
     DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
+    ReplicaSyncCoordinatorHandle, StateNonceCounter, Storage, StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -67,7 +67,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
-            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
+            if let Some(info) = setup_provider_info(&cli, &state.provider_id).await {
+                *state.chain_state.provider_info.write() = Some(info);
+            }
 
             Arc::new(state)
         }
@@ -226,7 +228,10 @@ async fn start_replica_sync_coordinator(
 ///
 /// Returns `None` (and logs a warning) if anything goes wrong, so a transient
 /// chain hiccup or an unregistered provider doesn't take the whole node down.
-async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
+async fn setup_provider_info(
+    cli: &Cli,
+    provider_id: &str,
+) -> Option<storage_client::discovery::ProviderInfo> {
     let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
         Ok(account) => account,
         Err(e) => {
@@ -278,7 +283,7 @@ async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo 
         info.accepting_primary,
     );
 
-    Some(Arc::new(RwLock::new(info)))
+    Some(info)
 }
 
 /// Create the in-memory nonce counter and bootstrap it from the chain's

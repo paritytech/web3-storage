@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub(crate) mod challenge_responder_subxt;
 pub mod checkpoint_coordinator;
@@ -30,6 +31,7 @@ pub mod storage;
 pub mod types;
 
 pub use api::create_router;
+pub use chain_state_coordinator::ChainState;
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
@@ -54,14 +56,12 @@ pub use storage::{
 pub use types::*;
 
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
 use subxt_signer::sr25519;
 use tokio::sync::mpsc;
 
 pub type StateNonceCounter = Option<Arc<NonceCounter>>;
-pub type StateProviderInfo = Option<Arc<RwLock<ProviderInfo>>>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -86,8 +86,9 @@ pub struct ProviderState {
     /// Monotonic nonce counter used by `/negotiate` to allocate fresh
     /// nonces for provider-signed `AgreementTerms`.
     pub nonce_counter: StateNonceCounter,
-    /// On-chain provider registration info.
-    pub provider_info: StateProviderInfo,
+    /// Live chain state (current block height + provider info) kept in sync
+    /// by the chain-state coordinator.
+    pub chain_state: Arc<ChainState>,
 }
 
 impl ProviderState {
@@ -103,7 +104,7 @@ impl ProviderState {
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: None,
-            provider_info: None,
+            chain_state: Arc::new(ChainState::default()),
         }
     }
 
@@ -126,7 +127,7 @@ impl ProviderState {
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: None,
-            provider_info: None,
+            chain_state: Arc::new(ChainState::default()),
         })
     }
 
@@ -252,5 +253,53 @@ mod tests {
         // Sanity: //Alice's own signature still verifies under her own key.
         let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
         assert!(sr25519::verify(&alice_sig, msg, &alice_pub));
+    }
+
+    #[test]
+    fn chain_state_defaults_to_unknown() {
+        use std::sync::atomic::Ordering;
+        let cs = ChainState::default();
+        assert_eq!(cs.current_block.load(Ordering::Relaxed), 0);
+        assert!(cs.provider_info.read().is_none());
+    }
+
+    #[test]
+    fn chain_state_current_block_round_trips() {
+        use std::sync::atomic::Ordering;
+        let cs = ChainState::default();
+        cs.current_block.store(42, Ordering::Relaxed);
+        assert_eq!(cs.current_block.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn chain_state_provider_info_round_trips() {
+        use storage_client::discovery::ProviderInfo;
+        let cs = ChainState::default();
+        let info = ProviderInfo {
+            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
+            stake: 0,
+            price_per_byte: 1_000,
+            min_duration: 100,
+            max_duration: 10_000,
+            max_capacity: 0,
+            committed_bytes: 0,
+            accepting_primary: true,
+            accepting_extensions: true,
+            replica_sync_price: None,
+            agreements_total: 0,
+            challenges_failed: 0,
+        };
+        *cs.provider_info.write() = Some(info.clone());
+        let read_back = cs.provider_info.read().clone().unwrap();
+        assert_eq!(read_back.price_per_byte, info.price_per_byte);
+        assert_eq!(read_back.multiaddr, info.multiaddr);
+    }
+
+    #[test]
+    fn provider_state_chain_defaults_on_new() {
+        use std::sync::atomic::Ordering;
+        let state = ProviderState::new(test_storage(), "test-provider".to_string());
+        assert_eq!(state.chain_state.current_block.load(Ordering::Relaxed), 0);
+        assert!(state.chain_state.provider_info.read().is_none());
     }
 }

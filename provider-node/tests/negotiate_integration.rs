@@ -12,7 +12,7 @@ use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
 use storage_provider_node::{
@@ -35,7 +35,7 @@ impl TestServer {
     async fn ready(info: ProviderInfo) -> Self {
         let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
             .expect("//Alice is a valid SURI");
-        state.provider_info = Some(Arc::new(RwLock::new(info)));
+        *state.chain_state.provider_info.write() = Some(info);
         state.nonce_counter = Some(Arc::new(NonceCounter::new(1)));
         Self::serve(Arc::new(state)).await
     }

@@ -170,10 +170,7 @@ async fn health() -> Json<HealthResponse> {
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
-        provider_registration_info: state
-            .provider_info
-            .as_ref()
-            .and_then(|slot| slot.read().ok().map(|guard| guard.clone())),
+        provider_registration_info: state.chain_state.provider_info.read().clone(),
     })
 }
 
@@ -801,9 +798,10 @@ async fn negotiate_terms(
 
     // Validate against the provider's on-chain settings
     let info = state
+        .chain_state
         .provider_info
-        .as_ref()
-        .and_then(|slot| slot.read().ok().map(|guard| guard.clone()))
+        .read()
+        .clone()
         .ok_or(Error::ProviderInfoUnavailable)?;
     negotiate::validate_request(&req, &info)?;
 
