@@ -166,8 +166,6 @@ jobs:
     env:
       SKIP_WASM_BUILD: 1
       CARGO_INCREMENTAL: '0'
-    # The container's default shell is dash; force bash so the run steps below
-    # can use `set -o pipefail` and other bashisms.
     defaults:
       run:
         shell: bash
@@ -184,18 +182,15 @@ jobs:
           shared-key: "web3-storage-cache-coverage"
           save-if: false
 
-      - name: Install coverage tools
-        run: |
-          set -euo pipefail
-          cargo install cargo-llvm-cov --locked
-          # diff-cover drives the patch-coverage gate below.
-          if ! command -v python3 >/dev/null 2>&1; then
-            echo "::error::python3 not available in CI image; cannot install diff-cover"
-            exit 1
-          fi
-          python3 -m pip install --quiet --disable-pip-version-check --user "diff-cover>=9,<10" \
-            || python3 -m pip install --quiet --disable-pip-version-check --break-system-packages "diff-cover>=9,<10"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install diff-cover
+        # Drives the patch-coverage gate. The bullseye CI image ships an
+        # unmanaged pip and runs as root, so a plain system-wide install works.
+        run: python3 -m pip install --quiet "diff-cover>=9,<10"
 
       - name: Measure coverage
         env:
