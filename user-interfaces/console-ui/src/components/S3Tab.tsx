@@ -400,8 +400,8 @@ export default function S3Tab({ onBucketSelect }: S3TabProps) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast({
-        title: "Downloaded",
-        description: verified ? `${obj.key} (verified)` : obj.key,
+        title: verified ? "Downloaded (verified)" : "Downloaded",
+        description: obj.key,
       });
     } catch (err) {
       toast({ title: "Download failed", description: err instanceof Error ? err.message : "Error", variant: "destructive" });
