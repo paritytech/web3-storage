@@ -15,6 +15,7 @@ import {
 import {
   useChallenges,
   usePendingChallenges,
+  respondToChallenge,
 } from '@/state/provider.state'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
@@ -32,32 +33,28 @@ function ChallengesContent() {
   const selectedAccount = useSelectedAccount()
   const challenges = useChallenges()
   const pendingChallenges = usePendingChallenges()
-  const [respondingTo, setRespondingTo] = useState<number | null>(null)
+  const [respondingTo, setRespondingTo] = useState<{ id: number; step: string } | null>(null)
+  const [respondError, setRespondError] = useState<{ id: number; message: string } | null>(null)
 
   const handleRespond = async (challenge: typeof challenges[number]) => {
     if (!selectedAccount) return
 
-    setRespondingTo(challenge.id)
+    setRespondError(null)
+    setRespondingTo({ id: challenge.id, step: 'Fetching proof...' })
     try {
-      // The provider node should automatically respond to challenges.
-      // Manual response from the UI is not yet supported because it requires
-      // fetching MMR proofs and chunk proofs from the provider node, then
-      // assembling a proper ChallengeResponse extrinsic with the full
-      // { deadline, index } ChallengeId — not just the index.
-      //
-      // For now, show an informative message.
-      console.warn(
-        'Manual challenge response not yet implemented.',
-        'The provider node auto-responds to challenges.',
-        'Challenge:', challenge
-      )
-      alert(
-        `Manual challenge response is not yet supported.\n\n` +
-        `The provider node should automatically respond to challenges before the deadline (block #${challenge.deadline.toLocaleString()}).\n\n` +
-        `Check your provider node logs for auto-response activity.`
-      )
+      await respondToChallenge(challenge, selectedAccount, (status) => {
+        if (status.type === 'signing') {
+          setRespondingTo({ id: challenge.id, step: status.message.includes('Fetching') ? 'Fetching proof...' : 'Signing...' })
+        } else if (status.type === 'broadcast') {
+          setRespondingTo({ id: challenge.id, step: 'Broadcasting...' })
+        } else if (status.type === 'inBlock') {
+          setRespondingTo({ id: challenge.id, step: 'Confirming...' })
+        }
+      })
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
       console.error('Failed to respond to challenge:', error)
+      setRespondError({ id: challenge.id, message: msg })
     } finally {
       setRespondingTo(null)
     }
@@ -189,6 +186,7 @@ function ChallengesContent() {
                   <TableHead>Bucket</TableHead>
                   <TableHead>Challenger</TableHead>
                   <TableHead>Leaf Index</TableHead>
+                  <TableHead>Chunk Index</TableHead>
                   <TableHead>Deadline</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Action</TableHead>
@@ -225,6 +223,7 @@ function ChallengesContent() {
                         <span className="font-mono">{formatAddress(challenge.challenger)}</span>
                       </TableCell>
                       <TableCell>{challenge.leafIndex.toLocaleString()}</TableCell>
+                      <TableCell>{challenge.chunkIndex.toLocaleString()}</TableCell>
                       <TableCell>
                         {challenge.status === 'pending' ? (
                           <span className="text-yellow-400">
@@ -246,20 +245,27 @@ function ChallengesContent() {
                       </TableCell>
                       <TableCell>
                         {challenge.status === 'pending' ? (
-                          <Button
-                            size="sm"
-                            onClick={() => handleRespond(challenge)}
-                            disabled={respondingTo === challenge.id}
-                          >
-                            {respondingTo === challenge.id ? (
-                              <>
-                                <Spinner size="sm" className="mr-2" />
-                                Responding...
-                              </>
-                            ) : (
-                              'Respond'
+                          <div className="space-y-1">
+                            <Button
+                              size="sm"
+                              onClick={() => handleRespond(challenge)}
+                              disabled={respondingTo !== null}
+                            >
+                              {respondingTo?.id === challenge.id ? (
+                                <>
+                                  <Spinner size="sm" className="mr-2" />
+                                  {respondingTo.step}
+                                </>
+                              ) : (
+                                'Respond'
+                              )}
+                            </Button>
+                            {respondError?.id === challenge.id && respondingTo === null && (
+                              <p className="text-xs text-red-400 max-w-[200px] truncate" title={respondError.message}>
+                                {respondError.message}
+                              </p>
                             )}
-                          </Button>
+                          </div>
                         ) : challenge.status === 'responded' ? (
                           <span className="text-green-400 text-sm">Defended</span>
                         ) : challenge.status === 'slashed' ? (
