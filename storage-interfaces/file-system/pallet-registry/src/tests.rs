@@ -42,7 +42,8 @@ fn primary_terms(
         max_bytes,
         duration,
         price_per_byte,
-        valid_until: 1_000_000u64,
+        valid_until: frame_system::Pallet::<Test>::block_number()
+            .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,

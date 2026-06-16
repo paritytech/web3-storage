@@ -40,7 +40,8 @@ fn primary_terms(owner: u64, max_bytes: u64, duration: u64, nonce: u64) -> Agree
         max_bytes,
         duration,
         price_per_byte: 1u128,
-        valid_until: 1_000_000u64,
+        valid_until: frame_system::Pallet::<Test>::block_number()
+            .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
