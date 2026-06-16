@@ -1,6 +1,7 @@
 {
   "name": "@web3-storage/papi",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Single source of truth for the parachain runtime descriptors. Owns the only tracked metadata snapshot in the repo. The internally-named @polkadot-api/descriptors package under .papi/descriptors is what the UIs consume via workspace:*.",
   "type": "module",

@@ -28,8 +28,8 @@ members = [
 [workspace.package]
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/parity/scalable-web3-storage"
+license = "GPL-3.0-only"
+repository = "https://github.com/paritytech/web3-storage"
 
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
