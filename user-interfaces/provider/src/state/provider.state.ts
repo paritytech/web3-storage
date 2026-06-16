@@ -138,7 +138,22 @@ const CHALLENGES_GENESIS_KEY = 'provider-challenges-genesis'
 function loadPersistedChallenges(): Challenge[] {
   try {
     const raw = localStorage.getItem(CHALLENGES_STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as Partial<Challenge>[]
+    return parsed.map((c) => ({
+      id: c.id ?? 0,
+      bucketId: c.bucketId ?? 0,
+      challenger: c.challenger ?? '',
+      provider: c.provider ?? '',
+      leafIndex: c.leafIndex ?? 0,
+      chunkIndex: c.chunkIndex ?? 0,
+      mmrRoot: c.mmrRoot ?? '',
+      startSeq: c.startSeq ?? 0,
+      status: c.status ?? 'expired',
+      challengeType: c.challengeType,
+      createdAt: c.createdAt ?? 0,
+      deadline: c.deadline ?? 0,
+    }))
   } catch { return [] }
 }
 function persistChallenges(challenges: Challenge[]) {
