@@ -2,7 +2,6 @@ packages:
   - shared/*
   - shared/papi/.papi/descriptors
   - provider
-  - console-ui
   - drive-ui
   - s3-ui
 
