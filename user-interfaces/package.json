@@ -1,6 +1,7 @@
 {
   "name": "web3-storage-ui",
   "private": true,
+  "license": "GPL-3.0-only",
   "scripts": {
     "postinstall": "pnpm --filter @web3-storage/papi run papi:install",
     "papi:generate": "pnpm --filter @web3-storage/papi run papi:generate",
