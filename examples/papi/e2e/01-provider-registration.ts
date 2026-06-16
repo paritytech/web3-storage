@@ -23,10 +23,10 @@
 import assert from "node:assert";
 import {
   addStake,
+  bytesEq,
   makeSigner,
   READ_OPTS,
   registerProvider,
-  toHex,
   updateProviderMultiaddr,
   updateProviderSettings,
   type ChainSigner,
@@ -61,7 +61,9 @@ async function matchEntry(
     },
     50
   );
-  return matches.find((m: any) => toHex(m.account.asBytes()) === toHex(who.publicKey));
+  // find_matching_providers returns `account` as the raw 32-byte public key
+  // (a Uint8Array), not an SS58 string or a Binary — compare bytes directly.
+  return matches.find((m: any) => bytesEq(m.account, who.publicKey));
 }
 
 async function main() {
