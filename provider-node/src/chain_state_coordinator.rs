@@ -86,6 +86,8 @@ impl ChainStateCoordinator {
                 let block_hash = H256::from_slice(block.hash().as_ref());
                 let block_number = block.number();
 
+                tracing::debug!("Finalized block: {}", block_number);
+
                 // handle update ChainState in a single call
                 self.chain_state
                     .current_block
@@ -123,7 +125,10 @@ impl ChainStateCoordinator {
             block_hash,
             block_number,
         );
-
+        if parsed.is_empty() {
+            return;
+        }
+        let mut new_provider_info = self.chain_state.provider_info.read().clone();
         for event in parsed {
             match event {
                 StorageEvent::ProviderSettingsUpdated {
@@ -131,7 +136,8 @@ impl ChainStateCoordinator {
                     provider_settings,
                     ..
                 } if provider == self.provider_account => {
-                    if let Some(info) = self.chain_state.provider_info.write().as_mut() {
+                    tracing::debug!("Received StorageEvent::ProviderSettingsUpdated");
+                    if let Some(info) = new_provider_info.as_mut() {
                         info.price_per_byte = provider_settings.price_per_byte;
                         info.min_duration = provider_settings.min_duration;
                         info.max_duration = provider_settings.max_duration;
@@ -146,15 +152,17 @@ impl ChainStateCoordinator {
                     multiaddr,
                     ..
                 } if provider == self.provider_account => {
-                    if let Some(info) = self.chain_state.provider_info.write().as_mut() {
+                    tracing::debug!("Received StorageEvent::ProviderMultiaddrUpdated");
+                    if let Some(info) = new_provider_info.as_mut() {
                         info.multiaddr = multiaddr;
                     }
                 }
                 StorageEvent::ProviderRegistered { provider, .. }
                     if provider == self.provider_account =>
                 {
+                    tracing::debug!("Received StorageEvent::ProviderRegistered");
                     match client.get_provider_info(&self.provider_account).await {
-                        Ok(info) => *self.chain_state.provider_info.write() = info,
+                        Ok(info) => new_provider_info = info,
                         Err(e) => tracing::warn!(
                             "chain-state coordinator: failed to fetch provider_info after registration: {e}"
                         ),
@@ -163,6 +171,9 @@ impl ChainStateCoordinator {
                 _ => {}
             }
         }
+
+        tracing::debug!("Update provider_info to: {:#?}", new_provider_info);
+        *self.chain_state.provider_info.write() = new_provider_info;
     }
 }
 
@@ -177,6 +188,7 @@ impl ChainStateCoordinatorHandle {
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
     /// underlying block subscription.
     pub async fn stop(self) {
+        tracing::info!("ChainCoordinator stopped");
         self.task.abort();
         let _ = self.task.await;
     }

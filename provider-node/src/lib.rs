@@ -31,7 +31,7 @@ pub mod storage;
 pub mod types;
 
 pub use api::create_router;
-pub use chain_state_coordinator::ChainState;
+pub use chain_state_coordinator::{ChainState, ChainStateCoordinator, ChainStateCoordinatorHandle};
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
@@ -89,6 +89,9 @@ pub struct ProviderState {
     /// Live chain state (current block height + provider info) kept in sync
     /// by the chain-state coordinator.
     pub chain_state: Arc<ChainState>,
+    /// On-chain `StorageProvider::RequestTimeout` constant.
+    /// Bootstrapped from the chain at startup; 0 means "not yet known".
+    pub request_timeout: u32,
 }
 
 impl ProviderState {
@@ -105,6 +108,7 @@ impl ProviderState {
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: None,
             chain_state: Arc::new(ChainState::default()),
+            request_timeout: 0,
         }
     }
 
@@ -128,6 +132,7 @@ impl ProviderState {
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: None,
             chain_state: Arc::new(ChainState::default()),
+            request_timeout: 0,
         })
     }
 

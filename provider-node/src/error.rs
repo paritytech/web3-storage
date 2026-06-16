@@ -95,6 +95,9 @@ pub enum Error {
     #[error("Provider on-chain info unavailable; cannot validate terms")]
     ProviderInfoUnavailable,
 
+    #[error("Chain state not ready: current_block and request_timeout must both be non-zero")]
+    ChainStateNotReady,
+
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
 
@@ -309,6 +312,16 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider's on-chain registration info is not loaded; \
                                     cannot validate agreement terms"
+                    })),
+                },
+            ),
+            Error::ChainStateNotReady => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_state_not_ready".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "current_block or request_timeout is 0; \
+                                    the node has not yet synced with the chain"
                     })),
                 },
             ),

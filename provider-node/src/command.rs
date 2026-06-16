@@ -3,11 +3,13 @@
 use crate::replica_sync_coordinator_subxt::SubxtReplicaSyncChainClient;
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
+    chain_state_coordinator::ChainStateCoordinator,
     checkpoint_coordinator_subxt::SubxtCheckpointChainClient,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle,
-    DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, StateNonceCounter, Storage, StorageBackend,
+    create_router, ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, DiskStorage, NonceCounter, ProviderState, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, StateNonceCounter, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -70,6 +72,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(info) = setup_provider_info(&cli, &state.provider_id).await {
                 *state.chain_state.provider_info.write() = Some(info);
             }
+            state.request_timeout = setup_request_timeout(&cli).await;
 
             Arc::new(state)
         }
@@ -105,6 +108,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start optional background services (failures are non-fatal)
+    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone()).await;
     let checkpoint_handle = start_checkpoint_coordinator(&cli, state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
         state.set_checkpoint_handle(handle);
@@ -133,6 +137,46 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
+}
+
+/// Bootstrap `chain_state.current_block` from the latest block and start the
+/// chain-state coordinator.
+///
+/// Failure to connect is logged and non-fatal — the coordinator simply won't
+/// run and `current_block` will remain 0.
+async fn start_chain_state_coordinator(
+    cli: &Cli,
+    state: Arc<ProviderState>,
+) -> Option<ChainStateCoordinatorHandle> {
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
+                state.provider_id
+            );
+            return None;
+        }
+    };
+
+    let coordinator = ChainStateCoordinator::new(
+        cli.rpc.chain_rpc.clone(),
+        provider_account,
+        state.chain_state.clone(),
+    );
+
+    match coordinator.start().await {
+        Ok(handle) => {
+            tracing::info!("Chain-state coordinator started");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Chain-state coordinator failed to start: {e}; current_block will not update"
+            );
+            None
+        }
+    }
 }
 
 async fn start_checkpoint_coordinator(
@@ -284,6 +328,32 @@ async fn setup_provider_info(
     );
 
     Some(info)
+}
+
+/// Read the `StorageProvider::RequestTimeout` runtime constant from the chain.
+///
+/// Returns 0 on any failure (warn and continue) — the negotiate handler
+/// will detect the zero and return a 503 until the node is restarted with a
+/// reachable chain.
+async fn setup_request_timeout(cli: &Cli) -> u32 {
+    match storage_client::ProviderClient::fetch_request_timeout(&cli.rpc.chain_rpc).await {
+        Ok(Some(timeout)) => {
+            tracing::info!("Bootstrapped request_timeout from chain: {timeout} blocks");
+            timeout
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "RequestTimeout constant absent from node metadata; request_timeout set to 0"
+            );
+            0
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to read RequestTimeout from chain: {e}; request_timeout set to 0"
+            );
+            0
+        }
+    }
 }
 
 /// Create the in-memory nonce counter and bootstrap it from the chain's

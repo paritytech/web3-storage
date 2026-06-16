@@ -782,10 +782,10 @@ async fn get_historical_roots(
 /// `price_per_byte` to the provider's own listed price (the client may have
 /// proposed more).
 ///
-/// TODO: requests are accepted automatically; let providers vet them later.
-///
-/// Returns `503` if the node has no signing key (`--keyfile`) or can't fetch its
-/// on-chain registration info.
+/// Returns `503`
+///  - The node has no signing key (`--keyfile`)
+///  - No provider info from the chain state
+///  - Chain state is not ready (`current_block` and `request_timeout` must both be non-zero).
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
@@ -795,6 +795,15 @@ async fn negotiate_terms(
         .nonce_counter
         .as_ref()
         .ok_or(Error::SigningUnavailable)?;
+
+    let current_block = state
+        .chain_state
+        .current_block
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let request_timeout = state.request_timeout;
+    if current_block == 0 || request_timeout == 0 {
+        return Err(Error::ChainStateNotReady);
+    }
 
     // Validate against the provider's on-chain settings
     let info = state
@@ -810,8 +819,7 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        // TODO: current_block + StorageProvider::RequestTimeout
-        valid_until: u32::MAX,
+        valid_until: current_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,

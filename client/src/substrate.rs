@@ -687,6 +687,18 @@ pub mod extrinsics {
     }
 }
 
+/// Runtime constant addresses for reading on-chain config.
+pub mod constants {
+    use super::*;
+
+    /// Dynamic constant address for `StorageProvider::RequestTimeout`,
+    /// the validity window (in blocks) the chain enforces on provider-signed
+    /// agreement terms.
+    pub fn request_timeout() -> subxt::constants::DynamicAddress {
+        subxt::dynamic::constant(PALLET_NAME, "RequestTimeout")
+    }
+}
+
 /// Storage queries for reading chain state.
 pub mod storage {
     use super::*;

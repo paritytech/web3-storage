@@ -37,6 +37,12 @@ impl TestServer {
             .expect("//Alice is a valid SURI");
         *state.chain_state.provider_info.write() = Some(info);
         state.nonce_counter = Some(Arc::new(NonceCounter::new(1)));
+        // Simulate a live-synced chain state so the ChainStateNotReady guard passes.
+        state
+            .chain_state
+            .current_block
+            .store(100, std::sync::atomic::Ordering::Relaxed);
+        state.request_timeout = 200;
         Self::serve(Arc::new(state)).await
     }
 
@@ -217,17 +223,28 @@ async fn negotiate_503_when_no_signing_key() {
 
 #[tokio::test]
 async fn negotiate_503_when_provider_info_unavailable() {
-    // Keypair + nonce counter present, but no on-chain registration info loaded:
-    // the node cannot validate terms it would be bound to, so it must refuse.
+    // Keypair + nonce counter present, chain state ready, but no on-chain registration
+    // info loaded: the node cannot validate terms it would be bound to, so it must refuse.
     let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state.nonce_counter = Some(Arc::new(NonceCounter::new(1)));
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    state.request_timeout = 200;
     // provider_info intentionally left None.
-    let server = TestServer::serve(Arc::new(state)).await;
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
 
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "provider_info_unavailable");
+
+    // Once on-chain info lands (via the shared ChainState), negotiation succeeds.
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::discovery::ProviderInfo;
-use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
@@ -328,6 +328,23 @@ impl ProviderClient {
         Ok(named_field(&decoded, "hsn")
             .and_then(|v| v.as_u128())
             .map(|h| h as u64))
+    }
+
+    /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
+    /// the validity window (in blocks) applied to provider-signed terms.
+    ///
+    /// Returns `Ok(None)` if the constant is absent from the node's metadata.
+    pub async fn fetch_request_timeout(chain_ws_url: &str) -> ClientResult<Option<u32>> {
+        let chain = SubstrateClient::connect(chain_ws_url).await?;
+        let value = chain
+            .api()
+            .constants()
+            .at(&constants::request_timeout())
+            .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
+
+        Ok(value.as_u128().map(|v| v as u32))
     }
 
     /// Negotiate provider-signed agreement terms over HTTP.
