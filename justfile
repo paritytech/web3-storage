@@ -215,7 +215,7 @@ register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./
     just register-provider "{{KEYFILE}}"
 
 # Register provider on-chain (idempotent). Requires a running chain.
-# Called automatically by start-n-reg-provider, or run standalone.
+# Called automatically by register-then-start-provider, or run standalone.
 register-provider KEYFILE="":
     #!/usr/bin/env bash
     set -euo pipefail
