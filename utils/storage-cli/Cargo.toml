@@ -1,0 +1,19 @@
+[package]
+name = "storage-cli"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Operator CLI for scalable Web3 storage (stress-test and ops tooling)"
+
+[dependencies]
+storage-client = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+subxt-signer = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow = "1"
+hex = "0.4"

@@ -32,6 +32,9 @@ members = [
 	"crates/pallets/drive-registry/precompiles",
 	"crates/pallets/s3-registry/precompiles",
 	"crates/pallets/storage-provider/precompiles",
+
+	# Developer tooling
+	"utils/storage-cli",
 ]
 
 [workspace.package]
