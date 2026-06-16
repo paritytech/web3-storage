@@ -48,6 +48,7 @@ jobs:
           filters: |
             runtime:
               - 'runtime/**'
+              - 'runtimes/**'
               - 'pallet/**'
               - 'primitives/**'
               - 'storage-interfaces/**/pallet-*/**'
