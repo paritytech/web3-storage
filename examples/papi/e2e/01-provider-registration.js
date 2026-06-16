@@ -252,7 +252,7 @@ async function main() {
         });
         assert.ok(entry, "Charlie should still be listed");
         assert.strictEqual(entry.match_score, 0, "Non-accepting provider should score 0");
-        assert.strictEqual(entry.info.accepting_primary, false, "Non-accepting primary provider should be false");
+        assert.strictEqual(entry.info.accepting_primary, false, "Non-accepting primary provider should have the corresponding field unset");
         assert.strictEqual(
           entry.partial_reason?.type,
           "NotAccepting",

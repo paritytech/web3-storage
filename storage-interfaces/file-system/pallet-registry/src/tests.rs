@@ -519,13 +519,7 @@ fn create_drive_fails_when_at_max_drives() {
         let terms = primary_terms(1, 100, 500, 101, 0);
         let sig = sign_terms(&pk, &terms);
         assert_noop!(
-            DriveRegistry::create_drive(
-                RuntimeOrigin::signed(1),
-                None,
-                provider,
-                terms,
-                sig,
-            ),
+            DriveRegistry::create_drive(RuntimeOrigin::signed(1), None, provider, terms, sig,),
             Error::<Test>::TooManyDrives
         );
     });

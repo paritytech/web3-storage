@@ -342,10 +342,18 @@ fn query_providers_with_capacity_filters_and_available_capacity() {
         let results = StorageProvider::query_providers_with_capacity(150, 0, 10);
         assert_eq!(results.len(), 2);
 
-        let p5 = results.iter().find(|(a, _)| *a == 5).map(|(_, i)| i).unwrap();
+        let p5 = results
+            .iter()
+            .find(|(a, _)| *a == 5)
+            .map(|(_, i)| i)
+            .unwrap();
         assert_eq!(p5.available_capacity, Some(200)); // limited: 200 - 0 committed
 
-        let p6 = results.iter().find(|(a, _)| *a == 6).map(|(_, i)| i).unwrap();
+        let p6 = results
+            .iter()
+            .find(|(a, _)| *a == 6)
+            .map(|(_, i)| i)
+            .unwrap();
         assert!(p6.available_capacity.is_none()); // unlimited
 
         // Pagination: offset=1 → exactly one result remains.
@@ -377,12 +385,20 @@ fn query_agreement_info_returns_replica_role() {
             bucket_id,
             50,
             200,
-            ReplicaTerms { sync_balance: 100, min_sync_interval: 10, sync_price: 5 },
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 5,
+            },
         );
 
         let response = StorageProvider::query_agreement_info(bucket_id, &3).unwrap();
-        if let ProviderRole::Replica { sync_balance, sync_price, min_sync_interval, last_sync } =
-            response.role
+        if let ProviderRole::Replica {
+            sync_balance,
+            sync_price,
+            min_sync_interval,
+            last_sync,
+        } = response.role
         {
             assert_eq!(sync_balance, 100u128);
             assert_eq!(sync_price, 5u128);
@@ -418,15 +434,22 @@ fn query_bucket_agreements_includes_replica() {
             bucket_id,
             50,
             200,
-            ReplicaTerms { sync_balance: 100, min_sync_interval: 10, sync_price: 5 },
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 5,
+            },
         );
 
         let agreements = StorageProvider::query_bucket_agreements(bucket_id);
         assert_eq!(agreements.len(), 2);
 
-        let has_primary = agreements.iter().any(|a| matches!(a.role, ProviderRole::Primary));
-        let has_replica =
-            agreements.iter().any(|a| matches!(a.role, ProviderRole::Replica { .. }));
+        let has_primary = agreements
+            .iter()
+            .any(|a| matches!(a.role, ProviderRole::Primary));
+        let has_replica = agreements
+            .iter()
+            .any(|a| matches!(a.role, ProviderRole::Replica { .. }));
         assert!(has_primary);
         assert!(has_replica);
     });
@@ -472,7 +495,11 @@ fn query_provider_agreements_includes_replica() {
             bucket_id,
             50,
             200,
-            ReplicaTerms { sync_balance: 100, min_sync_interval: 10, sync_price: 5 },
+            ReplicaTerms {
+                sync_balance: 100,
+                min_sync_interval: 10,
+                sync_price: 5,
+            },
         );
 
         // Provider 2: one Primary agreement.
