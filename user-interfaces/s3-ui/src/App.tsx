@@ -1,11 +1,16 @@
+import { Route, Routes } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
+import Layout from "@/components/Layout";
+import S3Page from "@/pages/S3Page";
 
 export default function App() {
   return (
     <>
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <p className="text-muted-foreground">S3 UI</p>
-      </div>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<S3Page />} />
+        </Route>
+      </Routes>
       <Toaster />
     </>
   );
