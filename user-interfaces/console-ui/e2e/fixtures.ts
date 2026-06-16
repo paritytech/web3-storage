@@ -1,9 +1,0 @@
-import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers/playwright";
-
-export const test = makeLocalPageFixture({
-  localStorage: {
-    "web3-storage-selected-network": "local",
-  },
-});
-
-export { expect };

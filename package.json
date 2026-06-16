@@ -10,7 +10,6 @@
     "papi:generate": "pnpm --filter @web3-storage/papi run papi:generate",
     "test:unit": "pnpm --filter @web3-storage/core --filter @web3-storage/layer0 --filter @web3-storage/layer1 --filter @web3-storage/drive-ui --filter provider-dashboard --if-present run test:unit",
     "test:e2e:drive-ui": "pnpm --filter @web3-storage/drive-ui run test",
-    "test:e2e:console-ui": "pnpm --filter @web3-storage/console-ui run test",
     "test:e2e:provider": "pnpm --filter provider-dashboard run test:e2e",
     "e2e": "pnpm --filter web3-storage-papi-demo run e2e",
     "demo": "pnpm --filter web3-storage-papi-demo run demo",

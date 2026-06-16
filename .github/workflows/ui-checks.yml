@@ -76,8 +76,8 @@ jobs:
         include:
           - ui: drive-ui
             filter: "@web3-storage/drive-ui"
-          - ui: console-ui
-            filter: "@web3-storage/console-ui"
+          - ui: s3-ui
+            filter: "@web3-storage/s3-ui"
           - ui: provider
             filter: provider-dashboard
     steps:

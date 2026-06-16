@@ -183,10 +183,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 1,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // 0.2.0 -> 2_000. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `1`).
+    spec_version: 2_000,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 1,
 };
 

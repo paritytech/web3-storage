@@ -5,8 +5,8 @@ packages:
   # a workspace package so consumers can depend on it via `workspace:*`.
   - "user-interfaces/shared/papi/.papi/descriptors"
   - "user-interfaces/provider"
-  - "user-interfaces/console-ui"
   - "user-interfaces/drive-ui"
+  - "user-interfaces/s3-ui"
   - "packages/*"
   - "examples/papi"
 

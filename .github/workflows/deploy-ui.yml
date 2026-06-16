@@ -39,7 +39,7 @@ jobs:
         env:
           GITHUB_PAGES: "true"
         run: |
-          pnpm --filter @web3-storage/console-ui run build
+          pnpm --filter @web3-storage/s3-ui run build
           pnpm --filter provider-dashboard run build
           pnpm --filter @web3-storage/drive-ui run build
 
@@ -52,11 +52,11 @@ jobs:
             user-interfaces/landing/index.html _site/index.html
           cp user-interfaces/landing/404.html _site/
           # Each app in its subpath
-          cp -r user-interfaces/console-ui/dist _site/console
+          cp -r user-interfaces/s3-ui/dist _site/s3
           cp -r user-interfaces/provider/dist _site/provider
           cp -r user-interfaces/drive-ui/dist _site/drive
           # Per-app 404.html for SPA routing within each app
-          cp user-interfaces/console-ui/dist/index.html _site/console/404.html
+          cp user-interfaces/s3-ui/dist/index.html _site/s3/404.html
           cp user-interfaces/provider/dist/index.html _site/provider/404.html
           cp user-interfaces/drive-ui/dist/index.html _site/drive/404.html
 

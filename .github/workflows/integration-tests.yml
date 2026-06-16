@@ -681,11 +681,6 @@ jobs:
           CI: "true"
         run: pnpm run test:e2e:drive-ui
 
-      - name: console-ui e2e
-        env:
-          CI: "true"
-        run: pnpm run test:e2e:console-ui
-
       - name: provider e2e
         env:
           CI: "true"
@@ -706,8 +701,6 @@ jobs:
           path: |
             user-interfaces/drive-ui/playwright-report
             user-interfaces/drive-ui/test-results
-            user-interfaces/console-ui/playwright-report
-            user-interfaces/console-ui/test-results
             user-interfaces/provider/playwright-report
             user-interfaces/provider/test-results
 
