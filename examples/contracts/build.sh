@@ -31,6 +31,7 @@ cd "$SCRIPT_DIR"
 # those ABIs, without an intermediate contract.
 resolc --combined-json abi,bin -O3 --overwrite -o "$BUILD_DIR" \
     StorageMarketplace.sol SharedTeamDrive.sol TokenGatedDrive.sol \
+    MutableNotebook.sol \
     IWeb3Storage.sol IDriveRegistry.sol IS3Registry.sol
 
 echo "Built artifacts:"

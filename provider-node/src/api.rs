@@ -338,7 +338,11 @@ async fn get_content(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetContentQuery>,
 ) -> Result<Response, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+    let hex = query
+        .data_root
+        .strip_prefix("0x")
+        .unwrap_or(&query.data_root);
+    let root_bytes = hex_decode(hex).map_err(|_| Error::InvalidHash {
         expected: query.data_root.clone(),
         actual: "invalid hex".to_string(),
     })?;
