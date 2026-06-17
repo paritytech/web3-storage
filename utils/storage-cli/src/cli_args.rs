@@ -1,9 +1,9 @@
-//! Command-line argument parsing for the storage operator CLI.
+//! Command-line argument parsing for the storage CLI.
 
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Operator CLI for scalable Web3 storage — drive on-chain and off-chain
+/// Storage CLI for scalable Web3 storage — drive on-chain and off-chain
 /// storage operations from a single tool.
 #[derive(Debug, Parser)]
 #[command(name = "storage-cli", version, about)]

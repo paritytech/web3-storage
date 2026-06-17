@@ -4,12 +4,13 @@
 //! [`storage-client`](../../client) SDK. See `--help` for the available
 //! subcommands.
 
-mod cli;
-mod commands;
+mod cli_args;
+mod shared;
+mod scenarios;
 
 use clap::Parser;
 
-use crate::cli::{Cli, Command, StressTest};
+use crate::cli_args::{Cli, Command, StressTest};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         Command::StressTest(StressTest::Upload(args)) => {
-            commands::stress_test::upload(&cli.global, args).await
+            scenarios::stress_test::upload(&cli.global, args).await
         }
     }
 }

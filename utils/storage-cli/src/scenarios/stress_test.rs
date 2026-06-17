@@ -7,7 +7,8 @@ use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ChunkingStrategy, ClientConfig, StorageUserClient};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
-use crate::cli::{GlobalArgs, UploadArgs};
+use crate::cli_args::{GlobalArgs, UploadArgs};
+use crate::shared::resolve_suri;
 
 /// Upload generated data to every bucket the account already has an agreement
 /// with `--provider` for.
@@ -23,12 +24,13 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<()> {
     let account = AccountId32::from(keypair.public_key().0);
     let account_ss58 = account.to_ss58check();
 
-    // Target provider: parse once, then build the hex needle the SDK reports
-    // agreements with (`0x` + lowercase hex of the 32 raw account bytes).
-    // Compare raw bytes, never SS58 strings (prefix differences would mismatch).
-    let provider = SubstrateClient::parse_account(&args.provider)
-        .map_err(|e| anyhow!("invalid --provider account: {e}"))?;
-    let provider_needle = format!("0x{}", hex::encode(provider.as_ref() as &[u8]));
+    // Target provider: parse the input and hex-encode it (`0x` + lowercase hex
+    // of the 32 raw account bytes) for matching against the chain's
+    // `StorageAgreements`. Match on raw bytes, never SS58 strings — prefix
+    // differences (`5…` vs `1…`) would make equal accounts compare unequal.
+    let target_provider_hex = SubstrateClient::parse_account(&args.provider)
+        .map_err(|e: storage_client::ClientError| anyhow!("invalid --provider account: {e}"))
+        .map(|ac| format!("0x{}", hex::encode(ac.as_ref() as &[u8])))?;
 
     let config = ClientConfig {
         chain_ws_url: global.chain_rpc.clone(),
@@ -58,7 +60,7 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<()> {
             .with_context(|| format!("failed to read agreements for bucket {bucket_id}"))?;
         if agreements
             .iter()
-            .any(|a| a.provider.eq_ignore_ascii_case(&provider_needle))
+            .any(|a| a.provider.eq_ignore_ascii_case(&target_provider_hex))
         {
             selected_buckets_id.push(bucket_id);
         }
@@ -102,22 +104,4 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<()> {
 
     println!("Done: {} bucket(s) written.", selected_buckets_id.len());
     Ok(())
-}
-
-/// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required;
-/// clap already enforces they are mutually exclusive).
-fn resolve_suri(global: &GlobalArgs) -> Result<String> {
-    match (&global.suri, &global.keyfile) {
-        (Some(suri), _) => Ok(suri.clone()),
-        (None, Some(path)) => {
-            let contents = std::fs::read_to_string(path)
-                .with_context(|| format!("failed to read keyfile {}", path.display()))?;
-            let suri = contents.trim().to_string();
-            if suri.is_empty() {
-                bail!("keyfile {} is empty", path.display());
-            }
-            Ok(suri)
-        }
-        (None, None) => bail!("one of --suri or --keyfile is required"),
-    }
 }
