@@ -16,9 +16,9 @@ use crate::{
 
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
-    pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
-    pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-    pub const RequestTimeout: BlockNumber = 6 * HOURS;
+    pub const ChallengeTimeout: BlockNumber = if cfg!(feature = "fast-runtime") { 10 } else { 48 * HOURS };
+    pub const SettlementTimeout: BlockNumber = if cfg!(feature = "fast-runtime") { 5 } else { 24 * HOURS };
+    pub const RequestTimeout: BlockNumber = if cfg!(feature = "fast-runtime") { 3 } else { 6 * HOURS };
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
     pub const DefaultCheckpointInterval: BlockNumber = 100;
@@ -27,7 +27,7 @@ parameter_types! {
     pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `>= ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
-    pub const DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    pub const DeregisterAnnouncementPeriod: BlockNumber = if cfg!(feature = "fast-runtime") { 10 } else { 48 * HOURS };
 }
 
 /// Treasury account that receives slashed funds.
