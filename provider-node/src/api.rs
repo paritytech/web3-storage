@@ -852,3 +852,40 @@ async fn get_replica_sync_status(
         syncing: false,        // Would check coordinator state
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+    use crate::StorageBackend;
+
+    fn test_storage() -> Arc<dyn StorageBackend> {
+        Arc::new(Storage::new())
+    }
+
+    #[tokio::test]
+    async fn info_reports_not_ready_without_signing_key() {
+        // `ProviderState::new` has no keypair, nonce counter, or provider info,
+        // so every readiness flag must be false.
+        let state = Arc::new(ProviderState::new(test_storage(), "no-key".to_string()));
+        let Json(resp) = info(State(state)).await;
+        assert_eq!(resp.provider_id, "no-key");
+        assert!(!resp.readiness.signing_configured);
+        assert!(!resp.readiness.nonce_counter_ready);
+        assert!(!resp.readiness.provider_info_loaded);
+        assert!(resp.provider_registration_info.is_none());
+    }
+
+    #[tokio::test]
+    async fn info_reports_signing_configured_with_seed() {
+        // A seed enables signing, but the nonce counter and on-chain provider
+        // info are only wired up at startup against a live chain — so a node
+        // can have a key yet still be unable to serve `/negotiate`.
+        let state =
+            Arc::new(ProviderState::with_seed(test_storage(), "//Alice").expect("valid dev seed"));
+        let Json(resp) = info(State(state)).await;
+        assert!(resp.readiness.signing_configured);
+        assert!(!resp.readiness.nonce_counter_ready);
+        assert!(!resp.readiness.provider_info_loaded);
+    }
+}
