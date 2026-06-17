@@ -550,6 +550,10 @@ mod runtime {
     #[runtime::pallet_index(33)]
     pub type MessageQueue = pallet_message_queue;
 
+    // Handy utilities. Utility / Multisig / Proxy / Indices ...
+    #[runtime::pallet_index(34)]
+    pub type Utility = pallet_utility;
+
     // Weight reclaim
     #[runtime::pallet_index(40)]
     pub type WeightReclaim = cumulus_pallet_weight_reclaim;
@@ -569,10 +573,6 @@ mod runtime {
     // Smart contracts (PolkaVM + EVM-compatible)
     #[runtime::pallet_index(60)]
     pub type Revive = pallet_revive;
-
-    // Handy utilities. Utility / Multisig / Proxy / Indices ...
-    #[runtime::pallet_index(70)]
-    pub type Utility = pallet_utility;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {
