@@ -3118,6 +3118,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
+name = "fastcdc"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9689,7 +9695,9 @@ dependencies = [
 name = "storage-primitives"
 version = "0.1.0"
 dependencies = [
+ "fastcdc",
  "parity-scale-codec",
+ "rand 0.8.5",
  "scale-info",
  "serde",
  "sp-core",
@@ -9707,6 +9715,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "rand 0.8.5",
  "reqwest",
  "rocksdb",
  "serde",

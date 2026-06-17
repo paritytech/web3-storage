@@ -33,3 +33,4 @@ codec = { workspace = true, features = ["std"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 serde_json = { workspace = true }
+rand = "0.8"
