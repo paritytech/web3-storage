@@ -163,6 +163,22 @@ function clearStaleCache(genesisHash: string) {
   localStorage.setItem(CHALLENGES_GENESIS_KEY, genesisHash)
 }
 
+/**
+ * Clear locally-cached chain data — the persisted challenges cache and the
+ * in-memory list. Preferences (wallet, network, auto-refresh) are NOT touched;
+ * those live under different keys. Callers typically follow with
+ * `loadProviderData` to refetch fresh state from chain.
+ */
+export function clearLocalCache(): void {
+  challenges$.next([])
+  try {
+    localStorage.removeItem(CHALLENGES_STORAGE_KEY)
+    localStorage.removeItem(CHALLENGES_GENESIS_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 // State subjects
 const providerInfo$ = new BehaviorSubject<ProviderInfo | null>(null)
 const providerSettings$ = new BehaviorSubject<ProviderSettings | null>(null)
@@ -219,9 +235,18 @@ export const [useProviderError] = bind(error$, null)
 /**
  * Load provider data from chain
  */
-export async function loadProviderData(address: string): Promise<void> {
-  isLoading$.next(true)
-  error$.next(null)
+export async function loadProviderData(
+  address: string,
+  opts: { silent?: boolean } = {},
+): Promise<void> {
+  // Silent refreshes (e.g. the auto-refresh timer) update data in place without
+  // toggling the global loading flag or surfacing transient errors, so the UI
+  // doesn't flash loading/error states on every tick.
+  const silent = opts.silent ?? false
+  if (!silent) {
+    isLoading$.next(true)
+    error$.next(null)
+  }
 
   try {
     // Clear stale challenge cache if chain restarted (different genesis)
@@ -323,9 +348,13 @@ export async function loadProviderData(address: string): Promise<void> {
       activeAgreementValue: activeValue,
     })
   } catch (err) {
-    error$.next(err instanceof Error ? err.message : 'Failed to load provider data')
+    if (silent) {
+      console.warn('Auto-refresh failed to load provider data:', err)
+    } else {
+      error$.next(err instanceof Error ? err.message : 'Failed to load provider data')
+    }
   } finally {
-    isLoading$.next(false)
+    if (!silent) isLoading$.next(false)
   }
 }
 
@@ -698,4 +727,5 @@ export const providerActions = {
   completeDeregister,
   respondToChallenge,
   clearProviderState,
+  clearLocalCache,
 }
