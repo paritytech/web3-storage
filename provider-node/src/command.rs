@@ -108,7 +108,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // later settings changes are reflected too. Only meaningful when we can
     // sign, so gate on having a key.
     if seed.is_some() {
-        spawn_chain_reconciler(cli.rpc.chain_rpc.clone(), state.clone());
+        let interval = Duration::from_secs(cli.rpc.reconcile_interval_secs);
+        spawn_chain_reconciler(cli.rpc.chain_rpc.clone(), interval, state.clone());
     }
 
     // Connect a single chain client shared by every coordinator. One
@@ -237,9 +238,6 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-/// How often the background reconciler re-reads the provider's on-chain state.
-const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
-
 /// Spawn a background task that keeps the node's view of its own on-chain
 /// registration current.
 ///
@@ -247,13 +245,13 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
 /// ([`ProviderState::provider_info`]) and replay window
 /// ([`ProviderState::nonce_counter`]). Instead of reading these once at
 /// startup — which would miss a provider that registers *after* the node is up
-/// and never notice later settings changes — we poll on a fixed interval. The
+/// and never notice later settings changes — we poll every `interval`. The
 /// first poll runs immediately, so an already-registered provider is picked up
 /// right away.
 ///
 /// All failures are non-fatal: a chain hiccup or an unregistered provider just
 /// means we keep the previous view and retry on the next tick.
-fn spawn_chain_reconciler(chain_rpc: String, state: Arc<ProviderState>) {
+fn spawn_chain_reconciler(chain_rpc: String, interval: Duration, state: Arc<ProviderState>) {
     let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
         Ok(account) => account,
         Err(e) => {
@@ -272,7 +270,7 @@ fn spawn_chain_reconciler(chain_rpc: String, state: Arc<ProviderState>) {
         let mut was_registered = false;
         loop {
             reconcile_once(&chain_rpc, &provider_account, &state, &mut was_registered).await;
-            tokio::time::sleep(RECONCILE_INTERVAL).await;
+            tokio::time::sleep(interval).await;
         }
     });
 }
