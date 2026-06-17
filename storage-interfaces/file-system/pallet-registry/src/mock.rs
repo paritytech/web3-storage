@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate as pallet_drive_registry;
 use frame_support::{
     derive_impl, parameter_types,
@@ -143,5 +145,11 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     .assimilate_storage(&mut t)
     .unwrap();
 
-    t.into()
+    let mut ext: sp_io::TestExternalities = t.into();
+    // Required so signed-terms tests can call `sr25519_sign` through the
+    // keystore extension.
+    ext.register_extension(sp_keystore::KeystoreExt::new(
+        sp_keystore::testing::MemoryKeystore::new(),
+    ));
+    ext
 }

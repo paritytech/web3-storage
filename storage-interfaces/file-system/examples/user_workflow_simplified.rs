@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! User Workflow Example: Using storage WITHOUT knowing about buckets
 //!
 //! This demonstrates the truly simplified user experience in Layer 1 File System.

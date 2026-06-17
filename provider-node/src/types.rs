@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
+use storage_client::discovery::ProviderInfo;
 use storage_primitives::BucketId;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,8 +265,8 @@ pub struct ListBucketsResponse {
 /// Provider info response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InfoResponse {
-    pub status: String,
-    pub version: String,
+    pub provider_id: String,
+    pub provider_registration_info: Option<ProviderInfo>,
 }
 
 /// Health check response.

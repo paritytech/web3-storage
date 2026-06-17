@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Block weight constants for the runtime.
 
 pub mod constants {

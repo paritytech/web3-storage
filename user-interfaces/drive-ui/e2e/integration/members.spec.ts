@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Members specs.
  *
@@ -11,32 +13,17 @@
  * still the sole member when the duplicate-check test runs.
  */
 import { test, expect } from "../fixtures";
-import {
-  Bob,
-  Charlie,
-  cleanupDrives,
-  createDriveViaApi,
-} from "@web3-storage/test-helpers";
+import { Bob, Charlie, cleanupDrives } from "@web3-storage/test-helpers";
+import { createDriveInFreshContext } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 let driveId: bigint;
 
-test.beforeAll(async () => {
-  // createDriveViaApi = one finalized create_drive (~12-36s under finality lag)
-  // + up to 90s waiting for the provider to finalize accept_agreement, so its
-  // worst case can exceed 120s. Use the same 180s budget as every other
-  // drive-creating spec (this hook previously lowered it to 120s and flaked).
+test.beforeAll(async ({ browser }) => {
   test.setTimeout(180_000);
-  const drive = await createDriveViaApi(Bob, {
-    name: `members-${Date.now()}`,
-    maxCapacity: 10_000_000n,
-    storagePeriod: 10_000,
-    payment: 120_000_000_000_000_000n,
-    minProviders: 1,
-  });
-  driveId = drive.driveId;
+  driveId = await createDriveInFreshContext(browser, `members-${Date.now()}`);
 });
 
 test.afterAll(async () => {

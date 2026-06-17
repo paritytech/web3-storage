@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Provider discovery / marketplace example.
  *
@@ -23,6 +25,7 @@
 
 import {
   connect,
+  READ_OPTS,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -70,7 +73,7 @@ function scoreProvider(info, req) {
 }
 
 async function fetchAndRankProviders(api, req) {
-  const entries = await api.query.StorageProvider.Providers.getEntries();
+  const entries = await api.query.StorageProvider.Providers.getEntries(READ_OPTS);
   const ranked = entries.map(({ keyArgs, value }) => ({
     address: keyArgs[0],
     info: value,

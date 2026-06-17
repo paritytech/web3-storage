@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Checkpoint Persistence Module
 //!
 //! Provides persistence for checkpoint state across restarts, including:

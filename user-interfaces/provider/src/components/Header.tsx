@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   Server,
-  FileText,
   Database,
   Shield,
   Coins,
@@ -44,7 +45,7 @@ import { formatAddress } from '@/utils/format'
 const navItems = [
   { path: '/', label: 'Overview', icon: Server },
   { path: '/registration', label: 'Registration', icon: Settings },
-  { path: '/agreements', label: 'Agreements', icon: FileText },
+  // { path: '/agreements', label: 'Agreements', icon: FileText },
   { path: '/buckets', label: 'Buckets', icon: Database },
   { path: '/checkpoints', label: 'Checkpoints', icon: CheckCircle },
   { path: '/challenges', label: 'Challenges', icon: Shield },

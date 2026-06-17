@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! File system drive metadata index.
 //!
 //! Provides a per-drive sorted path→metadata map for the file system interface.
@@ -533,6 +535,44 @@ mod tests {
         assert_eq!(loaded[0].1.get("/test.txt").unwrap().size, 42);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_file_to_dir_transition() {
+        let mut idx = DriveIndex::default();
+        idx.put_file("/path".to_string(), make_file_meta(100));
+        assert_eq!(idx.file_count, 1);
+        assert_eq!(idx.dir_count, 0);
+        assert_eq!(idx.total_size, 100);
+
+        // Replace file with directory
+        idx.mkdir("/path".to_string());
+        assert_eq!(idx.file_count, 0);
+        assert_eq!(idx.dir_count, 1);
+        assert_eq!(idx.total_size, 0);
+    }
+
+    #[test]
+    fn test_dir_to_file_transition() {
+        let mut idx = DriveIndex::default();
+        idx.mkdir("/path".to_string());
+        assert_eq!(idx.dir_count, 1);
+        assert_eq!(idx.file_count, 0);
+
+        // Replace directory with file
+        idx.put_file("/path".to_string(), make_file_meta(200));
+        assert_eq!(idx.dir_count, 0);
+        assert_eq!(idx.file_count, 1);
+        assert_eq!(idx.total_size, 200);
+    }
+
+    #[test]
+    fn test_metadata_merkle_root_single_entry() {
+        let mut idx = DriveIndex::default();
+        idx.put_file("/only.txt".to_string(), make_file_meta(42));
+
+        let root = idx.metadata_merkle_root();
+        assert_ne!(root, H256::zero());
     }
 
     #[test]

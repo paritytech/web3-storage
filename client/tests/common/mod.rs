@@ -1,12 +1,15 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared test helpers for integration tests.
 
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
 use storage_client::{
-    AdminClient, ChallengerClient, ClientConfig, DiscoveryClient, ProviderClient, ProviderSettings,
-    StorageUserClient,
+    sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
+    ProviderClient, ProviderSettings, StorageUserClient,
 };
+use storage_primitives::AgreementTerms;
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
@@ -120,12 +123,15 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         Ok(Some(_))
     );
 
+    let alice_keypair = subxt_signer::sr25519::dev::alice();
+    let alice_pubkey = alice_keypair.public_key().0.to_vec();
+
     if !already_registered {
         // Idempotent: ignore "already registered" errors so tests survive races.
         let _ = provider
             .register(
                 "/ip4/127.0.0.1/tcp/3333".to_string(),
-                vec![0u8; 32],
+                alice_pubkey,
                 MIN_STAKE,
             )
             .await;
@@ -143,13 +149,36 @@ pub async fn chain_setup() -> Option<ChainSetup> {
             .await;
     }
 
-    // ── Create a fresh bucket as Alice ────────────────────────────────────────
+    // ── Create a fresh bucket as Alice via signed-terms flow ──────────────────
+    // Alice is both the provider (signs terms) and the bucket owner (redeems).
+    // Nonces must be unique per provider, so we pick one based on the current
+    // block-ish counter — using time-since-epoch nanos so reruns don't collide.
     let mut admin = AdminClient::new(chain_config(), alice_ss58.clone()).ok()?;
     if admin.connect().await.is_err() {
         return None;
     }
     admin.set_dev_signer("alice").ok()?;
-    let bucket_id = admin.create_bucket(1).await.ok()?;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+
+    let terms: AgreementTermsOf = AgreementTerms {
+        owner: dev_account("alice"),
+        max_bytes: 1_000_000,
+        duration: 100,
+        price_per_byte: 1,
+        valid_until: u32::MAX,
+        nonce,
+        replica_params: None,
+        bucket_id: None,
+    };
+    let sig = sign_terms(&alice_keypair, &terms);
+    let bucket_id = admin
+        .establish_storage_agreement(alice_ss58.clone(), terms, sig)
+        .await
+        .ok()?;
 
     Some(ChainSetup {
         alice_ss58,

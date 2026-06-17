@@ -1,0 +1,6 @@
+{
+  "all": true,
+  "src": ["."],
+  "include": ["api.js", "common.js"],
+  "exclude": ["e2e/**", "node_modules/**", "sc-*.js", ".papi/**"]
+}
