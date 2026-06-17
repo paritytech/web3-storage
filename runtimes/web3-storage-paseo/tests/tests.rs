@@ -670,9 +670,10 @@ fn should_add_stake_via_xcm() {
                 public_key: to_provider_public_key(Sr25519Keyring::Alice),
                 stake: initial_stake,
             });
-        let add_stake_call = RuntimeCall::StorageProvider(
-            StorageProviderCall::<Runtime>::add_stake { amount: extra },
-        );
+        let add_stake_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::add_stake {
+                amount: extra,
+            });
 
         // The dispatch origin is the sovereign `AccountId` derived from Alice-on-para.
         let derived: AccountId =
