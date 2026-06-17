@@ -277,6 +277,7 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         let bucket_id = setup_with_snapshot(2, 1);
 
         let challenger_balance_before = Balances::free_balance(3);
+        let provider_balance_before = Balances::free_balance(2);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
 
         assert_ok!(StorageProvider::challenge_checkpoint(
@@ -307,6 +308,13 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         // deposit = 100, challenger_cost = 90, provider_cost = 10
         // Challenger gets unreserved (100 - 90) = 10 back
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 90);
+
+        // No deposit stays stuck in the challenger's reserved balance.
+        assert_eq!(Balances::reserved_balance(3), 0);
+
+        // The forfeited challenger_cost (90) is repatriated to the provider's
+        // free balance as compensation for responding.
+        assert_eq!(Balances::free_balance(2), provider_balance_before + 90);
 
         // Provider stake decreased by 10
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
@@ -444,6 +452,7 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
         let bucket_id = setup_with_snapshot(2, 1);
 
         let challenger_balance_before = Balances::free_balance(3);
+        let provider_balance_before = Balances::free_balance(2);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
 
         assert_ok!(StorageProvider::challenge_checkpoint(
@@ -473,6 +482,14 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
 
         // challenger_cost = 50, provider_cost = 50
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 50);
+
+        // No deposit stays stuck in the challenger's reserved balance.
+        assert_eq!(Balances::reserved_balance(3), 0);
+
+        // The forfeited challenger_cost (50) is repatriated to the provider's
+        // free balance as compensation for responding.
+        assert_eq!(Balances::free_balance(2), provider_balance_before + 50);
+
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
         assert_eq!(provider_stake_after, provider_stake_before - 50);
     });

@@ -47,7 +47,7 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{Currency, ExistenceRequirement, ReservableCurrency},
+        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     use frame_system::pallet_prelude::*;
@@ -2828,8 +2828,23 @@ pub mod pallet {
             let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
             let provider_cost = challenge.deposit * provider_percent.into() / 100u32.into();
 
-            // Refund challenger (deposit minus their cost)
-            let refund = challenge.deposit.saturating_sub(challenger_cost);
+            // Challenger forfeits `challenger_cost` to the provider as
+            // compensation for the work of responding: move it from the
+            // challenger's reserved balance into the provider's free balance.
+            let not_moved = T::Currency::repatriate_reserved(
+                &challenge.challenger,
+                &challenge.provider,
+                challenger_cost,
+                BalanceStatus::Free,
+            )
+            .unwrap_or(challenger_cost);
+            // Refund challenger the rest of their deposit. Anything that could
+            // not be moved (should not happen) is released back to them too, so
+            // no funds stay stuck in the challenger's reserved balance.
+            let refund = challenge
+                .deposit
+                .saturating_sub(challenger_cost)
+                .saturating_add(not_moved);
             T::Currency::unreserve(&challenge.challenger, refund);
 
             // Slash provider_cost from provider's stake
