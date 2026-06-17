@@ -22,7 +22,7 @@
   {
     "name": "storage-parachain-runtime",
     "package": "storage-parachain-runtime",
-    "path": "runtime",
+    "path": "runtimes/web3-storage-local",
     "build_command": "build-runtime",
     "zombienet_config": "zombienet.toml",
     "chain_spec_script": "scripts/build-chain-spec.sh",
