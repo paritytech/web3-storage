@@ -233,6 +233,21 @@ async fn negotiate_503_when_provider_info_unavailable() {
 }
 
 #[tokio::test]
+async fn negotiate_503_when_nonce_counter_unavailable() {
+    // Keypair present, but the nonce counter never bootstrapped from chain.
+    // This must surface as its own error rather than masquerading as a missing
+    // signing key — see `Error::NonceCounterUnavailable`.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    // nonce_counter intentionally left None.
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "nonce_counter_unavailable");
+}
+
+#[tokio::test]
 async fn negotiate_422_price_below_listed() {
     let server = TestServer::ready(provider_info()).await;
 
