@@ -82,6 +82,11 @@ pub mod pallet {
             // respond. `drain_prefix` removes the entries as it iterates.
             for (index, challenge) in Challenges::<T>::drain_prefix(n) {
                 let challenge_id = ChallengeId { deadline: n, index };
+                // Timeout is a resolution: decrement the pending counters
+                // exactly once here, mirroring the increment in
+                // `create_challenge`. (The slash helper is shared with the
+                // invalid-response path, so it must NOT touch the counters.)
+                Self::decrement_pending(challenge.bucket_id, &challenge.provider);
                 Self::slash_provider_for_failed_challenge(
                     &challenge,
                     challenge_id,
@@ -91,6 +96,19 @@ pub mod pallet {
             // Clear the per-deadline index allocator now the deadline has
             // passed; no further challenges can target this block.
             NextChallengeIndex::<T>::remove(n);
+        }
+
+        /// Invariant: the deregistration announcement window must be at least
+        /// as long as the challenge response timeout, so any challenge created
+        /// up to the announcement block matures (and the provider stays
+        /// slashable) before the provider can complete deregistration.
+        fn integrity_test() {
+            assert!(
+                T::DeregisterAnnouncementPeriod::get() >= T::ChallengeTimeout::get(),
+                "DeregisterAnnouncementPeriod must be >= ChallengeTimeout so a \
+                 challenge created at the announcement block matures while the \
+                 provider is still slashable"
+            );
         }
     }
 
@@ -250,6 +268,31 @@ pub mod pallet {
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+
+    /// Number of unresolved challenges currently outstanding against a
+    /// provider, summed across every bucket. Incremented in `create_challenge`
+    /// and decremented exactly once per resolution (defended/invalid-response
+    /// in `respond_to_challenge`, or timeout in `on_finalize`). Gates
+    /// `complete_deregister`: a provider cannot exit while still slashable for
+    /// a pending challenge.
+    #[pallet::storage]
+    pub type PendingChallenges<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+    /// Number of unresolved challenges outstanding against a specific
+    /// `(bucket, provider)` pair. Maintained in lockstep with
+    /// [`PendingChallenges`] and gates that bucket's agreement teardown
+    /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+    #[pallet::storage]
+    pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BucketId,
+        Blake2_128Concat,
+        T::AccountId,
+        u32,
+        ValueQuery,
+    >;
 
     /// Per-challenger aggregates so the SDK doesn't have to scan historical
     /// events to answer `get_challenge_stats` / `get_total_challenge_earnings`.
@@ -905,6 +948,13 @@ pub mod pallet {
         ProviderNotInSnapshot,
         LeafBeyondCanonical,
         InvalidDeletionProof,
+        /// A provider with unresolved challenges (`PendingChallenges > 0`)
+        /// cannot complete deregistration — they are still slashable.
+        ProviderHasPendingChallenges,
+        /// An agreement with an unresolved challenge against this
+        /// `(bucket, provider)` cannot be torn down until the challenge
+        /// resolves (defended, slashed, or timed out).
+        AgreementHasPendingChallenge,
 
         // Checkpoint errors
         InvalidSignature,
@@ -1114,6 +1164,16 @@ pub mod pallet {
             ensure!(
                 provider.committed_bytes == 0,
                 Error::<T>::ProviderHasActiveAgreements
+            );
+            // A provider with unresolved challenges is still slashable; they
+            // must not be able to exit and unreserve their stake before those
+            // challenges mature. The `DeregisterAnnouncementPeriod >=
+            // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
+            // challenge created up to the announcement block resolves before
+            // the wait window elapses, so this only blocks genuinely-live ones.
+            ensure!(
+                PendingChallenges::<T>::get(&who) == 0,
+                Error::<T>::ProviderHasPendingChallenges
             );
 
             // Drain pending checkpoint rewards (provider-keyed thanks to the
@@ -1569,6 +1629,14 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
+            // Block teardown while a challenge is pending against this
+            // `(bucket, provider)` — settling/paying out the agreement now
+            // would let the provider escape a live slashable challenge.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
+
             let current_block = frame_system::Pallet::<T>::block_number();
 
             let is_early_termination = current_block < agreement.expires_at;
@@ -1615,6 +1683,14 @@ pub mod pallet {
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementNotFound)?;
+
+            // Block payout while a challenge is pending against this provider
+            // for this bucket — the provider must not claim and exit while
+            // still slashable.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &who) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
 
             let current_block = frame_system::Pallet::<T>::block_number();
 
@@ -2497,10 +2573,16 @@ pub mod pallet {
                 Error::<T>::BucketNotFound
             );
 
-            // Verify provider has an agreement for this bucket
+            // Verify provider has an ACTIVE agreement for this bucket. An
+            // expired-but-unswept agreement leaves a stale row in
+            // `StorageAgreements`; challengeability must track genuine
+            // obligation, so a challenge can only open while the agreement is
+            // live (not into the settlement window).
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                StorageAgreements::<T>::contains_key(bucket_id, &provider),
-                Error::<T>::AgreementNotFound
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
             );
 
             // Build the commitment payload that the provider signed.
@@ -2540,6 +2622,13 @@ pub mod pallet {
             // Get the agreement and verify it's a replica
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
+
+            // Challengeability tracks genuine obligation: only while the
+            // agreement is live (not into the settlement window).
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
 
             let (mmr_root, start_seq) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
@@ -2583,6 +2672,13 @@ pub mod pallet {
             // never short-circuits with `?`) commits the removal.
             let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
+
+            // The `take` consumes this challenge, so resolve the pending
+            // counters now — this covers BOTH the defended path and the
+            // invalid-response slash path below. Any `?`-bail after this point
+            // reverts the whole extrinsic (including this decrement and the
+            // `take`), so the challenge and its counters stay in lockstep.
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
@@ -3320,6 +3416,17 @@ pub mod pallet {
             // End all agreements for this bucket (pay providers fairly)
             let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
 
+            // Refuse to delete the bucket while any of its agreements has a
+            // pending challenge — otherwise tearing down here would let the
+            // provider escape a live slashable challenge. Checked before any
+            // state mutation/payout so the whole call is a no-op on failure.
+            for (provider, _) in &agreements {
+                ensure!(
+                    PendingChallengesByBucket::<T>::get(bucket_id, provider) == 0,
+                    Error::<T>::AgreementHasPendingChallenge
+                );
+            }
+
             for (provider, agreement) in agreements {
                 // Calculate prorated refund based on remaining time
                 let current_block = frame_system::Pallet::<T>::block_number();
@@ -3445,6 +3552,17 @@ pub mod pallet {
             });
             Challenges::<T>::insert(deadline, index, &challenge);
 
+            // Bump the pending-challenge counters. These are decremented
+            // exactly once per resolution (defended/invalid-response in
+            // `respond_to_challenge`, or timeout in `on_finalize`), so a
+            // fully-resolved provider/bucket returns to 0. They gate
+            // `complete_deregister` and agreement teardown so a provider can't
+            // escape a live challenge.
+            PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
+            PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| {
+                *n = n.saturating_add(1)
+            });
+
             // Update provider stats
             Providers::<T>::mutate(&provider, |maybe_provider| {
                 if let Some(provider_info) = maybe_provider {
@@ -3508,6 +3626,21 @@ pub mod pallet {
             }
 
             Err(Error::<T>::InvalidSyncRoot.into())
+        }
+
+        /// Decrement both pending-challenge counters for a resolved
+        /// `(bucket, provider)` challenge. Called from the two resolution
+        /// sites — `respond_to_challenge` (after the `take` consumes the
+        /// challenge, covering both the defended and invalid-response paths)
+        /// and `on_finalize` (per drained timed-out challenge) — never from
+        /// `slash_provider_for_failed_challenge`, which both sites share and
+        /// which would otherwise double-count. `saturating_sub` keeps the
+        /// counters non-negative even if invariants are ever violated.
+        fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
+            PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));
+            PendingChallengesByBucket::<T>::mutate(bucket_id, provider, |n| {
+                *n = n.saturating_sub(1)
+            });
         }
 
         /// Slash a provider for failing a challenge.

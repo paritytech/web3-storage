@@ -886,10 +886,10 @@ mod challenge_tests {
     use super::*;
     use codec::Encode;
     use frame_support::{traits::Hooks, BoundedVec};
-    use sp_core::H256;
+    use sp_core::{Pair, H256};
     use storage_primitives::{
-        blake2_256, BucketSnapshot, ChallengeId, ChallengerStatRecord, MerkleProof, MmrLeaf,
-        MmrProof, ProviderRole, ReplicaSyncRecord,
+        blake2_256, BucketSnapshot, ChallengeId, ChallengerStatRecord, EndAction, MerkleProof,
+        MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1837,6 +1837,460 @@ mod challenge_tests {
             let stats = ChallengerStats::<Test>::get(3);
             assert_eq!(stats.successful_challenges, 1);
             assert_eq!(stats.total_earnings, 20);
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Fix 2 — lifecycle gating + pending-challenge counters
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Sign a `CommitmentPayload` the way a provider would when quoting an
+    /// off-chain commitment, so `challenge_offchain` accepts it.
+    fn signed_offchain_commitment(
+        provider: u64,
+        bucket_id: u64,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        nonce: u64,
+    ) -> sp_runtime::MultiSignature {
+        let pair = provider_signer(provider);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, start_seq, leaf_count, nonce,
+        );
+        // `verify_signature` checks the raw encoded payload (sr25519 hashes
+        // internally), so sign the encoding directly — no extra blake2 round.
+        sp_runtime::MultiSignature::Sr25519(pair.sign(&payload.encode()))
+    }
+
+    // Counter lifecycle ───────────────────────────────────────────────────────
+
+    /// `create_challenge` bumps both pending counters to 1, and a defended
+    /// `respond_to_challenge` (valid proof) returns both to 0.
+    #[test]
+    fn pending_counters_zero_after_defended_response() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+        });
+    }
+
+    /// An invalid-response slash also resolves the challenge, so both counters
+    /// return to 0.
+    #[test]
+    fn pending_counters_zero_after_invalid_response_slash() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, _) = single_chunk_proof(&chunk_data);
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
+
+            // A bogus chunk proof is a demonstrable lie → immediate slash.
+            let bad_proof = MerkleProof {
+                siblings: vec![H256::repeat_byte(0xab)],
+                path: vec![true],
+            };
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof: bad_proof,
+                },
+            ));
+            assert_eq!(Providers::<Test>::get(2).unwrap().stake, 0);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+        });
+    }
+
+    /// A timeout slash (deadline passes → `on_finalize` drains the challenge)
+    /// returns both counters to 0.
+    #[test]
+    fn pending_counters_zero_after_timeout_slash() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
+
+            // Deadline = 1 + ChallengeTimeout(100) = 101; advance past it.
+            advance_to(102);
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                1
+            );
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+        });
+    }
+
+    // Case B — challenge entry gated on a live agreement ───────────────────────
+
+    /// `challenge_offchain` succeeds while the agreement is live and fails with
+    /// `AgreementExpired` once the block reaches `expires_at`.
+    #[test]
+    fn challenge_offchain_rejects_expired_agreement() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // setup_agreement uses duration 100 → expires_at = 1 + 100 = 101.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            // While active (block 5 < expires_at 101): a valid signature opens
+            // the challenge.
+            System::set_block_number(5);
+            let sig = signed_offchain_commitment(2, 0, mmr_root, 0, 1, 5);
+            assert_ok!(StorageProvider::challenge_offchain(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                mmr_root,
+                0, // start_seq
+                1, // leaf_count
+                0, // leaf_index
+                0, // chunk_index
+                5, // nonce
+                sig,
+            ));
+
+            // At/after expiry the entry is rejected before signature checks, so
+            // a dummy signature still surfaces `AgreementExpired`.
+            System::set_block_number(101);
+            let dummy =
+                sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from([0u8; 64]));
+            assert_noop!(
+                StorageProvider::challenge_offchain(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    mmr_root,
+                    0,
+                    1,
+                    0,
+                    0,
+                    101,
+                    dummy,
+                ),
+                Error::<Test>::AgreementExpired
+            );
+        });
+    }
+
+    /// `challenge_replica` succeeds while the agreement is live and fails with
+    /// `AgreementExpired` once the block reaches `expires_at`.
+    #[test]
+    fn challenge_replica_rejects_expired_agreement() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let bucket_id = create_bucket(1, 1);
+            let replica_addr = b"/ip4/127.0.0.1/tcp/3001".to_vec();
+            assert_ok!(StorageProvider::register_provider(
+                RuntimeOrigin::signed(4),
+                replica_addr.try_into().unwrap(),
+                test_public_key(),
+                200
+            ));
+            // Replica agreement expiring at block 50, with a confirmed sync so
+            // the role carries a usable `last_sync` root.
+            let replica_agreement = StorageAgreement::<Test> {
+                owner: 1,
+                max_bytes: 100,
+                payment_locked: 0,
+                price_per_byte: 0,
+                expires_at: 50,
+                extensions_blocked: false,
+                role: ProviderRole::Replica {
+                    sync_balance: 100,
+                    sync_price: 1,
+                    min_sync_interval: 0,
+                    last_sync: Some(ReplicaSyncRecord {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                        block: 1u64,
+                    }),
+                },
+                started_at: 1,
+            };
+            StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
+
+            // Active (block 10 < expires_at 50): challenge opens.
+            System::set_block_number(10);
+            assert_ok!(StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                4,
+                0,
+                0,
+            ));
+
+            // At expiry (block 50 == expires_at): rejected.
+            System::set_block_number(50);
+            assert_noop!(
+                StorageProvider::challenge_replica(RuntimeOrigin::signed(3), bucket_id, 4, 0, 0),
+                Error::<Test>::AgreementExpired
+            );
+        });
+    }
+
+    // Case A — teardown blocked while a challenge is pending ───────────────────
+
+    /// With a pending challenge, `end_agreement` is rejected; after the
+    /// challenge is defended, teardown succeeds.
+    #[test]
+    fn end_agreement_blocked_while_challenge_pending() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let chunk_data = b"chunk-0".to_vec();
+            let (mmr_root, mmr_proof, chunk_proof) = single_chunk_proof(&chunk_data);
+            // Bucket 0 owned by 1, provider 2, expires_at = 1 + 100 = 101.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Early termination by admin while the challenge is pending: blocked.
+            assert_noop!(
+                StorageProvider::end_agreement(RuntimeOrigin::signed(1), 0, 2, EndAction::Pay),
+                Error::<Test>::AgreementHasPendingChallenge
+            );
+
+            // Defend the challenge → counter clears.
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Proof {
+                    chunk_data: make_chunk_bv(&chunk_data),
+                    mmr_proof,
+                    chunk_proof,
+                },
+            ));
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+
+            // Now early termination succeeds.
+            assert_ok!(StorageProvider::end_agreement(
+                RuntimeOrigin::signed(1),
+                0,
+                2,
+                EndAction::Pay
+            ));
+        });
+    }
+
+    /// With a pending challenge, `claim_expired_agreement` is rejected; after a
+    /// timeout slash resolves the challenge, the claim path is no longer gated
+    /// by the pending counter (it still requires expiry + settlement window,
+    /// which a slashed provider can satisfy).
+    #[test]
+    fn claim_expired_agreement_blocked_while_challenge_pending() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // expires_at = 1 + 100 = 101.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Move past expiry (101) + SettlementTimeout (50) = 151 so the
+            // claim's own gates pass. Crossing block 101 fires the challenge
+            // timeout via on_finalize, clearing the pending counter.
+            advance_to(152);
+            // The timeout slash at block 101 cleared the pending counter.
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
+
+            // Provider 2 was slashed but the agreement row remains; the claim
+            // path is unblocked by the (now-zero) pending counter.
+            assert_ok!(StorageProvider::claim_expired_agreement(
+                RuntimeOrigin::signed(2),
+                0
+            ));
+        });
+    }
+
+    /// `claim_expired_agreement` surfaces `AgreementHasPendingChallenge` while
+    /// a challenge is live — the pending gate is checked before the
+    /// expiry/settlement gates, so it fires at any block while the counter is
+    /// non-zero.
+    #[test]
+    fn claim_expired_agreement_rejects_pending_challenge_error() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
+
+            // Plain set_block_number (no on_finalize) keeps the challenge
+            // pending. The pending gate precedes the expiry check, so the
+            // rejection is `AgreementHasPendingChallenge`.
+            System::set_block_number(60);
+            assert_noop!(
+                StorageProvider::claim_expired_agreement(RuntimeOrigin::signed(2), 0),
+                Error::<Test>::AgreementHasPendingChallenge
+            );
+        });
+    }
+
+    // Deregister race ──────────────────────────────────────────────────────────
+
+    /// With a pending challenge, `complete_deregister` is rejected with
+    /// `ProviderHasPendingChallenges`; after a timeout slash resolves it,
+    /// completion succeeds.
+    ///
+    /// `deregister_provider` (announce) itself requires `committed_bytes == 0`,
+    /// and Case A blocks ending the agreement while the challenge is pending —
+    /// so a realistic path can't even reach `complete_deregister` with a live
+    /// challenge. We therefore set up the announce preconditions by zeroing
+    /// `committed_bytes` and stamping `deregister_at` directly, isolating the
+    /// `complete_deregister` pending-challenge gate. The challenge itself is
+    /// real (so the counter is genuinely maintained by the pallet).
+    #[test]
+    fn complete_deregister_blocked_while_challenge_pending() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Provider 2, bucket 0 owned by 1; challenge deadline = 101.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+
+            // Stamp the announce preconditions directly (see doc comment).
+            Providers::<Test>::mutate(2, |p| {
+                let p = p.as_mut().unwrap();
+                p.committed_bytes = 0;
+                p.deregister_at = Some(101); // period elapsed at block 101
+            });
+
+            // advance_to(102) finalises block 101, firing the challenge timeout
+            // (deadline 101) via on_finalize — clearing the pending counter and
+            // slashing provider 2. Block 102 is also >= deregister_at (101).
+            advance_to(102);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+
+            // With the challenge resolved and committed_bytes zero, completion
+            // succeeds.
+            assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
+                2
+            )));
+            assert!(Providers::<Test>::get(2).is_none());
+        });
+    }
+
+    /// Directly assert the `ProviderHasPendingChallenges` rejection on
+    /// `complete_deregister` while a real challenge is live (announce
+    /// preconditions stamped directly, window elapsed, but the challenge still
+    /// pending because no `on_finalize` has fired).
+    #[test]
+    fn complete_deregister_rejects_pending_challenge_error() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+
+            // Stamp announce preconditions so the only remaining gate is the
+            // pending-challenge counter.
+            Providers::<Test>::mutate(2, |p| {
+                let p = p.as_mut().unwrap();
+                p.committed_bytes = 0;
+                p.deregister_at = Some(101);
+            });
+
+            // Plain set_block_number (no on_finalize) keeps the challenge
+            // pending. Period elapsed (101 >= 101), committed_bytes zero, so the
+            // rejection is `ProviderHasPendingChallenges`.
+            System::set_block_number(101);
+            assert_noop!(
+                StorageProvider::complete_deregister(RuntimeOrigin::signed(2)),
+                Error::<Test>::ProviderHasPendingChallenges
+            );
         });
     }
 }
