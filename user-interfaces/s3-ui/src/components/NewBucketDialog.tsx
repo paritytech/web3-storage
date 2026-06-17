@@ -21,13 +21,11 @@ import {
   type CreationStatus,
 } from "@/state";
 import {
-  negotiateTerms,
   type AvailableProvider,
-  type SignedTerms,
 } from "@/lib/s3-client";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
-import { parseMultiaddrToUrl } from '@web3-storage/papi';
+import { negotiateProviderTerms, parseMultiaddrToUrl } from '@web3-storage/papi';
 
 interface NewBucketDialogProps {
   open: boolean;

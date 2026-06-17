@@ -11,6 +11,7 @@ import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
 import {
   NegotiateRequest,
+  parseMultiaddrToUrl,
   resolveProviderEndpoint,
   toSs58,
   type ParachainApi,
