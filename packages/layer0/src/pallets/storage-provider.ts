@@ -139,6 +139,9 @@ export function buildSignedTermsArgs(
       ? {
           sync_balance: BigInt(t.replica_params.sync_balance),
           min_sync_interval: t.replica_params.min_sync_interval,
+          // Always present on provider-signed terms (the runtime requires it);
+          // the `?`-typed field is only optional for the negotiate *request*.
+          sync_price: BigInt(t.replica_params.sync_price ?? 0),
         }
       : undefined,
   };

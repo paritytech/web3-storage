@@ -105,6 +105,12 @@ export function signProviderRequest(
 export interface ReplicaTermsWire {
   sync_balance: bigint | number | string;
   min_sync_interval: number;
+  /**
+   * Per-byte sync price (runtime v0.3.0+). Optional on the request — the
+   * provider quotes it, like `price_per_byte` — and always present on the
+   * provider-signed terms.
+   */
+  sync_price?: bigint | number | string;
 }
 
 /** A storage quote the provider is asked to sign (JSON wire shape). */
