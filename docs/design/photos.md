@@ -55,6 +55,13 @@ transparent contract enforces "only you manage your library."
 
 ## The `Photos` contract
 
+The contract is **part of the app**, not a shared example: its source lives at
+`user-interfaces/photos/contracts/Photos.sol`, with the `IWeb3Storage.sol` interface it imports
+vendored alongside it so the app is self-contained. It compiles (via `resolc`, like
+`examples/contracts/build.sh`) to an ABI + bytecode artifact at
+`user-interfaces/photos/src/contract/Photos.json`, which both the headless deploy recipe and the UI
+import directly (the UI needs the ABI for viem encode/decode anyway).
+
 Calls only the storage-provider precompile (`IWeb3Storage`, `0x…09010000`).
 
 ```solidity
@@ -145,12 +152,19 @@ The photo list is a manifest **blob** stored in the bucket like any photo; its b
 ```json
 { "version": 1,
   "photos": [
-    { "cid": "0x…", "name": "beach.jpg", "mime": "image/jpeg", "size": 1843200, "time": 1700000000 }
+    { "cid": "0x…", "thumbCid": "0x…", "name": "beach.jpg", "mime": "image/jpeg", "size": 1843200, "time": 1700000000 }
   ] }
 ```
 
+- **Thumbnails**: each entry carries a `thumbCid` — a small, downscaled JPEG (e.g. longest edge ~320px)
+  generated client-side at upload time and stored as its own blob, exactly like the full photo. The grid
+  renders from `thumbCid` so listing a library downloads kilobytes per photo, not megabytes; the full
+  `cid` is fetched only when a photo is opened. The thumbnail is itself content-addressed, so it's synced
+  to every primary and copied on a switch alongside the full blob.
 - **Integrity anchor**: the UI verifies `blake2-256(manifestBytes) == manifestCid` (the value the
   contract stored) before trusting a manifest fetched from a provider. Demonstrable security property.
+  (Thumbnails are a UX optimization, not a security anchor — they're verified by their own CID like any
+  blob, but a wrong thumbnail only mis-renders a cell; the full photo is always re-fetched by its `cid`.)
 - **Blob layer** — a thin `putBlob(bytes) → cid` / `getBlob(cid) → bytes` over the provider's Layer-0
   HTTP API (`PUT /node` + `POST /commit`, `GET /node?hash=…`), handling chunking for multi-MB photos.
   Reuse the existing TS file-system SDK's chunking (`user-interfaces/sdk/typescript/file-system-sdk`)
@@ -194,14 +208,17 @@ Implications:
 4. Poll `bucket.primary_providers` until the chosen provider is active (it auto-accepted), then → State B.
 
 **Upload a photo**
-1. `putBlob(photo) → cid` to **every** current primary (resolve endpoints via `resolveProviderEndpoint`).
-2. Fetch + verify current manifest, append `{cid, name, mime, size, time}`, serialize.
-3. `putBlob(manifest) → manifestCid` to every primary.
-4. `setManifest(manifestCid)` — one cheap tx.
+1. Generate a downscaled thumbnail in the browser (canvas → JPEG, longest edge ~320px).
+2. `putBlob(photo) → cid` and `putBlob(thumb) → thumbCid` to **every** current primary (resolve endpoints
+   via `resolveProviderEndpoint`).
+3. Fetch + verify current manifest, append `{cid, thumbCid, name, mime, size, time}`, serialize.
+4. `putBlob(manifest) → manifestCid` to every primary.
+5. `setManifest(manifestCid)` — one cheap tx.
 
 **Download / list**
-- List: `getBlob(manifestCid)`, verify hash, parse, render the grid (thumbnails by downloading each `cid`).
-- Download: `getBlob(cid)` from any available primary.
+- List: `getBlob(manifestCid)`, verify hash, parse, render the grid from each entry's `thumbCid`
+  (kilobytes per cell).
+- Download: open a photo → `getBlob(cid)` (full resolution) from any available primary.
 
 **Switch providers**
 1. User picks provider B → `addProvider(B, …){value}` → poll until B active.
@@ -215,7 +232,7 @@ shared packages (`@web3-storage/{network-config,network-picker,papi}`).
 
 | Concern | Choice |
 | --- | --- |
-| Dev port | **5176** (console 5173, drive 5174, provider 5175) |
+| Dev port | **5178** (console 5173, drive 5174, provider 5175) |
 | Wallet | Dev accounts (zero-setup) **and** Polkadot extension, like the provider UI |
 | New dep | `viem` (ABI encode/decode only) |
 | Reads | `ReviveApi.call` dry-run + viem `decodeFunctionResult` (unsigned) |
@@ -257,12 +274,21 @@ shared packages (`@web3-storage/{network-config,network-picker,papi}`).
 
 ## Contract deployment
 
-Deployed **once per network**; the UI never asks a user to deploy.
+Deployed **once per network**; the UI never asks a user to deploy. Everything contract-related — source,
+build, and deploy — lives **inside the app**, so Photos is self-contained:
+- **Source & build**: `user-interfaces/photos/contracts/{Photos.sol,IWeb3Storage.sol}` compiled with
+  `resolc` to `user-interfaces/photos/src/contract/Photos.json` (abi + bin). A package script
+  (e.g. `pnpm --filter photos build:contract`) produces it; both the deploy script and the UI import
+  `Photos.json` directly.
 - Add an optional `photosContract?: string` (H160) to `NetworkConfig`
   (`user-interfaces/shared/network-config/src/types.ts`), populated per network.
-- **Local dev**: a `just deploy-photos` recipe deploys `Photos` via the `deployContract()` helper and
-  injects the address (reusing the landing-page injection mechanism, `landing/inject-config.mjs`).
-- **Fallback**: a dev-only "Deploy contract" affordance when no address is configured.
+- **Deploy**: a **TypeScript** deploy script lives in the app at
+  `user-interfaces/photos/scripts/deploy-contract.ts` (run via `tsx`; PAPI `Revive.instantiate_with_code`,
+  reading bin from `Photos.json`). It can share the app's own TS deploy/encode helpers with the UI. A
+  `just deploy-photos` recipe just invokes it, then injects the resulting address (reusing the
+  landing-page injection mechanism, `landing/inject-config.mjs`).
+- **Fallback**: a dev-only "Deploy contract" affordance in the UI when no address is configured (deploys
+  the same `Photos.json` bin directly from the browser via `Revive.instantiate_with_code`).
 
 ## Integration points
 
@@ -276,7 +302,9 @@ Deployed **once per network**; the UI never asks a user to deploy.
 - **Integration** (the headless source of truth, mirroring `just sc-demo`): deploy `Photos` →
   `createLibrary(chosenProvider)` → poll accept → `putBlob(photo)` + manifest → `setManifest` →
   `addProvider(B)` → copy blobs → `dropProvider(A)` → assert library state, provider set, and payout.
-  Add as `examples/papi/photos-flow.js` + a `just` recipe.
+  Add as a **TypeScript** flow in the app — `user-interfaces/photos/scripts/photos-flow.ts` (run via
+  `tsx`) — reusing the same app-local TS helpers (`Photos.json` ABI, `openAgreement`, blob layer) the UI
+  uses, plus a `just photos-flow` recipe.
 - **UI e2e** (Playwright + `@web3-storage/test-helpers`): the three states + upload + switch.
 - **Contract**: covered by the integration script; optional Solidity unit tests if a harness is added.
 
@@ -304,9 +332,84 @@ This keeps the prototype shippable now while making the #97 cutover a small, wel
 **not** change the Layer 0 decision — #97 alters agreement *mechanics*, not the drive registry's
 provider choice/switching, so Layer 1 remains unsuitable for the headline feature.
 
+## Implementation milestones
+
+Built as **minimal, independently reviewable milestones**. The strategy is to prove the entire backend
+headless first (contract → blobs → switch), because that's where the risk lives (precompile origin,
+`msg.value`→payment, account mapping, async accept); only then build UI on a foundation that already
+works. All contract source, build, and deploy/flow scripts are **TypeScript and live in the app**
+(`user-interfaces/photos/`), not in `examples/`.
+
+### M1 — `Photos.sol` + deploy + `createLibrary` (headless)
+
+The riskiest seam, isolated. Vendor `contracts/{Photos.sol,IWeb3Storage.sol}` in the app; compile via
+`resolc` to `src/contract/Photos.json`. TS deploy script `scripts/deploy-contract.ts` + `just
+deploy-photos`. Headless: `ensureAccountMapped` → deploy → `createLibrary(provider, maxBytes, duration,
+maxPayment){value}` → poll `bucket.primary_providers` until active → read back `libraryOf` unsigned
+(`ReviveApi.call` + viem `decodeFunctionResult`).
+**Done:** bucket exists, owned by the contract account, chosen provider auto-accepted, `libraryOf.exists`;
+payment math verified against the provider's on-chain `price_per_byte` (`NativeToEthRatio = 10^6`).
+
+### M2 — Blob layer + manifest + integrity anchor (headless)
+
+`putBlob(bytes)→cid` / `getBlob(cid)→bytes` over the raw `/node` + `/commit` + `GET /node?hash=` API
+(lift chunking from `examples/papi/api.js`, ported to app-local TS), giving per-photo root CIDs.
+Manifest serialize (with the `thumbCid` field) + `blake2b256` CID + verify. Extend the flow:
+`putBlob(photo)` → `putBlob(thumb)` → `putBlob(manifest)` → `setManifest(cid)` → re-fetch, assert
+`blake2-256(bytes) == on-chain manifestCid`, byte-compare a downloaded photo. Real canvas downscaling is
+browser-only, so the headless flow uses a placeholder thumb blob (e.g. a fixed small byte string) purely
+to exercise the schema; actual thumbnail generation lands in M6. **Done:** round-trip a real multi-MB
+photo; tamper check rejects a mutated manifest.
+
+### M3 — Full headless switch flow → CI source of truth
+
+Complete `scripts/photos-flow.ts` + `just photos-flow` (mirrors `just sc-demo`): `addProvider(B){value}`
+→ poll B active → copy all blobs + manifest to B → `dropProvider(A)` → assert `primary_providers` and
+A's payout. All agreement mechanics wrapped in the single `openAgreement(provider, terms)` helper (the
+#97 seam). **Done:** one command runs deploy → create → upload → switch → assert against a local
+chain+provider. The entire backend is now proven with zero UI.
+
+### M4 — UI skeleton (state detection only)
+
+Scaffold `user-interfaces/photos/` mirroring `provider/` (React 19 + Vite + Tailwind + PAPI; dev-accounts
++ extension wallet; `viem` dep; base `/web3-storage/photos/`; port **5178**). Plumbing: add to
+`pnpm-workspace.yaml`, `run-local-uis`, landing card + `BASES`, `ui-checks.yml` matrix, `deploy-ui.yml`
+assemble; add `photosContract?: H160` to `NetworkConfig`. App reads `libraryOf` unsigned and renders
+**State A vs State B**. **Done:** runs locally on 5178, connects a dev account, shows "no library" vs
+"bucket #N". No writes.
+
+### M5 — State A in UI: create library
+
+Provider list from `StorageProvider.Providers` (price/capacity/accepting); size/duration inputs; payment
+compute + buffer with `value` in **substrate atomic units** (labeled in tokens); idempotent
+`Revive.map_account()` before first write; `createLibrary` via `Revive.call` `signSubmitAndWatch`; poll
+to State B. Reuses the M3 `openAgreement` helper. Surfaces `PaymentExceedsMax` and accept-timeout
+clearly. **Done:** a fresh account goes A→B in the browser.
+
+### M6 — State B in UI: upload + list + download
+
+Port the M2 blob layer to the browser. Upload: generate a downscaled thumbnail (canvas → JPEG, longest
+edge ~320px), `putBlob` both the full photo and the thumb to **every** current primary (endpoints via
+`resolveProviderEndpoint`), append the `{cid, thumbCid, …}` manifest entry, `setManifest` last. List:
+fetch manifest, verify hash, render the grid from `thumbCid` (kilobytes per cell); fetch the full `cid`
+only when a photo is opened. Per-provider sync status + idempotent retry on partial upload. **Done:**
+upload several photos, reload, grid renders from thumbnails, opening one downloads full-res.
+
+### M7 — Headline: pick & switch providers in UI
+
+Show current primaries from `bucket.primary_providers`; **+ Add** (pick B → `addProvider{value}` → poll
+→ copy all blobs+manifest to B) and **Drop/Switch** (`dropProvider(A)`) with a guard blocking "drop your
+only provider" + explicit confirmation. **Done:** add a second provider, watch sync, drop the first,
+confirm photos still load from the survivor.
+
+### M8 — Tests + polish
+
+Playwright e2e (three states + upload + switch) via `@web3-storage/test-helpers`; dev-only "Deploy
+contract" fallback when `photosContract` is unset; final error/edge pass (unmapped account, accept
+timeout, manifest tamper, partial upload). Optional Solidity unit tests if a harness is added.
+
 ## Open questions / follow-ups
 
 - **Albums** - nest the manifest.
-- **Thumbnails** - store a downscaled blob per photo for fast grids.
 - **Client-side image editing** (crop/rotate) — feasible as copy-on-write (new CID + `setManifest`); superseded versions accumulate within quota (no GC). See *Data mutability & editing*.
 - **Library deletion** (`endLibrary`) ending all agreements + freezing the bucket.
