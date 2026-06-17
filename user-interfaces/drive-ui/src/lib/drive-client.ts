@@ -9,7 +9,7 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58, type SignedTerms } from "@web3-storage/papi";
+import { parseMultiaddrToUrl, resolveProviderEndpoint, toSs58, type SignedTerms } from "@web3-storage/papi";
 
 // Re-exported so state modules can keep importing it from the client facade.
 export type { SignedTerms } from "@web3-storage/papi";
@@ -19,6 +19,14 @@ export type Signer = PolkadotSigner;
 
 const HTTP_RETRY_ATTEMPTS = 3;
 const HTTP_RETRY_BASE_MS = 250;
+
+/** A primary provider backing a drive's underlying layer-0 bucket. */
+export interface DriveProviderInfo {
+  account: string;
+  multiaddr: string;
+  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
+  url: string | null;
+}
 
 export interface DriveInfo {
   driveId: bigint;
@@ -30,8 +38,16 @@ export interface DriveInfo {
   createdAt: number;
   storagePeriod: number;
   expiresAt: number;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: DriveProviderInfo[];
 }
 
+
+/**
+ * Provider-signed agreement terms returned by `POST /negotiate` on the
+ * provider node. The signature is the SCALE-encoded `MultiSignature` as
+ * hex (e.g. `0x01<64-byte-sr25519-sig>`).
+ */
 
 export interface AvailableProvider {
   account: string;
@@ -461,6 +477,7 @@ export class DriveClient {
       createdAt: 0,
       storagePeriod: signed.terms.duration,
       expiresAt: 0,
+      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
     };
   }
 
@@ -471,12 +488,17 @@ export class DriveClient {
     const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address);
     if (driveIds.length === 0) return [];
 
+    // Batch all drive lookups into one storage query instead of N round-trips.
+    const driveValues = await api.query.DriveRegistry.Drives.getValues(
+      driveIds.map((driveId) => [driveId] as const),
+    );
+
     const drives: DriveInfo[] = [];
-    for (const driveId of driveIds) {
-      const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
-      if (!drive) continue;
+    const bucketIds: bigint[] = [];
+    driveValues.forEach((drive, i) => {
+      if (!drive) return;
       drives.push({
-        driveId,
+        driveId: driveIds[i]!,
         bucketId: drive.bucket_id,
         owner: drive.owner,
         name: decodeName(drive.name),
@@ -484,8 +506,17 @@ export class DriveClient {
         createdAt: drive.created_at,
         storagePeriod: drive.storage_period,
         expiresAt: drive.expires_at,
+        providerInfo: [],
       });
-    }
+      bucketIds.push(drive.bucket_id);
+    });
+
+    // `providersByBucket[i]` aligns with `drives[i]` (both built skipping nulls).
+    const providersByBucket = await this.resolveBucketProviders(bucketIds);
+    drives.forEach((drive, i) => {
+      drive.providerInfo = providersByBucket[i] ?? [];
+    });
+
     return drives;
   }
 
@@ -493,6 +524,7 @@ export class DriveClient {
     const api = this.requireApi();
     const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
     if (!drive) return null;
+    const [providerInfo] = await this.resolveBucketProviders([drive.bucket_id]);
     return {
       driveId,
       bucketId: drive.bucket_id,
@@ -502,7 +534,47 @@ export class DriveClient {
       createdAt: drive.created_at,
       storagePeriod: drive.storage_period,
       expiresAt: drive.expires_at,
+      providerInfo: providerInfo ?? [],
     };
+  }
+
+  /**
+   * Resolve the primary-provider info for each given layer-0 bucket id, batching
+   * every storage read into a single query per pallet map (no per-bucket /
+   * per-provider round-trips). Returns an array aligned with `bucketIds`.
+   */
+  private async resolveBucketProviders(
+    bucketIds: bigint[],
+  ): Promise<DriveProviderInfo[][]> {
+    const api = this.requireApi();
+    const bucketInfo = await api.query.StorageProvider.Buckets.getValues(
+      bucketIds.map((id) => [id] as const),
+    );
+
+    const providerAccounts = [
+      ...new Set(bucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ];
+    const providerRecords = await api.query.StorageProvider.Providers.getValues(
+      providerAccounts.map((account) => [account] as const),
+    );
+
+    const providerMap = new Map<string, DriveProviderInfo>();
+    providerAccounts.forEach((account, i) => {
+      const record = providerRecords[i];
+      if (!record) return;
+      const multiaddr = new TextDecoder().decode(record.multiaddr);
+      providerMap.set(account, {
+        account,
+        multiaddr,
+        url: parseMultiaddrToUrl(multiaddr),
+      });
+    });
+
+    return bucketInfo.map((info) =>
+      (info?.primary_providers ?? [])
+        .map((account) => providerMap.get(account))
+        .filter((p): p is DriveProviderInfo => p != null),
+    );
   }
 
   async deleteDrive(driveId: bigint): Promise<void> {

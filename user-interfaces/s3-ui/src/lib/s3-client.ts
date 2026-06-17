@@ -10,6 +10,7 @@ import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPa
 import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
 import {
+  NegotiateRequest,
   resolveProviderEndpoint,
   toSs58,
   type ParachainApi,
@@ -26,12 +27,22 @@ const HTTP_RETRY_BASE_MS = 250;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/** A primary provider backing a bucket's underlying layer-0 bucket. */
+export interface BucketProviderInfo {
+  account: string;
+  multiaddr: string;
+  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
+  url: string | null;
+}
+
 export interface BucketInfo {
   s3BucketId: bigint;
   name: string;
   layer0BucketId: bigint;
   owner: string;
   createdAt: bigint;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: BucketProviderInfo[];
 }
 
 export interface S3ObjectInfo {
@@ -238,6 +249,24 @@ export function buildSignedTermsArgs(
   return { provider: providerAccount, terms, sig };
 }
 
+export async function negotiateTerms(
+  providerUrl: string,
+  request: NegotiateRequest,
+): Promise<SignedTerms> {
+  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request, (_k, v) =>
+      typeof v === "bigint" ? v.toString() : v,
+    ),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`/negotiate failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
 function decodeName(name: unknown): string {
   if (name == null) return "";
   try {
@@ -366,6 +395,13 @@ export class S3Client {
       layer0BucketId: layer0_bucket_id,
       owner: address,
       createdAt: 0n,
+      providerInfo: [
+        {
+          account: providerAccount,
+          multiaddr: "",
+          url: providerUrl,
+        },
+      ],
     };
   }
 
@@ -376,18 +412,57 @@ export class S3Client {
     const bucketIds = await api.query.S3Registry.UserBuckets.getValue(address);
     if (bucketIds.length === 0) return [];
 
+    const bucketValues = await api.query.S3Registry.S3Buckets.getValues(
+      bucketIds.map((s3BucketId) => [s3BucketId] as const),
+    );
+
     const buckets: BucketInfo[] = [];
-    for (const s3BucketId of bucketIds) {
-      const bucket = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
-      if (!bucket) continue;
+    const layer0BucketIds: bigint[] = [];
+    bucketValues.forEach((bucket, i) => {
+      if (!bucket) return;
       buckets.push({
-        s3BucketId,
+        s3BucketId: bucketIds[i]!,
         name: decodeName(bucket.name),
         layer0BucketId: bucket.layer0_bucket_id,
         owner: bucket.owner,
         createdAt: BigInt(bucket.created_at ?? 0),
+        providerInfo: [],
       });
-    }
+      layer0BucketIds.push(bucket.layer0_bucket_id);
+    });
+
+    // Resolve each bucket's primary providers, batching every storage read into
+    // a single query per pallet map (no per-bucket / per-provider round-trips).
+    // `layer0BucketInfo[i]` aligns with `buckets[i]` (both built skipping nulls).
+    const layer0BucketInfo = await api.query.StorageProvider.Buckets.getValues(
+      layer0BucketIds.map((id) => [id] as const),
+    );
+
+    const providerAccounts = [
+      ...new Set(layer0BucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ];
+    const providerRecords = await api.query.StorageProvider.Providers.getValues(
+      providerAccounts.map((account) => [account] as const),
+    );
+
+    const providerMap = new Map<string, BucketProviderInfo>();
+    providerAccounts.forEach((account, i) => {
+      const record = providerRecords[i];
+      if (!record) return;
+      const multiaddr = new TextDecoder().decode(record.multiaddr);
+      providerMap.set(account, {
+        account,
+        multiaddr,
+        url: parseMultiaddrToUrl(multiaddr),
+      });
+    });
+
+    buckets.forEach((bucket, i) => {
+      bucket.providerInfo = (layer0BucketInfo[i]?.primary_providers ?? [])
+        .map((account) => providerMap.get(account))
+        .filter((info): info is BucketProviderInfo => info != null);
+    });
+
     return buckets;
   }
 

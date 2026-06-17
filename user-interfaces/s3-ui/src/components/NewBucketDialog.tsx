@@ -20,10 +20,14 @@ import {
   useCreations,
   type CreationStatus,
 } from "@/state";
-import { type AvailableProvider } from "@/lib/s3-client";
-import { negotiateProviderTerms } from "@web3-storage/papi";
+import {
+  negotiateTerms,
+  type AvailableProvider,
+  type SignedTerms,
+} from "@/lib/s3-client";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
+import { parseMultiaddrToUrl } from '@web3-storage/papi';
 
 interface NewBucketDialogProps {
   open: boolean;
@@ -111,6 +115,14 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
     setSubmitting(true);
     setNegotiateError(null);
     try {
+      const url = parseMultiaddrToUrl(provider.multiaddr);
+      if (!url) {
+        setNegotiateError(
+          `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
+        );
+        return;
+      }
+
       const owner = getSignerAddress();
       if (!owner) {
         setNegotiateError("Signer not set");
