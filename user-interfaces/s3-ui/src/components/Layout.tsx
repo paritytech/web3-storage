@@ -73,6 +73,7 @@ export default function Layout() {
             networkList={networks}
             onSelect={(id) => { void selectNetwork(id); }}
             onSelectCustom={(input) => { void selectCustomNetwork(input); }}
+            theme="light"
           />
         </div>
 

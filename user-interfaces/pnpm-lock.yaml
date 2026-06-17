@@ -491,6 +491,9 @@ importers:
       '@polkadot-api/descriptors':
         specifier: file:.papi/descriptors
         version: file:shared/papi/.papi/descriptors(polkadot-api@2.1.6(esbuild@0.28.0)(rxjs@7.8.2))
+      '@polkadot-api/utils':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@polkadot-labs/hdkd-helpers':
         specifier: ^0.0.30
         version: 0.0.30
