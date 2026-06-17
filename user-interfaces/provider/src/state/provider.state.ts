@@ -27,6 +27,7 @@ import {
 import { isSameAddress } from '@web3-storage/papi'
 import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
+import { challengeKey } from '@/state/challengeKey'
 
 // Types (matching chain types with some UI additions)
 export interface ProviderInfo {
@@ -257,9 +258,9 @@ export async function loadProviderData(address: string): Promise<void> {
     const existing = challenges$.getValue()
     const merged = new Map<string, Challenge>()
     // Keep existing (may include responded/slashed from prior polls)
-    for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+    for (const c of existing) merged.set(challengeKey(c), c)
     // Overlay with fresh data (updates status for ones still visible)
-    for (const c of newChallenges) merged.set(`${c.deadline}-${c.id}`, c)
+    for (const c of newChallenges) merged.set(challengeKey(c), c)
     challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 
     // Phase 2: Fetch bucket details (depends on agreement data for bucket IDs)
@@ -528,10 +529,10 @@ export async function respondToChallenge(
   )
 
   // Step 3: Update local state
-  const key = `${challenge.deadline}-${challenge.id}`
+  const key = challengeKey(challenge)
   const existing = challenges$.getValue()
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+  for (const c of existing) merged.set(challengeKey(c), c)
   merged.set(key, { ...challenge, status: 'responded' })
   challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
@@ -554,10 +555,10 @@ export function clearProviderState(): void {
  */
 export function addChallengeFromEvent(onChainChallenge: import('@/lib/chain-client').OnChainChallenge): void {
   const challenge = convertChallenge(onChainChallenge)
-  const key = `${challenge.deadline}-${challenge.id}`
+  const key = challengeKey(challenge)
   const existing = challenges$.getValue()
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+  for (const c of existing) merged.set(challengeKey(c), c)
 
   const prev = merged.get(key)
   if (prev) {
