@@ -64,12 +64,15 @@ async function main() {
   });
 
   const payload = `checkpoint-test @ ${Date.now()}`;
-  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload);
+  const uploadNonce = Number(await api.query.System.Number.getValue());
+  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce);
   const uploadInfo = {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
     startSeq: upload.commit.start_seq,
+    leafCount: upload.commit.leaf_count,
     providerSignature: upload.commit.provider_signature,
+    nonce: upload.commit.nonce,
   };
 
   const tests = [];
@@ -79,7 +82,8 @@ async function main() {
   tests.push({
     name: "5.1 Client checkpoint",
     fn: async () => {
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ckNonce = Number(await api.query.System.Number.getValue());
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
       const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events);

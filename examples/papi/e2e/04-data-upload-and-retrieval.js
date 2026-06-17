@@ -54,7 +54,8 @@ async function main() {
     name: "4.1 Small chunk (100 bytes)",
     fn: async () => {
       const data = "x".repeat(100);
-      const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       assert.ok(commit.mmr_root, "Should return mmr_root");
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(downloaded, Buffer.from(data), "Downloaded data should match");
@@ -65,7 +66,8 @@ async function main() {
     name: "4.2 Medium chunk (64 KB)",
     fn: async () => {
       const data = randomBytes(64 * 1024);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "64KB roundtrip integrity");
     },
@@ -75,7 +77,8 @@ async function main() {
     name: "4.3 Max chunk size (256 KB)",
     fn: async () => {
       const data = randomBytes(256 * 1024);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "256KB roundtrip integrity");
     },
@@ -85,9 +88,10 @@ async function main() {
     name: "4.4 Multiple sequential uploads",
     fn: async () => {
       const uploads = [];
+      const nonce = Number(await api.query.System.Number.getValue());
       for (let i = 0; i < 5; i++) {
         const data = `sequential upload #${i} @ ${Date.now()}`;
-        const result = await uploadChunk(PROVIDER_URL, bucketId, data);
+        const result = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
         uploads.push(result);
       }
       // Verify leaf indices are incrementing.
@@ -202,7 +206,8 @@ async function main() {
     name: "4.10 Upload binary (non-UTF8) data",
     fn: async () => {
       const binary = randomBytes(512);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary, nonce);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), binary, "Binary roundtrip should match");
     },
@@ -212,8 +217,9 @@ async function main() {
     name: "4.11 Upload identical content twice — different MMR leaves",
     fn: async () => {
       const data = "duplicate content for e2e";
-      const first = await uploadChunk(PROVIDER_URL, bucketId, data);
-      const second = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const first = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const second = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       assert.strictEqual(first.hash, second.hash, "Same data should produce same hash");
       assert.notStrictEqual(
         first.commit.leaf_indices[0],
@@ -229,7 +235,8 @@ async function main() {
       const data = "verify hash computation";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = Number(await api.query.System.Number.getValue());
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
     },
   });

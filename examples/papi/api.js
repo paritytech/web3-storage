@@ -711,15 +711,20 @@ export async function signCheckpointProposal(providerUrl, bucketId, duty, window
  */
 export async function fetchChallengeProof(api, providerUrl, challengeId) {
   // Best block: a finalized read would lag the just-created challenge.
-  const challenges = await api.query.StorageProvider.Challenges.getValue(
+  // Challenges is a StorageDoubleMap keyed by (deadline, index), so the
+  // single challenge is read directly with both keys.
+  const challenge = await api.query.StorageProvider.Challenges.getValue(
     challengeId.deadline,
+    challengeId.index,
     READ_OPTS
   );
-  if (!challenges)
-    throw new Error("No challenges at deadline " + challengeId.deadline);
-  const challenge = challenges[challengeId.index];
   if (!challenge)
-    throw new Error("Challenge index not found: " + challengeId.index);
+    throw new Error(
+      "Challenge not found: deadline " +
+        challengeId.deadline +
+        " index " +
+        challengeId.index
+    );
 
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
