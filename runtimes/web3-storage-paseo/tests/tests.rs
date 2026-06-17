@@ -588,16 +588,8 @@ fn should_update_provider_settings() {
 fn should_register_provider_via_xcm() {
     let account = Sr25519Keyring::Alice;
     let who: AccountId = account.to_account_id();
-    let stake = default_stake();
     let multiaddr: Vec<u8> = b"/ip4/127.0.0.1/tcp/3000".to_vec();
     let public_key = to_provider_public_key(account);
-
-    let register_provider_call =
-        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
-            multiaddr: multiaddr.clone().try_into().unwrap(),
-            public_key: public_key.clone(),
-            stake,
-        });
 
     ExtBuilder::<Runtime>::default()
         .with_collators(vec![AccountId::from(ALICE)])
@@ -611,6 +603,16 @@ fn should_register_provider_via_xcm() {
         .with_tracing()
         .build()
         .execute_with(|| {
+            // `default_stake` reads the storage-backed `MinProviderStake`, so it must
+            // run inside the externalities provided by `execute_with`.
+            let stake = default_stake();
+            let register_provider_call =
+                RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
+                    multiaddr: multiaddr.clone().try_into().unwrap(),
+                    public_key: public_key.clone(),
+                    stake,
+                });
+
             // Alice needs balance for both: paid XCM execution fees and the stake reserve.
             let _ = Balances::deposit_creating(&who, stake.saturating_mul(4));
 
@@ -656,19 +658,22 @@ fn should_register_provider_via_xcm() {
 #[test]
 fn should_add_stake_via_xcm() {
     let alice_on_para = alice_on_sibling_parachain(2_000);
-    let initial_stake = default_stake();
     let extra = 500 * UNIT;
 
-    let register_call =
-        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
-            multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
-            public_key: to_provider_public_key(Sr25519Keyring::Alice),
-            stake: initial_stake,
-        });
-    let add_stake_call =
-        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::add_stake { amount: extra });
-
     xcm_test_ext().execute_with(|| {
+        // `default_stake` reads the storage-backed `MinProviderStake`, so it must
+        // run inside the externalities provided by `execute_with`.
+        let initial_stake = default_stake();
+        let register_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
+                multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
+                public_key: to_provider_public_key(Sr25519Keyring::Alice),
+                stake: initial_stake,
+            });
+        let add_stake_call = RuntimeCall::StorageProvider(
+            StorageProviderCall::<Runtime>::add_stake { amount: extra },
+        );
+
         // The dispatch origin is the sovereign `AccountId` derived from Alice-on-para.
         let derived: AccountId =
             LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
@@ -713,16 +718,18 @@ fn should_register_provider_via_xcm_from_sibling_parachain() {
     // Use a different para id from `should_add_stake_via_xcm` to make the derived sovereign
     // distinct, even though each test runs in a fresh ext.
     let alice_on_para = alice_on_sibling_parachain(3_000);
-    let stake = default_stake();
-
-    let register_call =
-        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
-            multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
-            public_key: to_provider_public_key(Sr25519Keyring::Alice),
-            stake,
-        });
 
     xcm_test_ext().execute_with(|| {
+        // `default_stake` reads the storage-backed `MinProviderStake`, so it must
+        // run inside the externalities provided by `execute_with`.
+        let stake = default_stake();
+        let register_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
+                multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
+                public_key: to_provider_public_key(Sr25519Keyring::Alice),
+                stake,
+            });
+
         let derived: AccountId =
             LocationToAccountHelper::<AccountId, LocationToAccountId>::convert_location(
                 alice_on_para.clone().into(),
@@ -760,14 +767,16 @@ fn should_fail_xcm_unpaid_execution_from_unauthorized_origin() {
         }],
     );
 
-    let register_call =
-        RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
-            multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
-            public_key: to_provider_public_key(Sr25519Keyring::Alice),
-            stake: default_stake(),
-        });
-
     xcm_test_ext().execute_with(|| {
+        // `default_stake` reads the storage-backed `MinProviderStake`, so it must
+        // run inside the externalities provided by `execute_with`.
+        let register_call =
+            RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::register_provider {
+                multiaddr: b"/ip4/127.0.0.1/tcp/3000".to_vec().try_into().unwrap(),
+                public_key: to_provider_public_key(Sr25519Keyring::Alice),
+                stake: default_stake(),
+            });
+
         // `None` fee → `RuntimeHelper` builds an `UnpaidExecution + Transact` message.
         let outcome = RuntimeHelper::<Runtime, AllPalletsWithoutSystem>::execute_as_origin(
             (alice_on_relay, OriginKind::SovereignAccount),
