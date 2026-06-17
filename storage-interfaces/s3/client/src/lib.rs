@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! S3-Compatible Client SDK for Web3 Storage
 //!
 //! This crate provides a high-level S3-compatible API on top of the Layer 0 storage.

@@ -1,6 +1,6 @@
 [package]
 name = "storage-paseo-runtime"
-version = "0.1.0"
+version = "0.3.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -215,6 +215,7 @@ try-runtime = [
 	"pallet-balances/try-runtime",
 	"pallet-collator-selection/try-runtime",
 	"pallet-drive-registry-precompile/try-runtime",
+	"pallet-drive-registry/try-runtime",
 	"pallet-message-queue/try-runtime",
 	"pallet-revive/try-runtime",
 	"pallet-s3-registry-precompile/try-runtime",

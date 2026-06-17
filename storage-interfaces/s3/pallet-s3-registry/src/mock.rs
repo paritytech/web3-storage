@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Mock runtime for S3 Registry pallet tests.
 
 use crate as pallet_s3_registry;

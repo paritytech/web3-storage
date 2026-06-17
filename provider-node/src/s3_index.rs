@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! S3 bucket metadata index.
 //!
 //! Provides a per-bucket sorted key→metadata map for S3-compatible object storage.

@@ -586,8 +586,8 @@ This SDK is under active development.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](../LICENSE-APACHE2)
 
 ## Contributing
 
-Contributions welcome! Please see the main repository README for guidelines.
+Contributions welcome! Please see the main repository [README](../README.md) for guidelines.

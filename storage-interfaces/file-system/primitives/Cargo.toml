@@ -1,7 +1,10 @@
 [package]
 name = "file-system-primitives"
 version = "0.1.0"
-edition = "2021"
+authors.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
 
 [dependencies]
 # Serialization (std only - for protobuf)

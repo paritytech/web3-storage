@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 use codec::Encode;
 use sp_core::{sr25519, Pair, H256};

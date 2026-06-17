@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Mock runtime for testing the storage provider pallet.
 
 use crate as pallet_storage_provider;
@@ -139,6 +141,32 @@ pub fn new_test_ext_with_balances(balances: Vec<(u64, u64)>) -> sp_io::TestExter
     pallet_balances::GenesisConfig::<Test> {
         balances,
         dev_accounts: None,
+    }
+    .assimilate_storage(&mut t)
+    .unwrap();
+
+    t.into()
+}
+
+/// Build test externalities with custom balances and genesis providers.
+pub fn new_test_ext_with_genesis_providers(
+    balances: Vec<(u64, u64)>,
+    providers: Vec<crate::GenesisProvider<Test>>,
+) -> sp_io::TestExternalities {
+    let mut t = frame_system::GenesisConfig::<Test>::default()
+        .build_storage()
+        .unwrap();
+
+    pallet_balances::GenesisConfig::<Test> {
+        balances,
+        dev_accounts: None,
+    }
+    .assimilate_storage(&mut t)
+    .unwrap();
+
+    pallet_storage_provider::GenesisConfig::<Test> {
+        buckets: vec![],
+        providers,
     }
     .assimilate_storage(&mut t)
     .unwrap();

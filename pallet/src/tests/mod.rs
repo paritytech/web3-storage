@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for the storage provider pallet.
 
 use crate::{mock::*, *};
@@ -17,6 +19,7 @@ mod checkpoint;
 mod end_agreement;
 mod error_paths;
 mod extend_topup;
+mod genesis;
 mod member_buckets;
 mod misc;
 mod provider;

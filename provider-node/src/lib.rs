@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! # Storage Provider Node
 //!
 //! Off-chain provider node for scalable Web3 storage.
@@ -12,9 +14,7 @@ pub mod api;
 pub mod auth;
 pub mod chain_state_coordinator;
 pub mod challenge_responder;
-pub(crate) mod challenge_responder_subxt;
 pub mod checkpoint_coordinator;
-pub(crate) mod checkpoint_coordinator_subxt;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -24,10 +24,10 @@ pub mod mmr;
 pub mod negotiate;
 pub mod replica_sync;
 pub mod replica_sync_coordinator;
-pub(crate) mod replica_sync_coordinator_subxt;
 pub mod s3_api;
 pub mod s3_index;
 pub mod storage;
+pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;

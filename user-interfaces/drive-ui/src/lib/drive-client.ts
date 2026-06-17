@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive Client — wraps DriveRegistry pallet + StorageProvider pallet + provider
  * HTTP endpoints. Stateless w.r.t. connection: takes a `ParachainApi` and a
@@ -613,7 +615,7 @@ export class DriveClient {
       {
         method: "PUT",
         headers: { "Content-Type": options.contentType || "application/octet-stream" },
-        body: data,
+        body: data as Uint8Array<ArrayBuffer>,
         signal: options.signal,
       },
     );

@@ -10,6 +10,7 @@ rules:
   unpinned-images:
     ignore:
       - check.yml
+      - check-runtime-migration.yml
       - integration-tests.yml
       - release.yml
       - cmd-run.yml

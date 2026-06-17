@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Basic S3 Client Usage Example
 //!
 //! Usage: cargo run --example basic_usage [chain_ws] [provider_url] [seed]

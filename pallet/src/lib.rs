@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Storage Provider Pallet
 //!
 //! A pallet for scalable Web3 storage with game-theoretic guarantees.
@@ -270,6 +272,78 @@ pub mod pallet {
     >;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Genesis Config
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// A provider registered at genesis.
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        DebugNoBound,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
+    #[serde(bound(serialize = "", deserialize = ""), rename_all = "camelCase")]
+    pub struct GenesisProvider<T: Config> {
+        /// Provider account; must be endowed with at least `stake` by the
+        /// balances genesis.
+        pub account: T::AccountId,
+        /// Multiaddr for connecting to this provider, hex-encoded in JSON
+        /// ("0x..."); must fit `T::MaxMultiaddrLength`.
+        #[serde(with = "sp_core::bytes")]
+        pub multiaddr: Vec<u8>,
+        /// Raw public key bytes (32, 33 or 64), hex-encoded in JSON.
+        #[serde(with = "sp_core::bytes")]
+        pub public_key: Vec<u8>,
+        /// Stake to reserve; must be at least `T::MinProviderStake`.
+        pub stake: BalanceOf<T>,
+        /// Provider settings, validated like `update_provider_settings`.
+        pub settings: ProviderSettings<T>,
+    }
+
+    /// Genesis configuration for the storage provider pallet.
+    #[pallet::genesis_config]
+    #[derive(DefaultNoBound)]
+    pub struct GenesisConfig<T: Config> {
+        /// Buckets to create at genesis: (admin_account, min_providers).
+        pub buckets: Vec<(T::AccountId, u32)>,
+        /// Providers to register at genesis. Their stake is reserved from
+        /// the balances-genesis endowment.
+        pub providers: Vec<GenesisProvider<T>>,
+    }
+
+    #[pallet::genesis_build]
+    impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+        fn build(&self) {
+            for p in &self.providers {
+                let multiaddr: BoundedVec<u8, T::MaxMultiaddrLength> = p
+                    .multiaddr
+                    .clone()
+                    .try_into()
+                    .expect("genesis provider multiaddr exceeds MaxMultiaddrLength");
+                let public_key: BoundedVec<u8, ConstU32<64>> = p
+                    .public_key
+                    .clone()
+                    .try_into()
+                    .expect("genesis provider public key exceeds 64 bytes");
+                Pallet::<T>::register_provider_internal(
+                    &p.account,
+                    multiaddr,
+                    public_key,
+                    p.stake,
+                    p.settings.clone(),
+                )
+                .expect("genesis provider registration should not fail");
+            }
+            for (admin, min_providers) in &self.buckets {
+                Pallet::<T>::create_bucket_internal(admin, *min_providers, None)
+                    .expect("genesis bucket creation should not fail");
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Types
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -309,8 +383,15 @@ pub mod pallet {
         TypeInfo,
         MaxEncodedLen,
         DebugNoBound,
+        serde::Serialize,
+        serde::Deserialize,
     )]
     #[scale_info(skip_type_params(T))]
+    #[serde(
+        bound(serialize = "", deserialize = ""),
+        rename_all = "camelCase",
+        default
+    )]
     pub struct ProviderSettings<T: Config> {
         /// Minimum agreement duration provider will accept.
         pub min_duration: BlockNumberFor<T>,
@@ -860,50 +941,13 @@ pub mod pallet {
             stake: BalanceOf<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            ensure!(
-                !Providers::<T>::contains_key(&who),
-                Error::<T>::ProviderAlreadyRegistered
-            );
-            ensure!(
-                stake >= T::MinProviderStake::get(),
-                Error::<T>::InsufficientStake
-            );
-
-            // Validate public key length (32 bytes for Sr25519/Ed25519, 33 for Ecdsa compressed)
-            let key_len = public_key.len();
-            ensure!(
-                key_len == 32 || key_len == 33 || key_len == 64,
-                Error::<T>::InvalidPublicKey
-            );
-
-            // Reserve stake
-            T::Currency::reserve(&who, stake)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-
-            let provider_info = ProviderInfo {
+            Self::register_provider_internal(
+                &who,
                 multiaddr,
                 public_key,
                 stake,
-                committed_bytes: 0,
-                settings: ProviderSettings::default(),
-                stats: ProviderStats {
-                    registered_at: current_block,
-                    ..Default::default()
-                },
-                deregister_at: None,
-            };
-
-            Providers::<T>::insert(&who, provider_info);
-            ProviderReplayStates::<T>::insert(&who, ReplayWindow::default());
-
-            Self::deposit_event(Event::ProviderRegistered {
-                provider: who,
-                stake,
-            });
-
-            Ok(())
+                ProviderSettings::default(),
+            )
         }
 
         /// Add stake to an existing provider registration.
@@ -1099,23 +1143,7 @@ pub mod pallet {
                 // first.
                 Self::ensure_provider_active(provider)?;
 
-                // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
-                if settings.max_capacity > 0 {
-                    ensure!(
-                        settings.max_capacity >= provider.committed_bytes,
-                        Error::<T>::CapacityBelowCommitted
-                    );
-
-                    // Validate stake backs declared capacity
-                    let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
-                    let required_stake = T::MinStakePerByte::get()
-                        .checked_mul(&capacity_as_balance)
-                        .ok_or(Error::<T>::ArithmeticOverflow)?;
-                    ensure!(
-                        provider.stake >= required_stake,
-                        Error::<T>::InsufficientStakeForCapacity
-                    );
-                }
+                Self::validate_settings(&settings, provider.committed_bytes, provider.stake)?;
 
                 provider.settings = settings.clone();
                 Ok(())
@@ -3701,6 +3729,101 @@ pub mod pallet {
                 }
             }
             false
+        }
+
+        /// Validate provider settings against committed bytes and stake.
+        ///
+        /// Shared by `update_provider_settings` and `register_provider_internal`.
+        fn validate_settings(
+            settings: &ProviderSettings<T>,
+            committed_bytes: u64,
+            stake: BalanceOf<T>,
+        ) -> DispatchResult {
+            ensure!(
+                settings.min_duration <= settings.max_duration,
+                Error::<T>::MinDurationExceedsMaxDuration
+            );
+
+            // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
+            if settings.max_capacity > 0 {
+                ensure!(
+                    settings.max_capacity >= committed_bytes,
+                    Error::<T>::CapacityBelowCommitted
+                );
+
+                // Validate stake backs declared capacity
+                use sp_runtime::traits::SaturatedConversion;
+                let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
+                let required_stake = T::MinStakePerByte::get()
+                    .checked_mul(&capacity_as_balance)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
+                ensure!(
+                    stake >= required_stake,
+                    Error::<T>::InsufficientStakeForCapacity
+                );
+            }
+
+            Ok(())
+        }
+
+        /// Register a provider, reserving their stake.
+        ///
+        /// Shared by the `register_provider` extrinsic (which passes
+        /// `ProviderSettings::default()`) and genesis build (which passes the
+        /// full settings, since post-genesis there is no one to call
+        /// `update_provider_settings`).
+        pub(crate) fn register_provider_internal(
+            who: &T::AccountId,
+            multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
+            public_key: BoundedVec<u8, ConstU32<64>>,
+            stake: BalanceOf<T>,
+            settings: ProviderSettings<T>,
+        ) -> DispatchResult {
+            ensure!(
+                !Providers::<T>::contains_key(who),
+                Error::<T>::ProviderAlreadyRegistered
+            );
+            ensure!(
+                stake >= T::MinProviderStake::get(),
+                Error::<T>::InsufficientStake
+            );
+
+            // Validate public key length (32 bytes for Sr25519/Ed25519, 33 for Ecdsa compressed)
+            let key_len = public_key.len();
+            ensure!(
+                key_len == 32 || key_len == 33 || key_len == 64,
+                Error::<T>::InvalidPublicKey
+            );
+
+            Self::validate_settings(&settings, 0, stake)?;
+
+            // Reserve stake
+            T::Currency::reserve(who, stake)?;
+
+            let current_block = frame_system::Pallet::<T>::block_number();
+
+            let provider_info = ProviderInfo {
+                multiaddr,
+                public_key,
+                stake,
+                committed_bytes: 0,
+                settings,
+                stats: ProviderStats {
+                    registered_at: current_block,
+                    ..Default::default()
+                },
+                deregister_at: None,
+            };
+
+            Providers::<T>::insert(who, provider_info);
+            ProviderReplayStates::<T>::insert(who, ReplayWindow::default());
+
+            Self::deposit_event(Event::ProviderRegistered {
+                provider: who.clone(),
+                stake,
+            });
+
+            Ok(())
         }
 
         // ─────────────────────────────────────────────────────────────────────────

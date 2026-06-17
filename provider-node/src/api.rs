@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! HTTP API handlers for the provider node.
 
 use crate::auth::{self, RequiredRole};

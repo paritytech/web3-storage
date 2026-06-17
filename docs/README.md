@@ -58,3 +58,7 @@ docs/
 - [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) — FRAME, Cumulus, networking.
 - [Substrate Docs](https://docs.substrate.io/).
 - [Polkadot.js Apps](https://polkadot.js.org/apps/).
+
+## License
+
+See the repository root [README](../README.md#license) for license details.

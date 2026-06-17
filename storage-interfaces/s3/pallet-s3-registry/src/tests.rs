@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for S3 Registry pallet.
 
 use crate::{mock::*, Error, S3Buckets};

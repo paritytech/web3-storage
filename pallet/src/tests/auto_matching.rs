@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider matching moved off-chain: clients query
 //! `query_find_matching_providers` (runtime API), pick a provider, obtain
 //! signed terms, and redeem them via `establish_storage_agreement`.

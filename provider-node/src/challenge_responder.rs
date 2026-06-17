@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Challenge Responder - Automated response to on-chain challenges.
 //!
 //! This module provides a background service that monitors the blockchain

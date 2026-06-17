@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Basic File System Usage Example
 //!
 //! This example demonstrates the basic usage of the file system primitives

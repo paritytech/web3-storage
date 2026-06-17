@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! File System Client SDK Demo
 //!
 //! This example demonstrates how to use the high-level file system client SDK

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! WebSocket Event Subscription Module
 //!
 //! Provides real-time subscription to storage provider events from the blockchain,

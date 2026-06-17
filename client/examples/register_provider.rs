@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider registration and settings update.
 //!
 //! Mirrors the `registerProvider` + `updateProviderSettings` steps from

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider-signed terms of a storage agreement.
 //!
 //! A provider quotes terms off-chain (e.g. over HTTP) and signs

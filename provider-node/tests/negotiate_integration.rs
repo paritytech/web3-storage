@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the off-chain term negotiation endpoint.
 //!
 //! These spin up a real HTTP server (served *with* `ConnectInfo`, matching

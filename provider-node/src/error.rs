@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Error types for the provider node.
 
 use axum::{
@@ -242,7 +244,7 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "signing_unavailable".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "provider node is not ready for negotiation request."
+                        "message": "provider node signer is not available."
                     })),
                 },
             ),
@@ -457,6 +459,6 @@ mod tests {
         assert!(json["details"]["message"]
             .as_str()
             .unwrap()
-            .contains("no signing key"));
+            .contains("signer is not available."));
     }
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Drive Registry Pallet
 //!
 //! A pallet for managing Layer 1 file system drives on-chain.
@@ -35,6 +37,7 @@ pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod bechmarking;
+pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -58,7 +61,12 @@ pub mod pallet {
     use sp_runtime::BoundedVec;
     use storage_primitives::Role;
 
+    /// In-code storage version. v1 drops the `payment` field from
+    /// [`DriveInfo`]; see [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
     #[pallet::pallet]
+    #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
     /// Configuration trait

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Persistence specs (mostly fast, no chain mutations).
  *

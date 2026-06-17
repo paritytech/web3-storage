@@ -18,6 +18,28 @@ jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
 
+  # Skip expensive jobs when only docs/markdown changed. The aggregate gate
+  # (integration-tests-complete) always reports for branch protection.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      src: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.src == 'true' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!.claude/**'
+              - '!LICENSE'
+
   # ── Build once ────────────────────────────────────────────────────────────
   # Build the shared artifacts once (provider binary + one compressed wasm per
   # tested runtime) so both test jobs download instead of rebuilding. The test
@@ -26,12 +48,13 @@ jobs:
     name: Build
     runs-on: parity-large
     timeout-minutes: 60
-    needs: [set-image]
+    needs: [set-image, changes]
+    if: needs.changes.outputs.src == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -86,7 +109,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -139,7 +162,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -213,7 +236,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -271,7 +294,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -381,7 +404,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -434,7 +457,7 @@ jobs:
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -536,7 +559,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
 
@@ -586,7 +609,7 @@ jobs:
       # contents land back at their original paths (provider binary + per-runtime
       # wbuild wasm consumed by the chain-spec script).
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: build
           path: target/release
@@ -604,7 +627,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
         with:
           version: 10
 
@@ -648,12 +671,6 @@ jobs:
           CI: "true"
         run: pnpm run test:e2e:drive-ui
 
-      - name: console-ui e2e
-        working-directory: user-interfaces
-        env:
-          CI: "true"
-        run: pnpm run test:e2e:console-ui
-
       - name: provider e2e
         working-directory: user-interfaces
         env:
@@ -675,8 +692,6 @@ jobs:
           path: |
             user-interfaces/drive-ui/playwright-report
             user-interfaces/drive-ui/test-results
-            user-interfaces/console-ui/playwright-report
-            user-interfaces/console-ui/test-results
             user-interfaces/provider/playwright-report
             user-interfaces/provider/test-results
 
@@ -707,7 +722,7 @@ jobs:
           key: coverage-baseline-latest
 
       - name: Download PR coverage artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: e2e-coverage
           path: /tmp/pr-coverage
@@ -739,7 +754,7 @@ jobs:
 
   integration-tests-complete:
     name: Integration Tests
-    needs: [build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, coverage-gate]
+    needs: [changes, build, integration-tests, e2e-integration-tests, sc-integration-tests, ui-integration-tests, coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     steps:

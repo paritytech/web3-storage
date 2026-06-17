@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the provider node HTTP API.
 //!
 //! These tests spin up a real HTTP server and test the full request/response cycle.

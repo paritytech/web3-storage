@@ -3,7 +3,7 @@ name = "pallet-drive-registry"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "Apache-2.0"
 repository.workspace = true
 description = "Substrate pallet for Layer 1 drive registry"
 
@@ -50,4 +50,11 @@ runtime-benchmarks = [
 	"pallet-balances/runtime-benchmarks",
 	"pallet-storage-provider/runtime-benchmarks",
 	"sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+	"frame-support/try-runtime",
+	"frame-system/try-runtime",
+	"pallet-balances/try-runtime",
+	"pallet-storage-provider/try-runtime",
+	"sp-runtime/try-runtime",
 ]

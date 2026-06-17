@@ -12,6 +12,7 @@
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Test artifacts
 *.log
@@ -62,6 +63,3 @@ user-interfaces/**/test-results/
 
 # Screenshots
 Screenshot.png
-
-# Python
-__pycache__

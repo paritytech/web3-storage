@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Benchmarking setup for pallet-storage-provider.
 //!
 
