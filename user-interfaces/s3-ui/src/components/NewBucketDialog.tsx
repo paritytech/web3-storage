@@ -21,9 +21,9 @@ import {
   type CreationStatus,
 } from "@/state";
 import { type AvailableProvider } from "@/lib/s3-client";
-import { negotiateProviderTerms } from "@web3-storage/papi";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
+import { negotiateProviderTerms } from "@web3-storage/papi";
 
 interface NewBucketDialogProps {
   open: boolean;
@@ -227,9 +227,9 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
                   item={item}
                   onDismiss={dismissCreation}
                   onRetry={
-                    canRetryCreation(item.id)
+                    canRetryCreation(item.id) && name.trim()
                       ? (id) => {
-                          void retryCreation(id);
+                          void retryCreation(id, name.trim());
                         }
                       : undefined
                   }
