@@ -921,6 +921,45 @@ fn remove_slashed_reindexes_snapshot_bitfield() {
     });
 }
 
+/// The per-deadline challenge count is capped by `MaxChallengesPerDeadline`
+/// (5 in this mock) so the `on_finalize` slash sweep stays bounded. All
+/// challenges created in the same block share a deadline, so once the cap is
+/// reached in block 1 the next `challenge_checkpoint` for that deadline must be
+/// rejected with `TooManyChallengesThisBlock`.
+#[test]
+fn challenge_count_per_deadline_is_capped() {
+    new_test_ext().execute_with(|| {
+        use frame_support::traits::Get;
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        let cap = <Test as Config>::MaxChallengesPerDeadline::get();
+        assert_eq!(cap, 5, "mock cap is sized small to keep this test cheap");
+
+        // Fill the deadline to the cap. All land at deadline 101 (block 1 +
+        // ChallengeTimeout 100) with stable indices 0..cap.
+        for _ in 0..cap {
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                2,
+                0,
+                0,
+            ));
+        }
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), cap as usize);
+        assert_eq!(NextChallengeIndex::<Test>::get(101), cap);
+
+        // The next challenge for the same deadline is rejected.
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            Error::<Test>::TooManyChallengesThisBlock
+        );
+        // The rejection left the count untouched.
+        assert_eq!(NextChallengeIndex::<Test>::get(101), cap);
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PR #125 challenge-overhaul tests.
 //

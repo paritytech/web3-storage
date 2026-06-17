@@ -75,6 +75,39 @@ pub mod pallet {
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        /// Reserve weight for the bounded challenge sweep that `on_finalize(n)`
+        /// performs this block.
+        ///
+        /// The sweep drains every challenge whose deadline is `n` and slashes
+        /// its provider. Every challenge targeting deadline `n` is created
+        /// strictly before block `n` (`deadline = created_at + ChallengeTimeout`
+        /// and `ChallengeTimeout > 0`), so `NextChallengeIndex(n)` — the count
+        /// of challenges ever allocated for that deadline — is already final
+        /// here and is capped at `MaxChallengesPerDeadline` by
+        /// `create_challenge`. That makes the sweep's work bounded and lets us
+        /// account for it up front instead of doing unbounded work in
+        /// `on_finalize` without a weight charge.
+        fn on_initialize(n: BlockNumberFor<T>) -> Weight {
+            let count = NextChallengeIndex::<T>::get(n) as u64;
+            // Per slashed challenge the `on_finalize` sweep touches, as an
+            // upper bound:
+            //   reads  (10): `drain_prefix` next entry (1); `decrement_pending`
+            //     reads `PendingChallenges` + `PendingChallengesByBucket` (2);
+            //     `slash_provider_for_failed_challenge` reads `Providers` (1),
+            //     the slash + unreserve + two `resolve_creating` currency ops
+            //     (4), and `ChallengerStats` (1), plus 1 slack.
+            //   writes (10): `drain_prefix` removes the entry (1);
+            //     `decrement_pending` writes both pending counters (2); the
+            //     currency slash/unreserve/two reward settlements (4);
+            //     `Providers::insert` (1); `ChallengerStats` (1), plus 1 slack.
+            let per_challenge = T::DbWeight::get().reads_writes(10, 10);
+            // 1 read for `NextChallengeIndex(n)` above, plus its later removal
+            // in `on_finalize` (1 write), plus the per-challenge cost.
+            T::DbWeight::get()
+                .reads_writes(1, 1)
+                .saturating_add(per_challenge.saturating_mul(count))
+        }
+
         /// Process expired challenges at the end of each block.
         fn on_finalize(n: BlockNumberFor<T>) {
             // Drain every challenge expiring at this block by its stable
@@ -200,6 +233,17 @@ pub mod pallet {
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+        /// Maximum number of challenges that may share a single deadline block.
+        ///
+        /// Bounds the per-deadline challenge count so the `on_finalize` slash
+        /// sweep — which drains and slashes every challenge expiring at a given
+        /// block — does a bounded amount of work whose weight `on_initialize`
+        /// can reserve up front. Only challenges created in the *same* block
+        /// share a deadline (`deadline = created_at + ChallengeTimeout`), so a
+        /// generous value still cannot be exceeded under honest load.
+        #[pallet::constant]
+        type MaxChallengesPerDeadline: Get<u16>;
 
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: WeightInfo;
@@ -955,6 +999,10 @@ pub mod pallet {
         /// `(bucket, provider)` cannot be torn down until the challenge
         /// resolves (defended, slashed, or timed out).
         AgreementHasPendingChallenge,
+        /// `MaxChallengesPerDeadline` challenges have already been allocated
+        /// for the deadline this challenge would land on. Bounds the
+        /// `on_finalize` slash sweep so it stays within its reserved weight.
+        TooManyChallengesThisBlock,
 
         // Checkpoint errors
         InvalidSignature,
@@ -3558,6 +3606,16 @@ pub mod pallet {
                 chunk_index,
                 deposit,
             };
+
+            // Cap the number of challenges that can share this deadline so the
+            // `on_finalize` sweep stays bounded (and within the weight
+            // `on_initialize` reserves for it). `NextChallengeIndex(deadline)`
+            // is the count ever allocated for that deadline and is never
+            // decremented, so it is a tight upper bound on the sweep size.
+            ensure!(
+                NextChallengeIndex::<T>::get(deadline) < T::MaxChallengesPerDeadline::get(),
+                Error::<T>::TooManyChallengesThisBlock
+            );
 
             // Allocate a stable per-deadline index. Unlike the old
             // `Vec`-position scheme, this counter is never decremented when a

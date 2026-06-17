@@ -37,6 +37,10 @@ parameter_types! {
     /// Must be `>= ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
     pub const DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    /// Caps the challenges sharing one deadline block so the `on_finalize`
+    /// slash sweep stays bounded. Generous: only challenges created in the
+    /// same block share a deadline.
+    pub const MaxChallengesPerDeadline: u16 = 1_000;
 }
 
 /// Treasury account that receives slashed funds.
@@ -95,5 +99,6 @@ impl pallet_storage_provider::Config for Runtime {
     type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
+    type MaxChallengesPerDeadline = MaxChallengesPerDeadline;
     type WeightInfo = crate::weights::pallet_storage_provider::WeightInfo<Runtime>;
 }

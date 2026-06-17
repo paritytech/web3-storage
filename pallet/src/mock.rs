@@ -5,7 +5,7 @@
 use crate as pallet_storage_provider;
 use frame_support::{
     derive_impl,
-    traits::{ConstU32, ConstU64, Hooks},
+    traits::{ConstU16, ConstU32, ConstU64, Hooks},
 };
 use sp_core::{Pair as _, H256};
 use sp_runtime::{
@@ -99,6 +99,9 @@ impl pallet_storage_provider::Config for Test {
     // Must be >= ChallengeTimeout (100 in this mock). Set to a small
     // multiple so tests can advance past the period quickly.
     type DeregisterAnnouncementPeriod = ConstU64<100>;
+    // Small cap so the cap-enforcement test can hit it without creating
+    // thousands of challenges.
+    type MaxChallengesPerDeadline = ConstU16<5>;
     type WeightInfo = ();
 }
 
