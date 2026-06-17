@@ -270,29 +270,6 @@ export function buildSignedTermsArgs(
   return { provider: providerAccount, terms, sig };
 }
 
-export function parseMultiaddrToHttp(multiaddr: string): string | null {
-  const parts = multiaddr.split("/").filter(Boolean);
-  let host: string | null = null;
-  let port: string | null = null;
-
-  for (let i = 0; i < parts.length; i++) {
-    const seg = parts[i];
-    const next = parts[i + 1];
-    if (!next) continue;
-
-    if ((seg === "ip4" || seg === "ip6" || seg === "dns4" || seg === "dns6") && host === null) {
-      host = seg.startsWith("ip6") ? `[${next}]` : next;
-    }
-    if (seg === "tcp" && port === null) {
-      port = next;
-    }
-    if (host !== null && port !== null) break;
-  }
-
-  if (host && port) return `http://${host}:${port}`;
-  return null;
-}
-
 export class DriveClient {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;

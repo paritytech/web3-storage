@@ -9,12 +9,7 @@
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
-import {
-  parseMultiaddrToUrl,
-  resolveProviderEndpoint,
-  toSs58,
-  type ParachainApi,
-} from "@web3-storage/papi";
+import { resolveProviderEndpoint, toSs58, type ParachainApi } from "@web3-storage/papi";
 
 export type Signer = PolkadotSigner;
 
@@ -256,13 +251,6 @@ export function buildSignedTermsArgs(
     bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
   };
   return { provider: providerAccount, terms, sig };
-}
-
-// Delegates to the shared multiaddr parser so `/tls/`-terminated hosted
-// providers resolve to `https://` (not `http://:443`, which a browser blocks as
-// mixed content on the HTTPS-served UI). See `parseMultiaddrToUrl`.
-export function parseMultiaddrToHttp(multiaddr: string): string | null {
-  return parseMultiaddrToUrl(multiaddr);
 }
 
 export async function negotiateTerms(

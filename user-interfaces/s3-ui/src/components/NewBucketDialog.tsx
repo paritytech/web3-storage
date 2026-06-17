@@ -20,12 +20,8 @@ import {
   useCreations,
   type CreationStatus,
 } from "@/state";
-import {
-  negotiateTerms,
-  parseMultiaddrToHttp,
-  type AvailableProvider,
-  type SignedTerms,
-} from "@/lib/s3-client";
+import { negotiateTerms, type AvailableProvider, type SignedTerms } from "@/lib/s3-client";
+import { parseMultiaddrToUrl } from "@web3-storage/papi";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
@@ -115,7 +111,7 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
     setSubmitting(true);
     setNegotiateError(null);
     try {
-      const url = parseMultiaddrToHttp(provider.multiaddr);
+      const url = parseMultiaddrToUrl(provider.multiaddr);
       if (!url) {
         setNegotiateError(
           `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
