@@ -276,9 +276,14 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
 
+        // Treasury account is 999 in the mock (TestTreasury).
+        const TREASURY: u64 = 999;
+
         let challenger_balance_before = Balances::free_balance(3);
         let provider_balance_before = Balances::free_balance(2);
         let provider_stake_before = Providers::<Test>::get(2).unwrap().stake;
+        let treasury_balance_before = Balances::free_balance(TREASURY);
+        let total_issuance_before = Balances::total_issuance();
 
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(3),
@@ -319,6 +324,16 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         // Provider stake decreased by 10
         let provider_stake_after = Providers::<Test>::get(2).unwrap().stake;
         assert_eq!(provider_stake_after, provider_stake_before - 10);
+
+        // The slashed provider_cost (10) is routed to the Treasury, not burned.
+        assert_eq!(
+            Balances::free_balance(TREASURY),
+            treasury_balance_before + 10
+        );
+
+        // Slash + resolve is net-zero: total issuance is unchanged. The
+        // repatriated challenger_cost is an internal transfer, also net-zero.
+        assert_eq!(Balances::total_issuance(), total_issuance_before);
     });
 }
 
@@ -667,8 +682,13 @@ fn challenge_slashes_emits_event_and_rewards_challenger() {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
 
+        // Treasury account is 999 in the mock (TestTreasury).
+        const TREASURY: u64 = 999;
+
         let provider_stake = Providers::<Test>::get(2).unwrap().stake;
         let challenger_balance_before = Balances::free_balance(3);
+        let treasury_balance_before = Balances::free_balance(TREASURY);
+        let total_issuance_before = Balances::total_issuance();
 
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(3),
@@ -686,10 +706,21 @@ fn challenge_slashes_emits_event_and_rewards_challenger() {
 
         // Challenger gets deposit back + 10% of slashed amount
         let challenger_reward = provider_stake / 10;
+        let to_treasury = provider_stake - challenger_reward;
         assert_eq!(
             Balances::free_balance(3),
             challenger_balance_before + challenger_reward
         );
+
+        // The remaining 90% is routed to the Treasury (not burned).
+        assert_eq!(
+            Balances::free_balance(TREASURY),
+            treasury_balance_before + to_treasury
+        );
+
+        // Slash + resolve is net-zero: total issuance is unchanged (no mint, no
+        // burn). The reward is funded from the slashed imbalance, not minted.
+        assert_eq!(Balances::total_issuance(), total_issuance_before);
 
         // Verify ChallengeSlashed event
         let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {

@@ -47,7 +47,7 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
+        traits::{BalanceStatus, Currency, ExistenceRequirement, Imbalance, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     use frame_system::pallet_prelude::*;
@@ -2847,10 +2847,13 @@ pub mod pallet {
                 .saturating_add(not_moved);
             T::Currency::unreserve(&challenge.challenger, refund);
 
-            // Slash provider_cost from provider's stake
-            // Note: In on_finalize we can't easily handle errors, but here we can
-            let (_, remaining) = T::Currency::slash_reserved(&who, provider_cost);
+            // Slash provider_cost from provider's stake and route it to the
+            // Treasury (no burning). `resolve_creating` restores the issuance
+            // burned by `slash_reserved`, keeping total issuance unchanged.
+            let (provider_cost_imbalance, remaining) =
+                T::Currency::slash_reserved(&who, provider_cost);
             let actually_slashed = provider_cost.saturating_sub(remaining);
+            T::Currency::resolve_creating(&T::Treasury::get(), provider_cost_imbalance);
 
             // Update provider stake in storage
             Providers::<T>::mutate(&who, |maybe_provider| {
@@ -3680,25 +3683,27 @@ pub mod pallet {
                 // Slash the provider's entire stake
                 let slashed_amount = provider_info.stake;
 
-                // Unreserve and slash the stake
-                // In Substrate, slashing typically burns or sends to treasury
-                let (_, remaining) =
+                // Slash the provider's stake, capturing the imbalance so we can
+                // settle it into accounts instead of burning it.
+                let (slashed_imbalance, remaining) =
                     T::Currency::slash_reserved(&challenge.provider, slashed_amount);
                 let actually_slashed = slashed_amount.saturating_sub(remaining);
 
-                // Calculate challenger reward (e.g., 10% of slashed amount, rest goes to treasury)
+                // Calculate challenger reward (10% of slashed amount); the rest
+                // goes to the Treasury.
                 let challenger_reward = actually_slashed / 10u32.into();
-                let to_treasury = actually_slashed.saturating_sub(challenger_reward);
 
                 // Refund challenger's deposit
                 T::Currency::unreserve(&challenge.challenger, challenge.deposit);
 
-                // Transfer reward to challenger
-                // Note: We need to handle potential errors gracefully in on_finalize
-                let _ = T::Currency::deposit_creating(&challenge.challenger, challenger_reward);
-
-                // The rest goes to treasury (burned by slash_reserved)
-                let _ = to_treasury; // Acknowledged
+                // Fund the reward FROM the slashed imbalance (no minting); the
+                // remainder goes to the Treasury (no burning). Settling the
+                // imbalance via `resolve_creating` restores the issuance burned
+                // by `slash_reserved`, keeping total issuance unchanged.
+                let (reward_imbalance, treasury_imbalance) =
+                    slashed_imbalance.split(challenger_reward);
+                T::Currency::resolve_creating(&challenge.challenger, reward_imbalance);
+                T::Currency::resolve_creating(&T::Treasury::get(), treasury_imbalance);
 
                 // Update provider stats
                 provider_info.stats.challenges_failed =
