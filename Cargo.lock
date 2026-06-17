@@ -9677,7 +9677,7 @@ dependencies = [
 
 [[package]]
 name = "storage-paseo-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cumulus-pallet-aura-ext",
  "cumulus-pallet-parachain-system",
@@ -9760,7 +9760,7 @@ dependencies = [
 
 [[package]]
 name = "storage-provider-node"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",

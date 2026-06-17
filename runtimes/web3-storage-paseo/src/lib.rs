@@ -12,14 +12,6 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-/// Provides the `WASM_BINARY` build with `fast-runtime` feature enabled.
-///
-/// This is for example useful for local test chains.
-#[cfg(feature = "std")]
-pub mod fast_runtime_binary {
-    include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
-}
-
 pub mod genesis_config_presets;
 pub mod migrations;
 pub mod paseo_constants;
@@ -186,9 +178,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.3.0 -> 3_000. Must stay > the deployed value so the upgrade is
-    // accepted and migrations run (previous release was `2_000`).
-    spec_version: 3_000,
+    // 0.4.0 -> 4_000. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `3_000`).
+    spec_version: 4_000,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
