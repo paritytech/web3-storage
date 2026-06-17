@@ -1,216 +1,114 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Complete workflow example demonstrating all client types.
 //!
-//! This example shows:
-//! 1. Provider registration
-//! 2. Bucket creation by admin
-//! 3. Agreement request and acceptance
-//! 4. Data upload by storage user
-//! 5. Checkpoint creation
-//! 6. Challenge by third party
-//! 7. Challenge response by provider
+//!   1. Start the chain:        just start-chain
+//!   2. Start the provider:     just start-provider          (defaults to the //Alice key)
+//!   3. Register the provider:  cargo run --example register_provider
+//!
+//! With those running, this example exercises only the user-facing flow against
+//! the live chain + provider node:
+//!   1. negotiate storage terms with the provider node (HTTP)
+//!   2. establish a storage agreement on-chain (creates a bucket)
+//!   3. upload data to the provider
+//!   4. download it back and verify integrity
+//!
+//! Usage: cargo run --example complete_workflow [chain_ws] [provider_url] [user_seed]
+//!
+//! Arguments:
+//!   chain_ws      - WebSocket URL for parachain      (default: ws://127.0.0.1:2222)
+//!   provider_url  - HTTP URL for the provider node   (default: http://127.0.0.1:3333)
+//!   user_seed     - Seed of the paying user          (default: //Bob)
 
+use sp_core::crypto::Ss58Codec;
+use sp_runtime::AccountId32;
+use std::env;
 use storage_client::{
-    AdminClient, ChallengerClient, ChunkingStrategy, ClientConfig, ProviderClient,
+    AdminClient, ChunkingStrategy, ClientConfig, NegotiateRequest, ProviderClient, SignedTerms,
     StorageUserClient,
 };
+use subxt_signer::{sr25519::Keypair, SecretUri};
+
+const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
+const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
+const DEFAULT_USER_SEED: &str = "//Bob";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing for logs
     tracing_subscriber::fmt::init();
 
-    println!("=== Scalable Web3 Storage Complete Workflow ===\n");
+    let args: Vec<String> = env::args().collect();
+    let chain_ws = args.get(1).map(String::as_str).unwrap_or(DEFAULT_CHAIN_WS);
+    let provider_url = args
+        .get(2)
+        .map(String::as_str)
+        .unwrap_or(DEFAULT_PROVIDER_URL);
+    let user_seed = args.get(3).map(String::as_str).unwrap_or(DEFAULT_USER_SEED);
 
-    // Configuration
-    let config = ClientConfig {
-        chain_ws_url: "ws://localhost:2222".to_string(),
-        provider_urls: vec!["http://localhost:3333".to_string()],
-        timeout_secs: 30,
-        enable_retries: true,
-    };
+    let user_keypair = Keypair::from_uri(&user_seed.parse::<SecretUri>()?)?;
+    let user_account = AccountId32::from(user_keypair.public_key().0);
+    let user_ss58 = user_account.to_ss58check();
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 1: Provider Registration
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("📦 Step 1: Provider Registration");
+    let provider_ss58 = ProviderClient::fetch_provider_id(provider_url)
+        .await?
+        .to_ss58check();
 
-    let provider_account = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
-    let provider_client = ProviderClient::new(config.clone(), provider_account.to_string())?;
-
-    println!("  Registering provider {provider_account}...");
-    provider_client
-        .register(
-            "/ip4/203.0.113.1/tcp/3333".to_string(),
-            vec![0u8; 32],      // Mock public key
-            10_000_000_000_000, // 10 tokens stake
-        )
-        .await?;
-    println!("  ✓ Provider registered with 10 tokens stake\n");
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 2: Bucket Creation by Admin
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("🗂️  Step 2: Bucket Creation");
-
-    let admin_account = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-    let admin_client = AdminClient::new(config.clone(), admin_account.to_string())?;
-
-    println!("  Creating bucket with min_providers=1...");
-    let bucket_id = admin_client.create_bucket(1).await?;
-    println!("  ✓ Bucket created with ID: {bucket_id}\n");
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 3: Agreement Request and Acceptance
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("🤝 Step 3: Storage Agreement");
-
-    println!("  Admin requesting storage agreement...");
-    admin_client
-        .request_agreement(
-            bucket_id,
-            provider_account.to_string(),
-            10 * 1024 * 1024 * 1024, // 10 GB
-            100_000,                 // ~2 weeks at 6 sec blocks
-            5_000_000_000_000,       // 5 tokens payment
-            None,                    // Primary (not replica)
-        )
-        .await?;
-    println!("  ✓ Agreement requested: 10 GB for 100,000 blocks");
-
-    println!("  Provider accepting agreement...");
-    provider_client.accept_agreement(bucket_id).await?;
-    println!("  ✓ Agreement accepted!\n");
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 4: Data Upload by Storage User
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("⬆️  Step 4: Data Upload");
-
-    let user_client = StorageUserClient::new(config.clone())?;
-
-    let data = b"Hello, decentralized world! This is my important data that \
-                 needs to be stored reliably across multiple providers. \
-                 It's content-addressed and cryptographically verified!";
-
-    println!("  Uploading {} bytes...", data.len());
-    let data_root = user_client
-        .upload(bucket_id, data, ChunkingStrategy::default())
-        .await?;
-    println!(
-        "  ✓ Data uploaded with root: 0x{}",
-        hex::encode(data_root.as_bytes())
-    );
-
-    println!("  Committing to chain...");
-    let commitment = user_client.commit(bucket_id, vec![data_root]).await?;
-    println!("  ✓ Committed with MMR root: {}\n", commitment.mmr_root);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 5: Data Verification
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("✅ Step 5: Data Verification");
-
-    println!("  Downloading data...");
-    let retrieved_data = user_client
-        .download(&data_root, 0, data.len() as u64)
-        .await?;
-    println!("  ✓ Downloaded {} bytes", retrieved_data.len());
-
-    if retrieved_data == data {
-        println!("  ✓ Data integrity verified!");
-    } else {
-        println!("  ✗ Data mismatch!");
-    }
+    println!("=== Complete Storage Workflow ===");
+    println!("Chain WebSocket: {chain_ws}");
+    println!("Provider URL:    {provider_url}");
+    println!("Provider (SS58): {provider_ss58}");
+    println!("User (SS58):     {user_ss58}");
     println!();
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 6: Challenge by Third Party
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("🎯 Step 6: Data Integrity Challenge");
+    let chain_config = ClientConfig {
+        chain_ws_url: chain_ws.to_string(),
+        ..Default::default()
+    };
 
-    let challenger_account = "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy";
-    let challenger_client = ChallengerClient::new(config.clone(), challenger_account.to_string())?;
+    // 1. Negotiate terms with the running provider node.
+    println!("Negotiating storage terms with provider...");
+    let signed: SignedTerms = ProviderClient::negotiate_terms(
+        provider_url,
+        &NegotiateRequest {
+            owner: user_account.clone(),
+            max_bytes: 1_000_000,
+            duration: 100,
+            price_per_byte: 1,
+            replica_params: None,
+            bucket_id: None,
+        },
+    )
+    .await?;
+    assert!(signed.terms.nonce > 0, "provider should allocate a nonce");
+    println!("  Terms signed (nonce={})", signed.terms.nonce);
 
-    println!("  Challenger analyzing provider...");
-    let analysis = challenger_client
-        .analyze_provider(bucket_id, provider_account.to_string())
+    // 2. Redeem the signed terms on-chain to open a bucket + primary agreement.
+    println!("Establishing storage agreement on-chain...");
+    let mut admin = AdminClient::new(chain_config.clone(), user_ss58.clone())?;
+    admin.connect().await?;
+    admin.set_signer(user_keypair)?;
+    let bucket_id = admin
+        .establish_storage_agreement(provider_ss58, signed.terms, signed.signature)
         .await?;
-    println!("  Provider reputation: {}", analysis.reputation);
-    println!("  Recommendation: {:?}", analysis.recommendation);
+    println!("  Bucket #{bucket_id} created");
 
-    println!("  Creating challenge...");
-    let challenge_id = challenger_client
-        .challenge_checkpoint(
-            bucket_id,
-            provider_account.to_string(),
-            0, // leaf_index
-            0, // chunk_index
-        )
+    // 3. Upload + download against the provider node, verifying integrity.
+    println!("Uploading and downloading data...");
+    let user_config = ClientConfig {
+        chain_ws_url: chain_ws.to_string(),
+        provider_urls: vec![provider_url.to_string()],
+        ..Default::default()
+    };
+    let user = StorageUserClient::new(user_config)?;
+    let data = b"hello e2e".to_vec();
+    let data_root = user
+        .upload(bucket_id, &data, ChunkingStrategy::default())
         .await?;
-    println!(
-        "  ✓ Challenge created: deadline={}, index={}",
-        challenge_id.deadline, challenge_id.index
-    );
-    println!("  Provider must respond within challenge timeout!\n");
+    let downloaded = user.download(&data_root, 0, data.len() as u64).await?;
+    assert_eq!(downloaded, data, "downloaded bytes must match upload");
+    println!("  Uploaded {} bytes and verified download", data.len());
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 7: Challenge Response by Provider
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("🛡️  Step 7: Provider Response");
-
-    println!("  Provider fetching challenged data from local storage...");
-    // In a real scenario, provider would:
-    // 1. Load chunk from local storage
-    // 2. Generate Merkle proof
-    // 3. Generate MMR proof
-    // 4. Submit response on-chain
-
-    println!("  ✓ Provider would respond with proofs\n");
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Step 8: Monitoring & Analytics
-    // ═════════════════════════════════════════════════════════════════════════
-    println!("📊 Step 8: Monitoring & Analytics");
-
-    println!("  Provider statistics:");
-    let provider_stats = provider_client.get_stats().await?;
-    println!(
-        "    - Total agreements: {}",
-        provider_stats.agreements_total
-    );
-    println!(
-        "    - Challenges received: {}",
-        provider_stats.challenges_received
-    );
-    println!("    - Reputation: {}/100", provider_stats.reputation);
-
-    println!("\n  Challenger statistics:");
-    let challenge_stats = challenger_client.get_challenge_stats().await?;
-    println!(
-        "    - Total challenges: {}",
-        challenge_stats.total_challenges
-    );
-    println!(
-        "    - Success rate: {:.1}%",
-        if challenge_stats.total_challenges > 0 {
-            (challenge_stats.successful_challenges as f64 / challenge_stats.total_challenges as f64)
-                * 100.0
-        } else {
-            0.0
-        }
-    );
-    println!(
-        "    - Total earnings: {} tokens",
-        challenge_stats.total_earnings
-    );
-
-    println!("\n=== Workflow Complete ===");
-    println!("\n💡 Key Takeaways:");
-    println!("  • Providers stake collateral and offer storage");
-    println!("  • Admins create buckets and manage agreements");
-    println!("  • Users upload data with cryptographic guarantees");
-    println!("  • Challengers enforce accountability");
-    println!("  • All operations are verifiable on-chain");
-
+    println!();
+    println!("=== Done ===");
     Ok(())
 }

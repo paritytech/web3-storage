@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Checkpoint Manager for automated multi-provider checkpoint coordination.
 //!
 //! This module provides a reusable checkpoint management system that can be
@@ -940,7 +942,7 @@ impl CheckpointManager {
             self.extract_provider_fields_from_raw(&provider_bytes)?;
 
         // Parse multiaddr to HTTP endpoint
-        let endpoint = self.parse_multiaddr_to_http(&multiaddr_bytes)?;
+        let endpoint = Self::parse_multiaddr_to_http(&multiaddr_bytes)?;
 
         Ok(ProviderInfo {
             account_id: account_id.clone(),
@@ -1087,45 +1089,95 @@ impl CheckpointManager {
         Ok((bytes[data_start..data_end].to_vec(), data_end))
     }
 
-    /// Parse a multiaddr (e.g., /ip4/127.0.0.1/tcp/3000) to HTTP endpoint.
-    fn parse_multiaddr_to_http(&self, multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
+    /// Parse a libp2p multiaddr to an HTTP(S) base URL.
+    ///
+    /// Handles the two forms the provider node registers on chain:
+    /// - `/ip4/<host>/tcp/<port>` (also `ip6`/`dns4`/`dns6`/`dns`)
+    ///   → `http://<host>:<port>`
+    /// - `/dns4/<host>/tcp/443/tls/http/http-path/<path>`
+    ///   → `https://<host>/<path>`
+    ///
+    /// A `tls` (or `https`/`wss`) segment selects `https`; the default port for
+    /// the scheme (`443` https, `80` http) is elided; an `http-path/<segment>`
+    /// appends a percent-decoded path; `ip6` hosts are bracketed.
+    ///
+    /// Deliberately narrow: it covers the addresses this system writes, not the
+    /// full multiaddr grammar (a bare `tcp/443` stays http, a trailing
+    /// `/p2p/...` is ignored), so it is not a drop-in match for the TS side.
+    fn parse_multiaddr_to_http(multiaddr_bytes: &[u8]) -> Result<String, ClientError> {
+        /// Minimal percent-decoder for `http-path` segments (`%XX`).
+        fn percent_decode(s: &str) -> String {
+            let bytes = s.as_bytes();
+            let mut out = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'%' && i + 2 < bytes.len() {
+                    if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                        out.push(b);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        }
+
         let multiaddr_str = String::from_utf8(multiaddr_bytes.to_vec())
             .map_err(|e| ClientError::Chain(format!("Invalid multiaddr encoding: {e}")))?;
 
-        // Parse multiaddr format: /ip4/<ip>/tcp/<port> or /dns4/<host>/tcp/<port>
         let parts: Vec<&str> = multiaddr_str.split('/').filter(|s| !s.is_empty()).collect();
 
+        // Minimum shape is `<proto>/<host>/tcp/<port>`.
         if parts.len() < 4 {
             return Err(ClientError::Chain(format!(
                 "Invalid multiaddr format: {multiaddr_str}"
             )));
         }
 
-        let (host, port) = match parts[0] {
-            "ip4" | "ip6" => {
-                let ip = parts[1];
-                let port = parts
-                    .get(3)
-                    .ok_or_else(|| ClientError::Chain("Missing port in multiaddr".to_string()))?;
-                (ip.to_string(), port.to_string())
-            }
-            "dns4" | "dns6" | "dns" => {
-                let hostname = parts[1];
-                let port = parts
-                    .get(3)
-                    .ok_or_else(|| ClientError::Chain("Missing port in multiaddr".to_string()))?;
-                (hostname.to_string(), port.to_string())
-            }
-            _ => {
+        let host = match parts[0] {
+            "ip4" | "dns4" | "dns6" | "dns" => parts[1].to_string(),
+            "ip6" => format!("[{}]", parts[1]),
+            other => {
                 return Err(ClientError::Chain(format!(
-                    "Unsupported multiaddr protocol: {}",
-                    parts[0]
+                    "Unsupported multiaddr protocol: {other}"
                 )));
             }
         };
 
-        // Construct HTTP URL
-        Ok(format!("http://{host}:{port}"))
+        if parts[2] != "tcp" {
+            return Err(ClientError::Chain(format!(
+                "Unsupported multiaddr transport: {}",
+                parts[2]
+            )));
+        }
+        let port: u16 = parts[3]
+            .parse()
+            .map_err(|_| ClientError::Chain(format!("Invalid multiaddr port: {}", parts[3])))?;
+
+        // Segments after `tcp/<port>` select the scheme and an optional path.
+        let rest = &parts[4..];
+        let tls = rest.iter().any(|p| matches!(*p, "tls" | "https" | "wss"));
+        let scheme = if tls { "https" } else { "http" };
+
+        let path = match rest.iter().position(|p| *p == "http-path") {
+            Some(idx) => {
+                let raw = rest.get(idx + 1).ok_or_else(|| {
+                    ClientError::Chain("Missing value for http-path in multiaddr".to_string())
+                })?;
+                format!("/{}", percent_decode(raw).trim_start_matches('/'))
+            }
+            None => String::new(),
+        };
+
+        let default_port = if tls { 443 } else { 80 };
+        let port_suffix = if port == default_port {
+            String::new()
+        } else {
+            format!(":{port}")
+        };
+        Ok(format!("{scheme}://{host}{port_suffix}{path}"))
     }
 
     /// Update the provider cache.
@@ -2829,8 +2881,76 @@ mod tests {
     // Multiaddr Parsing Tests (via CheckpointManager helper)
     // ========================================================================
 
-    // Note: parse_multiaddr_to_http is private, but we can test it indirectly
-    // through discover_providers_from_chain in integration tests
+    fn parse_ma(s: &str) -> Result<String, ClientError> {
+        CheckpointManager::parse_multiaddr_to_http(s.as_bytes())
+    }
+
+    #[test]
+    fn multiaddr_ip4_is_http() {
+        assert_eq!(
+            parse_ma("/ip4/127.0.0.1/tcp/3333").unwrap(),
+            "http://127.0.0.1:3333"
+        );
+    }
+
+    #[test]
+    fn multiaddr_ip6_host_is_bracketed() {
+        assert_eq!(parse_ma("/ip6/::1/tcp/3333").unwrap(), "http://[::1]:3333");
+    }
+
+    #[test]
+    fn multiaddr_default_http_port_elided() {
+        assert_eq!(
+            parse_ma("/ip4/127.0.0.1/tcp/80").unwrap(),
+            "http://127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn multiaddr_tls_http_is_https_with_default_port_elided() {
+        assert_eq!(
+            parse_ma("/dns4/host.example.com/tcp/443/tls/http").unwrap(),
+            "https://host.example.com"
+        );
+    }
+
+    #[test]
+    fn multiaddr_tls_keeps_non_default_port() {
+        assert_eq!(
+            parse_ma("/dns4/host.example.com/tcp/8443/tls/http").unwrap(),
+            "https://host.example.com:8443"
+        );
+    }
+
+    #[test]
+    fn multiaddr_http_path_is_appended_the_hosted_provider_form() {
+        // The exact form the PreviewNet preset / `--public-multiaddr` advertise.
+        assert_eq!(
+            parse_ma(
+                "/dns4/previewnet.substrate.dev/tcp/443/tls/http/http-path/web3-storage-provider"
+            )
+            .unwrap(),
+            "https://previewnet.substrate.dev/web3-storage-provider"
+        );
+    }
+
+    #[test]
+    fn multiaddr_http_path_is_percent_decoded() {
+        assert_eq!(
+            parse_ma("/dns4/host.example.com/tcp/443/tls/http/http-path/a%2fb%2fc").unwrap(),
+            "https://host.example.com/a/b/c"
+        );
+    }
+
+    #[test]
+    fn multiaddr_without_port_is_rejected() {
+        assert!(parse_ma("/ip4/127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn multiaddr_unsupported_protocol_is_rejected() {
+        assert!(parse_ma("/unix/var/run/sock/tcp/3333").is_err());
+    }
 
     // ========================================================================
     // Phase 3: Metrics Tests

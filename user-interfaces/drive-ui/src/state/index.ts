@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * State barrel — exports every hook + action so components can import from
  * a single path.
@@ -69,6 +71,9 @@ export {
   deleteEntry,
   createFolder,
   createDrive,
+  retryCreation,
+  canRetryCreation,
+  listAvailableProviders,
   deleteDrive,
   fetchMembers,
   addMember,
@@ -78,7 +83,12 @@ export {
   getSelectedDrive,
   getCurrentPath,
 } from "./drive.state";
-export type { CreationStage, CreationStatus, ViewMode } from "./drive.state";
+export type {
+  CreationStage,
+  CreationStatus,
+  CreateDriveInput,
+  ViewMode,
+} from "./drive.state";
 
 export {
   useCheckpointInfo,

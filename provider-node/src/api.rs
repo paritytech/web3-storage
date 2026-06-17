@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! HTTP API handlers for the provider node.
 
 use crate::auth::{self, RequiredRole};
@@ -6,13 +8,15 @@ use crate::checkpoint_coordinator::{
 };
 use crate::error::Error;
 use crate::fs_api;
+use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
 use crate::s3_api;
 use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
     http::{header, StatusCode},
+    middleware::{from_fn_with_state, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -20,13 +24,31 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
 use sp_core::H256;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+/// Sustained `/negotiate` requests allowed per-IP / second (token refill rate).
+const NEGOTIATE_RATE_LIMIT_PER_SEC: u64 = 5;
+/// Per-IP token-bucket capacity: a single client may burst up to this many
+/// `/negotiate` requests before being throttled to the refill rate.
+const NEGOTIATE_RATE_LIMIT_BURST: u64 = 16;
+
 /// Create the API router with all endpoints.
 pub fn create_router(state: Arc<ProviderState>) -> Router {
+    // Per-IP token-bucket limiter for `/negotiate`.
+    let negotiate_limiter = Arc::new(
+        RateLimiter::builder()
+            .requests_per_second(NEGOTIATE_RATE_LIMIT_PER_SEC)
+            .burst(NEGOTIATE_RATE_LIMIT_BURST)
+            .build()
+            .expect("static `/negotiate` rate-limit config is valid"),
+    );
+
     Router::new()
         // Health and info
         .route("/health", get(health))
@@ -51,6 +73,14 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
+        // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
+        .route(
+            "/negotiate",
+            post(negotiate_terms).layer(from_fn_with_state(
+                negotiate_limiter,
+                rate_limit_by_ip_middleware,
+            )),
+        )
         // Checkpoint coordination
         .route("/checkpoint/sign", post(sign_checkpoint_proposal))
         .route("/checkpoint/duty", get(get_checkpoint_duty))
@@ -82,6 +112,26 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+async fn rate_limit_by_ip_middleware(
+    State(limiter): State<Arc<RateLimiter>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    let ip = addr.ip().to_string();
+    match limiter.check(&ip).await {
+        Ok(decision) if decision.permitted => Ok(next.run(request).await),
+        Ok(_) => Err(Error::RateLimited),
+        // Fail closed: a limiter-internal error rejects the request rather than
+        // letting unbounded traffic through, which could overwhelm the node and
+        // hide detail error from client.
+        Err(err) => {
+            tracing::warn!("rate limiter error for {ip}: {err}; rejecting request");
+            Err(Error::Internal("RateLimited".to_string()))
+        }
+    }
 }
 
 /// Extract the Authorization header value from a header map.
@@ -121,10 +171,13 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn info() -> Json<InfoResponse> {
+async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
     Json(InfoResponse {
-        status: "healthy".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        provider_id: state.provider_id.clone(),
+        provider_registration_info: state
+            .provider_info
+            .as_ref()
+            .and_then(|slot| slot.read().ok().map(|guard| guard.clone())),
     })
 }
 
@@ -766,6 +819,48 @@ async fn get_historical_roots(
         ],
         snapshot_block: 0, // Would need chain query for actual block
     }))
+}
+
+/// Sign [`AgreementTerms`] for a bucket owner, echoing the request but pinning
+/// `price_per_byte` to the provider's own listed price (the client may have
+/// proposed more).
+///
+/// TODO: requests are accepted automatically; let providers vet them later.
+///
+/// Returns `503` if the node has no signing key (`--keyfile`) or can't fetch its
+/// on-chain registration info.
+async fn negotiate_terms(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<NegotiateRequest>,
+) -> Result<Json<SignedTerms>, Error> {
+    let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
+    let nonce_counter = state
+        .nonce_counter
+        .as_ref()
+        .ok_or(Error::SigningUnavailable)?;
+
+    // Validate against the provider's on-chain settings
+    let info = state
+        .provider_info
+        .as_ref()
+        .and_then(|slot| slot.read().ok().map(|guard| guard.clone()))
+        .ok_or(Error::ProviderInfoUnavailable)?;
+    negotiate::validate_request(&req, &info)?;
+
+    let terms: AgreementTermsOf = AgreementTerms {
+        owner: req.owner,
+        max_bytes: req.max_bytes,
+        duration: req.duration,
+        price_per_byte: info.price_per_byte,
+        // TODO: current_block + StorageProvider::RequestTimeout
+        valid_until: u32::MAX,
+        nonce: nonce_counter.next(),
+        bucket_id: req.bucket_id,
+        replica_params: req.replica_params,
+    };
+    let signature = storage_client::sign_terms(keypair, &terms);
+
+    Ok(Json(SignedTerms { terms, signature }))
 }
 
 /// Get replica sync status for a bucket.

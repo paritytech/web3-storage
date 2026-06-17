@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! S3 bucket metadata index.
 //!
 //! Provides a per-bucket sorted key→metadata map for S3-compatible object storage.
@@ -611,6 +613,26 @@ mod tests {
         assert_eq!(loaded[0].1.get("test.txt").unwrap().size, 42);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_increment_last_byte_normal() {
+        assert_eq!(increment_last_byte("abc"), Some("abd".to_string()));
+        assert_eq!(increment_last_byte("z"), Some("{".to_string()));
+    }
+
+    #[test]
+    fn test_increment_last_byte_empty() {
+        assert_eq!(increment_last_byte(""), None);
+    }
+
+    #[test]
+    fn test_metadata_merkle_root_single_entry() {
+        let mut idx = BucketIndex::default();
+        idx.put("only.txt".to_string(), make_meta(42));
+
+        let root = idx.metadata_merkle_root();
+        assert_ne!(root, H256::zero());
     }
 
     #[test]

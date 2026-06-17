@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Shared Playwright + chain helpers for the three Web3-Storage UIs
  * (drive-ui, console-ui, provider).

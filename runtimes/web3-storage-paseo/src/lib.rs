@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Paseo Web3 Storage Parachain.
 //!
 //! A minimal parachain runtime that includes the storage provider pallet
@@ -18,7 +20,8 @@ pub mod fast_runtime_binary {
     include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
 }
 
-mod genesis_config_presets;
+pub mod genesis_config_presets;
+pub mod migrations;
 pub mod paseo_constants;
 mod revive;
 mod storage;
@@ -124,11 +127,6 @@ pub type SignedBlock = generic::SignedBlock<Block>;
 pub type BlockId = generic::BlockId<Block>;
 
 /// The SignedExtension to the basic transaction logic.
-///
-/// The trailing `pallet_revive::evm::tx_extension::SetOrigin` lets the runtime
-/// accept Ethereum-signed transactions via `pallet_revive::eth_transact` —
-/// `SetOrigin` recovers the signer's `H160` from the signature and maps it to
-/// a substrate `AccountId32` (see [`crate::revive::EthExtraImpl`]).
 pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
     Runtime,
     (
@@ -140,6 +138,8 @@ pub type TxExtension = cumulus_pallet_weight_reclaim::StorageWeightReclaim<
         frame_system::CheckNonce<Runtime>,
         frame_system::CheckWeight<Runtime>,
         pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+        frame_metadata_hash_extension::CheckMetadataHash<Runtime>,
+        // lets the runtime accept Ethereum-signed transactions via `pallet_revive::eth_transact`
         pallet_revive::evm::tx_extension::SetOrigin<Runtime>,
     ),
 >;
@@ -185,10 +185,13 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
-    spec_version: 1,
+    // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
+    // 0.3.0 -> 3_000. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `2_000`).
+    spec_version: 3_000,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
-    transaction_version: 1,
+    transaction_version: 2,
     system_version: 1,
 };
 
@@ -268,7 +271,7 @@ impl frame_system::Config for Runtime {
     type SS58Prefix = SS58Prefix;
     type OnSetCode = cumulus_pallet_parachain_system::ParachainSetCode<Self>;
     type MaxConsumers = ConstU32<16>;
-    type SingleBlockMigrations = ();
+    type SingleBlockMigrations = migrations::Migrations;
     type MultiBlockMigrator = ();
     type PreInherents = ();
     type PostInherents = ();
@@ -323,6 +326,13 @@ impl pallet_transaction_payment::Config for Runtime {
     type FeeMultiplierUpdate = polkadot_runtime_common::SlowAdjustingFeeUpdate<Self>;
     type OperationalFeeMultiplier = ConstU8<5>;
     type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
+}
+
+impl pallet_utility::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type RuntimeCall = RuntimeCall;
+    type PalletsOrigin = OriginCaller;
+    type WeightInfo = weights::pallet_utility::WeightInfo<Runtime>;
 }
 
 impl pallet_sudo::Config for Runtime {
@@ -547,6 +557,10 @@ mod runtime {
     #[runtime::pallet_index(33)]
     pub type MessageQueue = pallet_message_queue;
 
+    // Handy utilities. Utility / Multisig / Proxy / Indices ...
+    #[runtime::pallet_index(34)]
+    pub type Utility = pallet_utility;
+
     // Weight reclaim
     #[runtime::pallet_index(40)]
     pub type WeightReclaim = cumulus_pallet_weight_reclaim;
@@ -589,6 +603,7 @@ mod benches {
         [pallet_drive_registry, DriveRegistry]
         [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
+        [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]

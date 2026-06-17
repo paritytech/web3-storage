@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! File system HTTP API handlers.
 //!
 //! These endpoints handle the full upload flow (chunking, tree-building, commit, index update)

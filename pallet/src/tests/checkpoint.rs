@@ -1,24 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 use codec::Encode;
 use sp_core::{sr25519, Pair, H256};
 use storage_primitives::BucketSnapshot;
-
-/// Register a provider using a real Sr25519 keypair so signatures can be verified on-chain.
-/// Returns the keypair for later use in signing.
-fn register_provider_with_keypair(who: u64, stake: u64) -> sr25519::Pair {
-    use frame_support::assert_ok;
-    let (pair, _) = sr25519::Pair::generate();
-    let public_key: frame_support::BoundedVec<u8, frame_support::traits::ConstU32<64>> =
-        pair.public().0.to_vec().try_into().unwrap();
-    let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-    assert_ok!(StorageProvider::register_provider(
-        RuntimeOrigin::signed(who),
-        multiaddr.try_into().unwrap(),
-        public_key,
-        stake,
-    ));
-    pair
-}
 
 /// Create a signed checkpoint proposal for use in provider_checkpoint calls.
 fn sign_checkpoint_proposal(
@@ -42,34 +27,19 @@ fn sign_checkpoint_proposal(
 }
 
 /// Setup agreement with a keypair-registered provider. Returns (bucket_id, keypair).
+///
+/// `setup_agreement` redeems provider-signed terms via `establish_storage_agreement`,
+/// and `provider_signer` stamps the deterministic Sr25519 keypair into the provider's
+/// on-chain `public_key`, so the returned pair signs checkpoints that verify on-chain.
 fn setup_agreement_with_keypair(
     provider: u64,
     client: u64,
     max_bytes: u64,
     duration: u64,
 ) -> (u64, sr25519::Pair) {
-    let pair = register_provider_with_keypair(provider, 200);
-    let bucket_id = {
-        use frame_support::assert_ok;
-        assert_ok!(StorageProvider::create_bucket(
-            RuntimeOrigin::signed(client),
-            1
-        ));
-        let bucket_id = crate::NextBucketId::<Test>::get() - 1;
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(client),
-            bucket_id,
-            provider,
-            max_bytes,
-            duration,
-            max_bytes * duration,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(provider),
-            bucket_id,
-        ));
-        bucket_id
-    };
+    register_provider(provider, 200);
+    let bucket_id = setup_agreement(provider, client, max_bytes, duration);
+    let pair = provider_signer(provider);
     (bucket_id, pair)
 }
 
@@ -98,7 +68,7 @@ fn insert_snapshot(bucket_id: u64, providers: &[u64]) {
 fn configure_checkpoint_window_works() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_ok!(StorageProvider::configure_checkpoint_window(
             RuntimeOrigin::signed(1),
@@ -118,7 +88,7 @@ fn configure_checkpoint_window_works() {
 #[test]
 fn configure_checkpoint_window_fails_not_admin() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::configure_checkpoint_window(RuntimeOrigin::signed(3), 0, 20, 10, true),
@@ -146,7 +116,7 @@ fn configure_checkpoint_window_fails_no_bucket() {
 #[test]
 fn fund_checkpoint_pool_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         let free_before = Balances::free_balance(1);
 
@@ -202,7 +172,7 @@ fn claim_checkpoint_rewards_fails_no_rewards() {
 #[test]
 fn checkpoint_fails_not_writer() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         // Account 3 is not a member
         assert_noop!(
@@ -240,7 +210,7 @@ fn checkpoint_fails_no_bucket() {
 fn checkpoint_works_with_zero_min_providers() {
     new_test_ext().execute_with(|| {
         // With min_providers = 0, no signatures needed
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
@@ -261,7 +231,7 @@ fn checkpoint_works_with_zero_min_providers() {
 #[test]
 fn extend_checkpoint_fails_no_snapshot() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         assert_noop!(
             StorageProvider::extend_checkpoint(RuntimeOrigin::signed(1), 0, Default::default(),),
@@ -273,7 +243,7 @@ fn extend_checkpoint_fails_no_snapshot() {
 #[test]
 fn extend_checkpoint_works_after_initial_checkpoint() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        create_bucket(1, 0);
 
         // First, create a snapshot with zero sigs (min_providers = 0)
         assert_ok!(StorageProvider::checkpoint(
@@ -436,21 +406,12 @@ fn provider_checkpoint_leader_within_grace_period() {
 fn provider_checkpoint_non_leader_rejected_during_grace() {
     new_test_ext().execute_with(|| {
         let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
-        let pair3 = register_provider_with_keypair(3, 200);
+        register_provider(3, 200);
+        let pair3 = provider_signer(3);
 
-        // Add second provider
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            500,
-            25000,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-        ));
+        // Add second provider (establish_storage_agreement always creates a
+        // fresh single-primary bucket, so the multi-primary shape is synthesized).
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // Within grace period, only leader can submit.
         // Determine the leader deterministically and only try the non-leader.
@@ -503,21 +464,12 @@ fn provider_checkpoint_non_leader_rejected_during_grace() {
 fn provider_checkpoint_fallback_after_grace() {
     new_test_ext().execute_with(|| {
         let (bucket_id, pair2) = setup_agreement_with_keypair(2, 1, 50, 500);
-        let _pair3 = register_provider_with_keypair(3, 200);
+        register_provider(3, 200);
+        let _pair3 = provider_signer(3);
 
-        // Add second provider
-        assert_ok!(StorageProvider::request_primary_agreement(
-            RuntimeOrigin::signed(1),
-            bucket_id,
-            3,
-            50,
-            500,
-            25000,
-        ));
-        assert_ok!(StorageProvider::accept_agreement(
-            RuntimeOrigin::signed(3),
-            bucket_id,
-        ));
+        // Add second provider (establish_storage_agreement always creates a
+        // fresh single-primary bucket, so the multi-primary shape is synthesized).
+        add_primary_to_bucket(3, 1, bucket_id, 50);
 
         // After grace period (block > window_start + grace = 0 + 5 = 5)
         // Any primary provider can submit (fallback)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Merkle Mountain Range implementation.
 //!
 //! Positions are assigned sequentially as nodes are added. Leaf positions

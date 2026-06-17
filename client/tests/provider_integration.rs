@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration tests for `ProviderClient`.
 //!
 //! Requires a running parachain at `ws://127.0.0.1:2222`:
@@ -91,41 +93,6 @@ async fn test_get_provider_info_unregistered_returns_none() {
         .expect("get_provider_info should not error");
 
     assert!(info.is_none(), "Bob should not be a registered provider");
-}
-
-/// `list_pending_requests` should succeed and return a (possibly empty) list of
-/// pending agreement requests targeting Alice.
-#[tokio::test]
-async fn test_list_pending_requests() {
-    let _guard = chain_guard().await;
-
-    if chain_setup().await.is_none() {
-        eprintln!("Chain not reachable — skipping test_list_pending_requests");
-        return;
-    }
-
-    let provider = alice_provider()
-        .await
-        .expect("chain was already reachable in chain_setup");
-
-    let requests = provider
-        .list_pending_requests()
-        .await
-        .expect("list_pending_requests should not error");
-
-    println!("Alice has {} pending request(s)", requests.len());
-
-    for r in &requests {
-        assert!(
-            !r.requester.is_empty(),
-            "requester field should not be empty"
-        );
-        assert!(r.bucket_id > 0, "bucket_id should be non-zero");
-        println!(
-            "  bucket={} requester={} max_bytes={} payment_locked={} duration={}",
-            r.bucket_id, r.requester, r.max_bytes, r.payment_locked, r.duration
-        );
-    }
 }
 
 /// `list_active_agreements` should succeed and return a (possibly empty) list.
@@ -447,32 +414,5 @@ async fn test_add_stake_increases_stake() {
         stake_after,
         stake_before + increment,
         "stake should increase by exactly {increment} (before={stake_before}, after={stake_after})"
-    );
-}
-
-/// `accept_agreement` must fail when no pending request exists for the bucket —
-/// the chain has nothing for the provider to accept.
-#[tokio::test]
-async fn test_accept_agreement_without_request_errors() {
-    let _guard = chain_guard().await;
-
-    let setup = match chain_setup().await {
-        Some(s) => s,
-        None => {
-            eprintln!(
-                "Chain not reachable — skipping test_accept_agreement_without_request_errors"
-            );
-            return;
-        }
-    };
-
-    let provider = alice_provider()
-        .await
-        .expect("chain was already reachable in chain_setup");
-
-    let result = provider.accept_agreement(setup.bucket_id).await;
-    assert!(
-        result.is_err(),
-        "accept_agreement should fail when no pending request exists for the bucket"
     );
 }

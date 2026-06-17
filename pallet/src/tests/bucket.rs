@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 
 #[test]
 fn create_bucket_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 2));
+        create_bucket(1, 2);
 
         let bucket = Buckets::<Test>::get(0).unwrap();
         assert_eq!(bucket.min_providers, 2);
@@ -21,9 +23,9 @@ fn create_bucket_works() {
 #[test]
 fn create_multiple_buckets_increments_id() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(2), 2));
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 3));
+        create_bucket(1, 1);
+        create_bucket(2, 2);
+        create_bucket(1, 3);
 
         assert_eq!(NextBucketId::<Test>::get(), 3);
         assert!(Buckets::<Test>::get(0).is_some());
@@ -35,7 +37,7 @@ fn create_multiple_buckets_increments_id() {
 #[test]
 fn set_member_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Add writer
         assert_ok!(StorageProvider::set_member(
@@ -56,7 +58,7 @@ fn set_member_works() {
 #[test]
 fn set_member_updates_existing_role() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Add as writer
         assert_ok!(StorageProvider::set_member(
@@ -83,7 +85,7 @@ fn set_member_updates_existing_role() {
 #[test]
 fn set_member_fails_for_non_admin() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Non-admin tries to add member
         assert_noop!(
@@ -96,7 +98,7 @@ fn set_member_fails_for_non_admin() {
 #[test]
 fn cannot_demote_other_admin() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Add second admin
         assert_ok!(StorageProvider::set_member(
@@ -117,7 +119,7 @@ fn cannot_demote_other_admin() {
 #[test]
 fn last_admin_cannot_self_demote() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Admin 1 is the sole admin and cannot demote themselves.
         assert_noop!(
@@ -130,7 +132,7 @@ fn last_admin_cannot_self_demote() {
 #[test]
 fn last_admin_cannot_be_removed() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::remove_member(RuntimeOrigin::signed(1), 0, 1),
@@ -142,7 +144,7 @@ fn last_admin_cannot_be_removed() {
 #[test]
 fn admin_can_demote_self() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Add second admin
         assert_ok!(StorageProvider::set_member(
@@ -169,7 +171,7 @@ fn admin_can_demote_self() {
 #[test]
 fn remove_member_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
         assert_ok!(StorageProvider::set_member(
             RuntimeOrigin::signed(1),
             0,
@@ -192,7 +194,7 @@ fn remove_member_works() {
 #[test]
 fn remove_member_fails_for_non_existent() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::remove_member(RuntimeOrigin::signed(1), 0, 99),
@@ -204,7 +206,7 @@ fn remove_member_fails_for_non_existent() {
 #[test]
 fn set_min_providers_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 2));
+        create_bucket(1, 2);
 
         // Can set to 0 (no minimum)
         assert_ok!(StorageProvider::set_min_providers(
@@ -221,7 +223,7 @@ fn set_min_providers_works() {
 #[test]
 fn freeze_bucket_requires_snapshot() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::freeze_bucket(RuntimeOrigin::signed(1), 0),

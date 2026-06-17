@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider registration and settings update.
 //!
 //! Mirrors the `registerProvider` + `updateProviderSettings` steps from
@@ -17,23 +19,25 @@ use std::env;
 use storage_client::{ClientConfig, ProviderClient, ProviderSettings};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 
+const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
+const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";
+const DEFAULT_PROVIDER_MULTIADDR: &str = "/ip4/127.0.0.1/tcp/3333";
+const DEFAULT_KEYRING: &str = "//Alice";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let args: Vec<String> = env::args().collect();
-    let chain_ws = args
-        .get(1)
-        .map(String::as_str)
-        .unwrap_or("ws://127.0.0.1:2222");
+    let chain_ws = args.get(1).map(String::as_str).unwrap_or(DEFAULT_CHAIN_WS);
     let provider_url = args
         .get(2)
         .map(String::as_str)
-        .unwrap_or("http://127.0.0.1:3333");
+        .unwrap_or(DEFAULT_PROVIDER_URL);
     let multiaddr = args
         .get(3)
         .cloned()
-        .unwrap_or_else(|| "/ip4/127.0.0.1/tcp/3333".to_string());
+        .unwrap_or_else(|| DEFAULT_PROVIDER_MULTIADDR.to_string());
 
     // Load keypair from keyfile seed (e.g. "//Alice") or fall back to //Alice.
     // The keyfile format matches start-provider: a single seed phrase per line.
@@ -43,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let uri: SecretUri = seed.trim().parse()?;
         Keypair::from_uri(&uri)?
     } else {
-        Keypair::from_uri(&"//Alice".parse::<SecretUri>()?)?
+        Keypair::from_uri(&DEFAULT_KEYRING.parse::<SecretUri>()?)?
     };
 
     // Derive SS58 address from the keypair for display and ProviderClient identity.

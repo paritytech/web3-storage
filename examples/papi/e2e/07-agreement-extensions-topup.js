@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * E2E Workflow 07 — Agreement Extensions & Top-up
  *
@@ -10,20 +12,18 @@
 
 import assert from "node:assert";
 import {
-  createBucket,
   extendAgreement,
-  requestPrimaryAgreement,
   setExtensionsBlocked,
   topUpAgreement,
   updateProviderSettings,
 } from "../api.js";
+import { ensureProviderRegistered, makeSigner, READ_OPTS } from "../common.js";
 import {
-  ensureProviderRegistered,
-  makeSigner,
-  READ_OPTS,
-  waitForAgreementAcceptance,
-} from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
+  negotiateAndEstablish,
+  runSuite,
+  submitTxExpectFailure,
+  setupChain,
+} from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -42,7 +42,6 @@ async function main() {
   // Create a bucket with a longer-lived agreement for extension tests.
   const maxBytes = 1_048_576n;
   const duration = 100;
-  const maxPayment = maxBytes * BigInt(duration) * 10n;
 
   let bucketId;
 
@@ -51,13 +50,10 @@ async function main() {
   tests.push({
     name: "7.0 Setup bucket + agreement",
     fn: async () => {
-      bucketId = await createBucket(api, client);
-      await requestPrimaryAgreement(api, client, provider, bucketId, {
-        max_bytes: maxBytes,
+      ({ bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
+        maxBytes,
         duration,
-        max_payment: maxPayment,
-      });
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
+      }));
       const agreement = await api.query.StorageProvider.StorageAgreements.getValue(
         bucketId,
         provider.address,
