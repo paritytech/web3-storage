@@ -30,7 +30,7 @@ cargo build --release
 
 # Build specific components
 cargo build --release -p storage-parachain-runtime
-cargo build --release -p storage-provider-pallet
+cargo build --release -p pallet-storage-provider
 cargo build --release -p storage-provider-node
 cargo build --release -p storage-client
 
@@ -48,7 +48,7 @@ just build
 cargo test
 
 # Run pallet tests
-cargo test -p storage-provider-pallet
+cargo test -p pallet-storage-provider
 
 # Run provider node tests
 cargo test -p storage-provider-node
