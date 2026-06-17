@@ -63,7 +63,7 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{item.name}</p>
+          <p className="text-sm font-medium truncate">{item.name || "Untitled Drive"}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Drive is ready to use"}
@@ -236,9 +236,9 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
                     item={item}
                     onDismiss={dismissCreation}
                     onRetry={
-                      canRetryCreation(item.id)
+                      canRetryCreation(item.id) && name.trim()
                         ? (id) => {
-                            void retryCreation(id);
+                            void retryCreation(id, name.trim());
                           }
                         : undefined
                     }

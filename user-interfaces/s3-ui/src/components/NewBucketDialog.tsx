@@ -239,9 +239,9 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
                   item={item}
                   onDismiss={dismissCreation}
                   onRetry={
-                    canRetryCreation(item.id)
+                    canRetryCreation(item.id) && name.trim()
                       ? (id) => {
-                          void retryCreation(id);
+                          void retryCreation(id, name.trim());
                         }
                       : undefined
                   }
