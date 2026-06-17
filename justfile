@@ -48,13 +48,13 @@ default:
 build:
     cargo build --release
 
-# Build only the runtime (fast-runtime shrinks timeouts for local testing)
+# Build only the runtime
 build-runtime:
-    cargo build --release -p storage-parachain-runtime --features fast-runtime
+    cargo build --release -p storage-parachain-runtime
 
-# Build only the paseo runtime (fast-runtime shrinks timeouts for local testing)
+# Build only the paseo runtime
 build-paseo-runtime:
-    cargo build --release -p storage-paseo-runtime --features fast-runtime
+    cargo build --release -p storage-paseo-runtime
 
 # Build only the provider node
 build-provider:
