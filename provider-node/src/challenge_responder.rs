@@ -368,12 +368,17 @@ pub(crate) struct DecodedChallenge {
     pub(crate) chunk_index: u64,
 }
 
-/// Decode a SCALE-encoded `Vec<Challenge>` from `Challenges` storage and
-/// return only the entries whose `provider` field matches `our_bytes`,
-/// alongside their original index in the vec (which is what the pallet uses
-/// as `ChallengeId::index`).
+/// Total SCALE-encoded size of a single `Challenge<T>` value (fixed-width
+/// fields only, see the layout below).
+const CHALLENGE_ENTRY_SIZE: usize = 144;
+
+/// Decode a single SCALE-encoded `Challenge` value from `Challenges` storage
+/// (the map is now a `StorageDoubleMap<BlockNumber, u16, Challenge>`, so each
+/// key holds exactly one challenge rather than a `Vec`). Returns `Some` iff
+/// the decoded `provider` field matches `our_bytes`; `None` when the
+/// challenge targets a different provider.
 ///
-/// Layout per `Challenge<T>` (see `pallet/src/lib.rs`):
+/// Layout of `Challenge<T>` (see `pallet/src/lib.rs`):
 ///   bucket_id (u64)         — 8
 ///   provider (AccountId32)  — 32
 ///   challenger (AccountId32)— 32
@@ -382,106 +387,104 @@ pub(crate) struct DecodedChallenge {
 ///   leaf_index (u64)        — 8
 ///   chunk_index (u64)       — 8
 ///   deposit (Balance u128)  — 16
-/// Total per entry: 144 bytes.
-pub(crate) fn decode_challenge_vec_for_provider(
-    mut bytes: &[u8],
+/// Total: 144 bytes.
+pub(crate) fn decode_challenge_for_provider(
+    encoded: &[u8],
     our_bytes: &[u8; 32],
-) -> Result<Vec<(u16, DecodedChallenge)>, &'static str> {
-    use codec::Decode;
+) -> Result<Option<DecodedChallenge>, &'static str> {
+    if encoded.len() < CHALLENGE_ENTRY_SIZE {
+        return Err("challenge value shorter than expected layout");
+    }
+    let entry = &encoded[..CHALLENGE_ENTRY_SIZE];
 
-    let len = <codec::Compact<u32>>::decode(&mut bytes)
-        .map_err(|_| "compact length prefix")?
-        .0 as usize;
-
-    const ENTRY_SIZE: usize = 144;
-    if bytes.len() < len.saturating_mul(ENTRY_SIZE) {
-        return Err("vec body shorter than length prefix implies");
+    let provider = &entry[8..40];
+    if provider != our_bytes {
+        return Ok(None);
     }
 
-    let mut out = Vec::new();
-    for i in 0..len {
-        let off = i * ENTRY_SIZE;
-        let entry = &bytes[off..off + ENTRY_SIZE];
+    let bucket_id = u64::from_le_bytes(entry[0..8].try_into().expect("8 bytes"));
+    let mut challenger = [0u8; 32];
+    challenger.copy_from_slice(&entry[40..72]);
+    let mut root_bytes = [0u8; 32];
+    root_bytes.copy_from_slice(&entry[72..104]);
+    let mmr_root = H256::from(root_bytes);
+    let start_seq = u64::from_le_bytes(entry[104..112].try_into().expect("8 bytes"));
+    let leaf_index = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
+    let chunk_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
+    // deposit at entry[128..144] — not needed for the response.
 
-        let provider = &entry[8..40];
-        if provider != our_bytes {
-            continue;
-        }
-
-        let bucket_id = u64::from_le_bytes(entry[0..8].try_into().expect("8 bytes"));
-        let mut challenger = [0u8; 32];
-        challenger.copy_from_slice(&entry[40..72]);
-        let mut root_bytes = [0u8; 32];
-        root_bytes.copy_from_slice(&entry[72..104]);
-        let mmr_root = H256::from(root_bytes);
-        let start_seq = u64::from_le_bytes(entry[104..112].try_into().expect("8 bytes"));
-        let leaf_index = u64::from_le_bytes(entry[112..120].try_into().expect("8 bytes"));
-        let chunk_index = u64::from_le_bytes(entry[120..128].try_into().expect("8 bytes"));
-        // deposit at entry[128..144] — not needed for the response.
-
-        out.push((
-            i as u16,
-            DecodedChallenge {
-                bucket_id,
-                challenger,
-                mmr_root,
-                start_seq,
-                leaf_index,
-                chunk_index,
-            },
-        ));
-    }
-    Ok(out)
+    Ok(Some(DecodedChallenge {
+        bucket_id,
+        challenger,
+        mmr_root,
+        start_seq,
+        leaf_index,
+        chunk_index,
+    }))
 }
 
 #[cfg(test)]
 mod scale_decoding_tests {
     use super::*;
-    use codec::Encode;
 
-    /// Round-trip: SCALE-encode a Vec of two pseudo-Challenges (the second
-    /// matches our account), then verify the decoder picks out only the
-    /// matching one with the correct index.
+    /// Build raw bytes matching the pallet's `Challenge<T>` layout. We hand-
+    /// roll this rather than rely on the pallet's own struct so the test would
+    /// catch a layout drift between the two crates.
+    fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let bucket_id: u64 = 42;
+        let challenger: [u8; 32] = [2u8; 32];
+        let mmr_root: [u8; 32] = [3u8; 32];
+        let start_seq: u64 = 100;
+        let leaf_index: u64 = 7;
+        let chunk_index: u64 = 0;
+        let deposit: u128 = 1_000_000_000_000;
+        buf.extend_from_slice(&bucket_id.to_le_bytes());
+        buf.extend_from_slice(&provider);
+        buf.extend_from_slice(&challenger);
+        buf.extend_from_slice(&mmr_root);
+        buf.extend_from_slice(&start_seq.to_le_bytes());
+        buf.extend_from_slice(&leaf_index.to_le_bytes());
+        buf.extend_from_slice(&chunk_index.to_le_bytes());
+        buf.extend_from_slice(&deposit.to_le_bytes());
+        buf
+    }
+
+    /// A single-value `Challenge` whose provider matches us decodes into
+    /// `Some` with the expected fields.
     #[test]
-    fn decode_challenge_vec_filters_by_provider() {
+    fn decode_single_challenge_matching_provider() {
+        let our_bytes: [u8; 32] = [9u8; 32];
+        let encoded = build_challenge(our_bytes);
+
+        let decoded = decode_challenge_for_provider(&encoded, &our_bytes)
+            .expect("decodes")
+            .expect("matches our provider");
+        assert_eq!(decoded.bucket_id, 42);
+        assert_eq!(decoded.start_seq, 100);
+        assert_eq!(decoded.leaf_index, 7);
+        assert_eq!(decoded.challenger, [2u8; 32]);
+    }
+
+    /// A `Challenge` targeting a different provider decodes into `None`.
+    #[test]
+    fn decode_single_challenge_other_provider() {
         let our_bytes: [u8; 32] = [9u8; 32];
         let other_bytes: [u8; 32] = [1u8; 32];
+        let encoded = build_challenge(other_bytes);
 
-        // Build raw bytes that match the pallet's `Challenge` layout. We hand-
-        // roll this rather than rely on the pallet's own struct so the test
-        // would catch a layout drift between the two crates.
-        fn build(provider: [u8; 32]) -> Vec<u8> {
-            let mut buf = Vec::new();
-            let bucket_id: u64 = 42;
-            let challenger: [u8; 32] = [2u8; 32];
-            let mmr_root: [u8; 32] = [3u8; 32];
-            let start_seq: u64 = 100;
-            let leaf_index: u64 = 7;
-            let chunk_index: u64 = 0;
-            let deposit: u128 = 1_000_000_000_000;
-            buf.extend_from_slice(&bucket_id.to_le_bytes());
-            buf.extend_from_slice(&provider);
-            buf.extend_from_slice(&challenger);
-            buf.extend_from_slice(&mmr_root);
-            buf.extend_from_slice(&start_seq.to_le_bytes());
-            buf.extend_from_slice(&leaf_index.to_le_bytes());
-            buf.extend_from_slice(&chunk_index.to_le_bytes());
-            buf.extend_from_slice(&deposit.to_le_bytes());
-            buf
-        }
+        let decoded = decode_challenge_for_provider(&encoded, &our_bytes).expect("decodes");
+        assert!(
+            decoded.is_none(),
+            "challenge for another provider is filtered out"
+        );
+    }
 
-        let entry_other = build(other_bytes);
-        let entry_us = build(our_bytes);
-        let mut payload = codec::Compact(2u32).encode();
-        payload.extend(entry_other);
-        payload.extend(entry_us);
-
-        let matched = decode_challenge_vec_for_provider(&payload, &our_bytes).expect("decodes");
-        assert_eq!(matched.len(), 1, "only our entry should match");
-        let (idx, challenge) = &matched[0];
-        assert_eq!(*idx, 1u16, "matched entry is at position 1");
-        assert_eq!(challenge.bucket_id, 42);
-        assert_eq!(challenge.start_seq, 100);
-        assert_eq!(challenge.leaf_index, 7);
+    /// A truncated value (shorter than the fixed layout) is a decode error.
+    #[test]
+    fn decode_single_challenge_truncated() {
+        let our_bytes: [u8; 32] = [9u8; 32];
+        let encoded = vec![0u8; CHALLENGE_ENTRY_SIZE - 1];
+        assert!(decode_challenge_for_provider(&encoded, &our_bytes).is_err());
     }
 }

@@ -11,7 +11,7 @@
 //! shares the underlying WebSocket connection).
 
 use crate::challenge_responder::{
-    decode_challenge_vec_for_provider, ChallengeChainClient, DetectedChallenge,
+    decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
 use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
 use crate::replica_sync_coordinator::{
@@ -809,14 +809,15 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 impl ChallengeChainClient for SubxtChainClient {
     /// Poll for active challenges against this provider.
     ///
-    /// Iterates the on-chain `StorageProvider::Challenges` map. Each entry is
-    /// keyed by deadline (a `BlockNumber`) and stores a `Vec<Challenge>`. We
-    /// scan all entries, decode each `Vec<Challenge>` from raw SCALE, and
-    /// keep only the ones whose `provider` matches our account.
+    /// Iterates the on-chain `StorageProvider::Challenges` map. It is a
+    /// `StorageDoubleMap<BlockNumber deadline, u16 index, Challenge>`, so each
+    /// key holds exactly one challenge. We scan all entries, decode each
+    /// single `Challenge` from raw SCALE, and keep only the ones whose
+    /// `provider` matches our account.
     ///
     /// Cost is bounded by `ChallengeTimeout` (storage entries past their
     /// deadline are reaped in `on_finalize`), so iteration is at worst the
-    /// number of distinct deadlines with at least one open challenge.
+    /// number of open challenges across all unexpired deadlines.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
         // Our account's raw bytes, used to filter challenges targeting us.
         let our_bytes: [u8; 32] = self.signer.public_key().0;
@@ -844,36 +845,39 @@ impl ChallengeChainClient for SubxtChainClient {
                 }
             };
 
-            // Key layout: 16 (pallet hash) + 16 (storage hash) + 16 (blake2_128) + 4 (BlockNumber u32) = 52.
+            // DoubleMap key layout:
+            //   16 (pallet hash) + 16 (storage hash)
+            //   + 16 (blake2_128 of deadline) + 4 (BlockNumber u32 LE)
+            //   + 8 (twox64 of index)         + 2 (u16 index LE)
+            //   = 62 bytes total.
             let key_bytes = &kv.key_bytes;
-            if key_bytes.len() < 52 {
+            if key_bytes.len() < 62 {
                 continue;
             }
             let deadline = u32::from_le_bytes(key_bytes[48..52].try_into().unwrap_or([0; 4]));
+            let index = u16::from_le_bytes(key_bytes[60..62].try_into().unwrap_or([0; 2]));
 
             let encoded = kv.value.encoded();
-            let parsed = match decode_challenge_vec_for_provider(encoded, &our_bytes) {
-                Ok(p) => p,
+            let challenge = match decode_challenge_for_provider(encoded, &our_bytes) {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
                 Err(e) => {
-                    tracing::warn!("Failed to decode challenges at {deadline}: {e}");
+                    tracing::warn!("Failed to decode challenge at {deadline}/{index}: {e}");
                     continue;
                 }
             };
 
-            for (index, challenge) in parsed {
-                detected.push(DetectedChallenge {
-                    bucket_id: challenge.bucket_id,
-                    deadline,
-                    index,
-                    mmr_root: challenge.mmr_root,
-                    start_seq: challenge.start_seq,
-                    leaf_index: challenge.leaf_index,
-                    chunk_index: challenge.chunk_index,
-                    challenger: sp_core::crypto::AccountId32::from(challenge.challenger)
-                        .to_ss58check(),
-                    created_at_block: deadline,
-                });
-            }
+            detected.push(DetectedChallenge {
+                bucket_id: challenge.bucket_id,
+                deadline,
+                index,
+                mmr_root: challenge.mmr_root,
+                start_seq: challenge.start_seq,
+                leaf_index: challenge.leaf_index,
+                chunk_index: challenge.chunk_index,
+                challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
+                created_at_block: deadline,
+            });
         }
         Ok(detected)
     }

@@ -77,21 +77,20 @@ pub mod pallet {
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         /// Process expired challenges at the end of each block.
         fn on_finalize(n: BlockNumberFor<T>) {
-            // Check if there are any challenges expiring at this block
-            if let Some(expired_challenges) = Challenges::<T>::take(n) {
-                for (index, challenge) in expired_challenges.iter().enumerate() {
-                    // Slash the provider for failing to respond
-                    let challenge_id = ChallengeId {
-                        deadline: n,
-                        index: index as u16,
-                    };
-                    Self::slash_provider_for_failed_challenge(
-                        challenge,
-                        challenge_id,
-                        SlashReason::Timeout,
-                    );
-                }
+            // Drain every challenge expiring at this block by its stable
+            // per-deadline index and slash the provider for failing to
+            // respond. `drain_prefix` removes the entries as it iterates.
+            for (index, challenge) in Challenges::<T>::drain_prefix(n) {
+                let challenge_id = ChallengeId { deadline: n, index };
+                Self::slash_provider_for_failed_challenge(
+                    &challenge,
+                    challenge_id,
+                    SlashReason::Timeout,
+                );
             }
+            // Clear the per-deadline index allocator now the deadline has
+            // passed; no further challenges can target this block.
+            NextChallengeIndex::<T>::remove(n);
         }
     }
 
@@ -227,12 +226,30 @@ pub mod pallet {
         StorageAgreement<T>,
     >;
 
-    /// Pending challenges indexed by deadline block.
+    /// Pending challenges indexed by `(deadline block, stable per-deadline
+    /// index)`. The index is allocated by [`NextChallengeIndex`] and never
+    /// reused for a given deadline, so a `ChallengeId { deadline, index }`
+    /// stays valid even when sibling challenges sharing the same deadline are
+    /// resolved (the old `Vec`-backed layout shifted indices on removal,
+    /// making siblings unaddressable).
     #[pallet::storage]
-    #[pallet::unbounded]
     #[pallet::getter(fn challenges)]
-    pub type Challenges<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+    pub type Challenges<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BlockNumberFor<T>,
+        Twox64Concat,
+        u16,
+        Challenge<T>,
+        OptionQuery,
+    >;
+
+    /// Next stable challenge index to allocate for a given deadline block.
+    /// Monotonically increasing per deadline; never decremented when a
+    /// challenge is resolved, guaranteeing index stability for siblings.
+    #[pallet::storage]
+    pub type NextChallengeIndex<T: Config> =
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
     /// Per-challenger aggregates so the SDK doesn't have to scan historical
     /// events to answer `get_challenge_stats` / `get_total_challenge_earnings`.
@@ -2557,11 +2574,14 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut challenges =
-                Challenges::<T>::get(challenge_id.deadline).ok_or(Error::<T>::ChallengeNotFound)?;
-
-            let challenge = challenges
-                .get(challenge_id.index as usize)
+            // Consume the challenge up front. With the stable-index DoubleMap
+            // a single `take` removes exactly this challenge and leaves its
+            // siblings (sharing the same deadline) untouched and addressable.
+            // Any `?`-bail below (wrong provider, expired, missing bucket)
+            // reverts the extrinsic, rolling the `take` back so the challenge
+            // remains pending; only the adjudicated `response_outcome` (which
+            // never short-circuits with `?`) commits the removal.
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
@@ -2666,16 +2686,10 @@ pub mod pallet {
                 }
             };
 
-            // Remove the challenge from storage regardless of outcome — the
-            // response has been adjudicated, the challenge is no longer
-            // pending. The owned copy below feeds either the defended-path
-            // cost-split or the slash helper.
-            let challenge = challenges.remove(challenge_id.index as usize);
-            if challenges.is_empty() {
-                Challenges::<T>::remove(challenge_id.deadline);
-            } else {
-                Challenges::<T>::insert(challenge_id.deadline, challenges);
-            }
+            // The challenge was already removed by the `take` above; the owned
+            // `challenge` value feeds either the defended-path cost-split or
+            // the slash helper. The adjudication has concluded, so the
+            // removal now becomes the committed state transition.
 
             if let Err(reason) = response_outcome {
                 // Invalid response → slash now. The extrinsic itself returns
@@ -3420,12 +3434,16 @@ pub mod pallet {
                 deposit,
             };
 
-            let index = Challenges::<T>::mutate(deadline, |challenges| {
-                let challenges = challenges.get_or_insert_with(Vec::new);
-                let idx = challenges.len() as u16;
-                challenges.push(challenge);
-                idx
+            // Allocate a stable per-deadline index. Unlike the old
+            // `Vec`-position scheme, this counter is never decremented when a
+            // sibling challenge resolves, so the `ChallengeId` we emit stays
+            // valid for the life of the challenge.
+            let index = NextChallengeIndex::<T>::mutate(deadline, |n| {
+                let i = *n;
+                *n = n.saturating_add(1);
+                i
             });
+            Challenges::<T>::insert(deadline, index, &challenge);
 
             // Update provider stats
             Providers::<T>::mutate(&provider, |maybe_provider| {
@@ -3884,10 +3902,8 @@ pub mod pallet {
         pub fn query_challenges_at(
             block: BlockNumberFor<T>,
         ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            Challenges::<T>::get(block)
-                .unwrap_or_default()
-                .iter()
-                .map(|challenge| crate::runtime_api::ChallengeResponse {
+            Challenges::<T>::iter_prefix(block)
+                .map(|(index, challenge)| crate::runtime_api::ChallengeResponse {
                     bucket_id: challenge.bucket_id,
                     provider: challenge.provider.encode(),
                     challenger: challenge.challenger.encode(),
@@ -3896,6 +3912,7 @@ pub mod pallet {
                     leaf_index: challenge.leaf_index,
                     chunk_index: challenge.chunk_index,
                     deadline: block.saturated_into::<u32>(),
+                    index,
                     deposit: challenge.deposit.saturated_into::<u128>(),
                 })
                 .collect()

@@ -251,9 +251,11 @@ fn query_challenges_at_returns_data() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         register_provider(2, 200);
+        register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
+        add_primary_to_bucket(4, 1, bucket_id, 50);
 
-        // Insert snapshot
+        // Insert snapshot signed by both primaries (bits 0 and 1).
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
@@ -261,12 +263,14 @@ fn query_challenges_at_returns_data() {
                     start_seq: 0,
                     leaf_count: 10,
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: vec![0x03],
                     commitment_nonce: 0,
                 });
             }
         });
 
+        // Two challenges at the same deadline: index 0 -> provider 2,
+        // index 1 -> provider 4.
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(3),
             bucket_id,
@@ -274,13 +278,63 @@ fn query_challenges_at_returns_data() {
             0,
             0,
         ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            4,
+            0,
+            0,
+        ));
 
+        // `iter_prefix` order is hash-dependent, so look entries up by their
+        // stable `index` rather than position.
         let challenges = StorageProvider::query_challenges_at(101);
-        assert_eq!(challenges.len(), 1);
-        assert_eq!(challenges[0].bucket_id, bucket_id);
-        assert_eq!(challenges[0].provider, 2u64.encode());
-        assert_eq!(challenges[0].challenger, 3u64.encode());
-        assert_eq!(challenges[0].deadline, 101);
-        assert_eq!(challenges[0].deposit, 100);
+        assert_eq!(challenges.len(), 2);
+        let find = |idx: u16| {
+            challenges
+                .iter()
+                .find(|c| c.index == idx)
+                .unwrap_or_else(|| panic!("challenge index {idx} present"))
+        };
+
+        let c0 = find(0);
+        assert_eq!(c0.bucket_id, bucket_id);
+        assert_eq!(c0.provider, 2u64.encode());
+        assert_eq!(c0.challenger, 3u64.encode());
+        assert_eq!(c0.deadline, 101);
+        assert_eq!(c0.deposit, 100);
+
+        let c1 = find(1);
+        assert_eq!(c1.provider, 4u64.encode());
+        assert_eq!(c1.challenger, 5u64.encode());
+        assert_eq!(c1.deadline, 101);
+
+        // Supersede the challenged root, then resolve sibling index 0.
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 10,
+                checkpoint_block: 1,
+                primary_signers: vec![0x03],
+                commitment_nonce: 1,
+            });
+        });
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            storage_primitives::ChallengeId {
+                deadline: 101,
+                index: 0,
+            },
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // After removing sibling index 0, the survivor is still reported at its
+        // original index 1.
+        let remaining = StorageProvider::query_challenges_at(101);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].index, 1);
+        assert_eq!(remaining[0].provider, 4u64.encode());
     });
 }

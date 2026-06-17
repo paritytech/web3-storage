@@ -64,11 +64,12 @@ fn challenge_checkpoint_works() {
         // Challenge deposit (100) should be reserved
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 100);
 
-        // Challenge should exist at deadline = current_block(1) + ChallengeTimeout(100) = 101
-        let challenges = Challenges::<Test>::get(101).unwrap();
-        assert_eq!(challenges.len(), 1);
-        assert_eq!(challenges[0].provider, 2);
-        assert_eq!(challenges[0].challenger, 3);
+        // Challenge should exist at deadline = current_block(1) + ChallengeTimeout(100) = 101,
+        // at stable index 0 (first challenge allocated for this deadline).
+        let challenge = Challenges::<Test>::get(101, 0).unwrap();
+        assert_eq!(challenge.provider, 2);
+        assert_eq!(challenge.challenger, 3);
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
     });
 }
 
@@ -232,7 +233,7 @@ fn respond_to_challenge_superseded_works() {
         ));
 
         // Challenge should be removed
-        assert!(Challenges::<Test>::get(101).is_none());
+        assert!(Challenges::<Test>::get(101, 0).is_none());
     });
 }
 
@@ -521,9 +522,10 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
             0,
         ));
 
-        // Both challenges at deadline 101
-        let challenges = Challenges::<Test>::get(101).unwrap();
-        assert_eq!(challenges.len(), 2);
+        // Both challenges at deadline 101, at stable indices 0 and 1.
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 2);
+        assert!(Challenges::<Test>::get(101, 0).is_some());
+        assert!(Challenges::<Test>::get(101, 1).is_some());
 
         // Advance past deadline — run_to_block(102) finalises block 101
         run_to_block(102);
@@ -537,8 +539,108 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
         assert_eq!(provider3.stake, 0);
         assert_eq!(provider3.stats.challenges_failed, 1);
 
-        // Challenges should be removed
-        assert!(Challenges::<Test>::get(101).is_none());
+        // Challenges should be removed and the index allocator cleared.
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 0);
+        assert_eq!(NextChallengeIndex::<Test>::get(101), 0);
+    });
+}
+
+/// Regression for the Vec-shift bug: two challenges sharing a deadline must
+/// keep their original `ChallengeId.index` after a sibling is resolved.
+/// Responding to the first sibling must NOT make the second one
+/// unaddressable or shift it to a different index.
+#[test]
+fn responding_to_sibling_preserves_other_challenge_index() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        add_primary_to_bucket(3, 1, bucket_id, 50);
+
+        // Snapshot signed by both providers (bits 0 and 1).
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            if let Some(bucket) = maybe_bucket {
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                    checkpoint_block: 1,
+                    primary_signers: vec![0x03],
+                    commitment_nonce: 0,
+                });
+            }
+        });
+
+        // Two challenges at the SAME deadline (101): index 0 -> provider 2,
+        // index 1 -> provider 3.
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            3,
+            0,
+            0,
+        ));
+        assert_eq!(NextChallengeIndex::<Test>::get(101), 2);
+        assert_eq!(Challenges::<Test>::get(101, 0).unwrap().provider, 2);
+        assert_eq!(Challenges::<Test>::get(101, 1).unwrap().provider, 3);
+
+        // Supersede the challenged root (0xAB) with a new canonical snapshot so
+        // a `Superseded` defense is valid for both challenges.
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 10,
+                checkpoint_block: 1,
+                primary_signers: vec![0x03],
+                commitment_nonce: 1,
+            });
+        });
+
+        // Respond to the FIRST sibling (index 0, provider 2).
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            ChallengeId {
+                deadline: 101,
+                index: 0,
+            },
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // Index 0 is gone; the OTHER challenge is still at its ORIGINAL index 1
+        // (the Vec layout would have shifted it down to 0 and broken this).
+        assert!(Challenges::<Test>::get(101, 0).is_none());
+        let sibling =
+            Challenges::<Test>::get(101, 1).expect("sibling still addressable at index 1");
+        assert_eq!(sibling.provider, 3);
+
+        // The index allocator is unaffected by removal — indices are never
+        // reused, so the next allocation would still be 2.
+        assert_eq!(NextChallengeIndex::<Test>::get(101), 2);
+
+        // The sibling resolves correctly by its original `ChallengeId`.
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(3),
+            ChallengeId {
+                deadline: 101,
+                index: 1,
+            },
+            crate::ChallengeResponse::Superseded,
+        ));
+        assert!(Challenges::<Test>::get(101, 1).is_none());
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 0);
+        // Allocator still untouched by responses (only `on_finalize` clears it).
+        assert_eq!(NextChallengeIndex::<Test>::get(101), 2);
     });
 }
 
@@ -890,10 +992,9 @@ mod challenge_tests {
                 0, // chunk_index
             ));
 
-            // Challenge stored at deadline = block(1) + ChallengeTimeout(100) = 101.
-            let challenges = Challenges::<Test>::get(101).expect("challenge present");
-            assert_eq!(challenges.len(), 1);
-            let challenge = &challenges[0];
+            // Challenge stored at deadline = block(1) + ChallengeTimeout(100) = 101, index 0.
+            assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
+            let challenge = Challenges::<Test>::get(101, 0).expect("challenge present");
             assert_eq!(challenge.provider, 2);
             assert_eq!(challenge.challenger, 3);
             assert_eq!(challenge.mmr_root, mmr_root);
@@ -971,7 +1072,7 @@ mod challenge_tests {
             ));
 
             // Challenge cleared from storage.
-            assert!(Challenges::<Test>::get(101).is_none());
+            assert!(Challenges::<Test>::get(101, 0).is_none());
             // Defended path slashes a fraction of the deposit from the
             // provider's stake based on response time. At block 1 (challenge
             // also created at block 1) the response is within "block 1" → 10%
@@ -1076,7 +1177,7 @@ mod challenge_tests {
             ));
 
             // Challenge gone, provider stake gone, stats reflect the loss.
-            assert!(Challenges::<Test>::get(101).is_none());
+            assert!(Challenges::<Test>::get(101, 0).is_none());
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
             assert_eq!(provider.stats.challenges_failed, 1);
@@ -1201,7 +1302,7 @@ mod challenge_tests {
                 },
                 ChallengeResponse::Superseded,
             ));
-            assert!(Challenges::<Test>::get(101).is_none());
+            assert!(Challenges::<Test>::get(101, 0).is_none());
         });
     }
 
@@ -1366,7 +1467,7 @@ mod challenge_tests {
             assert_eq!(Balances::free_balance(3), challenger_before + 20);
 
             // Challenge cleared from storage.
-            assert!(Challenges::<Test>::get(101).is_none());
+            assert!(Challenges::<Test>::get(101, 0).is_none());
         });
     }
 
@@ -1454,11 +1555,11 @@ mod challenge_tests {
                 0, // chunk
             ));
 
-            let challenges = Challenges::<Test>::get(101).expect("created");
-            assert_eq!(challenges[0].mmr_root, last_root);
+            let challenge = Challenges::<Test>::get(101, 0).expect("created");
+            assert_eq!(challenge.mmr_root, last_root);
             // start_seq now reflects the value captured at sync time
             // (previously hardcoded 0u64 placeholder).
-            assert_eq!(challenges[0].start_seq, 7);
+            assert_eq!(challenge.start_seq, 7);
         });
     }
 
