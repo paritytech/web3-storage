@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Provider-node HTTP helpers — the off-chain half of flows the pallet
  * wrappers complete. Platform-neutral (btoa/atob-based base64), so browser

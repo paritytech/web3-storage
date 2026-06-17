@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /** Byte/hex primitives shared by every layer. */
 
 export function toHex(bytes: Uint8Array | ArrayLike<number>): string {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { Subject } from "rxjs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Demo-only glue for the smart-contract / precompile examples. This is NOT
  * general SDK material: it reshapes a provider-signed quote into the

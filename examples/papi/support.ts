@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Demo/E2E orchestration helpers that are NOT SDK material: CLI argument
  * parsing, console pretty-printing, and dev-key-based test choreography.

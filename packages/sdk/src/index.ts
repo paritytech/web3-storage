@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * @web3-storage/sdk — umbrella over the #123 package layout. Everything
  * consumers used before the split keeps resolving from here; the physical

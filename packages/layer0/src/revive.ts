@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,
  * call a function on it, and read back contract-emitted events. Uses viem

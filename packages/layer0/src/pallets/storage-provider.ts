@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Thin typed wrappers around the StorageProvider pallet extrinsics. Each
  * submits at in-block inclusion (see tx.ts) and extracts what callers need

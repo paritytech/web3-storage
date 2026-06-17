@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Sr25519 key derivation and signer construction, PAPI-native (hdkd — no
  * @polkadot/* packages, no async cryptoWaitReady).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /** Thin typed wrappers around the DriveRegistry pallet (Layer 1 — file system). */
 
 import { Enum } from "polkadot-api";

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Web3Storage — the #123 facade: one connected handle exposing the typed
  * chain API plus lazy layer-1 clients. Pure delegation over the flat

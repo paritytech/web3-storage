@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Content-addressing verification. CIDs in this system are blake2b-256 over
  * the chunk bytes; a single-chunk blob's data_root equals its chunk hash

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Playwright-coupled half of the test-helpers: fixtures and page-level
  * assertions. Separate subpath (`@web3-storage/test-helpers/playwright`) so

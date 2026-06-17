@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Provider-node HTTP plumbing: fetch with retry/backoff + AbortSignal, and
  * the signed Authorization header the provider verifies in auth.rs.

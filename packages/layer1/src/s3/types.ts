@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /** S3-style interface types (bucket/object storage). */
 
 import type { SignedTerms } from "@web3-storage/core";

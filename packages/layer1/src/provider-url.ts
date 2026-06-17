@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Provider endpoint resolution shared by the layer-1 clients: on-chain
  * multiaddr lookup with a per-bucket cache, plus the watchValue-based wait

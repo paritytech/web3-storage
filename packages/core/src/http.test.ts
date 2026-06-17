@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { httpFetch, HttpError, signProviderRequest } from "./http.js";
 import { hexToBytes } from "./bytes.js";

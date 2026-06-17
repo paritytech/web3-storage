@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * @web3-storage/core — backend-free, browser-safe primitives (#123 layout).
  * Strictly no chain coupling: no descriptors, no polkadot-api.

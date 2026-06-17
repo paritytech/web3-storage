@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { test, expect } from "@playwright/test";
 import { Ferdie, cleanProviderRegistry, registerProviderViaApi } from "./src/index";
 import { getApi } from "./src/chain-api";

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { describe, expect, it, vi } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";
 import { FileSystemClient } from "./client.js";

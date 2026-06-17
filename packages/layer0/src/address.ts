@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Address and byte-level helpers. SS58 encoding state (prefix) lives in
  * @web3-storage/papi — the single owner of the descriptor set — so every

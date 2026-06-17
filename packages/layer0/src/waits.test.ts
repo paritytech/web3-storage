@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { Subject } from "rxjs";
 import { describe, expect, it, vi } from "vitest";
 import { firstMatch } from "./waits.js";

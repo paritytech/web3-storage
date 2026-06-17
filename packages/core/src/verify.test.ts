@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { describe, expect, it } from "vitest";
 import { CidMismatchError, computeCid, DEFAULT_CHUNK_SIZE, verifyCid } from "./verify.js";
 import { toHex } from "./bytes.js";

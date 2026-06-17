@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * @web3-storage/sdk — chain-interaction SDK for the storage parachain.
  *

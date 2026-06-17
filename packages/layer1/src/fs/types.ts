@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /** File-system interface types (drive-backed storage). */
 
 import type { SignedTerms } from "@web3-storage/core";

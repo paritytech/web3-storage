@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Chain-state waits built on PAPI's `watchValue` instead of polling.
  *

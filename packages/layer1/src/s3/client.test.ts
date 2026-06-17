@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { describe, expect, it, vi } from "vitest";
 import { CidMismatchError, computeCid, toHex } from "@web3-storage/core";
 import { makeSigner } from "@web3-storage/layer0";

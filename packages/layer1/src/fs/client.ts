@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * FileSystemClient — drives (DriveRegistry) + the provider node's /fs HTTP
  * surface. Chain ops delegate to the layer-0 pallet wrappers (silent, no

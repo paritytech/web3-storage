@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * S3Client — S3Registry buckets/object-metadata (chain) + the provider
  * node's /s3 object HTTP surface. Chain ops delegate to the layer-0 pallet

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Cross-suite test choreography that signs for arbitrary dev keys — test-only
  * power, deliberately outside @web3-storage/sdk. Consumed by the PAPI E2E
