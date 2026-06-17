@@ -222,7 +222,7 @@ fn insert_challenge<T: Config>(
         chunk_index: 0,
         deposit: 100u32.into(),
     };
-    Challenges::<T>::insert(deadline, alloc::vec![challenge]);
+    Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
 }
 
