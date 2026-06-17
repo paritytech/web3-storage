@@ -1483,7 +1483,13 @@ pub mod pallet {
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
+                        // Capture the position before removal so the snapshot's
+                        // positional signer bitfield can be re-indexed to match.
+                        let pos = bucket.primary_providers.iter().position(|p| p == &provider);
                         bucket.primary_providers.retain(|p| p != &provider);
+                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
+                            snapshot.remove_provider_bit(pos);
+                        }
                     }
                 });
 
@@ -3245,7 +3251,13 @@ pub mod pallet {
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
+                        // Capture the position before removal so the snapshot's
+                        // positional signer bitfield can be re-indexed to match.
+                        let pos = bucket.primary_providers.iter().position(|p| p == provider);
                         bucket.primary_providers.retain(|p| p != provider);
+                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
+                            snapshot.remove_provider_bit(pos);
+                        }
                     }
                 });
 

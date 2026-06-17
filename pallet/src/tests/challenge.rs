@@ -648,6 +648,130 @@ fn respond_to_challenge_superseded_emits_defended_event() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Snapshot signer-bitfield re-indexing on primary-provider removal.
+//
+// `primary_signers` is positional: bit `i` belongs to `primary_providers[i]`.
+// Removing a primary shifts every later provider down one index, so the
+// bitfield must be re-indexed to match — otherwise `has_provider_signed` reads
+// the wrong bit for every surviving provider after the removed one.
+//
+// Both removal paths (`finalize_agreement` via admin early-termination, and
+// `remove_slashed`) build a bucket with primaries [A, B, C] = [2, 3, 4] where
+// only A and C signed (bits {0, 2}). After A is removed the ordering becomes
+// [B, C] and the bitfield must report B (now index 0) as not-signed and C (now
+// index 1) as signed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a bucket whose primaries are [2, 3, 4] with a snapshot in which 2 and
+/// 4 signed (bits {0, 2}) but 3 did not. Returns the bucket id.
+fn setup_three_primaries_snapshot() -> u64 {
+    register_provider(2, 200);
+    register_provider(3, 200);
+    register_provider(4, 200);
+    let bucket_id = setup_agreement(2, 1, 50, 200);
+    add_primary_to_bucket(3, 1, bucket_id, 50);
+    add_primary_to_bucket(4, 1, bucket_id, 50);
+
+    Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+        let bucket = maybe_bucket.as_mut().expect("bucket exists");
+        // Sanity: ordering is exactly [2, 3, 4].
+        assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3, 4]);
+        bucket.snapshot = Some(BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
+            primary_signers: vec![0b0000_0101],
+            commitment_nonce: 0,
+        });
+    });
+
+    bucket_id
+}
+
+/// Assert that after the lead primary (2) was removed, the stored snapshot's
+/// bitfield matches the new [3, 4] ordering: 3 not-signed, 4 signed.
+fn assert_reindexed_after_removing_lead(bucket_id: u64) {
+    let bucket = Buckets::<Test>::get(bucket_id).unwrap();
+    assert_eq!(bucket.primary_providers.to_vec(), vec![3, 4]);
+    let snapshot = bucket.snapshot.expect("snapshot retained");
+    // New layout: idx 0 -> old bit 1 (provider 3, unsigned) = clear;
+    // idx 1 -> old bit 2 (provider 4, signed) = set => 0b0000_0010.
+    assert!(
+        !snapshot.has_provider_signed(0),
+        "provider 3 (new index 0) must read as not-signed"
+    );
+    assert!(
+        snapshot.has_provider_signed(1),
+        "provider 4 (new index 1) must read as signed"
+    );
+
+    // And the challenge gate now resolves correctly for the new ordering:
+    // provider 3 (unsigned) cannot be challenged, provider 4 (signed) can.
+    assert_noop!(
+        StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(5), bucket_id, 3, 0, 0),
+        Error::<Test>::ProviderNotInSnapshot
+    );
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(5),
+        bucket_id,
+        4,
+        0,
+        0,
+    ));
+}
+
+#[test]
+fn finalize_agreement_reindexes_snapshot_bitfield() {
+    use storage_primitives::EndAction;
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_three_primaries_snapshot();
+
+        // Admin (client 1) early-terminates provider 2's primary agreement,
+        // which routes through `finalize_agreement` and removes 2 (index 0).
+        assert_ok!(StorageProvider::end_agreement(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            2,
+            EndAction::Pay,
+        ));
+
+        assert_reindexed_after_removing_lead(bucket_id);
+    });
+}
+
+#[test]
+fn remove_slashed_reindexes_snapshot_bitfield() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_three_primaries_snapshot();
+
+        // Slash provider 2's entire reserved stake to zero, then remove it.
+        Providers::<Test>::mutate(2, |maybe_provider| {
+            if let Some(provider) = maybe_provider {
+                let stake = provider.stake;
+                let (_, remaining) =
+                    <Balances as frame_support::traits::ReservableCurrency<u64>>::slash_reserved(
+                        &2, stake,
+                    );
+                assert_eq!(remaining, 0, "entire stake should have been slashed");
+                provider.stake = 0;
+            }
+        });
+
+        assert_ok!(StorageProvider::remove_slashed(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            2
+        ));
+
+        assert_reindexed_after_removing_lead(bucket_id);
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PR #125 challenge-overhaul tests.
 //
 // Kept in a nested module so they coexist with dev's top-level challenge tests

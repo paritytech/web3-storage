@@ -410,6 +410,38 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
             .unwrap_or(false)
     }
 
+    /// Re-index the signer bitfield after the provider at `idx` is removed
+    /// from `primary_providers`.
+    ///
+    /// The bitfield is positional: bit `i` corresponds to
+    /// `primary_providers[i]`. Removing element `idx` shifts every later
+    /// provider down one index, so the bits must shift to match: new bit `j`
+    /// is old bit `j` for `j < idx`, and old bit `j + 1` for `j >= idx` (i.e.
+    /// bit `idx` is dropped and all higher bits shift down by one).
+    pub fn remove_provider_bit(&mut self, idx: usize) {
+        let total_bits = self.primary_signers.len().saturating_mul(8);
+        // Unpack into individual bits (LSB-first within each byte, matching
+        // how `has_provider_signed` reads them).
+        let mut bits: Vec<bool> = (0..total_bits)
+            .map(|i| self.has_provider_signed(i))
+            .collect();
+        if idx < bits.len() {
+            bits.remove(idx);
+        }
+        // Repack into the minimal Vec<u8>, dropping trailing all-zero bytes.
+        let byte_len = bits.len().div_ceil(8);
+        let mut bytes = alloc::vec![0u8; byte_len];
+        for (i, set) in bits.iter().enumerate() {
+            if *set {
+                bytes[i / 8] |= 1 << (i % 8);
+            }
+        }
+        while bytes.last() == Some(&0) {
+            bytes.pop();
+        }
+        self.primary_signers = bytes;
+    }
+
     /// Count the number of providers who signed this snapshot
     pub fn count_signers(&self) -> usize {
         self.primary_signers
@@ -599,6 +631,72 @@ mod tests {
         assert!(payload.contains_seq(10));
         assert!(payload.contains_seq(14));
         assert!(!payload.contains_seq(15));
+    }
+
+    fn snapshot_with_signers(primary_signers: Vec<u8>) -> BucketSnapshot<u32> {
+        BucketSnapshot {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 0,
+            checkpoint_block: 0,
+            primary_signers,
+            commitment_nonce: 0,
+        }
+    }
+
+    #[test]
+    fn test_remove_provider_bit_shifts_higher_bits_down() {
+        // Positions {0, 1, 3} set -> 0b0000_1011.
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_1011]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(snapshot.has_provider_signed(1));
+        assert!(!snapshot.has_provider_signed(2));
+        assert!(snapshot.has_provider_signed(3));
+
+        // Remove index 1: the old bit 1 is dropped, higher bits shift down.
+        // New layout: old bit 0 -> new bit 0 (set), old bit 2 -> new bit 1
+        // (clear), old bit 3 -> new bit 2 (set) => positions {0, 2} =>
+        // 0b0000_0101.
+        snapshot.remove_provider_bit(1);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b0000_0101]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(!snapshot.has_provider_signed(1));
+        assert!(snapshot.has_provider_signed(2));
+        assert!(!snapshot.has_provider_signed(3));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_drops_highest_set_bit() {
+        // Positions {0, 2} set -> 0b0000_0101.
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0101]);
+        // Remove the highest set bit (index 2). Remaining position {0}.
+        snapshot.remove_provider_bit(2);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b0000_0001]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(!snapshot.has_provider_signed(1));
+        assert!(!snapshot.has_provider_signed(2));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_trims_trailing_zero_bytes() {
+        // Only bit 0 set in a two-byte field; removing index 0 leaves all
+        // bits clear, so the repacked field is empty (trailing zeros dropped).
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0001, 0b0000_0000]);
+        snapshot.remove_provider_bit(0);
+        assert!(snapshot.primary_signers.is_empty());
+        assert!(!snapshot.has_provider_signed(0));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_across_byte_boundary() {
+        // Bit 8 set (first bit of second byte) -> [0, 1]. Removing index 0
+        // shifts it down to bit 7 of the first byte -> [0b1000_0000].
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0000, 0b0000_0001]);
+        assert!(snapshot.has_provider_signed(8));
+        snapshot.remove_provider_bit(0);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b1000_0000]);
+        assert!(snapshot.has_provider_signed(7));
+        assert!(!snapshot.has_provider_signed(8));
     }
 
     #[test]
