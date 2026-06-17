@@ -26,6 +26,25 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
     bucket_id
 }
 
+/// Replace a bucket's snapshot with a NEW canonical root (still covering seq
+/// 0..10) so a previously created challenge — bound to the old `0xAB` root — is
+/// genuinely superseded. Required for a `Superseded` defense to be valid under
+/// the tightened soundness rule (challenged root must differ from the live
+/// canonical root, and the challenged seq must still be in range).
+fn advance_snapshot_root(bucket_id: u64) {
+    Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+        let bucket = maybe_bucket.as_mut().expect("bucket exists");
+        bucket.snapshot = Some(BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xCD),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            primary_signers: vec![0x01],
+            commitment_nonce: 1,
+        });
+    });
+}
+
 #[test]
 fn challenge_checkpoint_works() {
     new_test_ext().execute_with(|| {
@@ -190,8 +209,22 @@ fn respond_to_challenge_superseded_works() {
             index: 0,
         };
 
-        // The snapshot has leaf_count=10, start_seq=0, so canonical_end = 10.
-        // challenged_seq = start_seq(0) + leaf_index(0) = 0, which is < 10, so Superseded works.
+        // Advance the canonical snapshot to a NEW root so the challenged
+        // commitment (root 0xAB) is genuinely superseded. The challenged seq 0
+        // still sits inside the new canonical range 0..10, so `Superseded` is a
+        // valid defense.
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 10,
+                checkpoint_block: 1,
+                primary_signers: vec![0x01],
+                commitment_nonce: 1,
+            });
+        });
+
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
@@ -261,6 +294,8 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         // Respond at block 2 → response_time = 2 - (101-100) = 2 - 1 = 1
         run_to_block(2);
 
+        advance_snapshot_root(bucket_id);
+
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
@@ -304,6 +339,8 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
         // Blocks 2-5: challenger 80%, provider 20%
         run_to_block(6);
 
+        advance_snapshot_root(bucket_id);
+
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
@@ -342,6 +379,8 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
         // Respond at block 25 → response_time = 25 - 1 = 24
         // Blocks 6-24: challenger 70%, provider 30%
         run_to_block(25);
+
+        advance_snapshot_root(bucket_id);
 
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
@@ -382,6 +421,8 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
         // Blocks 25-95: challenger 60%, provider 40%
         run_to_block(96);
 
+        advance_snapshot_root(bucket_id);
+
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
@@ -420,6 +461,8 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
         // Respond at block 100 → response_time = 100 - 1 = 99
         // Blocks 96+: challenger 50%, provider 50%
         run_to_block(100);
+
+        advance_snapshot_root(bucket_id);
 
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
@@ -567,6 +610,22 @@ fn respond_to_challenge_superseded_emits_defended_event() {
 
         // Respond at block 2 → response_time = 1
         run_to_block(2);
+
+        // Advance the canonical snapshot to a NEW root so the challenged
+        // commitment (root 0xAB) is genuinely superseded — the precondition for
+        // a valid `Superseded` defense. Challenged seq 0 remains inside the new
+        // canonical range 0..10.
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 10,
+                checkpoint_block: 1,
+                primary_signers: vec![0x01],
+                commitment_nonce: 1,
+            });
+        });
 
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
@@ -1019,6 +1078,90 @@ mod challenge_tests {
                 ChallengeResponse::Superseded,
             ));
             assert!(Challenges::<Test>::get(101).is_none());
+        });
+    }
+
+    /// A `Superseded` claim made against the CURRENT canonical snapshot (the
+    /// challenged root still equals the live snapshot root) is unsound: the
+    /// data is live and the provider must answer with a `Proof`. Even though
+    /// the challenged seq sits inside the canonical range, the matching root
+    /// means the claim is rejected and the provider is slashed.
+    #[test]
+    fn superseded_slashes_when_root_matches_canonical() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Snapshot covers seq 0..1; challenge leaf 0 is in range. The
+            // snapshot root is left untouched, so the challenge's root equals
+            // the canonical root.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Superseded,
+            ));
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
+        });
+    }
+
+    /// Data that rolled off the front of the canonical range (challenged seq
+    /// below the advanced snapshot `start_seq`) must go through the admin-signed
+    /// `Deleted` path, not `Superseded`. Even with a freshly advanced root, a
+    /// seq below `start_seq` fails the `contains_seq` lower bound and slashes.
+    #[test]
+    fn superseded_slashes_when_seq_below_canonical_start() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            // Initial snapshot covers seq 0..1; challenge leaf 0.
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                0,
+                0,
+            ));
+
+            // Advance the snapshot: new root (so (a) passes) but start_seq
+            // rolled past the challenged seq 0, so the canonical range is
+            // 5..15 and seq 0 is below the front.
+            Buckets::<Test>::mutate(0u64, |bucket| {
+                let bucket = bucket.as_mut().unwrap();
+                bucket.snapshot = Some(BucketSnapshot {
+                    mmr_root: H256::repeat_byte(0x77),
+                    start_seq: 5,
+                    leaf_count: 10,
+                    checkpoint_block: 1,
+                    primary_signers: vec![0b0000_0001],
+                    commitment_nonce: 1,
+                });
+            });
+
+            assert_ok!(StorageProvider::respond_to_challenge(
+                RuntimeOrigin::signed(2),
+                ChallengeId {
+                    deadline: 101u64,
+                    index: 0u16,
+                },
+                ChallengeResponse::Superseded,
+            ));
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stake, 0);
+            assert_eq!(provider.stats.challenges_failed, 1);
         });
     }
 

@@ -2633,15 +2633,24 @@ pub mod pallet {
                     }
                 }
                 ChallengeResponse::Superseded => {
-                    // No snapshot to lean on → claim is unsupported, slash.
+                    // A `Superseded` defense only holds when the challenged
+                    // commitment was genuinely replaced by a newer canonical
+                    // snapshot. Without a snapshot to lean on the claim is
+                    // unsupported, so we slash.
                     match bucket.snapshot.as_ref() {
                         None => Err(SlashReason::InvalidSupersededClaim),
                         Some(snapshot) => {
                             let challenged_seq =
                                 challenge.start_seq.saturating_add(challenge.leaf_index);
-                            let canonical_end =
-                                snapshot.start_seq.saturating_add(snapshot.leaf_count);
-                            if challenged_seq < canonical_end {
+                            // (a) The challenged root must NOT be the current
+                            // canonical root — if it still is, the data is live
+                            // and the provider must answer with a `Proof`.
+                            // (b)+(c) The challenged seq must still sit inside
+                            // the canonical range; front-rolled/deleted data
+                            // has to go through the admin-signed `Deleted` path.
+                            if challenge.mmr_root != snapshot.mmr_root
+                                && snapshot.contains_seq(challenged_seq)
+                            {
                                 Ok(())
                             } else {
                                 Err(SlashReason::InvalidSupersededClaim)
