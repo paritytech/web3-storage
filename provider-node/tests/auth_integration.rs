@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
 //! These tests spin up a real HTTP server with `auth_enabled = true` and a

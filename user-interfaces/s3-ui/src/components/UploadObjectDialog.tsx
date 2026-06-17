@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Upload, FileUp, Loader2, Lock } from "lucide-react";
 import {

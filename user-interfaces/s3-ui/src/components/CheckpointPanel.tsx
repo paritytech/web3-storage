@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useEffect, useState } from "react";
 import { Shield, RefreshCw, Loader2, CheckCircle2, Swords, History } from "lucide-react";
 import { Button } from "@/components/ui/button";

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! CLI argument parsing for the storage provider node.
 
 use clap::Parser;

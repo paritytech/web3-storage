@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! File System Client SDK
 //!
 //! High-level API for interacting with the Layer 1 file system built on top of

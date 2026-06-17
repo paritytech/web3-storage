@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! `pallet_revive` configuration: PolkaVM-based smart contracts with EVM
 //! compatibility, exposing the storage-provider and drive-registry pallets to
 //! Solidity contracts via custom precompiles.

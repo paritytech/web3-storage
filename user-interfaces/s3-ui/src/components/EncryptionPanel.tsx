@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
 import { Lock, LockOpen, Copy, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";

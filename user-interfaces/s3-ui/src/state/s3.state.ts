@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * S3 State — bucket/object orchestration over an S3Client.
  *

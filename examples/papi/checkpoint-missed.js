@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Missed-checkpoint reporting flow for pallet-storage-provider.
  *

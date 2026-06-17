@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Coordinator integration tests — consolidated into a single test binary.
 //!
 //! Each sub-module covers one coordinator; shared helpers live here.

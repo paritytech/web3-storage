@@ -1,9 +1,10 @@
 [package]
 name = "file-system-client"
 version = "0.1.0"
-edition = "2021"
-authors = ["Parity Technologies <admin@parity.io>"]
+authors.workspace = true
+edition.workspace = true
 license = "Apache-2.0"
+repository.workspace = true
 description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage"
 
 [dependencies]

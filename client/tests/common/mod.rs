@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared test helpers for integration tests.
 
 use sp_core::crypto::Ss58Codec;

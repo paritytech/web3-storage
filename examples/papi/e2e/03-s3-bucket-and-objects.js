@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * E2E Workflow 03 — S3 Bucket and Objects
  *

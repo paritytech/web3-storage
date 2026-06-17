@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Authentication and authorization for the provider node.
 //!
 //! Provides:

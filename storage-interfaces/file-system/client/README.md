@@ -397,7 +397,7 @@ For more details, see:
 
 ## License
 
-Apache-2.0
+[Apache-2.0](../../../LICENSE-APACHE2)
 
 ## Contributing
 

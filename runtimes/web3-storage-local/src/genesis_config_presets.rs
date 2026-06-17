@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Storage Parachain Runtime genesis config presets
 
 use crate::constants::currency::{EXISTENTIAL_DEPOSIT, UNIT};

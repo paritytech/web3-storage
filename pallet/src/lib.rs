@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Storage Provider Pallet
 //!
 //! A pallet for scalable Web3 storage with game-theoretic guarantees.
