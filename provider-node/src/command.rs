@@ -213,7 +213,7 @@ async fn start_checkpoint_coordinator(
         Some(c) => c.clone(),
         None => {
             tracing::error!(
-                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Disabled."
             );
             return None;
         }

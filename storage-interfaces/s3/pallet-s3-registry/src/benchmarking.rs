@@ -37,7 +37,7 @@ use s3_primitives::{
     S3BucketInfo,
 };
 use sp_core::H256;
-use sp_runtime::traits::{Bounded, SaturatedConversion};
+use sp_runtime::traits::{Bounded, Saturating, SaturatedConversion};
 use storage_primitives::AgreementTerms;
 
 const SEED: u32 = 0;
@@ -230,7 +230,7 @@ mod benchmarks {
             max_bytes,
             duration,
             price_per_byte: 1u32.into(),
-            valid_until: BlockNumberFor::<T>::max_value(),
+            valid_until: frame_system::Pallet::<T>::block_number().saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
             nonce: 1,
             bucket_id: None,
             replica_params: None,

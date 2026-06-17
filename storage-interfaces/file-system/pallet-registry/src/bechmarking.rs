@@ -30,7 +30,7 @@ use frame_support::{
 };
 use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
 use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettings};
-use sp_runtime::traits::{Bounded, SaturatedConversion};
+use sp_runtime::traits::{Bounded, SaturatedConversion, Saturating};
 use storage_primitives::{AgreementTerms, Role};
 
 const SEED: u32 = 0;
@@ -107,7 +107,7 @@ fn make_primary_terms<T: Config>(owner: &T::AccountId, nonce: u64) -> AgreementT
         max_bytes: 1_000u64,
         duration: 100u32.into(),
         price_per_byte: 1u32.into(),
-        valid_until: BlockNumberFor::<T>::max_value(),
+        valid_until: frame_system::Pallet::<T>::block_number().saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
