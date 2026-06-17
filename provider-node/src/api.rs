@@ -170,12 +170,19 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
+    let provider_registration_info = state
+        .provider_info
+        .as_ref()
+        .and_then(|slot| slot.read().ok().map(|guard| guard.clone()));
+
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
-        provider_registration_info: state
-            .provider_info
-            .as_ref()
-            .and_then(|slot| slot.read().ok().map(|guard| guard.clone())),
+        readiness: ProviderReadiness {
+            signing_configured: state.keypair.is_some(),
+            nonce_counter_ready: state.nonce_counter.is_some(),
+            provider_info_loaded: provider_registration_info.is_some(),
+        },
+        provider_registration_info,
     })
 }
 
