@@ -641,11 +641,6 @@ export async function submitCompleteDeregister(
   await submit(tx, signer, 'Complete deregister', onProgress)
 }
 
-// submitChallengeResponse intentionally omitted — challenge response requires
-// a structured `ChallengeResponse` payload (not just bytes) and a structured
-// `ChallengeId { deadline, index }`. The Challenges UI doesn't currently
-// invoke it; add back when implementing manual challenge response.
-
 // ── Challenge proof fetching & response submission ──────────────────────────
 
 export interface ChallengeProofData {
