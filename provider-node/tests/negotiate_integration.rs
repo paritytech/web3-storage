@@ -14,12 +14,10 @@ use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::{
-    create_router, NegotiateRequest, NonceCounter, ProviderState, SignedTerms, Storage,
-};
+use storage_provider_node::{create_router, NegotiateRequest, ProviderState, SignedTerms, Storage};
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -35,10 +33,13 @@ impl TestServer {
     /// `//Alice`-signed server whose state advertises `info` on-chain and has a
     /// nonce counter ready, i.e. every `/negotiate` prerequisite satisfied.
     async fn ready(info: ProviderInfo) -> Self {
-        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
+        let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
             .expect("//Alice is a valid SURI");
-        state.provider_info = Some(Arc::new(RwLock::new(info)));
-        state.nonce_counter = Some(Arc::new(NonceCounter::new(1)));
+        // Publish on-chain registration info and align the nonce counter with
+        // the replay window (hsn 0), mirroring what the reconciler does once the
+        // provider is registered — satisfying every `/negotiate` prerequisite.
+        *state.provider_info.write().unwrap() = Some(info);
+        state.nonce_counter.bootstrap_from_hsn(0);
         Self::serve(Arc::new(state)).await
     }
 
@@ -219,11 +220,10 @@ async fn negotiate_503_when_no_signing_key() {
 
 #[tokio::test]
 async fn negotiate_503_when_provider_info_unavailable() {
-    // Keypair + nonce counter present, but no on-chain registration info loaded:
-    // the node cannot validate terms it would be bound to, so it must refuse.
-    let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
-    state.nonce_counter = Some(Arc::new(NonceCounter::new(1)));
-    // provider_info intentionally left None.
+    // Keypair present but no on-chain registration info loaded (the reconciler
+    // never ran): the node cannot validate terms it would be bound to, so it
+    // must refuse. `provider_info` defaults to `None`.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     let server = TestServer::serve(Arc::new(state)).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -233,12 +233,13 @@ async fn negotiate_503_when_provider_info_unavailable() {
 }
 
 #[tokio::test]
-async fn negotiate_503_when_nonce_counter_unavailable() {
-    // Keypair present, but the nonce counter never bootstrapped from chain.
-    // This must surface as its own error rather than masquerading as a missing
-    // signing key — see `Error::NonceCounterUnavailable`.
+async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
+    // Registered (provider_info loaded) but the nonce counter has not been
+    // aligned with the chain's replay window yet. The handler must refuse
+    // rather than sign a nonce not derived from on-chain state.
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
-    // nonce_counter intentionally left None.
+    *state.provider_info.write().unwrap() = Some(provider_info());
+    // nonce_counter intentionally left un-bootstrapped.
     let server = TestServer::serve(Arc::new(state)).await;
 
     let resp = server.negotiate(&primary_request()).await;
