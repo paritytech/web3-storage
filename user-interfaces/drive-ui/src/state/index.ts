@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * State barrel — exports every hook + action so components can import from
  * a single path.

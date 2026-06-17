@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useEffect, useCallback } from "react";
 import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
 import { isValidSs58 } from "@/lib/crypto";

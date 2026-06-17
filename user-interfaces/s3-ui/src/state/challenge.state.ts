@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Challenge State - tracks the lifecycle of a storage provider challenge
  * for the currently-selected bucket, plus a list of all open challenges.

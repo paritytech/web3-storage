@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared primitives for Scalable Web3 Storage
 //!
 //! This crate contains types and structures shared between the on-chain pallet

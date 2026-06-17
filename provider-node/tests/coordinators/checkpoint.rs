@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the checkpoint coordinator.
 
 use super::{test_state_with_seed, wait_for};

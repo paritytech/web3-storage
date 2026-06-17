@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import {
   Dialog,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Integration tests for `ChallengerClient`.
 //!
 //! Requires a running parachain at `ws://127.0.0.1:2222`:

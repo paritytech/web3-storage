@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Precompile-coverage e2e — exercises every selector on both precompiles by
  * making direct `Revive.call(<precompile-address>, <calldata>)` substrate

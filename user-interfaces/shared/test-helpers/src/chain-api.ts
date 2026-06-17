@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Worker-scoped PAPI client singleton plus thin submit/wait wrappers over
  * @web3-storage/sdk. The singleton is test-infra concern (one socket per

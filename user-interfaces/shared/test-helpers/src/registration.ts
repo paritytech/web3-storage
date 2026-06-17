@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { Blake2128Concat, Twox128 } from "@polkadot-api/substrate-bindings";
 import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getApi, submitExtrinsic, submitExtrinsicBestBlock } from "./chain-api";

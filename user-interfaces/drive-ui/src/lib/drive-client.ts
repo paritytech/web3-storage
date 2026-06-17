@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive Client — drive-ui's thin adapter over the sdk's FileSystemClient.
  * What stays here is app-shaped: stateless signer swapping driven by the

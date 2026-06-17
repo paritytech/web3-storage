@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { type ReactNode } from 'react'
 import { type LucideIcon, Loader2 } from 'lucide-react'
 import { useSelectedAccount } from '@/state/wallet.state'

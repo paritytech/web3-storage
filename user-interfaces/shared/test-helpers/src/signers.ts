@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Dev signers come from @web3-storage/sdk (single derivation + SS58 source
  * for the whole workspace); re-exported here so existing test imports keep

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * PAPI-native crypto helpers. Derivation and SS58 encoding come from
  * @web3-storage/sdk (single source for the whole workspace); only the

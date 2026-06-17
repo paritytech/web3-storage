@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useRef, useState, useCallback, type ReactNode } from "react";
 import { Upload, Loader2, X } from "lucide-react";
 import { useUploading, useSelectedBucket, uploadFiles, abortUpload } from "@/state";

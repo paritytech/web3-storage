@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { waitForPrimaryProvider } from "@web3-storage/sdk";
 import { S3Client } from "@web3-storage/sdk/s3";
 import { FileSystemClient } from "@web3-storage/sdk/fs";

@@ -1,6 +1,7 @@
 {
   "name": "provider-dashboard",
   "version": "0.1.0",
+  "license": "GPL-3.0-only",
   "description": "Storage Provider Dashboard for Web3 Storage",
   "type": "module",
   "scripts": {

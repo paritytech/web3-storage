@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * S3 Client — s3-ui's thin adapter over the SDK's S3Client + layer0 pallet
  * wrappers, mirroring drive-ui's DriveClient. Everything chain/HTTP-mechanical

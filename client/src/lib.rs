@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Storage Client SDK
 //!
 //! Comprehensive off-chain SDK for interacting with the scalable Web3 storage system.

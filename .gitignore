@@ -12,6 +12,7 @@
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Test artifacts
 *.log
@@ -63,7 +64,5 @@ user-interfaces/**/test-results/
 # Screenshots
 Screenshot.png
 
-# Python
-__pycache__
 # c8 output from `just e2e`
 examples/papi/coverage/

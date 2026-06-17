@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Drive Registry Pallet
 //!
 //! A pallet for managing Layer 1 file system drives on-chain.

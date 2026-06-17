@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Smart-contract end-to-end demo for the `SharedTeamDrive` example dApp.
  *

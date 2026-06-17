@@ -103,3 +103,7 @@ Tests are idempotent: chain-state collisions (already-registered provider, lefto
 
 - The parachain descriptors have a single owner: `shared/papi` tracks the only metadata snapshot, and its nested `@polkadot-api/descriptors` package is a workspace member every consumer (UIs, `packages/sdk`, `examples/papi`) depends on via `workspace:*`. `pnpm install` at the repo root regenerates descriptors from the tracked metadata; `pnpm run papi:generate` (chain running) refreshes the snapshot itself. Inter-workspace deps only resolve under pnpm.
 - Canonical dev ports: drive-ui `5174`, provider `5175`, s3-ui `5177`.
+
+## License
+
+[GPL-3.0-only](../LICENSE-GPL3)

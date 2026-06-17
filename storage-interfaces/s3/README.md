@@ -341,3 +341,7 @@ just s3-demo-ci                                   # Terminal 3
 - **Versioning**: Leverage CID immutability to store version history
 - **ACLs**: Bucket and object access control policies
 - **HTTP Gateway**: Optional S3-compatible HTTP server for AWS CLI compatibility
+
+## License
+
+[Apache-2.0](../../LICENSE-APACHE2)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Smart-contract end-to-end demo for web3-storage (issue #83).
  *
