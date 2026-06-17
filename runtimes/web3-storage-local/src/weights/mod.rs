@@ -21,5 +21,6 @@ pub mod pallet_storage_provider;
 pub mod pallet_sudo;
 pub mod pallet_timestamp;
 pub mod pallet_transaction_payment;
+pub mod pallet_utility;
 pub mod pallet_xcm;
 pub mod xcm;

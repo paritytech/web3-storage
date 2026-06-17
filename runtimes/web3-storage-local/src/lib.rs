@@ -321,6 +321,13 @@ impl pallet_transaction_payment::Config for Runtime {
     type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
 }
 
+impl pallet_utility::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type RuntimeCall = RuntimeCall;
+    type PalletsOrigin = OriginCaller;
+    type WeightInfo = weights::pallet_utility::WeightInfo<Runtime>;
+}
+
 impl pallet_sudo::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type RuntimeCall = RuntimeCall;
@@ -562,6 +569,10 @@ mod runtime {
     // Smart contracts (PolkaVM + EVM-compatible)
     #[runtime::pallet_index(60)]
     pub type Revive = pallet_revive;
+
+    // Handy utilities. Utility / Multisig / Proxy / Indices ...
+    #[runtime::pallet_index(70)]
+    pub type Utility = pallet_utility;
 }
 
 cumulus_pallet_parachain_system::register_validate_block! {
@@ -585,6 +596,7 @@ mod benches {
         [pallet_drive_registry, DriveRegistry]
         [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
+        [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]

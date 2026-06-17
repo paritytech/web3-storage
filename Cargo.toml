@@ -75,6 +75,7 @@ pallet-sudo = { version = "46.0.0", default-features = false }
 pallet-timestamp = { version = "45.0.0", default-features = false }
 pallet-transaction-payment = { version = "46.0.0", default-features = false }
 pallet-transaction-payment-rpc-runtime-api = { version = "46.0.0", default-features = false }
+pallet-utility = { version = "46.0.0", default-features = false }
 
 # Substrate primitives
 sp-api = { version = "41.0.0", default-features = false }
