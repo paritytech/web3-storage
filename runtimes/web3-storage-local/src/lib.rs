@@ -321,6 +321,13 @@ impl pallet_transaction_payment::Config for Runtime {
     type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
 }
 
+impl pallet_utility::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type RuntimeCall = RuntimeCall;
+    type PalletsOrigin = OriginCaller;
+    type WeightInfo = weights::pallet_utility::WeightInfo<Runtime>;
+}
+
 impl pallet_sudo::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type RuntimeCall = RuntimeCall;
@@ -543,6 +550,10 @@ mod runtime {
     #[runtime::pallet_index(33)]
     pub type MessageQueue = pallet_message_queue;
 
+    // Handy utilities. Utility / Multisig / Proxy / Indices ...
+    #[runtime::pallet_index(34)]
+    pub type Utility = pallet_utility;
+
     // Weight reclaim
     #[runtime::pallet_index(40)]
     pub type WeightReclaim = cumulus_pallet_weight_reclaim;
@@ -585,6 +596,7 @@ mod benches {
         [pallet_drive_registry, DriveRegistry]
         [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
+        [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]
