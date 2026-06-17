@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Drive Registry Pallet
 //!
 //! A pallet for managing Layer 1 file system drives on-chain.
@@ -35,6 +37,7 @@ pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
 pub mod bechmarking;
+pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
 
@@ -58,7 +61,12 @@ pub mod pallet {
     use sp_runtime::BoundedVec;
     use storage_primitives::Role;
 
+    /// In-code storage version. v1 drops the `payment` field from
+    /// [`DriveInfo`]; see [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
     #[pallet::pallet]
+    #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
     /// Configuration trait
@@ -99,7 +107,7 @@ pub mod pallet {
         _,
         Blake2_128Concat,
         DriveId,
-        DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength, BalanceOf<T>>,
+        DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength>,
     >;
 
     /// User's drives (account -> list of drive IDs)
@@ -161,22 +169,8 @@ pub mod pallet {
         DriveNameTooLong,
         /// Drive ID overflow
         DriveIdOverflow,
-        /// Invalid storage size (must be > 0)
-        InvalidStorageSize,
-        /// Invalid provider count (must be > 0)
-        InvalidProviderCount,
-        /// Invalid storage period (must be > 0)
-        InvalidStoragePeriod,
-        /// Invalid payment amount (must be > 0)
-        InvalidPayment,
-        /// Failed to create bucket in Layer 0
-        BucketCreationFailed,
         /// Failed to cleanup bucket in Layer 0
         BucketCleanupFailed,
-        /// No storage providers available
-        NoProvidersAvailable,
-        /// Insufficient replica providers available
-        InsufficientReplicaProviders,
         /// Not authorized to share this drive (must be owner or bucket admin)
         NotAuthorizedToShare,
         /// Failed to update bucket membership in Layer 0
@@ -187,36 +181,29 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Create a new drive with automatic bucket creation
         ///
-        /// The system automatically creates a Layer 0 bucket, selects providers,
-        /// and establishes storage agreements. File/directory metadata is managed
-        /// off-chain by the provider node.
+        /// Atomically opens the Layer 0 bucket + primary storage agreement
+        /// (via `establish_storage_agreement_internal`) and records the
+        /// drive metadata on top. The caller obtains `terms` and `sig`
+        /// off-chain from the provider; Layer 0 enforces signature, replay
+        /// window, and capacity/stake/duration/price checks — those errors
+        /// surface directly so the caller can react to them.
+        ///
         ///
         /// Parameters:
         /// - `name`: Optional human-readable name for the drive
-        /// - `max_capacity`: Maximum storage capacity in bytes
-        /// - `storage_period`: Storage duration in blocks
-        /// - `payment`: Upfront payment tokens for storage agreements
-        /// - `min_providers`: Optional minimum number of providers (default: auto)
+        /// - `provider`: Provider account that signed the terms.
+        /// - `terms`: Provider-signed agreement terms.
+        /// - `sig`: Provider signature over the SCALE-encoded terms.
         #[pallet::call_index(0)]
         #[pallet::weight(<T as Config>::WeightInfo::create_drive())]
         pub fn create_drive(
             origin: OriginFor<T>,
             name: Option<Vec<u8>>,
-            max_capacity: u64,
-            storage_period: BlockNumberFor<T>,
-            payment: BalanceOf<T>,
-            min_providers: Option<u8>,
+            provider: T::AccountId,
+            terms: pallet_storage_provider::AgreementTermsOf<T>,
+            sig: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-
-            // Validate inputs
-            ensure!(max_capacity > 0, Error::<T>::InvalidStorageSize);
-            ensure!(
-                storage_period > BlockNumberFor::<T>::from(0u32),
-                Error::<T>::InvalidStoragePeriod
-            );
-            use sp_runtime::traits::Zero;
-            ensure!(!payment.is_zero(), Error::<T>::InvalidPayment);
 
             // Convert name to BoundedVec
             let bounded_name = if let Some(n) = name {
@@ -232,14 +219,18 @@ pub mod pallet {
                 Error::<T>::TooManyDrives
             );
 
-            // Allocate bucket with storage parameters
-            let bucket_id = Self::allocate_bucket_for_user(
-                &who,
-                max_capacity,
-                storage_period,
-                payment,
-                min_providers,
-            )?;
+            // Snapshot the values the DriveInfo wants before handing `terms`
+            // to Layer 0 (which consumes it).
+            let max_capacity = terms.max_bytes;
+            let storage_period = terms.duration;
+
+            // Open the Layer 0 bucket + primary agreement atomically.
+            // Layer 0 errors (bad signature, replay, capacity, price, …)
+            // surface directly via `?`.
+            let bucket_id =
+                pallet_storage_provider::Pallet::<T>::establish_storage_agreement_internal(
+                    &who, &provider, terms, &sig,
+                )?;
 
             // Get next drive ID
             let drive_id = NextDriveId::<T>::get();
@@ -258,7 +249,6 @@ pub mod pallet {
                 max_capacity,
                 storage_period,
                 expires_at,
-                payment,
             };
 
             // Store drive
@@ -403,115 +393,11 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// Allocate a bucket for a user with specified storage requirements.
-        fn allocate_bucket_for_user(
-            user: &T::AccountId,
-            max_capacity: u64,
-            storage_period: BlockNumberFor<T>,
-            payment: BalanceOf<T>,
-            min_providers: Option<u8>,
-        ) -> Result<u64, Error<T>> {
-            use sp_runtime::traits::{CheckedDiv, SaturatedConversion, Zero};
-
-            // Determine number of providers
-            let num_providers: u8 = if let Some(min) = min_providers {
-                ensure!(min > 0, Error::<T>::InvalidProviderCount);
-                min
-            } else {
-                let threshold_blocks = BlockNumberFor::<T>::from(1000u32);
-                if storage_period > threshold_blocks {
-                    3
-                } else {
-                    1
-                }
-            };
-
-            // Step 1: Create bucket in Layer 0
-            let bucket_id = pallet_storage_provider::Pallet::<T>::create_bucket_internal(
-                user,
-                num_providers as u32,
-            )
-            .map_err(|_| Error::<T>::BucketCreationFailed)?;
-
-            // Step 2: Calculate payment per provider
-            let divisor: BalanceOf<T> = (num_providers as u32).saturated_into();
-            let payment_per_provider = payment
-                .checked_div(&divisor)
-                .ok_or(Error::<T>::BucketCreationFailed)?;
-
-            // Step 3: Find and request primary agreement
-            let available_primary_providers =
-                pallet_storage_provider::Pallet::<T>::query_available_providers(max_capacity, true);
-
-            ensure!(
-                !available_primary_providers.is_empty(),
-                Error::<T>::NoProvidersAvailable
-            );
-
-            let primary_provider = &available_primary_providers[0];
-
-            pallet_storage_provider::Pallet::<T>::request_primary_agreement_internal(
-                user,
-                bucket_id,
-                primary_provider,
-                max_capacity,
-                storage_period,
-                payment_per_provider,
-            )
-            .map_err(|_| Error::<T>::BucketCreationFailed)?;
-
-            // Step 4: Request replica agreements (if needed)
-            if num_providers > 1 {
-                let available_replica_providers =
-                    pallet_storage_provider::Pallet::<T>::query_available_providers(
-                        max_capacity,
-                        false,
-                    );
-
-                let num_replicas = (num_providers - 1) as usize;
-                ensure!(
-                    available_replica_providers.len() >= num_replicas,
-                    Error::<T>::InsufficientReplicaProviders
-                );
-
-                let mut replica_count = 0;
-                for replica_provider in available_replica_providers.iter() {
-                    if replica_count >= num_replicas {
-                        break;
-                    }
-                    if replica_provider == primary_provider {
-                        continue;
-                    }
-
-                    let divisor_ten: BalanceOf<T> = 10u32.saturated_into();
-                    let sync_balance = payment_per_provider
-                        .checked_div(&divisor_ten)
-                        .unwrap_or_else(Zero::zero);
-
-                    pallet_storage_provider::Pallet::<T>::request_replica_agreement_internal(
-                        user,
-                        bucket_id,
-                        replica_provider,
-                        max_capacity,
-                        storage_period,
-                        payment_per_provider,
-                        sync_balance,
-                    )
-                    .map_err(|_| Error::<T>::BucketCreationFailed)?;
-
-                    replica_count += 1;
-                }
-            }
-
-            Ok(bucket_id)
-        }
-
         /// Helper: Get drive info
         #[allow(clippy::type_complexity)]
         pub fn get_drive(
             drive_id: DriveId,
-        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength, BalanceOf<T>>>
-        {
+        ) -> Option<DriveInfo<T::AccountId, BlockNumberFor<T>, T::MaxDriveNameLength>> {
             Drives::<T>::get(drive_id)
         }
 

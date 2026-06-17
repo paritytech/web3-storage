@@ -1,17 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Admin Client - For bucket administrators managing buckets and agreements.
 //!
 //! This client provides operations for:
-//! - Creating and configuring buckets
+//! - Establish storage agreement
 //! - Managing bucket members and permissions
-//! - Requesting storage agreements from providers
-//! - Terminating agreements
+//! - Extending / topping up / terminating agreements
 //! - Freezing buckets
 //! - Deleting old data
 
+use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
+use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
@@ -46,40 +49,67 @@ impl AdminClient {
         self.base.set_dev_signer(name)
     }
 
+    /// Set a custom keypair signer loaded from a keyfile or seed.
+    /// Must be called after connect().
+    pub fn set_signer(&mut self, signer: subxt_signer::sr25519::Keypair) -> ClientResult<()> {
+        self.base.set_signer(signer)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Bucket Management
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Create a new storage bucket.
+    /// Redeem provider-signed terms to open a bucket + primary agreement
+    /// atomically.
     ///
-    /// # Parameters
-    /// - `min_providers`: Minimum number of provider signatures required for checkpoints
-    ///
-    /// # Returns
-    /// The bucket ID of the newly created bucket.
+    /// `terms` and `sig` come from the provider — typically via
+    /// [`ProviderClient::negotiate_terms`](crate::provider::ProviderClient::negotiate_terms),
+    /// but any source that produces a valid signature works.
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::AdminClient;
+    /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
-    /// let bucket_id = client.create_bucket(2).await?;
-    /// println!("Created bucket {}", bucket_id);
+    /// let signed = ProviderClient::negotiate_terms(
+    ///     "http://provider.example:3333",
+    ///     &NegotiateRequest {
+    ///         owner: "5GrwvaEF...".parse()?,
+    ///         max_bytes: 1_000_000,
+    ///         duration: 100,
+    ///         price_per_byte: 1_000_000,
+    ///         replica_params: None,
+    ///         bucket_id: None,
+    ///     },
+    /// ).await?;
+    /// let bucket_id = client.establish_storage_agreement(
+    ///     "5FHneW46...".to_string(),
+    ///     signed.terms,
+    ///     signed.signature,
+    /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn create_bucket(&self, min_providers: u32) -> ClientResult<BucketId> {
+    pub async fn establish_storage_agreement(
+        &self,
+        provider: String,
+        terms: AgreementTermsOf,
+        sig: MultiSignature,
+    ) -> ClientResult<BucketId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
+        let provider_account = SubstrateClient::parse_account(&provider)?;
 
         tracing::info!(
-            "Creating bucket with min_providers={} for admin {}",
-            min_providers,
-            self.admin_account
+            "Establishing storage agreement with provider {} for owner {} (max_bytes={}, duration={}, nonce={})",
+            provider,
+            self.admin_account,
+            terms.max_bytes,
+            terms.duration,
+            terms.nonce,
         );
 
-        // Create and submit the extrinsic
-        let tx = extrinsics::create_bucket(min_providers);
+        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &sig);
 
         let tx_progress = chain
             .api()
@@ -88,22 +118,16 @@ impl AdminClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
-        // Wait for finalization, capture the block hash, then check success.
         let tx_in_block = tx_progress
             .wait_for_finalized()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-
         let raw_block_hash = tx_in_block.block_hash();
-
         let events = tx_in_block
             .wait_for_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
-        tracing::info!("Bucket created successfully");
-
-        // Convert subxt's H256 (primitive_types 0.12) to sp_core::H256 (0.13) via raw bytes.
         let block_hash = H256::from_slice(raw_block_hash.as_bytes());
         let block_number = chain
             .api()
@@ -116,12 +140,13 @@ impl AdminClient {
         let parsed =
             StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
 
-        tracing::info!("Parsed events: {:?}", parsed);
-
         for event in parsed {
-            tracing::info!("Received event: {event:?}");
             if let StorageEvent::BucketCreated { bucket_id, .. } = event {
-                tracing::info!("Bucket created with ID: {bucket_id}");
+                tracing::info!(
+                    "Storage agreement established; bucket {} created with provider {}",
+                    bucket_id,
+                    provider,
+                );
                 return Ok(bucket_id);
             }
         }
@@ -246,107 +271,6 @@ impl AdminClient {
     // ═════════════════════════════════════════════════════════════════════════
     // Agreement Management
     // ═════════════════════════════════════════════════════════════════════════
-
-    /// Request a storage agreement from a provider.
-    ///
-    /// # Parameters
-    /// - `provider`: Provider's account ID
-    /// - `max_bytes`: Maximum storage capacity to reserve
-    /// - `duration`: Agreement duration in blocks
-    /// - `payment`: Total payment to lock (will be released to provider on success)
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use storage_client::AdminClient;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
-    /// let provider = "5FHneW46...".to_string();
-    ///
-    /// client.request_agreement(
-    ///     1,                      // bucket_id
-    ///     provider,
-    ///     10 * 1024 * 1024 * 1024, // 10 GB
-    ///     100_000,                // duration blocks (~2 weeks)
-    ///     1_000_000_000_000,      // payment
-    ///     None                    // primary (not replica)
-    /// ).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn request_agreement(
-        &self,
-        bucket_id: BucketId,
-        provider: String,
-        max_bytes: u64,
-        duration: u32,
-        payment: u128,
-        replica_params: Option<ReplicaParams>,
-    ) -> ClientResult<()> {
-        let chain = self.base.chain()?;
-        let signer = chain.signer()?;
-
-        tracing::info!(
-            "Requesting agreement from {} for bucket {}: {} bytes, {} blocks, {} payment",
-            provider,
-            bucket_id,
-            max_bytes,
-            duration,
-            payment
-        );
-
-        // Parse provider account
-        let provider_account = SubstrateClient::parse_account(&provider)?;
-
-        // Use different extrinsic based on whether it's a primary or replica agreement
-        if let Some(params) = replica_params {
-            // Replica agreement
-            let tx = extrinsics::request_agreement(
-                bucket_id,
-                provider_account,
-                max_bytes,
-                duration,
-                payment,
-                params.sync_balance,
-                params.min_sync_interval,
-            );
-
-            let tx_progress = chain
-                .api()
-                .tx()
-                .sign_and_submit_then_watch_default(&tx, signer)
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-            tx_progress
-                .wait_for_finalized_success()
-                .await
-                .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-        } else {
-            // Primary agreement
-            let tx = extrinsics::request_primary_agreement(
-                bucket_id,
-                provider_account,
-                max_bytes,
-                duration,
-                payment,
-            );
-
-            let tx_progress = chain
-                .api()
-                .tx()
-                .sign_and_submit_then_watch_default(&tx, signer)
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
-
-            tx_progress
-                .wait_for_finalized_success()
-                .await
-                .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-        }
-
-        tracing::info!("Agreement request submitted successfully");
-        Ok(())
-    }
 
     /// Extend an existing agreement with a provider.
     ///
@@ -831,16 +755,6 @@ fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value<u32>, buf: &mu
 }
 
 // Types
-
-#[derive(Debug, Clone)]
-pub struct ReplicaParams {
-    /// The primary provider this replica syncs from
-    pub primary_provider: Option<String>,
-    /// Initial sync balance to fund per-sync payments
-    pub sync_balance: u128,
-    /// Minimum blocks between sync confirmations
-    pub min_sync_interval: u32,
-}
 
 #[derive(Debug, Clone)]
 pub struct BucketInfo {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! File System Primitives for Layer 1
 //!
 //! This crate provides the core data structures for the Layer 1 file system
@@ -610,7 +612,6 @@ pub struct DriveInfo<
     AccountId: Encode + Decode + MaxEncodedLen,
     BlockNumber: Encode + Decode + MaxEncodedLen,
     MaxNameLength: Get<u32>,
-    Balance: Encode + Decode + MaxEncodedLen,
 > {
     /// Owner of the drive
     pub owner: AccountId,
@@ -626,8 +627,6 @@ pub struct DriveInfo<
     pub storage_period: BlockNumber,
     /// Expiry block number (created_at + storage_period)
     pub expires_at: BlockNumber,
-    /// Payment tokens for storage
-    pub payment: Balance,
 }
 
 // ============================================================================

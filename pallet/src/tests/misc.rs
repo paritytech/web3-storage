@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 
 #[test]
@@ -99,7 +101,7 @@ fn remove_slashed_fails_not_slashed() {
 fn remove_slashed_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         // Zero out stake
         Providers::<Test>::mutate(2, |maybe_provider| {
@@ -122,7 +124,7 @@ fn remove_slashed_fails_no_agreement() {
 #[test]
 fn remove_slashed_fails_provider_not_found() {
     new_test_ext().execute_with(|| {
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::remove_slashed(RuntimeOrigin::signed(3), 0, 99),
@@ -135,7 +137,7 @@ fn remove_slashed_fails_provider_not_found() {
 fn set_extensions_blocked_fails_no_agreement() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::set_extensions_blocked(RuntimeOrigin::signed(2), 0, true),
@@ -188,10 +190,10 @@ fn register_provider_emits_event() {
 fn create_bucket_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        let bucket_id = create_bucket(1, 1);
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCreated {
-            bucket_id: 0,
+            bucket_id,
             admin: 1,
         });
         assert!(frame_system::Pallet::<Test>::events()
@@ -201,20 +203,28 @@ fn create_bucket_emits_event() {
 }
 
 #[test]
-fn accept_agreement_emits_event() {
+fn establish_agreement_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         register_provider(2, 200);
         let bucket_id = setup_agreement(2, 1, 50, 100);
 
-        let expected = RuntimeEvent::StorageProvider(crate::Event::AgreementAccepted {
-            bucket_id,
-            provider: 2,
-            expires_at: 101, // block 1 + duration 100
+        // `setup_agreement` redeems provider-signed terms via
+        // `establish_storage_agreement`, which emits StorageAgreementEstablished.
+        let events = frame_system::Pallet::<Test>::events();
+        let found = events.iter().any(|r| {
+            matches!(
+                &r.event,
+                RuntimeEvent::StorageProvider(crate::Event::StorageAgreementEstablished {
+                    bucket_id: bid,
+                    provider: 2,
+                    owner: 1,
+                    expires_at: 101, // block 1 + duration 100
+                    ..
+                }) if *bid == bucket_id
+            )
         });
-        assert!(frame_system::Pallet::<Test>::events()
-            .iter()
-            .any(|r| r.event == expected));
+        assert!(found);
     });
 }
 
@@ -266,11 +276,11 @@ fn challenge_checkpoint_emits_event() {
 fn checkpoint_emits_event() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 0));
+        let bucket_id = create_bucket(1, 0);
 
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
-            0,
+            bucket_id,
             sp_core::H256::repeat_byte(0xAA),
             0,
             10,
@@ -278,7 +288,7 @@ fn checkpoint_emits_event() {
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
-            bucket_id: 0,
+            bucket_id,
             mmr_root: sp_core::H256::repeat_byte(0xAA),
             start_seq: 0,
             leaf_count: 10,

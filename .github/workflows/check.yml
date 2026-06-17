@@ -11,18 +11,50 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
 
+  # Skip expensive jobs when only docs/markdown/non-Rust files changed.
+  # The aggregate gate (basic-checks) always reports, so branch protection
+  # stays safe even when jobs are skipped.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.config/**'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/check.yml'
+              - '.github/workflows/set-image.yml'
+              - '.github/env'
+
   check-fmt:
     runs-on: parity-default
     timeout-minutes: 20
-    needs: [set-image]
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Cargo fmt
         run: |
@@ -45,12 +77,15 @@ jobs:
   check:
     name: Cargo check
     runs-on: parity-large
-    needs: [set-image]
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -75,7 +110,9 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -99,7 +136,9 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -122,7 +161,9 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -155,9 +196,10 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - name: Checkout PR sources (with base branch history)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -166,48 +208,92 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-llvm-cov
 
       - name: Measure PR coverage
         run: |
-          PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$PALLET_COV" ]; then
+            echo "ERROR: Failed to measure pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
           echo "PR pallet coverage: ${PALLET_COV}%"
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          PROVIDER_COV=$(cargo llvm-cov --lib -p storage-provider-node \
-            --ignore-filename-regex='(\.cargo|rustc)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          # Discover available integration test targets from filesystem
+          TEST_FLAGS=""
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
+          done
+
+          if [ -n "$TEST_FLAGS" ]; then
+            PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
+              -p storage-provider-node \
+              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --summary-only 2>&1 \
+              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          else
+            PROVIDER_COV=0
+          fi
           echo "PR_PROVIDER_COV=$PROVIDER_COV" >> $GITHUB_ENV
           echo "PR provider coverage: ${PROVIDER_COV}%"
 
       - name: Measure base branch coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Container user differs from repo owner; allow git operations
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git stash --include-untracked 2>/dev/null || true
-          git checkout ${{ github.event.pull_request.base.sha }}
+          git checkout "$BASE_SHA"
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PALLET_COV=$(cargo llvm-cov --lib -p pallet-storage-provider \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/)' \
+          BASE_PALLET_COV=$(cargo llvm-cov --lib \
+            -p pallet-storage-provider \
+            -p pallet-drive-registry \
+            -p pallet-s3-registry \
+            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
             --summary-only 2>&1 \
             | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          if [ -z "$BASE_PALLET_COV" ]; then
+            echo "ERROR: Failed to measure base pallet coverage (build or test failure?)"
+            exit 1
+          fi
           echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
           echo "Base pallet coverage: ${BASE_PALLET_COV}%"
 
           cargo llvm-cov clean --workspace 2>/dev/null || true
 
-          BASE_PROVIDER_COV=$(cargo llvm-cov --lib -p storage-provider-node \
-            --ignore-filename-regex='(\.cargo|rustc)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          # Discover available integration test targets from filesystem
+          TEST_FLAGS=""
+          for f in provider-node/tests/*_integration.rs; do
+            [ -f "$f" ] || continue
+            t=$(basename "$f" .rs)
+            TEST_FLAGS="$TEST_FLAGS --test $t"
+          done
+
+          if [ -n "$TEST_FLAGS" ]; then
+            BASE_PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
+              -p storage-provider-node \
+              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --summary-only 2>&1 \
+              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
+          else
+            BASE_PROVIDER_COV=0
+          fi
           echo "BASE_PROVIDER_COV=$BASE_PROVIDER_COV" >> $GITHUB_ENV
           echo "Base provider coverage: ${BASE_PROVIDER_COV}%"
 
@@ -227,6 +313,9 @@ jobs:
             eval "PR_VAL=\$PR_${COMPONENT}_COV"
             eval "BASE_VAL=\$BASE_${COMPONENT}_COV"
             LABEL=$(echo "$COMPONENT" | tr '[:upper:]' '[:lower:]')
+            # Treat empty values as 0
+            PR_VAL="${PR_VAL:-0}"
+            BASE_VAL="${BASE_VAL:-0}"
             DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
             if [ "$DECREASED" = "1" ]; then
               echo "FAIL: $LABEL coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"
@@ -246,7 +335,7 @@ jobs:
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
   basic-checks:
     name: Basic checks
-    needs: [check-fmt, check, clippy, test, benchmarks, coverage]
+    needs: [changes, check-fmt, check, clippy, test, benchmarks, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:

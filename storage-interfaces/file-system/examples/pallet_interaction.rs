@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Drive Registry Pallet Interaction Example
 //!
 //! This example demonstrates how to interact with the DriveRegistry pallet

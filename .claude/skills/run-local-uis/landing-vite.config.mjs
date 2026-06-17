@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Dev-server config for the landing page. Reproduces what
 // `user-interfaces/landing/inject-config.mjs` does at build time, but as an
 // in-memory Vite `transformIndexHtml` plugin so the dev server can serve a
 // working index.html (without the `__…__` placeholders that would otherwise
 // break the inline JS) and full-reload when the network-config TS sources
 // change. Also rewrites the card links to absolute Vite dev-server URLs so
-// the landing's "Console / Provider / Drive" cards open the locally-running
+// the landing's "Provider / Drive / S3" cards open the locally-running
 // apps instead of falling through to the landing's own port.
 
 import { readFileSync } from 'node:fs'
@@ -64,9 +66,9 @@ function readConfig() {
 // and the double-quoted `href` attributes (the click handler uses BASES, but
 // middle-click / "open in new tab" relies on the `href`).
 const DEV_BASES = {
-  './console/': 'http://127.0.0.1:5173/',
   './provider/': 'http://127.0.0.1:5175/',
   './drive/': 'http://127.0.0.1:5174/',
+  './s3/': 'http://127.0.0.1:5177/',
 }
 
 function injectConfigPlugin() {

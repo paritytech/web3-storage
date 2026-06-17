@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for S3-compatible object storage endpoints.
 
 use axum::http::StatusCode;
@@ -508,4 +510,120 @@ async fn test_get_content_returns_full_bytes() {
     assert_eq!(r.status(), StatusCode::OK);
     let returned = r.bytes().await.unwrap();
     assert_eq!(returned.as_ref(), body.as_slice());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edge cases: empty key, nonexistent HEAD/DELETE, empty body, metadata on GET
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_s3_head_nonexistent() {
+    let server = TestServer::new().await;
+
+    let response = server
+        .client
+        .head(server.url("/s3/1/object?key=nope.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_s3_delete_nonexistent() {
+    let server = TestServer::new().await;
+
+    let response = server
+        .client
+        .delete(server.url("/s3/1/object?key=nope.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["deleted"], false);
+}
+
+#[tokio::test]
+async fn test_s3_put_empty_body() {
+    let server = TestServer::new().await;
+
+    let response = server
+        .client
+        .put(server.url("/s3/1/object?key=empty.bin"))
+        .body("")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["size"], 0);
+
+    // GET should return empty body
+    let response = server
+        .client
+        .get(server.url("/s3/1/object?key=empty.bin"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let data = response.bytes().await.unwrap();
+    assert!(data.is_empty());
+}
+
+#[tokio::test]
+async fn test_s3_metadata_roundtrip_on_get() {
+    let server = TestServer::new().await;
+
+    // PUT with custom metadata
+    server
+        .client
+        .put(server.url("/s3/1/object?key=meta.txt"))
+        .header("content-type", "text/plain")
+        .header("x-amz-meta-project", "web3-storage")
+        .header("x-amz-meta-env", "test")
+        .body("metadata test")
+        .send()
+        .await
+        .unwrap();
+
+    // GET should include metadata in response headers
+    let response = server
+        .client
+        .get(server.url("/s3/1/object?key=meta.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    assert_eq!(
+        response.headers().get("x-amz-meta-project").unwrap(),
+        "web3-storage"
+    );
+    assert_eq!(response.headers().get("x-amz-meta-env").unwrap(), "test");
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/plain"
+    );
+    assert_eq!(response.text().await.unwrap(), "metadata test");
+}
+
+#[tokio::test]
+async fn test_s3_list_empty_bucket() {
+    let server = TestServer::new().await;
+
+    let response = server
+        .client
+        .get(server.url("/s3/1/objects"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["key_count"], 0);
+    assert_eq!(body["is_truncated"], false);
+    assert!(body["contents"].as_array().unwrap().is_empty());
 }

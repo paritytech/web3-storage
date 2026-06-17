@@ -3,7 +3,7 @@ name = "pallet-drive-registry-precompile"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "Apache-2.0"
 repository.workspace = true
 description = "pallet_revive precompile exposing the drive-registry pallet to Solidity contracts"
 
@@ -44,6 +44,7 @@ runtime-benchmarks = [
 try-runtime = [
 	"frame-support/try-runtime",
 	"frame-system/try-runtime",
+	"pallet-drive-registry/try-runtime",
 	"pallet-revive/try-runtime",
 	"pallet-storage-provider/try-runtime",
 	"sp-runtime/try-runtime",

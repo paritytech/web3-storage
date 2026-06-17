@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { test as base, expect, type Page } from "@playwright/test";
 import { getApi, getBestBlockNumber, disconnect, type ParachainApi } from "./chain-api";
 
 const PROVIDER_HEALTH_URL =
   process.env.PROVIDER_HEALTH_URL ?? "http://127.0.0.1:3333/health";
 
-const DEFAULT_MIN_BLOCK_TIMEOUT = process.env.CI ? 60_000 : 60_000;
+const DEFAULT_MIN_BLOCK_TIMEOUT = 60_000;
 
 export async function waitForConnection(page: Page, timeout = 30_000): Promise<void> {
   await expect(page.getByTestId("block-number")).toBeVisible({ timeout });

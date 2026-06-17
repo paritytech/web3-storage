@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,
  * call a function on it, and read back contract-emitted events. Uses viem
@@ -11,8 +13,10 @@
  */
 
 import { Binary } from "@polkadot-api/substrate-bindings";
+import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 
+import { negotiateTerms } from "./api.js";
 import {
   hexToBytes,
   requireOneEvent,
@@ -31,6 +35,61 @@ export function substrateToH160(publicKey) {
   const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
   const hash = hexToBytes(keccak256(bytes));
   return "0x" + Buffer.from(hash.slice(12)).toString("hex");
+}
+
+/**
+ * Substrate account `AccountId32Mapper` assigns to an unmapped H160 (e.g. a
+ * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`.
+ * Returns a signer-shaped `{ publicKey, address }` so it can be passed as
+ * the `owner` of negotiated agreement terms.
+ */
+export function h160ToSubstrate(addressBytes) {
+  const publicKey = new Uint8Array(32).fill(0xee);
+  publicKey.set(addressBytes, 0);
+  return { publicKey, address: ss58Address(publicKey) };
+}
+
+/**
+ * POST /negotiate on the provider node and shape the signed bundle for the
+ * precompiles' `PrimitiveAgreementTerms` ABI struct. `owner` must be the
+ * account the pallet will see as origin — the EOA's substrate account for
+ * direct precompile calls, or the contract's substrate-mapped account
+ * (`h160ToSubstrate(deployed.addressBytes)`) when a contract forwards the
+ * terms.
+ */
+export async function negotiatePrecompileTerms(providerUrl, owner, { maxBytes, duration, pricePerByte }) {
+  const signed = await negotiateTerms(providerUrl, {
+    owner: owner.address,
+    max_bytes: BigInt(maxBytes),
+    duration,
+    price_per_byte: pricePerByte,
+    replica_params: null,
+    bucket_id: null,
+  });
+  const t = signed.terms;
+  const rp = t.replica_params;
+  const bucket = t.bucket_id;
+  return {
+    terms: {
+      owner: toHex(owner.publicKey),
+      maxBytes: BigInt(t.max_bytes),
+      duration: Number(t.duration),
+      pricePerByte: BigInt(t.price_per_byte),
+      validUntil: Number(t.valid_until),
+      nonce: BigInt(t.nonce),
+      hasReplicaParams: rp != null,
+      replicaParams: {
+        syncBalance: BigInt(rp?.sync_balance ?? 0),
+        minSyncInterval: Number(rp?.min_sync_interval ?? 0),
+        syncPrice: BigInt(rp?.sync_price ?? 0),
+      },
+      hasBucketId: bucket != null,
+      bucketId: BigInt(bucket ?? 0),
+    },
+    signature: signed.signature.startsWith("0x")
+      ? signed.signature
+      : `0x${signed.signature}`,
+  };
 }
 
 /**

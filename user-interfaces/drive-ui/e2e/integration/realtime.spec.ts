@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Real-time event subscription specs (multi-tab).
  *
@@ -9,16 +11,17 @@ import { test, expect } from "../fixtures";
 import {
   Bob,
   cleanupDrives,
-  createDriveViaApi,
   deleteDriveViaApi,
   waitForConnection,
   waitForMinBlock,
 } from "@web3-storage/test-helpers";
+import { createDriveViaUi } from "../helpers/createDriveViaUi";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
 test.afterEach(async () => {
+  test.setTimeout(180_000);
   await cleanupDrives(Bob);
 });
 
@@ -41,20 +44,12 @@ async function openTabB(browser: import("@playwright/test").Browser) {
 test("DriveCreated cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Bob, {
-      name: `rt-create-${Date.now()}`,
-      maxCapacity: 10_000_000n,
-      storagePeriod: 10_000,
-      payment: 120_000_000_000_000_000n,
-      minProviders: 1,
-    });
+    const driveId = await createDriveViaUi(localPage, `rt-create-${Date.now()}`);
 
-    // Tab A also reflects (sanity).
-    await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+    await expect(localPage.getByTestId(`drive-list-item-${driveId}`)).toBeVisible({
       timeout: 90_000,
     });
-    // Tab B reflects without reload.
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+    await expect(tabB.getByTestId(`drive-list-item-${driveId}`)).toBeVisible({
       timeout: 90_000,
     });
   } finally {
@@ -65,23 +60,17 @@ test("DriveCreated cross-tab", async ({ localPage, browser }) => {
 test("DriveDeleted cross-tab", async ({ localPage, browser }) => {
   const { tabB, ctx } = await openTabB(browser);
   try {
-    const drive = await createDriveViaApi(Bob, {
-      name: `rt-delete-${Date.now()}`,
-      maxCapacity: 10_000_000n,
-      storagePeriod: 10_000,
-      payment: 120_000_000_000_000_000n,
-      minProviders: 1,
-    });
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeVisible({
+    const driveId = await createDriveViaUi(localPage, `rt-delete-${Date.now()}`);
+    await expect(tabB.getByTestId(`drive-list-item-${driveId}`)).toBeVisible({
       timeout: 90_000,
     });
 
-    await deleteDriveViaApi(Bob, drive.driveId);
+    await deleteDriveViaApi(Bob, driveId);
 
-    await expect(tabB.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
+    await expect(tabB.getByTestId(`drive-list-item-${driveId}`)).toBeHidden({
       timeout: 90_000,
     });
-    await expect(localPage.getByTestId(`drive-list-item-${drive.driveId}`)).toBeHidden({
+    await expect(localPage.getByTestId(`drive-list-item-${driveId}`)).toBeHidden({
       timeout: 90_000,
     });
   } finally {

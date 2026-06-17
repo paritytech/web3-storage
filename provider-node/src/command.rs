@@ -1,18 +1,21 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Node startup and runtime orchestration.
 
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
-    create_router, AgreementCoordinator, AgreementCoordinatorConfig, AgreementCoordinatorHandle,
+    create_router,
+    subxt_client::SubxtChainClient,
     CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
 };
 use clap::Parser;
-use std::sync::Arc;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use subxt::dynamic::At;
-use subxt::{dynamic::Value, OnlineClient, PolkadotConfig};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Parse CLI arguments, initialize the node, and run the server.
@@ -64,6 +67,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
+            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
+            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
+
             Arc::new(state)
         }
         None => {
@@ -97,64 +103,79 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Connect a single chain client shared by every coordinator. One
+    // WebSocket connection and one signer (the provider's own account) back
+    // all on-chain actions; coordinators each get a cheap clone. Requires a
+    // signing key, so this is only available when a seed was provided.
+    let chain_client = match &seed {
+        Some(seed) => match SubxtChainClient::connect(&cli.rpc.chain_rpc, seed).await {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::error!("Failed to connect chain client: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     // Start optional background services (failures are non-fatal)
-    let checkpoint_handle = start_checkpoint_coordinator(&cli, &seed, state.clone()).await;
+    let checkpoint_handle =
+        start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
         state.set_checkpoint_handle(handle);
     }
-    let _replica_sync_handle = start_replica_sync_coordinator(&cli, state.clone()).await;
-    let _agreement_handle = start_agreement_coordinator(&cli, &seed, state.clone()).await;
+    let _replica_sync_handle =
+        start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
 
-    // Sync on-chain multiaddr with actual bind address (requires signing key)
-    if let Some(seed) = &seed {
-        sync_multiaddr_on_chain(
-            &cli.rpc.chain_rpc,
-            seed,
-            &state.provider_id,
-            &cli.rpc.bind_addr,
-        )
-        .await;
+    // Sync the on-chain multiaddr. Reuses the chain client connected above, so
+    // this only runs when that connection succeeded (which also implies a
+    // signing key was provided). Advertise the public multiaddr when configured,
+    // otherwise derive one from the bind address.
+    if let Some(chain_client) = &chain_client {
+        chain_client
+            .sync_multiaddr(
+                &state.provider_id,
+                &cli.rpc.bind_addr,
+                cli.rpc.public_multiaddr.as_deref(),
+            )
+            .await;
     }
 
     tracing::info!("Starting storage provider node on {}", cli.rpc.bind_addr);
 
     let listener = tokio::net::TcpListener::bind(&cli.rpc.bind_addr).await?;
     let app = create_router(state);
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
 
 async fn start_checkpoint_coordinator(
     cli: &Cli,
-    seed: &Option<String>,
+    chain_client: Option<&SubxtChainClient>,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
         return None;
     }
 
-    let seed = match seed {
-        Some(s) => s.clone(),
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
         None => {
-            tracing::error!("Checkpoint coordinator requires --keyfile for signing. Skipping.");
+            tracing::error!(
+                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+            );
             return None;
         }
     };
 
-    let config = CheckpointCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        seed: Some(seed),
-        ..Default::default()
-    };
+    let config = CheckpointCoordinatorConfig::default();
 
-    let mut coordinator = CheckpointCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect checkpoint coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Checkpoint coordinator connected to chain");
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -170,27 +191,31 @@ async fn start_checkpoint_coordinator(
 
 async fn start_replica_sync_coordinator(
     cli: &Cli,
+    chain_client: Option<&SubxtChainClient>,
     state: Arc<ProviderState>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
         return None;
     }
 
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
+        None => {
+            tracing::error!(
+                "Replica sync coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+            );
+            return None;
+        }
+    };
+
     let config = ReplicaSyncCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
         poll_interval: Duration::from_secs(cli.replica_sync.replica_poll_interval),
         sync_timeout: Duration::from_secs(cli.replica_sync.replica_sync_timeout),
         max_concurrent_syncs: cli.replica_sync.replica_max_concurrent,
         auto_confirm: true,
     };
 
-    let mut coordinator = ReplicaSyncCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect replica sync coordinator: {}", e);
-        return None;
-    }
-    tracing::info!("Replica sync coordinator connected to chain");
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
 
     match coordinator.start(None).await {
         Ok(handle) => {
@@ -204,209 +229,98 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-async fn start_agreement_coordinator(
-    cli: &Cli,
-    seed: &Option<String>,
-    state: Arc<ProviderState>,
-) -> Option<AgreementCoordinatorHandle> {
-    if !cli.agreement.enable_agreement_coordinator {
-        return None;
-    }
-
-    let seed = match seed {
-        Some(s) => s.clone(),
-        None => {
-            tracing::error!("Agreement coordinator requires --keyfile for signing. Skipping.");
+/// Fetch the provider's on-chain registration info once and store it.
+///
+/// Returns `None` (and logs a warning) if anything goes wrong, so a transient
+/// chain hiccup or an unregistered provider doesn't take the whole node down.
+async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
             return None;
         }
     };
 
-    let config = AgreementCoordinatorConfig {
-        chain_ws_url: cli.rpc.chain_rpc.clone(),
-        poll_interval: Duration::from_secs(cli.agreement.agreement_poll_interval),
-        auto_accept: true,
-        seed: Some(seed),
+    let client = storage_client::ProviderClient::new(
+        storage_client::ClientConfig {
+            chain_ws_url: cli.rpc.chain_rpc.clone(),
+            ..Default::default()
+        },
+        provider_id.to_string(),
+    );
+    let mut client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            tracing::warn!("failed to build provider client: {e:?}");
+            return None;
+        }
     };
-
-    let mut coordinator = AgreementCoordinator::new(config, state);
-
-    if let Err(e) = coordinator.connect().await {
-        tracing::error!("Failed to connect agreement coordinator: {}", e);
+    if let Err(e) = client.connect().await {
+        tracing::warn!("failed to connect to chain: {e:?}");
         return None;
     }
-    tracing::info!("Agreement coordinator connected to chain");
 
-    match coordinator.start().await {
-        Ok(handle) => {
-            tracing::info!("Agreement coordinator started — auto-accepting agreements");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::error!("Failed to start agreement coordinator: {}", e);
-            None
-        }
-    }
-}
-
-/// Convert a bind address (e.g. "0.0.0.0:3333") to a multiaddr string (e.g. "/ip4/127.0.0.1/tcp/3333").
-fn bind_addr_to_multiaddr(bind_addr: &str) -> String {
-    let parts: Vec<&str> = bind_addr.split(':').collect();
-    let (host, port) = if parts.len() == 2 {
-        (parts[0], parts[1])
-    } else {
-        ("127.0.0.1", "3333")
-    };
-    // 0.0.0.0 isn't useful as a client-facing address
-    let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
-    format!("/ip4/{host}/tcp/{port}")
-}
-
-/// Ensure the on-chain multiaddr matches the actual bind address.
-/// If the provider is registered and the multiaddr differs, submit an update transaction.
-async fn sync_multiaddr_on_chain(chain_rpc: &str, seed: &str, provider_id: &str, bind_addr: &str) {
-    let expected_multiaddr = bind_addr_to_multiaddr(bind_addr);
-
-    let api = match OnlineClient::<PolkadotConfig>::from_url(chain_rpc).await {
-        Ok(api) => api,
-        Err(e) => {
-            tracing::warn!("Could not connect to chain for multiaddr sync: {}", e);
-            return;
-        }
-    };
-
-    // Read current on-chain provider info
-    let our_account: sp_core::crypto::AccountId32 =
-        match sp_core::crypto::Ss58Codec::from_ss58check(provider_id) {
-            Ok(a) => a,
-            Err(_) => {
-                tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
-                return;
-            }
-        };
-    let our_bytes: [u8; 32] = our_account.into();
-
-    let storage_query = subxt::dynamic::storage(
-        "StorageProvider",
-        "Providers",
-        vec![Value::from_bytes(our_bytes)],
-    );
-
-    let result = match api.storage().at_latest().await {
-        Ok(s) => s.fetch(&storage_query).await,
-        Err(e) => {
-            tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
-            return;
-        }
-    };
-
-    let provider_value = match result {
-        Ok(Some(v)) => v,
+    let info = match client.get_provider_info(&provider_account).await {
+        Ok(Some(info)) => info,
         Ok(None) => {
-            tracing::info!("Provider not registered on chain yet, skipping multiaddr sync");
-            return;
+            tracing::warn!(
+                "provider {provider_id} is not registered on chain; \
+                 register it before starting the node"
+            );
+            return None;
         }
         Err(e) => {
-            tracing::warn!("Failed to fetch provider info: {}", e);
-            return;
+            tracing::warn!("failed to fetch provider info: {e:?}");
+            return None;
         }
     };
-
-    // Extract multiaddr from the encoded provider storage entry.
-    // Decode to scale_value and extract the "multiaddr" field bytes.
-    let current = {
-        let decoded = match provider_value.to_value() {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Could not decode provider value: {}, skipping sync", e);
-                return;
-            }
-        };
-
-        // Use At trait to navigate the decoded value
-        let multiaddr_val = match decoded.at("multiaddr") {
-            Some(v) => v,
-            None => {
-                tracing::warn!("No multiaddr field in provider info, skipping sync");
-                return;
-            }
-        };
-
-        // Extract bytes from the value — could be a sequence of u8 values
-        fn extract_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Vec<u8> {
-            use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-            match &val.value {
-                // Sequence/composite of individual byte values
-                ValueDef::Composite(Composite::Unnamed(items)) => items
-                    .iter()
-                    .filter_map(|item| match &item.value {
-                        ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                        _ => None,
-                    })
-                    .collect(),
-                // Some subxt versions encode Vec<u8> as a Primitive::U256 or similar
-                ValueDef::Primitive(Primitive::U128(n)) => {
-                    // Single byte
-                    vec![*n as u8]
-                }
-                _ => vec![],
-            }
-        }
-
-        let bytes = extract_bytes(multiaddr_val);
-        if bytes.is_empty() {
-            // Debug: log the actual value structure to understand the encoding
-            tracing::warn!(
-                "multiaddr decoded as empty, value structure: {:?}",
-                multiaddr_val
-            );
-        }
-        String::from_utf8_lossy(&bytes).to_string()
-    };
-
-    if current == expected_multiaddr {
-        tracing::info!(
-            "On-chain multiaddr matches bind address: {}",
-            expected_multiaddr
-        );
-        return;
-    }
 
     tracing::info!(
-        "On-chain multiaddr mismatch: chain=\"{}\" actual=\"{}\", updating...",
-        current,
-        expected_multiaddr
+        "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
+        info.price_per_byte,
+        info.min_duration,
+        info.max_duration,
+        info.max_capacity,
+        info.accepting_primary,
     );
 
-    // Create signer from seed
-    let uri: subxt_signer::SecretUri = match seed.parse() {
-        Ok(u) => u,
+    Some(Arc::new(RwLock::new(info)))
+}
+
+/// Create the in-memory nonce counter and bootstrap it from the chain's
+/// `ProviderReplayState.hsn`. The chain is the source of truth, so there
+/// is nothing to persist locally.
+async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter {
+    // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
+    // reachable yet, set to None
+    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+        Ok(account) => account,
         Err(e) => {
-            tracing::error!("Failed to parse seed for multiaddr update: {:?}", e);
-            return;
+            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
+            return None;
         }
     };
-    let signer = subxt_signer::sr25519::Keypair::from_uri(&uri).expect("valid keypair from seed");
-
-    let multiaddr_bytes = expected_multiaddr.as_bytes().to_vec();
-    let tx = subxt::dynamic::tx(
-        "StorageProvider",
-        "update_provider_multiaddr",
-        vec![Value::from_bytes(multiaddr_bytes)],
-    );
-
-    match api
-        .tx()
-        .sign_and_submit_then_watch_default(&tx, &signer)
+    match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
         .await
     {
-        Ok(progress) => match progress.wait_for_finalized_success().await {
-            Ok(_) => {
-                tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr)
-            }
-            Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
-        },
+        Ok(Some(hsn)) => {
+            tracing::info!(
+                "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
+                hsn,
+                provider_id,
+            );
+            let counter = NonceCounter::new(1);
+            counter.bootstrap_from_hsn(hsn);
+            Some(Arc::new(counter))
+        }
+        Ok(None) => {
+            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
+            None
+        }
         Err(e) => {
-            tracing::error!("Failed to submit multiaddr update: {}", e);
+            tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
+            None
         }
     }
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * E2E Workflow 09 — Drive Lifecycle
  *
@@ -17,9 +19,27 @@ import {
   printBucketMembers,
   READ_OPTS,
   sameAddress,
-  waitForAgreementAcceptance,
 } from "../common.js";
-import { runSuite, submitTxExpectFailure, setupChain, getFree } from "./helpers.js";
+import {
+  getFree,
+  negotiateSigned,
+  runSuite,
+  submitTxExpectFailure,
+  setupChain,
+} from "./helpers.js";
+
+/**
+ * Create a drive: negotiate provider-signed terms, then redeem them via
+ * `create_drive`, which opens the underlying bucket + primary agreement
+ * atomically. Returns `{ driveId, bucketId }`.
+ */
+async function createDriveWithStorage(api, providerUrl, owner, provider, name, { maxBytes, duration }) {
+  const signed = await negotiateSigned(api, providerUrl, owner, provider, {
+    maxBytes,
+    duration,
+  });
+  return createDrive(api, owner, name, provider, signed);
+}
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
@@ -44,21 +64,24 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
-        payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
-      });
+      const result = await createDriveWithStorage(
+        api,
+        PROVIDER_URL,
+        owner,
+        provider,
+        `e2e-drive-${Date.now()}`,
+        { maxBytes: maxCapacity, duration: storagePeriod }
+      );
       driveId = result.driveId;
       bucketId = result.bucketId;
       assert.ok(driveId !== undefined, "drive_id should be returned");
       assert.ok(bucketId !== undefined, "bucket_id should be returned");
+      // The underlying bucket's primary provider is the one we negotiated with.
+      const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
       assert.ok(
-        sameAddress(result.matchedProvider, provider.address),
-        "Should match expected provider"
+        bucket.primary_providers.some((p) => sameAddress(p, provider.address)),
+        "Negotiated provider should be the bucket's primary"
       );
-      await waitForAgreementAcceptance(api, provider.address, bucketId);
 
       // Verify storage.
       const drive = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
@@ -129,13 +152,14 @@ async function main() {
       // Create a new drive for this test.
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-9b-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
-        payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
-      });
-      await waitForAgreementAcceptance(api, provider.address, result.bucketId);
+      const result = await createDriveWithStorage(
+        api,
+        PROVIDER_URL,
+        owner,
+        provider,
+        `e2e-drive-9b-${Date.now()}`,
+        { maxBytes: maxCapacity, duration: storagePeriod }
+      );
       const tx = api.tx.DriveRegistry.share_drive({
         drive_id: result.driveId,
         member: owner.address,
@@ -150,13 +174,14 @@ async function main() {
     fn: async () => {
       const maxCapacity = 1_048_576n;
       const storagePeriod = 100;
-      const result = await createDrive(api, owner, `e2e-drive-9c-${Date.now()}`, {
-        max_capacity: maxCapacity,
-        storage_period: storagePeriod,
-        payment: maxCapacity * BigInt(storagePeriod) * 10n,
-        min_providers: 1,
-      });
-      await waitForAgreementAcceptance(api, provider.address, result.bucketId);
+      const result = await createDriveWithStorage(
+        api,
+        PROVIDER_URL,
+        owner,
+        provider,
+        `e2e-drive-9c-${Date.now()}`,
+        { maxBytes: maxCapacity, duration: storagePeriod }
+      );
       const tx = api.tx.DriveRegistry.delete_drive({ drive_id: result.driveId });
       await submitTxExpectFailure(tx, member.signer, "NotDriveOwner", "9.7");
     },

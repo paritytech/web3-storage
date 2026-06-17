@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 use storage_primitives::EndAction;
 
@@ -141,7 +143,7 @@ fn end_agreement_fails_past_settlement() {
 fn end_agreement_fails_not_found() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);
-        assert_ok!(StorageProvider::create_bucket(RuntimeOrigin::signed(1), 1));
+        create_bucket(1, 1);
 
         assert_noop!(
             StorageProvider::end_agreement(RuntimeOrigin::signed(1), 0, 2, EndAction::Pay),

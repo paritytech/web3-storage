@@ -345,6 +345,7 @@ maxPayment: 600000000000000000
 replicaParams: {
   syncBalance: 50000000,
   minSyncInterval: 100
+  syncPrice: 1000000,
 }
 ```
 
@@ -1074,7 +1075,7 @@ Common errors you might encounter:
 
 ## Configuration Parameters
 
-Runtime configuration (see [runtime/src/lib.rs](../../runtime/src/lib.rs)):
+Runtime configuration (see [runtimes/web3-storage-local/src/lib.rs](../../runtimes/web3-storage-local/src/lib.rs)):
 
 ```rust
 // Token configuration

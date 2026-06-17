@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 import "./IDriveRegistry.sol";
 
@@ -11,7 +11,9 @@ import "./IDriveRegistry.sol";
 ///         without crawling the bucket's membership list.
 ///
 /// Lifecycle:
-///   1. Whoever deploys + calls `createTeam` becomes the team admin.
+///   1. Whoever deploys + calls `createTeam` becomes the team admin. The
+///      terms are negotiated off-chain with a provider (`POST /negotiate`)
+///      using the *contract's* substrate-mapped account as `terms.owner`.
 ///   2. Admin can `invite(member, role)` and `kick(member)` — these update
 ///      the contract-side `memberRole` map and forward to
 ///      `DRIVE_REGISTRY.shareDrive` / `unshareDrive`.
@@ -45,25 +47,22 @@ contract SharedTeamDrive {
         _;
     }
 
-    /// Create the team's drive. `msg.value` funds the agreement payment
-    /// reserve held by the contract's substrate-mapped account.
+    /// Create the team's drive by redeeming provider-signed terms
+    /// (`terms.owner` must be the contract's substrate-mapped account).
+    /// `msg.value` funds the agreement payment reserve held by that account.
+    /// Primary terms must not be bound to an existing bucket — the drive's
+    /// bucket is created at redemption.
     function createTeam(
         string calldata name,
-        uint64 maxCapacity,
-        uint32 storagePeriod,
-        uint128 payment,
-        uint8 minProviders
+        bytes32 provider,
+        IDriveRegistry.PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external payable returns (uint64) {
         require(admin == address(0), "team already created");
         require(msg.value > 0, "must fund agreement");
+        require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         admin = msg.sender;
-        driveId = DRIVE_REGISTRY.createDrive(
-            name,
-            maxCapacity,
-            storagePeriod,
-            payment,
-            minProviders
-        );
+        driveId = DRIVE_REGISTRY.createDrive(name, provider, terms, signature);
         emit TeamCreated(msg.sender, driveId);
         return driveId;
     }
