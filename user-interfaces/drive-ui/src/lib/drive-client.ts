@@ -9,16 +9,20 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58, type SignedTerms } from "@web3-storage/papi";
+import {
+  buildSignedTermsArgs,
+  httpFetch,
+  resolveProviderEndpoint,
+  toSs58,
+  type SignedTerms,
+} from "@web3-storage/papi";
 
-// Re-exported so state modules can keep importing it from the client facade.
+// Re-exported so other modules can keep importing them from the client facade.
+export { buildSignedTermsArgs } from "@web3-storage/papi";
 export type { SignedTerms } from "@web3-storage/papi";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
-
-const HTTP_RETRY_ATTEMPTS = 3;
-const HTTP_RETRY_BASE_MS = 250;
 
 export interface DriveInfo {
   driveId: bigint;
@@ -119,43 +123,6 @@ export interface QueryMatchingProvidersParams {
   limit: number;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof DOMException &&
-    (err.name === "AbortError" || err.code === DOMException.ABORT_ERR)
-  );
-}
-
-function isRetryableHttpError(status: number | null): boolean {
-  if (status === null) return true;
-  return status >= 500 && status < 600;
-}
-
-async function httpFetch(
-  url: string,
-  init: RequestInit & { signal?: AbortSignal } = {},
-): Promise<Response> {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < HTTP_RETRY_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(url, init);
-      if (res.ok || !isRetryableHttpError(res.status)) return res;
-      lastError = new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      lastError = err;
-    }
-    if (attempt < HTTP_RETRY_ATTEMPTS - 1) {
-      await sleep(HTTP_RETRY_BASE_MS * Math.pow(2, attempt));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
-}
-
 function decodeName(name: unknown): string | null {
   if (name == null) return null;
   try {
@@ -166,62 +133,6 @@ function decodeName(name: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-// MultiSignature SCALE variant order from sp_runtime.
-const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
-  0: "Ed25519",
-  1: "Sr25519",
-  2: "Ecdsa",
-  3: "Eth",
-};
-
-function hexToBytes(hex: string): Uint8Array {
-  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const out = new Uint8Array(h.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-/**
- * Build the `{ provider, terms, sig }` args shared by every signed-terms
- * extrinsic.
- */
-export function buildSignedTermsArgs(
-  providerAccount: string,
-  signed: SignedTerms,
-) {
-  const sigBytes = hexToBytes(signed.signature);
-  if (sigBytes.length < 1) {
-    throw new Error("signature too short to contain a MultiSignature variant byte");
-  }
-  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
-  if (!variantName) {
-    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
-  }
-  const sigPayloadHex =
-    "0x" +
-    Array.from(sigBytes.slice(1))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sig = Enum(variantName as any, sigPayloadHex);
-
-  const t = signed.terms;
-  const terms = {
-    owner: t.owner,
-    max_bytes: BigInt(t.max_bytes),
-    duration: t.duration,
-    price_per_byte: BigInt(t.price_per_byte),
-    valid_until: t.valid_until,
-    nonce: BigInt(t.nonce),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    replica_params: (t.replica_params ?? undefined) as any,
-    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
-  };
-  return { provider: providerAccount, terms, sig };
 }
 
 export class DriveClient {
