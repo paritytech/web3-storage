@@ -47,7 +47,7 @@ pub mod pallet {
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{BalanceStatus, Currency, ExistenceRequirement, Imbalance, ReservableCurrency},
+        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     use frame_system::pallet_prelude::*;
@@ -3742,26 +3742,20 @@ pub mod pallet {
                 let slashed_amount = provider_info.stake;
 
                 // Slash the provider's stake, capturing the imbalance so we can
-                // settle it into accounts instead of burning it.
+                // settle it into the Treasury instead of burning it.
                 let (slashed_imbalance, remaining) =
                     T::Currency::slash_reserved(&challenge.provider, slashed_amount);
                 let actually_slashed = slashed_amount.saturating_sub(remaining);
 
-                // Calculate challenger reward (10% of slashed amount); the rest
-                // goes to the Treasury.
-                let challenger_reward = actually_slashed / 10u32.into();
-
-                // Refund challenger's deposit
+                // Per the design, a successful challenger receives NO reward —
+                // only their deposit back. Refund the deposit and route the
+                // entire slashed amount to the Treasury. Paying the challenger
+                // a cut of the slash would create a profit-from-slashing
+                // incentive (the "refund me or I burn" blackmail channel the
+                // design explicitly closes). `resolve_creating` restores the
+                // issuance burned by `slash_reserved`, keeping issuance whole.
                 T::Currency::unreserve(&challenge.challenger, challenge.deposit);
-
-                // Fund the reward FROM the slashed imbalance (no minting); the
-                // remainder goes to the Treasury (no burning). Settling the
-                // imbalance via `resolve_creating` restores the issuance burned
-                // by `slash_reserved`, keeping total issuance unchanged.
-                let (reward_imbalance, treasury_imbalance) =
-                    slashed_imbalance.split(challenger_reward);
-                T::Currency::resolve_creating(&challenge.challenger, reward_imbalance);
-                T::Currency::resolve_creating(&T::Treasury::get(), treasury_imbalance);
+                T::Currency::resolve_creating(&T::Treasury::get(), slashed_imbalance);
 
                 // Update provider stats
                 provider_info.stats.challenges_failed =
@@ -3770,12 +3764,10 @@ pub mod pallet {
 
                 Providers::<T>::insert(&challenge.provider, provider_info);
 
-                // Bump challenger's aggregate so the SDK's
-                // `get_total_challenge_earnings` and `get_challenge_stats`
-                // can answer without scanning event history.
+                // Bump the challenger's successful-challenge count. Challengers
+                // earn nothing (no reward), so `total_earnings` stays zero.
                 ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
                     stats.successful_challenges = stats.successful_challenges.saturating_add(1);
-                    stats.total_earnings = stats.total_earnings.saturating_add(challenger_reward);
                 });
 
                 // Emit event
@@ -3783,7 +3775,7 @@ pub mod pallet {
                     challenge_id,
                     provider: challenge.provider.clone(),
                     slashed_amount: actually_slashed,
-                    challenger_reward,
+                    challenger_reward: Zero::zero(),
                     reason,
                 });
             }

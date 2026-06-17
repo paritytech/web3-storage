@@ -677,7 +677,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
 }
 
 #[test]
-fn challenge_slashes_emits_event_and_rewards_challenger() {
+fn challenge_slashes_routes_full_slash_to_treasury() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         let bucket_id = setup_with_snapshot(2, 1);
@@ -704,25 +704,22 @@ fn challenge_slashes_emits_event_and_rewards_challenger() {
         // run_to_block(102) finalises block 101, triggering slash
         run_to_block(102);
 
-        // Challenger gets deposit back + 10% of slashed amount
-        let challenger_reward = provider_stake / 10;
-        let to_treasury = provider_stake - challenger_reward;
-        assert_eq!(
-            Balances::free_balance(3),
-            challenger_balance_before + challenger_reward
-        );
+        // Per the design the challenger receives NO reward — only their
+        // deposit back — so their free balance returns to where it started.
+        assert_eq!(Balances::free_balance(3), challenger_balance_before);
 
-        // The remaining 90% is routed to the Treasury (not burned).
+        // The entire slashed amount is routed to the Treasury (not burned,
+        // not shared with the challenger).
         assert_eq!(
             Balances::free_balance(TREASURY),
-            treasury_balance_before + to_treasury
+            treasury_balance_before + provider_stake
         );
 
-        // Slash + resolve is net-zero: total issuance is unchanged (no mint, no
-        // burn). The reward is funded from the slashed imbalance, not minted.
+        // Slash + resolve is net-zero: total issuance is unchanged (no mint,
+        // no burn — the slash is moved to the Treasury, not destroyed).
         assert_eq!(Balances::total_issuance(), total_issuance_before);
 
-        // Verify ChallengeSlashed event
+        // Verify ChallengeSlashed event (challenger_reward is always zero).
         let expected_event = RuntimeEvent::StorageProvider(crate::Event::ChallengeSlashed {
             challenge_id: ChallengeId {
                 deadline: 101,
@@ -730,7 +727,7 @@ fn challenge_slashes_emits_event_and_rewards_challenger() {
             },
             provider: 2,
             slashed_amount: provider_stake,
-            challenger_reward,
+            challenger_reward: 0,
             reason: storage_primitives::SlashReason::Timeout,
         });
         assert!(frame_system::Pallet::<Test>::events()
@@ -1548,10 +1545,10 @@ mod challenge_tests {
             assert_eq!(provider.stake, 0);
             assert_eq!(provider.stats.challenges_failed, 1);
 
-            // Challenger deposit is unreserved and they receive a 10% reward of
-            // the 200-stake slash = 20.
+            // Challenger deposit is unreserved (refunded); no reward is paid
+            // (design: refund only), so free balance returns to where it began.
             assert_eq!(Balances::reserved_balance(3), 0);
-            assert_eq!(Balances::free_balance(3), challenger_before + 20);
+            assert_eq!(Balances::free_balance(3), challenger_before);
 
             // Challenge cleared from storage.
             assert!(Challenges::<Test>::get(101, 0).is_none());
@@ -1886,8 +1883,8 @@ mod challenge_tests {
             assert_eq!(stats.total_challenges, 1);
             assert_eq!(stats.successful_challenges, 1);
             assert_eq!(stats.failed_challenges, 0);
-            // 10% of provider stake (200) = 20 reward.
-            assert_eq!(stats.total_earnings, 20);
+            // Challengers earn no reward (design: refund only), so earnings stay 0.
+            assert_eq!(stats.total_earnings, 0);
         });
     }
 
@@ -1923,7 +1920,7 @@ mod challenge_tests {
             ));
             let stats = ChallengerStats::<Test>::get(3);
             assert_eq!(stats.successful_challenges, 1);
-            assert_eq!(stats.total_earnings, 20);
+            assert_eq!(stats.total_earnings, 0);
         });
     }
 
