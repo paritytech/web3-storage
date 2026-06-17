@@ -799,7 +799,7 @@ async fn negotiate_terms(
     let nonce_counter = state
         .nonce_counter
         .as_ref()
-        .ok_or(Error::SigningUnavailable)?;
+        .ok_or(Error::NonceCounterUnavailable)?;
 
     // Validate against the provider's on-chain settings
     let info = state
