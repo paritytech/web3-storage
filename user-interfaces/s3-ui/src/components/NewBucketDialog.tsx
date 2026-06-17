@@ -20,8 +20,8 @@ import {
   useCreations,
   type CreationStatus,
 } from "@/state";
-import { negotiateTerms, type AvailableProvider, type SignedTerms } from "@/lib/s3-client";
-import { parseMultiaddrToUrl } from "@web3-storage/papi";
+import { type AvailableProvider } from "@/lib/s3-client";
+import { negotiateProviderTerms } from "@web3-storage/papi";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
@@ -111,42 +111,30 @@ export default function NewBucketDialog({ open, onOpenChange }: NewBucketDialogP
     setSubmitting(true);
     setNegotiateError(null);
     try {
-      const url = parseMultiaddrToUrl(provider.multiaddr);
-      if (!url) {
-        setNegotiateError(
-          `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
-        );
-        return;
-      }
-
       const owner = getSignerAddress();
       if (!owner) {
         setNegotiateError("Signer not set");
         return;
       }
 
-      let signed: SignedTerms;
-      try {
-        signed = await negotiateTerms(url, {
-          owner,
-          max_bytes: BigInt(capacity),
-          duration: parseInt(duration, 10),
-          price_per_byte: BigInt(pricePerByte || "0"),
-          replica_params: null,
-          bucket_id: null,
-        });
-      } catch (err) {
-        setNegotiateError(
-          err instanceof Error ? err.message : "Failed to negotiate with provider",
-        );
+      const result = await negotiateProviderTerms(provider, {
+        owner,
+        max_bytes: BigInt(capacity),
+        duration: parseInt(duration, 10),
+        price_per_byte: BigInt(pricePerByte || "0"),
+        replica_params: null,
+        bucket_id: null,
+      });
+      if (!result.ok) {
+        setNegotiateError(result.error);
         return;
       }
 
       const bucket = await createBucket({
         name: name || "Untitled Bucket",
         provider,
-        url,
-        signed,
+        url: result.url,
+        signed: result.signed,
       });
       if (bucket) {
         setName("");

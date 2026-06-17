@@ -9,7 +9,10 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58 } from "@web3-storage/papi";
+import { resolveProviderEndpoint, toSs58, type SignedTerms } from "@web3-storage/papi";
+
+// Re-exported so state modules can keep importing it from the client facade.
+export type { SignedTerms } from "@web3-storage/papi";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
@@ -29,33 +32,6 @@ export interface DriveInfo {
   expiresAt: number;
 }
 
-/**
- * Provider-signed agreement terms returned by `POST /negotiate` on the
- * provider node. The signature is the SCALE-encoded `MultiSignature` as
- * hex (e.g. `0x01<64-byte-sr25519-sig>`).
- */
-export interface SignedTerms {
-  terms: {
-    owner: string;
-    max_bytes: number | bigint;
-    duration: number;
-    price_per_byte: number | bigint;
-    valid_until: number;
-    nonce: number | bigint;
-    replica_params: unknown | null;
-    bucket_id: bigint | null;
-  };
-  signature: string;
-}
-
-export interface NegotiateRequest {
-  owner: string;
-  max_bytes: number | bigint;
-  duration: number;
-  price_per_byte: number | bigint;
-  replica_params: unknown | null;
-  bucket_id?: bigint | null;
-}
 
 export interface AvailableProvider {
   account: string;
@@ -190,28 +166,6 @@ function decodeName(name: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * POST a `NegotiateRequest` to the provider's `/negotiate` endpoint and
- * return the provider-signed terms bundle.
- */
-export async function negotiateTerms(
-  providerUrl: string,
-  request: NegotiateRequest,
-): Promise<SignedTerms> {
-  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request, (_k, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    ),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`/negotiate failed: ${res.status} ${body}`);
-  }
-  return res.json();
 }
 
 // MultiSignature SCALE variant order from sp_runtime.

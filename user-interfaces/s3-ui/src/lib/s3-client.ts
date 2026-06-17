@@ -9,7 +9,15 @@
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58, type ParachainApi } from "@web3-storage/papi";
+import {
+  resolveProviderEndpoint,
+  toSs58,
+  type ParachainApi,
+  type SignedTerms,
+} from "@web3-storage/papi";
+
+// Re-exported so state modules can keep importing it from the client facade.
+export type { SignedTerms } from "@web3-storage/papi";
 
 export type Signer = PolkadotSigner;
 
@@ -36,29 +44,6 @@ export interface S3ObjectInfo {
 export interface UploadResult {
   cid: string;
   size: number;
-}
-
-export interface SignedTerms {
-  terms: {
-    owner: string;
-    max_bytes: number | bigint;
-    duration: number;
-    price_per_byte: number | bigint;
-    valid_until: number;
-    nonce: number | bigint;
-    replica_params: unknown | null;
-    bucket_id: bigint | null;
-  };
-  signature: string;
-}
-
-export interface NegotiateRequest {
-  owner: string;
-  max_bytes: number | bigint;
-  duration: number;
-  price_per_byte: number | bigint;
-  replica_params: unknown | null;
-  bucket_id?: bigint | null;
 }
 
 export interface AvailableProvider {
@@ -251,24 +236,6 @@ export function buildSignedTermsArgs(
     bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
   };
   return { provider: providerAccount, terms, sig };
-}
-
-export async function negotiateTerms(
-  providerUrl: string,
-  request: NegotiateRequest,
-): Promise<SignedTerms> {
-  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request, (_k, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    ),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`/negotiate failed: ${res.status} ${body}`);
-  }
-  return res.json();
 }
 
 function decodeName(name: unknown): string {

@@ -83,6 +83,90 @@ export function parseMultiaddrToUrl(multiaddr: string): string | null {
 }
 
 /**
+ * Provider-signed agreement terms returned by `POST /negotiate` on the
+ * provider node. The signature is the SCALE-encoded `MultiSignature` as
+ * hex (e.g. `0x01<64-byte-sr25519-sig>`).
+ */
+export interface SignedTerms {
+  terms: {
+    owner: string;
+    max_bytes: number | bigint;
+    duration: number;
+    price_per_byte: number | bigint;
+    valid_until: number;
+    nonce: number | bigint;
+    replica_params: unknown | null;
+    bucket_id: bigint | null;
+  };
+  signature: string;
+}
+
+/** Body of a `POST /negotiate` request to a provider node. */
+export interface NegotiateRequest {
+  owner: string;
+  max_bytes: number | bigint;
+  duration: number;
+  price_per_byte: number | bigint;
+  replica_params: unknown | null;
+  bucket_id?: bigint | null;
+}
+
+/**
+ * POST a `NegotiateRequest` to the provider's `/negotiate` endpoint and
+ * return the provider-signed terms bundle.
+ */
+export async function negotiateTerms(
+  providerUrl: string,
+  request: NegotiateRequest,
+): Promise<SignedTerms> {
+  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`/negotiate failed: ${res.status} ${body}`);
+  }
+  return res.json();
+}
+
+/** Outcome of {@link negotiateProviderTerms}: resolved endpoint + terms, or a UI-ready error. */
+export type NegotiateProviderResult =
+  | { ok: true; url: string; signed: SignedTerms }
+  | { ok: false; error: string };
+
+/**
+ * Resolve a provider's multiaddr to a base URL and negotiate signed terms in
+ * one step — the shared core of the "create bucket" / "create drive" flows.
+ *
+ * Returns a discriminated result instead of throwing so callers can surface the
+ * message inline: a `null` multiaddr and a failed `/negotiate` both come back as
+ * `{ ok: false, error }`.
+ */
+export async function negotiateProviderTerms(
+  provider: { account: string; multiaddr: string },
+  request: NegotiateRequest,
+): Promise<NegotiateProviderResult> {
+  const url = parseMultiaddrToUrl(provider.multiaddr);
+  if (!url) {
+    return {
+      ok: false,
+      error: `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
+    };
+  }
+  try {
+    const signed = await negotiateTerms(url, request);
+    return { ok: true, url, signed };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Failed to negotiate with provider",
+    };
+  }
+}
+
+/**
  * Resolve the HTTP(S) endpoint for a bucket's primary provider purely from
  * on-chain data: read the bucket, walk its primary providers, and return the
  * first one whose registered multiaddr parses to an HTTP(S) URL.
