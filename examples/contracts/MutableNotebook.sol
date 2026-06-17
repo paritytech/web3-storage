@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.34;
 
 import "./IS3Registry.sol";
 
@@ -74,20 +74,20 @@ contract MutableNotebook {
     error EmptyKey();
     error NotEmpty(uint64 stillStanding);
 
+    /// Bootstrap the bucket by redeeming provider-signed terms negotiated
+    /// off-chain (`POST /negotiate` on the provider). `terms.owner` must be
+    /// the contract's substrate-mapped account; `msg.value` funds the
+    /// agreement reserve.
     function initialize(
         string calldata name,
-        uint64 maxCapacity,
-        uint32 duration,
-        uint128 maxPayment
+        bytes32 provider,
+        IS3Registry.PrimitiveAgreementTerms calldata terms,
+        bytes calldata signature
     ) external payable returns (uint64) {
         if (admin != address(0)) revert AlreadyInitialized();
+        require(!terms.hasBucketId, "primary terms must not be bucket-bound");
         admin = msg.sender;
-        s3BucketId = S3.createS3BucketWithStorage(
-            name,
-            maxCapacity,
-            duration,
-            maxPayment
-        );
+        s3BucketId = S3.createS3Bucket(name, provider, terms, signature);
         emit NotebookInitialized(msg.sender, s3BucketId);
         return s3BucketId;
     }

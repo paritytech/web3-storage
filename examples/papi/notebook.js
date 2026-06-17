@@ -19,6 +19,8 @@ import {
   decodeContractEmitted,
   deployContract,
   encodeCall,
+  h160ToSubstrate,
+  negotiatePrecompileTerms,
 } from "./sc-api.js";
 
 /** Contract key inside `examples/contracts/build/combined.json`. */
@@ -102,26 +104,34 @@ export class NotebookClient {
     this.s3BucketId = opts.s3BucketId;
   }
 
-  /** Deploy a fresh notebook. `value` funds the storage agreement opened by
-   * `initialize`; the rest of the params land on the precompile call. */
+  /** Deploy a fresh notebook. Negotiates agreement terms with the provider
+   * (owner = contract's substrate-mapped account), then redeems them on-chain
+   * inside `initialize`. `value` funds the agreement reserve. */
   static async deploy({
     api,
     signer,
     providerUrl,
+    providerPublicKey,
     abi,
     bytecode,
     bucketName,
-    maxCapacity,
+    maxBytes,
     duration,
-    maxPayment,
+    pricePerByte,
     value,
   }) {
     const deployed = await deployContract(api, signer, bytecode);
+    const contractAccount = h160ToSubstrate(deployed.addressBytes);
+    const signed = await negotiatePrecompileTerms(providerUrl, contractAccount, {
+      maxBytes,
+      duration,
+      pricePerByte,
+    });
     const initData = encodeCall(abi, "initialize", [
       bucketName,
-      maxCapacity,
-      duration,
-      maxPayment,
+      providerPublicKey,
+      signed.terms,
+      signed.signature,
     ]);
     const r = await callContract(api, signer, deployed.addressBytes, initData, {
       value,

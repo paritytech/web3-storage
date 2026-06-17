@@ -27,6 +27,7 @@ import {
   waitForNextBlock,
 } from "./common.js";
 import { ensureAccountMapped } from "./sc-api.js";
+import { toHex } from "./common.js";
 import { CONTRACT_KEY, NotebookClient } from "./notebook.js";
 
 const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientArgs();
@@ -81,12 +82,13 @@ async function main() {
       api,
       signer: author,
       providerUrl,
+      providerPublicKey: toHex(provider.publicKey),
       abi,
       bytecode,
       bucketName,
-      maxCapacity: 1n << 20n, // 1 MiB
+      maxBytes: 1n << 20n, // 1 MiB
       duration: 50, // blocks
-      maxPayment: 2n * UNIT,
+      pricePerByte: 1n,
       value: 5n * UNIT,
     });
     console.log("  contract :", client.address);
