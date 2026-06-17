@@ -467,7 +467,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     replica_sync_price: undefined,
     accepting_extensions: true,
     max_capacity: 0n,
-  }
+  };
   await updateProviderSettings(api, provider, providerSettings);
 
   // wait for provider-node fully sync data
