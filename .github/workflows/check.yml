@@ -18,10 +18,37 @@ jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
 
+  # Skip expensive jobs when only docs/markdown/non-Rust files changed.
+  # The aggregate gate (basic-checks) always reports, so branch protection
+  # stays safe even when jobs are skipped.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.config/**'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/check.yml'
+              - '.github/workflows/set-image.yml'
+              - '.github/env'
+
   check-fmt:
     runs-on: parity-default
     timeout-minutes: 20
-    needs: [set-image]
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
@@ -50,7 +77,8 @@ jobs:
   check:
     name: Cargo check
     runs-on: parity-large
-    needs: [set-image]
+    needs: [set-image, changes]
+    if: needs.changes.outputs.rust == 'true'
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
@@ -180,7 +208,9 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-llvm-cov
 
       - name: Measure PR coverage
         run: |
@@ -305,7 +335,7 @@ jobs:
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
   basic-checks:
     name: Basic checks
-    needs: [check-fmt, check, clippy, test, benchmarks, coverage]
+    needs: [changes, check-fmt, check, clippy, test, benchmarks, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:

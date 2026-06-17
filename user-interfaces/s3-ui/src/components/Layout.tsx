@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { ArrowLeft, Archive, Wifi, WifiOff } from "lucide-react";

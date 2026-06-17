@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! # Storage Provider Node
 //!
 //! Off-chain provider node for scalable Web3 storage.

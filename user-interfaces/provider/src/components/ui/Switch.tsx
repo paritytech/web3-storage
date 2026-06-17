@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { forwardRef } from 'react'
 import { cn } from '@/utils/cn'
 

@@ -215,4 +215,4 @@ This SDK provides S3-compatible semantics with the following operations:
 
 ## License
 
-Apache-2.0
+[Apache-2.0](../../../../LICENSE-APACHE2)

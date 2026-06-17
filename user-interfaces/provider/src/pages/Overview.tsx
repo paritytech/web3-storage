@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 import { useEffect, useState, useCallback } from 'react'
 import { Server, HardDrive, FileText, Shield, Coins, AlertTriangle, Network } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'

@@ -189,7 +189,7 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
 }
 ```
 
-Reference runtime values (see `runtime/src/storage.rs`):
+Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`):
 
 | Constant | Value |
 |---|---|

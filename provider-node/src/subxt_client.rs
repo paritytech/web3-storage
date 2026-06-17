@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Subxt-based production chain client shared by all coordinators.
 //!
 //! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection

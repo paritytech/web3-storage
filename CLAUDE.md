@@ -112,7 +112,7 @@ just demo
 
 ### Running the UIs locally
 
-When the user says **"run locally"** (or "run the UIs", "start the UIs", "spin up the UIs"), invoke the `run-local-uis` project skill — it starts all five `user-interfaces/` apps on their canonical ports with Vite HMR, including the landing page (which needs a custom dev config to substitute its build-time placeholders and rewrite card links). Canonical ports: landing 5176, console-ui 5173, drive-ui 5174, provider 5175, s3-ui 5177.
+When the user says **"run locally"** (or "run the UIs", "start the UIs", "spin up the UIs"), invoke the `run-local-uis` project skill — it starts all four `user-interfaces/` apps on their canonical ports with Vite HMR, including the landing page (which needs a custom dev config to substitute its build-time placeholders and rewrite card links). Canonical ports: landing 5176, drive-ui 5174, provider 5175, s3-ui 5177.
 
 ## File System (Layer 1) Commands
 
@@ -206,9 +206,11 @@ web3-storage/
 ├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
 │   ├── src/lib.rs             # Core pallet implementation
 │   └── Cargo.toml             # Pallet dependencies
-├── runtime/                    # Parachain runtime
-│   ├── src/lib.rs             # Runtime configuration
-│   └── Cargo.toml             # Runtime dependencies
+├── runtimes/                   # Parachain runtimes
+│   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
+│   │   ├── src/lib.rs         # Runtime configuration
+│   │   └── Cargo.toml         # Runtime dependencies
+│   └── web3-storage-paseo/     # Paseo testnet runtime (storage-paseo-runtime)
 ├── provider-node/              # Off-chain HTTP storage server
 │   ├── src/                   # Provider implementation
 │   │   ├── main.rs           # Server entry point
@@ -266,7 +268,7 @@ web3-storage/
 
 **Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
-**Runtime (`runtime/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
+**Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
 **Provider Node (`provider-node/`)**: Off-chain HTTP server that:
 - Stores data chunks locally
@@ -374,7 +376,7 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtime/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
 
 ```rust
 // Token decimals

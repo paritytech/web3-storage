@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * S3 Client — wraps S3Registry pallet + StorageProvider pallet + provider HTTP
  * endpoints. Ported from console-ui's StorageClient, restructured to match

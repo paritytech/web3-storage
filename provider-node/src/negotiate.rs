@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Off-chain terms negotiation — provider-signed [`AgreementTerms`].
 //!
 //! Bucket owners ask the provider node for signed terms via

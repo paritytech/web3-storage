@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Admin Workflow Example: Setting up storage infrastructure
 //!
 //! This example demonstrates the admin flow in the bucket-based model.

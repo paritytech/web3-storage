@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! File system drive metadata index.
 //!
 //! Provides a per-drive sorted path→metadata map for the file system interface.

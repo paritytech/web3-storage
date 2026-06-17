@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};

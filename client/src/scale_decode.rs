@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Generic SCALE value decoders for use with subxt's dynamic event and storage APIs.
 //!
 //! Subxt's event API returns field values as `Composite<u32>` (field index as context);

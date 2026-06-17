@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Storage backends for the provider node.
 //!
 //! This module contains the `StorageBackend` trait and its implementations:

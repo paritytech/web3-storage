@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Checkpoint State - read-only snapshot of bucket checkpoint info + provider
  * duty status for the currently-selected bucket.

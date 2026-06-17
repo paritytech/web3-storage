@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Mock runtime for testing the storage provider pallet.
 
 use crate as pallet_storage_provider;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Provider State - Real chain data queries
  *
@@ -77,6 +79,9 @@ export interface Challenge {
   challenger: string
   provider: string
   leafIndex: number
+  chunkIndex: number
+  mmrRoot: string
+  startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   createdAt: number
@@ -496,18 +501,39 @@ export async function completeDeregister(
 }
 
 /**
- * Respond to a challenge (submits extrinsic via wallet)
+ * Respond to a challenge: fetch proofs from provider node, submit on-chain.
  */
 export async function respondToChallenge(
-  _challengeId: number,
-  _proof: Uint8Array,
-  _signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount
+  challenge: Challenge,
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void,
 ): Promise<void> {
-  // The runtime extrinsic takes a structured `ChallengeResponse` payload and
-  // a `ChallengeId { deadline, index }`, not just bytes + a number. The
-  // submission helper was removed during the PAPI v2 migration; add it back
-  // when implementing the manual challenge-response UI flow.
-  throw new Error('respondToChallenge: not implemented in current build')
+  const { fetchChallengeProof, submitRespondToChallenge } = await import('@/lib/chain-client')
+
+  // Step 1: Fetch proofs from provider node
+  onProgress?.({ type: 'signing', message: 'Fetching proof from provider node...' })
+  const proof = await fetchChallengeProof(
+    getProviderHttp(),
+    challenge.bucketId,
+    challenge.leafIndex,
+    challenge.chunkIndex,
+  )
+
+  // Step 2: Submit on-chain
+  await submitRespondToChallenge(
+    { deadline: challenge.deadline, index: challenge.id },
+    proof,
+    signer,
+    onProgress,
+  )
+
+  // Step 3: Update local state
+  const key = `${challenge.deadline}-${challenge.id}`
+  const existing = challenges$.getValue()
+  const merged = new Map<string, Challenge>()
+  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+  merged.set(key, { ...challenge, status: 'responded' })
+  challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
 
 export function clearProviderState(): void {
@@ -618,6 +644,9 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
     challenger: chain.challenger,
     provider: chain.provider,
     leafIndex: chain.leafIndex,
+    chunkIndex: chain.chunkIndex,
+    mmrRoot: chain.mmrRoot,
+    startSeq: chain.startSeq,
     status: chain.status,
     challengeType: chain.challengeType,
     createdAt: chain.createdAt,

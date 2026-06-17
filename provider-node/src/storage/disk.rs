@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Disk-based persistent storage backend using RocksDB.
 //!
 //! This provides the same interface as the in-memory storage but persists

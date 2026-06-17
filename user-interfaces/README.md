@@ -116,3 +116,7 @@ Tests are idempotent: chain-state collisions (already-registered provider, lefto
 
 - Each UI has its own `.papi/descriptors/` (a `file:` dependency). `pnpm install` at the workspace root resolves them correctly because the per-UI `vite.config.ts` (and `vitest.config.ts` for unit tests) include an explicit `@polkadot-api/descriptors` alias. Inter-workspace deps (`@web3-storage/network-config`, `@web3-storage/test-helpers`) use `workspace:*` and only resolve under pnpm.
 - `provider/` historically defaulted to port `5173`, which collides with `console-ui/`. Provider now uses `5175`. Adjust your bookmarks if you had it open.
+
+## License
+
+[GPL-3.0-only](../LICENSE-GPL3)
