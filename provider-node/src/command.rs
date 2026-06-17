@@ -315,8 +315,16 @@ async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter 
             Some(Arc::new(counter))
         }
         Ok(None) => {
-            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
-            None
+            // No `ProviderReplayState` entry yet (e.g. a freshly registered
+            // provider, including one that was deregistered and re-registered).
+            // "No replay state" means "no nonce consumed yet", so start fresh
+            // at 1 rather than discarding the counter — otherwise `/negotiate`
+            // would 503 for every brand-new registration.
+            tracing::info!(
+                "No on-chain replay state for provider {} yet; starting nonce counter fresh.",
+                provider_id,
+            );
+            Some(Arc::new(NonceCounter::new(1)))
         }
         Err(e) => {
             tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
