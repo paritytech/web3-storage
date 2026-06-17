@@ -15,7 +15,7 @@ const DEV_PROVIDER_URL = process.env.PROVIDER_URL ?? "http://127.0.0.1:3333";
 const DEFAULT_MAX_BYTES = 10_000_000n;
 const DEFAULT_DURATION = 10_000;
 
-// ─── S3 Buckets (console-ui) ─────────────────────────────────────────────────
+// ─── S3 Buckets ─────────────────────────────────────────────────────────────
 
 export interface CreateBucketOptions {
   name: string;

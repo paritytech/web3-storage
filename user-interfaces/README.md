@@ -3,12 +3,11 @@
 Three React + Vite + Polkadot-API single-page apps:
 
 - **`drive-ui/`** (port `5174`) — Layer 1 file system browser. Drives, files, members, checkpoints. Talks to the parachain (`ws://127.0.0.1:2222`) and to whichever provider node a drive's bucket points at (resolved via on-chain multiaddr).
-- **`console-ui/`** (port `5173`) — Layer 0 storage console. Buckets, S3-style objects, low-level explorer.
+- **`s3-ui/`** (port `5177`) — Layer 0 S3-style object store. Buckets, objects, client-side encryption, checkpoints.
 - **`provider/`** (port `5175`) — Provider operator dashboard. Registration, agreements, checkpoints, challenges, earnings.
 
 State management:
-- `provider/` and `drive-ui/` use RxJS `BehaviorSubject` + `@react-rxjs/core` `bind()`. State files live in `src/state/*.state.ts`.
-- `console-ui/` is a lighter Context+useState surface; on the to-do list to migrate.
+- `provider/`, `drive-ui/`, and `s3-ui/` use RxJS `BehaviorSubject` + `@react-rxjs/core` `bind()`. State files live in `src/state/*.state.ts`.
 
 All three share `@web3-storage/network-config` (in `shared/network-config`) for endpoint selection and persistence.
 
@@ -21,7 +20,7 @@ just start-provider      # provider HTTP node (port 3333)
 
 # Then any of:
 cd user-interfaces/drive-ui && pnpm dev      # http://localhost:5174
-cd user-interfaces/console-ui && pnpm dev    # http://localhost:5173
+cd user-interfaces/s3-ui && pnpm dev         # http://localhost:5177
 cd user-interfaces/provider && pnpm dev      # http://localhost:5175
 ```
 
@@ -43,10 +42,9 @@ just test-ui-unit
 
 # E2E for one UI (requires chain + provider running)
 just test-ui-drive
-just test-ui-console
 just test-ui-provider
 
-# Everything: unit + e2e × 3 UIs (waits for chain + provider /health, then serial)
+# Everything: unit + e2e (waits for chain + provider /health, then serial)
 just test-ui
 ```
 
@@ -72,17 +70,7 @@ Examples in use across the three UIs:
 - `manage-access-dialog`, `members-table`, `member-row-{address}`, `add-member-address`, `add-member-role`, `add-member-submit`, `add-member-error`
 - `upload-button`, `upload-cancel`, `view-mode-toggle`, `refresh-button`, `new-folder-button`
 
-**console-ui**:
-- `nav-{name}` (sidebar nav links: dashboard / storage / explorer / accounts), `layout-disconnect`, `signer-name`, `signer-address`, `balance-display`
-- `connect-button`, `connect-dialog`, `connect-ws-input`, `connect-submit`, `connect-cancel`
-- `s3-bucket-selector`, `s3-new-bucket`, `s3-delete-bucket`, `s3-delete-confirm`, `s3-delete-cancel`
-- `s3-create-bucket-form`, `s3-bucket-name-input`, `s3-bucket-capacity-input`, `s3-bucket-duration-input`, `s3-bucket-maxpayment-input`, `s3-create-submit`, `s3-create-cancel`, `s3-create-error`
-- `s3-upload-button`, `s3-upload-form`, `s3-upload-key-input`, `s3-upload-file-input`, `s3-upload-choose-file`, `s3-upload-submit`, `s3-upload-cancel`
-- `s3-encryption-toggle`, `s3-encryption-form`, `s3-encryption-key-input`, `s3-encryption-generate`, `s3-encryption-enable`, `s3-encryption-cancel`, `s3-encryption-copy`
-- `s3-refresh-objects`, `s3-objects-table`, `s3-folder-row-{name}`, `s3-object-row-{key}`, `s3-download-{key}`, `s3-delete-object-{key}`, `s3-user-role`
-- `bucket-info-panel`, `bucket-info-toggle`, `bucket-members-table`, `bucket-member-row-{address}`, `bucket-member-remove-{address}`, `bucket-add-member-{address,role,submit}`
-- `accounts-custom-form`, `accounts-custom-name-input`, `accounts-custom-seed-input`, `accounts-custom-submit`
-- `accounts-list`, `accounts-list-row-{name}`, `accounts-active-badge-{name}`, `accounts-set-active-{name}`, `accounts-copy-{name}`, `accounts-delete-{name}`
+**s3-ui** (S3 object store): test-ids follow the same `{area}-{element}` convention (`s3`, `bucket`, `object`, `connect`, `account`, …). Playwright coverage is not yet wired — it's a tracked follow-up.
 
 **provider**:
 - `nav-{label}` (overview / registration / agreements / buckets / checkpoints / challenges / earnings)
@@ -101,7 +89,6 @@ PR 3 adds a feature-level Playwright suite covering bucket / drive / member / fi
 just start-chain         # terminal 1
 just start-provider      # terminal 2
 just test-ui-drive       # terminal 3 — drive-ui specs (~21 feature + 5 smoke)
-just test-ui-console     # terminal 3 — console-ui specs (~11 feature + 3 smoke)
 just test-ui-provider    # terminal 3 — provider specs (~8 feature + 3 smoke)
 ```
 
@@ -115,4 +102,4 @@ Tests are idempotent: chain-state collisions (already-registered provider, lefto
 ## Workspace gotchas
 
 - The parachain descriptors have a single owner: `shared/papi` tracks the only metadata snapshot, and its nested `@polkadot-api/descriptors` package is a workspace member every consumer (UIs, `packages/sdk`, `examples/papi`) depends on via `workspace:*`. `pnpm install` at the repo root regenerates descriptors from the tracked metadata; `pnpm run papi:generate` (chain running) refreshes the snapshot itself. Inter-workspace deps only resolve under pnpm.
-- `provider/` historically defaulted to port `5173`, which collides with `console-ui/`. Provider now uses `5175`. Adjust your bookmarks if you had it open.
+- Canonical dev ports: drive-ui `5174`, provider `5175`, s3-ui `5177`.

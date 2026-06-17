@@ -391,7 +391,7 @@ s3-demo-ci:
     cargo run --release -p s3-client --example ci_integration_test -- "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 # ─── UI Tests ─────────────────────────────────────────────────────────────────
 #
-# Unit tests + Playwright e2e for drive-ui, console-ui, and provider.
+# Unit tests + Playwright e2e for drive-ui and provider.
 # Requires a running local chain + provider node.
 
 # Run all UI unit tests (Vitest)
@@ -401,10 +401,6 @@ test-ui-unit:
 # Run drive-ui Playwright e2e (requires chain + provider running)
 test-ui-drive:
     pnpm run test:e2e:drive-ui
-
-# Run console-ui Playwright e2e (requires chain running)
-test-ui-console:
-    pnpm run test:e2e:console-ui
 
 # Run provider Playwright e2e (requires chain running)
 test-ui-provider:
@@ -437,9 +433,6 @@ test-ui:
 
     echo "=== drive-ui e2e ==="
     just test-ui-drive
-
-    echo "=== console-ui e2e ==="
-    just test-ui-console
 
     echo "=== provider e2e ==="
     just test-ui-provider
