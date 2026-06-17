@@ -11,8 +11,8 @@ use frame_support::{
 use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
-    paseo_constants::currency::UNIT, AccountId, Balance, Balances, BlockNumber, Runtime,
-    RuntimeEvent,
+    paseo_constants::{currency::UNIT, time::HOURS},
+    AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
 // Storage-backed parameters: each value below is the default, but can be
@@ -22,9 +22,9 @@ use crate::{
 // current value from unhashed storage, falling back to the default.
 parameter_types! {
     pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
-    pub storage ChallengeTimeout: BlockNumber = 10;
-    pub storage SettlementTimeout: BlockNumber = 5;
-    pub storage RequestTimeout: BlockNumber = 3;
+    pub storage ChallengeTimeout: BlockNumber = 48 * HOURS;
+    pub storage SettlementTimeout: BlockNumber = 24 * HOURS;
+    pub storage RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub storage MinStakePerByte: Balance = 1_000;
     pub storage DefaultCheckpointInterval: BlockNumber = 100;
@@ -33,7 +33,7 @@ parameter_types! {
     pub storage CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `>= ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
-    pub storage DeregisterAnnouncementPeriod: BlockNumber = 10;
+    pub storage DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
 }
 
 /// Treasury account that receives slashed funds.
