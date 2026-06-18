@@ -169,8 +169,6 @@ export class NonceManager {
  */
 export async function waitForNextBlock(papi) {
   return new Promise((resolve) => {
-    // BehaviorSubject: fires synchronously on subscribe. Use a flag so the
-    // first callback can short-circuit before `sub` is bound.
     let initial = null;
     let sub;
     sub = papi.bestBlocks$.subscribe((blocks) => {
@@ -182,10 +180,8 @@ export async function waitForNextBlock(papi) {
       if (block.number > initial) {
         sub?.unsubscribe();
         resolve();
-        if (sub) sub.unsubscribe();
       }
     });
-    if (resolved && sub) sub.unsubscribe();
   });
 }
 
@@ -207,10 +203,8 @@ export async function waitForBlock(papi, target, { logEvery = 5 } = {}) {
       if (block.number > target) {
         sub?.unsubscribe();
         resolve();
-        if (sub) sub.unsubscribe();
       }
     });
-    if (resolved && sub) sub.unsubscribe();
   });
 }
 

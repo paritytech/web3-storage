@@ -48,8 +48,18 @@ pub mod consensus {
 
         /// Maximum number of blocks simultaneously accepted by the Runtime, not yet included
         /// into the relay chain.
+        ///
+        /// Sized in relay slots, then converted to parachain blocks. A candidate takes ~2 relay
+        /// slots to be backed and included under async backing; `RELAY_PARENT_OFFSET` adds the
+        /// extra relay parents the offset lets us build against, and `+ 1` is the in-flight slot.
+        /// Multiplying by `BLOCK_PROCESSING_VELOCITY` turns relay slots into parachain blocks.
+        /// With offset 1 and velocity 3 this is `(3 + 1) * 3 = 12`.
         pub const UNINCLUDED_SEGMENT_CAPACITY: u32 =
-            (3 + RELAY_PARENT_OFFSET) * BLOCK_PROCESSING_VELOCITY;
+            (RELAY_SLOTS_OF_CAPACITY + RELAY_PARENT_OFFSET) * BLOCK_PROCESSING_VELOCITY;
+
+        /// Relay slots of unincluded data to buffer, before accounting for the relay-parent
+        /// offset: 2 slots for the backing+inclusion pipeline plus 1 in-flight slot.
+        const RELAY_SLOTS_OF_CAPACITY: u32 = 3;
     }
 }
 
