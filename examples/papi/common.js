@@ -475,7 +475,10 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const info = await getProviderNodeInfo(providerUrl);
     const r = info.readiness;
-    if (r.signing_configured && r.nonce_counter_ready && r.provider_info_loaded) return;
+    const priceSynced =
+      r.provider_info_loaded &&
+      BigInt(info.provider_registration_info.price_per_byte) === pricePerByte;
+    if (r.signing_configured && r.nonce_counter_ready && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   throw new Error(
