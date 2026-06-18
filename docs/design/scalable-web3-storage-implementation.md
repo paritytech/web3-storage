@@ -1916,12 +1916,14 @@ Response (404 Not Found):
 Delete Data (admin only)
 ────────────────────────
 POST /delete
+Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+  // admin-signed header (same scheme as other mutating endpoints);
+  // when auth is enabled the signer must be an Admin member of the bucket
 
 Request:
 {
   "bucket_id": "0x1234...",
-  "new_start_seq": 10,
-  "admin_signature": "0x..."  // signs {bucket_id, new_start_seq}
+  "new_start_seq": 10
 }
 
 Response (200 OK):

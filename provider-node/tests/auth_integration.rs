@@ -451,6 +451,78 @@ async fn s3_head_with_auth() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Delete endpoint auth tests (admin-only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn delete_admin_can_prune() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+
+    // Create bucket 1 by uploading a file (Admin satisfies the Writer requirement).
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "PUT", 1, ts);
+    server
+        .client
+        .put(server.url("/fs/1/file?path=/data.txt"))
+        .header("Authorization", &header)
+        .body(b"prune me".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    // Admin-signed delete succeeds.
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["provider_signature"].is_string());
+}
+
+#[tokio::test]
+async fn delete_writer_blocked() {
+    let server = AuthTestServer::with_role(Role::Writer).await;
+    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
+    let ts = current_timestamp();
+    let header = make_auth_header(&alice, "POST", 1, ts);
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .header("Authorization", &header)
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn delete_missing_auth_returns_401() {
+    let server = AuthTestServer::with_role(Role::Admin).await;
+
+    let resp = server
+        .client
+        .post(server.url("/delete"))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
