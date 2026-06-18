@@ -68,12 +68,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            // The background reconciler bootstraps the nonce counter and
-            // publishes `provider_info`. `request_timeout` is a runtime constant
-            // the reconciler doesn't touch, so read it once here for the
-            // `/negotiate` replay window.
-            state.request_timeout = setup_request_timeout(&cli).await;
-
             Arc::new(state)
         }
         None => {
@@ -291,11 +285,15 @@ async fn start_replica_sync_coordinator(
 ///
 /// The chain is the source of truth for the provider's settings
 /// ([`ProviderState::provider_info`]) and replay window
-/// ([`ProviderState::nonce_counter`]). Instead of reading these once at
-/// startup — which would miss a provider that registers *after* the node is up
-/// and never notice later settings changes — we poll every `interval`. The
-/// first poll runs immediately, so an already-registered provider is picked up
-/// right away.
+/// ([`ProviderState::nonce_counter`] and [`ProviderState::request_timeout`]).
+/// We poll every `interval` rather than reading these once at startup, which
+/// would:
+/// - miss a provider that registers *after* the node is already serving;
+/// - never notice later settings changes; and
+/// - leave the replay window zeroed forever if the chain was unreachable at boot.
+///
+/// The first poll runs immediately, so an already-registered provider is picked
+/// up right away.
 ///
 /// All failures are non-fatal: a chain hiccup or an unregistered provider just
 /// means we keep the previous view and retry on the next tick.
@@ -331,112 +329,146 @@ async fn reconcile_once(
     state: &ProviderState,
     was_registered: &mut bool,
 ) {
-    let provider_id = &state.provider_id;
+    let client = match connect_reconciler_client(chain_rpc, &state.provider_id).await {
+        Some(client) => client,
+        None => return,
+    };
 
-    let client = storage_client::ProviderClient::new(
+    match client.get_provider_info(provider_account).await {
+        Ok(Some(info)) => {
+            apply_registered(chain_rpc, provider_account, state, &info, was_registered).await
+        }
+        Ok(None) => apply_unregistered(state, was_registered),
+        Err(e) => tracing::debug!("reconciler: failed to fetch provider info: {e:?}"),
+    }
+}
+
+/// Build and connect a `ProviderClient` for a reconciliation pass. Returns
+/// `None` (logging the cause) on any failure so the caller can skip this tick.
+async fn connect_reconciler_client(
+    chain_rpc: &str,
+    provider_id: &str,
+) -> Option<storage_client::ProviderClient> {
+    let mut client = match storage_client::ProviderClient::new(
         storage_client::ClientConfig {
             chain_ws_url: chain_rpc.to_string(),
             ..Default::default()
         },
-        provider_id.clone(),
-    );
-    let mut client = match client {
+        provider_id.to_string(),
+    ) {
         Ok(client) => client,
         Err(e) => {
             tracing::debug!("reconciler: failed to build provider client: {e:?}");
-            return;
+            return None;
         }
     };
     if let Err(e) = client.connect().await {
         tracing::debug!("reconciler: failed to connect to chain: {e:?}");
+        return None;
+    }
+    Some(client)
+}
+
+/// Apply a registered provider's on-chain state. The replay window (nonce
+/// counter + request timeout) is aligned *before* publishing `provider_info`:
+/// `/negotiate` gates on `provider_info` being `Some`, so once it is visible the
+/// counter is guaranteed bootstrapped (see the defensive check in
+/// `negotiate_terms`).
+async fn apply_registered(
+    chain_rpc: &str,
+    provider_account: &sp_runtime::AccountId32,
+    state: &ProviderState,
+    info: &storage_client::discovery::ProviderInfo,
+    was_registered: &mut bool,
+) {
+    // Defer to the next tick if the replay state can't be read yet, so we never
+    // publish `provider_info` without a ready replay window.
+    if !bootstrap_nonce_counter(chain_rpc, provider_account, state).await {
         return;
     }
+    sync_request_timeout(chain_rpc, state).await;
 
-    match client.get_provider_info(provider_account).await {
-        Ok(Some(info)) => {
-            // Align the nonce counter with the chain's replay window *before*
-            // publishing `provider_info`. `/negotiate` gates on `provider_info`
-            // being `Some`, so once it is visible the counter is guaranteed to
-            // be bootstrapped (see the defensive check in `negotiate_terms`).
-            match storage_client::ProviderClient::fetch_replay_hsn(chain_rpc, provider_account)
-                .await
-            {
-                Ok(Some(hsn)) => state.nonce_counter.bootstrap_from_hsn(hsn),
-                Ok(None) => {
-                    // Registered but no replay state is a transient/inconsistent
-                    // view (registration inserts both atomically). Defer.
-                    tracing::debug!(
-                        "reconciler: provider {provider_id} registered but replay state \
-                         missing; deferring to next tick"
-                    );
-                    return;
-                }
-                Err(e) => {
-                    tracing::debug!("reconciler: failed to fetch replay hsn: {e:?}");
-                    return;
-                }
-            }
+    if let Ok(mut guard) = state.provider_info.write() {
+        *guard = Some(info.clone());
+    }
 
-            if let Ok(mut guard) = state.provider_info.write() {
-                *guard = Some(info.clone());
-            }
+    if !*was_registered {
+        *was_registered = true;
+        tracing::info!(
+            "Provider {} is registered on chain: price_per_byte={}, \
+             duration=[{}, {}], max_capacity={}, accepting_primary={}. Signing \
+             endpoints are now available.",
+            state.provider_id,
+            info.price_per_byte,
+            info.min_duration,
+            info.max_duration,
+            info.max_capacity,
+            info.accepting_primary,
+        );
+    }
+}
 
-            if !*was_registered {
-                *was_registered = true;
-                tracing::info!(
-                    "Provider {provider_id} is registered on chain: price_per_byte={}, \
-                     duration=[{}, {}], max_capacity={}, accepting_primary={}. Signing \
-                     endpoints are now available.",
-                    info.price_per_byte,
-                    info.min_duration,
-                    info.max_duration,
-                    info.max_capacity,
-                    info.accepting_primary,
-                );
-            }
+/// Align the nonce counter with the chain's replay window. Returns `false`
+/// (the caller should defer to the next tick) when the replay state can't be
+/// read — a registered provider with no replay state is a transient,
+/// inconsistent view, since registration inserts both atomically.
+async fn bootstrap_nonce_counter(
+    chain_rpc: &str,
+    provider_account: &sp_runtime::AccountId32,
+    state: &ProviderState,
+) -> bool {
+    match storage_client::ProviderClient::fetch_replay_hsn(chain_rpc, provider_account).await {
+        Ok(Some(hsn)) => {
+            state.nonce_counter.bootstrap_from_hsn(hsn);
+            true
         }
         Ok(None) => {
-            if let Ok(mut guard) = state.provider_info.write() {
-                *guard = None;
-            }
-            if *was_registered {
-                *was_registered = false;
-                tracing::warn!(
-                    "Provider {provider_id} is no longer registered on chain; signing \
-                     endpoints are unavailable until it is re-registered."
-                );
-            } else {
-                tracing::debug!("reconciler: provider {provider_id} not registered on chain yet");
-            }
+            tracing::debug!(
+                "reconciler: provider {} registered but replay state missing; \
+                 deferring to next tick",
+                state.provider_id
+            );
+            false
         }
         Err(e) => {
-            tracing::debug!("reconciler: failed to fetch provider info: {e:?}");
+            tracing::debug!("reconciler: failed to fetch replay hsn: {e:?}");
+            false
         }
     }
 }
 
-/// Read the `StorageProvider::RequestTimeout` runtime constant from the chain.
-///
-/// Returns 0 on any failure (warn and continue) — the negotiate handler
-/// will detect the zero and return a 503 until the node is restarted with a
-/// reachable chain.
-async fn setup_request_timeout(cli: &Cli) -> u32 {
-    match storage_client::ProviderClient::fetch_request_timeout(&cli.rpc.chain_rpc).await {
-        Ok(Some(timeout)) => {
-            tracing::info!("Bootstrapped request_timeout from chain: {timeout} blocks");
-            timeout
-        }
+/// Refresh `request_timeout` from the chain. It's a runtime constant (changes
+/// only across upgrades), but fetching it here means a node that booted while
+/// the chain was unreachable still picks it up. Best-effort: on failure we keep
+/// the previous value and retry next tick.
+async fn sync_request_timeout(chain_rpc: &str, state: &ProviderState) {
+    match storage_client::ProviderClient::fetch_request_timeout(chain_rpc).await {
+        Ok(Some(timeout)) => state
+            .request_timeout
+            .store(timeout, std::sync::atomic::Ordering::Relaxed),
         Ok(None) => {
-            tracing::warn!(
-                "RequestTimeout constant absent from node metadata; request_timeout set to 0"
-            );
-            0
+            tracing::debug!("reconciler: RequestTimeout constant absent from node metadata")
         }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to read RequestTimeout from chain: {e}; request_timeout set to 0"
-            );
-            0
-        }
+        Err(e) => tracing::debug!("reconciler: failed to fetch RequestTimeout: {e:?}"),
+    }
+}
+
+/// Clear cached registration info when the provider isn't registered on chain.
+fn apply_unregistered(state: &ProviderState, was_registered: &mut bool) {
+    if let Ok(mut guard) = state.provider_info.write() {
+        *guard = None;
+    }
+    if *was_registered {
+        *was_registered = false;
+        tracing::warn!(
+            "Provider {} is no longer registered on chain; signing endpoints are \
+             unavailable until it is re-registered.",
+            state.provider_id
+        );
+    } else {
+        tracing::debug!(
+            "reconciler: provider {} not registered on chain yet",
+            state.provider_id
+        );
     }
 }

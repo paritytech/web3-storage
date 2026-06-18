@@ -818,7 +818,9 @@ async fn negotiate_terms(
         .chain_state
         .current_block
         .load(std::sync::atomic::Ordering::Relaxed);
-    let request_timeout = state.request_timeout;
+    let request_timeout = state
+        .request_timeout
+        .load(std::sync::atomic::Ordering::Relaxed);
     if current_block == 0 || request_timeout == 0 {
         return Err(Error::ChainStateNotReady);
     }

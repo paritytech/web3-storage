@@ -33,7 +33,7 @@ impl TestServer {
     /// `//Alice`-signed server whose state advertises `info` on-chain and has a
     /// nonce counter ready, i.e. every `/negotiate` prerequisite satisfied.
     async fn ready(info: ProviderInfo) -> Self {
-        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
+        let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
             .expect("//Alice is a valid SURI");
         // Publish on-chain registration info and align the nonce counter with
         // the replay window (hsn 0), mirroring what the reconciler does once the
@@ -46,7 +46,9 @@ impl TestServer {
             .chain_state
             .current_block
             .store(100, std::sync::atomic::Ordering::Relaxed);
-        state.request_timeout = 200;
+        state
+            .request_timeout
+            .store(200, std::sync::atomic::Ordering::Relaxed);
         Self::serve(Arc::new(state)).await
     }
 
@@ -230,12 +232,14 @@ async fn negotiate_503_when_provider_info_unavailable() {
     // Keypair present and chain state ready, but no on-chain registration info
     // loaded (the reconciler never published it): the node cannot validate terms
     // it would be bound to, so it must refuse. `provider_info` defaults to `None`.
-    let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    state.request_timeout = 200;
+    state
+        .request_timeout
+        .store(200, std::sync::atomic::Ordering::Relaxed);
     // provider_info intentionally left None.
     let state = Arc::new(state);
     let server = TestServer::serve(state.clone()).await;
@@ -259,12 +263,14 @@ async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
     // Registered (provider_info loaded) but the nonce counter has not been
     // aligned with the chain's replay window yet. The handler must refuse
     // rather than sign a nonce not derived from on-chain state.
-    let mut state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    state.request_timeout = 200;
+    state
+        .request_timeout
+        .store(200, std::sync::atomic::Ordering::Relaxed);
     *state.provider_info.write().unwrap() = Some(provider_info());
     // nonce_counter intentionally left un-bootstrapped.
     let server = TestServer::serve(Arc::new(state)).await;

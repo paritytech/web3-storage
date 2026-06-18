@@ -56,6 +56,7 @@ pub use storage::{
 pub use types::*;
 
 use std::str::FromStr;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use storage_client::discovery::ProviderInfo;
@@ -106,9 +107,10 @@ pub struct ProviderState {
     /// by the chain-state coordinator. Supplies `current_block` for the
     /// `/negotiate` replay window.
     pub chain_state: Arc<ChainState>,
-    /// On-chain `StorageProvider::RequestTimeout` constant.
-    /// Bootstrapped from the chain at startup; 0 means "not yet known".
-    pub request_timeout: u32,
+    /// On-chain `StorageProvider::RequestTimeout` constant, kept current by the
+    /// background reconciler (see [`crate::command`]). `0` means "not yet known"
+    /// — `/negotiate` returns 503 until the reconciler populates it.
+    pub request_timeout: AtomicU32,
 }
 
 impl ProviderState {
@@ -126,7 +128,7 @@ impl ProviderState {
             nonce_counter: Arc::new(NonceCounter::new(1)),
             provider_info: Arc::new(RwLock::new(None)),
             chain_state: Arc::new(ChainState::default()),
-            request_timeout: 0,
+            request_timeout: AtomicU32::new(0),
         }
     }
 
@@ -151,7 +153,7 @@ impl ProviderState {
             nonce_counter: Arc::new(NonceCounter::new(1)),
             provider_info: Arc::new(RwLock::new(None)),
             chain_state: Arc::new(ChainState::default()),
-            request_timeout: 0,
+            request_timeout: AtomicU32::new(0),
         })
     }
 
