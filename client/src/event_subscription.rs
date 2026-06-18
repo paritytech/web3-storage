@@ -877,7 +877,6 @@ pub trait EventParser<EventType> {
             })
             .collect()
     }
-
 }
 
 /// Parser for converting raw subxt events into typed [`StorageEvent`]s.
