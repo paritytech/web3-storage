@@ -878,27 +878,6 @@ pub trait EventParser<EventType> {
             .collect()
     }
 
-    /// Parse all events from a block, returning only the ones
-    /// that [`parse_event_detail`] accepts.
-    ///
-    /// The default implementation iterates the collection and calls
-    /// [`parse_event_detail`] for each event, so implementors rarely need to
-    /// override this.
-    ///
-    /// [`parse_event_detail`]: EventParser::parse_event_detail
-    fn from_block_events(
-        events: &subxt::events::Events<PolkadotConfig>,
-        block_hash: H256,
-        block_number: u32,
-    ) -> Vec<EventType> {
-        events
-            .iter()
-            .filter_map(|result| {
-                let event = result.ok()?;
-                Self::parse_event_detail(&event, block_hash, block_number)
-            })
-            .collect()
-    }
 }
 
 /// Parser for converting raw subxt events into typed [`StorageEvent`]s.
