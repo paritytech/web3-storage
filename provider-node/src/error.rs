@@ -72,6 +72,9 @@ pub enum Error {
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
 
+    #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
+    NonceCounterUnavailable,
+
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -245,6 +248,17 @@ impl IntoResponse for Error {
                     error: "signing_unavailable".to_string(),
                     details: Some(serde_json::json!({
                         "message": "provider node signer is not available."
+                    })),
+                },
+            ),
+            Error::NonceCounterUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "nonce_counter_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider node has not bootstrapped its nonce counter from \
+                                    on-chain replay state; ensure the provider is registered and \
+                                    the chain is reachable, then retry"
                     })),
                 },
             ),
@@ -428,6 +442,10 @@ mod tests {
             status_of(Error::SigningUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
         );
+        assert_eq!(
+            status_of(Error::NonceCounterUnavailable),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
@@ -460,5 +478,22 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("signer is not available."));
+    }
+
+    #[test]
+    fn test_nonce_counter_unavailable_503() {
+        let resp = Error::NonceCounterUnavailable.into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "nonce_counter_unavailable");
+        assert!(json["details"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonce counter"));
     }
 }

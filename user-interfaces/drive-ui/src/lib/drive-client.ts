@@ -9,13 +9,29 @@
 
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58 } from "@web3-storage/papi";
+import {
+  buildSignedTermsArgs,
+  httpFetch,
+  parseMultiaddrToUrl,
+  resolveProviderEndpoint,
+  toSs58,
+  type SignedTerms,
+} from "@web3-storage/papi";
+
+// Re-exported so other modules can keep importing them from the client facade.
+export { buildSignedTermsArgs } from "@web3-storage/papi";
+export type { SignedTerms } from "@web3-storage/papi";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
 
-const HTTP_RETRY_ATTEMPTS = 3;
-const HTTP_RETRY_BASE_MS = 250;
+/** A primary provider backing a drive's underlying layer-0 bucket. */
+export interface DriveProviderInfo {
+  account: string;
+  multiaddr: string;
+  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
+  url: string | null;
+}
 
 export interface DriveInfo {
   driveId: bigint;
@@ -27,35 +43,16 @@ export interface DriveInfo {
   createdAt: number;
   storagePeriod: number;
   expiresAt: number;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: DriveProviderInfo[];
 }
+
 
 /**
  * Provider-signed agreement terms returned by `POST /negotiate` on the
  * provider node. The signature is the SCALE-encoded `MultiSignature` as
  * hex (e.g. `0x01<64-byte-sr25519-sig>`).
  */
-export interface SignedTerms {
-  terms: {
-    owner: string;
-    max_bytes: number | bigint;
-    duration: number;
-    price_per_byte: number | bigint;
-    valid_until: number;
-    nonce: number | bigint;
-    replica_params: unknown | null;
-    bucket_id: bigint | null;
-  };
-  signature: string;
-}
-
-export interface NegotiateRequest {
-  owner: string;
-  max_bytes: number | bigint;
-  duration: number;
-  price_per_byte: number | bigint;
-  replica_params: unknown | null;
-  bucket_id?: bigint | null;
-}
 
 export interface AvailableProvider {
   account: string;
@@ -143,43 +140,6 @@ export interface QueryMatchingProvidersParams {
   limit: number;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof DOMException &&
-    (err.name === "AbortError" || err.code === DOMException.ABORT_ERR)
-  );
-}
-
-function isRetryableHttpError(status: number | null): boolean {
-  if (status === null) return true;
-  return status >= 500 && status < 600;
-}
-
-async function httpFetch(
-  url: string,
-  init: RequestInit & { signal?: AbortSignal } = {},
-): Promise<Response> {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < HTTP_RETRY_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(url, init);
-      if (res.ok || !isRetryableHttpError(res.status)) return res;
-      lastError = new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      lastError = err;
-    }
-    if (attempt < HTTP_RETRY_ATTEMPTS - 1) {
-      await sleep(HTTP_RETRY_BASE_MS * Math.pow(2, attempt));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
-}
-
 function decodeName(name: unknown): string | null {
   if (name == null) return null;
   try {
@@ -190,107 +150,6 @@ function decodeName(name: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * POST a `NegotiateRequest` to the provider's `/negotiate` endpoint and
- * return the provider-signed terms bundle.
- */
-export async function negotiateTerms(
-  providerUrl: string,
-  request: NegotiateRequest,
-): Promise<SignedTerms> {
-  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request, (_k, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    ),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`/negotiate failed: ${res.status} ${body}`);
-  }
-  return res.json();
-}
-
-// MultiSignature SCALE variant order from sp_runtime.
-const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
-  0: "Ed25519",
-  1: "Sr25519",
-  2: "Ecdsa",
-  3: "Eth",
-};
-
-function hexToBytes(hex: string): Uint8Array {
-  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const out = new Uint8Array(h.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-/**
- * Build the `{ provider, terms, sig }` args shared by every signed-terms
- * extrinsic.
- */
-export function buildSignedTermsArgs(
-  providerAccount: string,
-  signed: SignedTerms,
-) {
-  const sigBytes = hexToBytes(signed.signature);
-  if (sigBytes.length < 1) {
-    throw new Error("signature too short to contain a MultiSignature variant byte");
-  }
-  const variantName = MULTI_SIGNATURE_VARIANT[sigBytes[0]];
-  if (!variantName) {
-    throw new Error(`unknown MultiSignature variant byte: ${sigBytes[0]}`);
-  }
-  const sigPayloadHex =
-    "0x" +
-    Array.from(sigBytes.slice(1))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sig = Enum(variantName as any, sigPayloadHex);
-
-  const t = signed.terms;
-  const terms = {
-    owner: t.owner,
-    max_bytes: BigInt(t.max_bytes),
-    duration: t.duration,
-    price_per_byte: BigInt(t.price_per_byte),
-    valid_until: t.valid_until,
-    nonce: BigInt(t.nonce),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    replica_params: (t.replica_params ?? undefined) as any,
-    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
-  };
-  return { provider: providerAccount, terms, sig };
-}
-
-export function parseMultiaddrToHttp(multiaddr: string): string | null {
-  const parts = multiaddr.split("/").filter(Boolean);
-  let host: string | null = null;
-  let port: string | null = null;
-
-  for (let i = 0; i < parts.length; i++) {
-    const seg = parts[i];
-    const next = parts[i + 1];
-    if (!next) continue;
-
-    if ((seg === "ip4" || seg === "ip6" || seg === "dns4" || seg === "dns6") && host === null) {
-      host = seg.startsWith("ip6") ? `[${next}]` : next;
-    }
-    if (seg === "tcp" && port === null) {
-      port = next;
-    }
-    if (host !== null && port !== null) break;
-  }
-
-  if (host && port) return `http://${host}:${port}`;
-  return null;
 }
 
 export class DriveClient {
@@ -530,6 +389,7 @@ export class DriveClient {
       createdAt: 0,
       storagePeriod: signed.terms.duration,
       expiresAt: 0,
+      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
     };
   }
 
@@ -540,12 +400,17 @@ export class DriveClient {
     const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address);
     if (driveIds.length === 0) return [];
 
+    // Batch all drive lookups into one storage query instead of N round-trips.
+    const driveValues = await api.query.DriveRegistry.Drives.getValues(
+      driveIds.map((driveId) => [driveId] as const),
+    );
+
     const drives: DriveInfo[] = [];
-    for (const driveId of driveIds) {
-      const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
-      if (!drive) continue;
+    const bucketIds: bigint[] = [];
+    driveValues.forEach((drive, i) => {
+      if (!drive) return;
       drives.push({
-        driveId,
+        driveId: driveIds[i]!,
         bucketId: drive.bucket_id,
         owner: drive.owner,
         name: decodeName(drive.name),
@@ -553,8 +418,17 @@ export class DriveClient {
         createdAt: drive.created_at,
         storagePeriod: drive.storage_period,
         expiresAt: drive.expires_at,
+        providerInfo: [],
       });
-    }
+      bucketIds.push(drive.bucket_id);
+    });
+
+    // `providersByBucket[i]` aligns with `drives[i]` (both built skipping nulls).
+    const providersByBucket = await this.resolveBucketProviders(bucketIds);
+    drives.forEach((drive, i) => {
+      drive.providerInfo = providersByBucket[i] ?? [];
+    });
+
     return drives;
   }
 
@@ -562,6 +436,7 @@ export class DriveClient {
     const api = this.requireApi();
     const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
     if (!drive) return null;
+    const [providerInfo] = await this.resolveBucketProviders([drive.bucket_id]);
     return {
       driveId,
       bucketId: drive.bucket_id,
@@ -571,7 +446,47 @@ export class DriveClient {
       createdAt: drive.created_at,
       storagePeriod: drive.storage_period,
       expiresAt: drive.expires_at,
+      providerInfo: providerInfo ?? [],
     };
+  }
+
+  /**
+   * Resolve the primary-provider info for each given layer-0 bucket id, batching
+   * every storage read into a single query per pallet map (no per-bucket /
+   * per-provider round-trips). Returns an array aligned with `bucketIds`.
+   */
+  private async resolveBucketProviders(
+    bucketIds: bigint[],
+  ): Promise<DriveProviderInfo[][]> {
+    const api = this.requireApi();
+    const bucketInfo = await api.query.StorageProvider.Buckets.getValues(
+      bucketIds.map((id) => [id] as const),
+    );
+
+    const providerAccounts = [
+      ...new Set(bucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ];
+    const providerRecords = await api.query.StorageProvider.Providers.getValues(
+      providerAccounts.map((account) => [account] as const),
+    );
+
+    const providerMap = new Map<string, DriveProviderInfo>();
+    providerAccounts.forEach((account, i) => {
+      const record = providerRecords[i];
+      if (!record) return;
+      const multiaddr = new TextDecoder().decode(record.multiaddr);
+      providerMap.set(account, {
+        account,
+        multiaddr,
+        url: parseMultiaddrToUrl(multiaddr),
+      });
+    });
+
+    return bucketInfo.map((info) =>
+      (info?.primary_providers ?? [])
+        .map((account) => providerMap.get(account))
+        .filter((p): p is DriveProviderInfo => p != null),
+    );
   }
 
   async deleteDrive(driveId: bigint): Promise<void> {

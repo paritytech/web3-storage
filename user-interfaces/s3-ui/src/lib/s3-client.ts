@@ -9,14 +9,32 @@
 import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { Subscription } from "rxjs";
 import { parachain } from "@polkadot-api/descriptors";
-import { resolveProviderEndpoint, toSs58, type ParachainApi } from "@web3-storage/papi";
+import {
+  buildSignedTermsArgs,
+  httpFetch,
+  parseMultiaddrToUrl,
+  resolveProviderEndpoint,
+  toHex,
+  toSs58,
+  type ParachainApi,
+  type SignedTerms,
+} from "@web3-storage/papi";
+
+// Re-exported so other modules can keep importing them from the client facade.
+export { buildSignedTermsArgs } from "@web3-storage/papi";
+export type { SignedTerms } from "@web3-storage/papi";
 
 export type Signer = PolkadotSigner;
 
-const HTTP_RETRY_ATTEMPTS = 3;
-const HTTP_RETRY_BASE_MS = 250;
-
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/** A primary provider backing a bucket's underlying layer-0 bucket. */
+export interface BucketProviderInfo {
+  account: string;
+  multiaddr: string;
+  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
+  url: string | null;
+}
 
 export interface BucketInfo {
   s3BucketId: bigint;
@@ -24,6 +42,8 @@ export interface BucketInfo {
   layer0BucketId: bigint;
   owner: string;
   createdAt: bigint;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: BucketProviderInfo[];
 }
 
 export interface S3ObjectInfo {
@@ -36,29 +56,6 @@ export interface S3ObjectInfo {
 export interface UploadResult {
   cid: string;
   size: number;
-}
-
-export interface SignedTerms {
-  terms: {
-    owner: string;
-    max_bytes: number | bigint;
-    duration: number;
-    price_per_byte: number | bigint;
-    valid_until: number;
-    nonce: number | bigint;
-    replica_params: unknown | null;
-    bucket_id: bigint | null;
-  };
-  signature: string;
-}
-
-export interface NegotiateRequest {
-  owner: string;
-  max_bytes: number | bigint;
-  duration: number;
-  price_per_byte: number | bigint;
-  replica_params: unknown | null;
-  bucket_id?: bigint | null;
 }
 
 export interface AvailableProvider {
@@ -156,143 +153,6 @@ export interface QueryMatchingProvidersParams {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof DOMException &&
-    (err.name === "AbortError" || err.code === DOMException.ABORT_ERR)
-  );
-}
-
-function isRetryableHttpError(status: number | null): boolean {
-  if (status === null) return true;
-  return status >= 500 && status < 600;
-}
-
-async function httpFetch(
-  url: string,
-  init: RequestInit & { signal?: AbortSignal } = {},
-): Promise<Response> {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < HTTP_RETRY_ATTEMPTS; attempt++) {
-    try {
-      const res = await fetch(url, init);
-      if (res.ok || !isRetryableHttpError(res.status)) return res;
-      lastError = new Error(`HTTP ${res.status}: ${await res.text().catch(() => "")}`);
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      lastError = err;
-    }
-    if (attempt < HTTP_RETRY_ATTEMPTS - 1) {
-      await sleep(HTTP_RETRY_BASE_MS * Math.pow(2, attempt));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("HTTP request failed");
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const h = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const out = new Uint8Array(h.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-// MultiSignature SCALE variant order from sp_runtime.
-const MULTI_SIGNATURE_VARIANT: Record<number, string> = {
-  0: "Ed25519",
-  1: "Sr25519",
-  2: "Ecdsa",
-  3: "Eth",
-};
-
-export function buildSignedTermsArgs(
-  providerAccount: string,
-  signed: SignedTerms,
-) {
-  const sigBytes = hexToBytes(signed.signature);
-  if (sigBytes.length < 1) {
-    throw new Error("signature too short to contain a MultiSignature variant byte");
-  }
-  const variantByte = sigBytes[0]!;
-  const variantName = MULTI_SIGNATURE_VARIANT[variantByte];
-  if (!variantName) {
-    throw new Error(`unknown MultiSignature variant byte: ${variantByte}`);
-  }
-  const sigPayloadHex =
-    "0x" +
-    Array.from(sigBytes.slice(1))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sig = Enum(variantName as any, sigPayloadHex);
-
-  const t = signed.terms;
-  const terms = {
-    owner: t.owner,
-    max_bytes: BigInt(t.max_bytes),
-    duration: t.duration,
-    price_per_byte: BigInt(t.price_per_byte),
-    valid_until: t.valid_until,
-    nonce: BigInt(t.nonce),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    replica_params: (t.replica_params ?? undefined) as any,
-    bucket_id: t.bucket_id ? BigInt(t.bucket_id) : undefined,
-  };
-  return { provider: providerAccount, terms, sig };
-}
-
-export function parseMultiaddrToHttp(multiaddr: string): string | null {
-  const parts = multiaddr.split("/").filter(Boolean);
-  let host: string | null = null;
-  let port: string | null = null;
-
-  for (let i = 0; i < parts.length; i++) {
-    const seg = parts[i];
-    const next = parts[i + 1];
-    if (!next) continue;
-
-    if ((seg === "ip4" || seg === "ip6" || seg === "dns4" || seg === "dns6") && host === null) {
-      host = seg.startsWith("ip6") ? `[${next}]` : next;
-    }
-    if (seg === "tcp" && port === null) {
-      port = next;
-    }
-    if (host !== null && port !== null) break;
-  }
-
-  if (host && port) return `http://${host}:${port}`;
-  return null;
-}
-
-export async function negotiateTerms(
-  providerUrl: string,
-  request: NegotiateRequest,
-): Promise<SignedTerms> {
-  const res = await fetch(`${providerUrl.replace(/\/$/, "")}/negotiate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request, (_k, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    ),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`/negotiate failed: ${res.status} ${body}`);
-  }
-  return res.json();
-}
 
 function decodeName(name: unknown): string {
   if (name == null) return "";
@@ -422,6 +282,13 @@ export class S3Client {
       layer0BucketId: layer0_bucket_id,
       owner: address,
       createdAt: 0n,
+      providerInfo: [
+        {
+          account: providerAccount,
+          multiaddr: "",
+          url: providerUrl,
+        },
+      ],
     };
   }
 
@@ -432,18 +299,57 @@ export class S3Client {
     const bucketIds = await api.query.S3Registry.UserBuckets.getValue(address);
     if (bucketIds.length === 0) return [];
 
+    const bucketValues = await api.query.S3Registry.S3Buckets.getValues(
+      bucketIds.map((s3BucketId) => [s3BucketId] as const),
+    );
+
     const buckets: BucketInfo[] = [];
-    for (const s3BucketId of bucketIds) {
-      const bucket = await api.query.S3Registry.S3Buckets.getValue(s3BucketId);
-      if (!bucket) continue;
+    const layer0BucketIds: bigint[] = [];
+    bucketValues.forEach((bucket, i) => {
+      if (!bucket) return;
       buckets.push({
-        s3BucketId,
+        s3BucketId: bucketIds[i]!,
         name: decodeName(bucket.name),
         layer0BucketId: bucket.layer0_bucket_id,
         owner: bucket.owner,
         createdAt: BigInt(bucket.created_at ?? 0),
+        providerInfo: [],
       });
-    }
+      layer0BucketIds.push(bucket.layer0_bucket_id);
+    });
+
+    // Resolve each bucket's primary providers, batching every storage read into
+    // a single query per pallet map (no per-bucket / per-provider round-trips).
+    // `layer0BucketInfo[i]` aligns with `buckets[i]` (both built skipping nulls).
+    const layer0BucketInfo = await api.query.StorageProvider.Buckets.getValues(
+      layer0BucketIds.map((id) => [id] as const),
+    );
+
+    const providerAccounts = [
+      ...new Set(layer0BucketInfo.flatMap((info) => info?.primary_providers ?? [])),
+    ];
+    const providerRecords = await api.query.StorageProvider.Providers.getValues(
+      providerAccounts.map((account) => [account] as const),
+    );
+
+    const providerMap = new Map<string, BucketProviderInfo>();
+    providerAccounts.forEach((account, i) => {
+      const record = providerRecords[i];
+      if (!record) return;
+      const multiaddr = new TextDecoder().decode(record.multiaddr);
+      providerMap.set(account, {
+        account,
+        multiaddr,
+        url: parseMultiaddrToUrl(multiaddr),
+      });
+    });
+
+    buckets.forEach((bucket, i) => {
+      bucket.providerInfo = (layer0BucketInfo[i]?.primary_providers ?? [])
+        .map((account) => providerMap.get(account))
+        .filter((info): info is BucketProviderInfo => info != null);
+    });
+
     return buckets;
   }
 
@@ -461,8 +367,8 @@ export class S3Client {
     const message = `web3storage:${method}:${Number(bucketId)}:${timestamp}`;
     const msgBytes = new TextEncoder().encode(message);
     const sig = this.keypair.sign(msgBytes);
-    const pubHex = bytesToHex(this.keypair.publicKey);
-    const sigHex = bytesToHex(sig);
+    const pubHex = toHex(this.keypair.publicKey);
+    const sigHex = toHex(sig);
     return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
   }
 

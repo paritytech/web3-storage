@@ -163,6 +163,10 @@ export interface NetworkPickerProps {
   /** Render as a compact button that opens a popover. Default: inline panel. */
   compact?: boolean
   className?: string
+  /** Color scheme. Default: "light". */
+  theme?: "light" | "dark"
+  // show provider status
+  showProviderStatus?: boolean
 }
 
 export function NetworkPicker(props: NetworkPickerProps) {
@@ -176,14 +180,17 @@ function InlinePicker({
   onSelect,
   onSelectCustom,
   className,
+  theme = 'light',
+  showProviderStatus = false,
 }: NetworkPickerProps) {
   return (
-    <div className={`np-root ${className ?? ''}`} data-testid="network-picker">
+    <div className={`np-root ${className ?? ''}`} data-theme={theme} data-testid="network-picker">
       <PickerBody
         selectedNetwork={selectedNetwork}
         networkList={networkList}
         onSelect={onSelect}
         onSelectCustom={onSelectCustom}
+        showProviderStatus={showProviderStatus}
       />
     </div>
   )
@@ -195,6 +202,8 @@ function CompactPicker({
   onSelect,
   onSelectCustom,
   className,
+  theme = 'light',
+  showProviderStatus = false
 }: NetworkPickerProps) {
   const [open, setOpen] = useState(false)
   // Probes run for the button indicator regardless of popover state.
@@ -205,7 +214,7 @@ function CompactPicker({
   const overall = combinedStatus(wsStatus, httpStatus)
 
   return (
-    <div className={`np-compact-root ${className ?? ''}`} data-testid="network-picker-compact">
+    <div className={`np-compact-root ${className ?? ''}`} data-theme={theme} data-testid="network-picker-compact">
       <button
         type="button"
         className="np-compact-button"
@@ -220,12 +229,13 @@ function CompactPicker({
       {open && (
         <>
           <div className="np-backdrop" onClick={() => setOpen(false)} />
-          <div className="np-popover np-root" data-testid="network-picker-popover">
+          <div className="np-popover np-root" data-theme={theme} data-testid="network-picker-popover">
             <PickerBody
               selectedNetwork={selectedNetwork}
               networkList={networkList}
               onSelect={(id) => { void onSelect(id) }}
               onSelectCustom={(input) => { void onSelectCustom(input) }}
+              showProviderStatus={showProviderStatus}
             />
           </div>
         </>
@@ -239,7 +249,8 @@ function PickerBody({
   networkList,
   onSelect,
   onSelectCustom,
-}: Pick<NetworkPickerProps, 'selectedNetwork' | 'networkList' | 'onSelect' | 'onSelectCustom'>) {
+  showProviderStatus,
+}: Pick<NetworkPickerProps, 'selectedNetwork' | 'networkList' | 'onSelect' | 'onSelectCustom' | 'showProviderStatus'>) {
   const isCustom = selectedNetwork.id === 'custom'
   const [customWs, setCustomWs] = useState(isCustom ? selectedNetwork.parachainWs : '')
   const [customHttp, setCustomHttp] = useState(isCustom ? selectedNetwork.providerHttp : '')
@@ -318,7 +329,11 @@ function PickerBody({
 
       <dl className="np-endpoints">
         <EndpointRow label="Parachain RPC" url={displayedWs} status={wsStatus} placeholder={placeholder} testidPrefix="network-picker-endpoint-ws" />
-        <EndpointRow label="Provider HTTP" url={displayedHttp} status={httpStatus} placeholder={placeholder} testidPrefix="network-picker-endpoint-http" />
+        {
+          showProviderStatus ? (
+            <EndpointRow label="Provider HTTP" url={displayedHttp} status={httpStatus} placeholder={placeholder} testidPrefix="network-picker-endpoint-http" />
+          ) : (<></>)
+        }
       </dl>
     </>
   )

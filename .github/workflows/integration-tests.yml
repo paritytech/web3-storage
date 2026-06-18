@@ -316,6 +316,7 @@ jobs:
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --reconcile-interval-secs 1 \
             --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health

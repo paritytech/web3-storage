@@ -170,9 +170,22 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
+    let provider_registration_info = state
+        .provider_info
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone());
+
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
-        provider_registration_info: state.chain_state.provider_info.read().clone(),
+        readiness: ProviderReadiness {
+            signing_configured: state.keypair.is_some(),
+            // The counter is always allocated, but it can only sign once the
+            // reconciler has aligned it with the chain's replay window.
+            nonce_counter_ready: state.nonce_counter.is_bootstrapped(),
+            provider_info_loaded: provider_registration_info.is_some(),
+        },
+        provider_registration_info,
     })
 }
 
@@ -784,21 +797,23 @@ async fn get_historical_roots(
 /// `price_per_byte` to the provider's own listed price (the client may have
 /// proposed more).
 ///
-/// Returns `503`
-///  - The node has no signing key (`--keyfile`)
-///  - No provider info from the chain state
-///  - Chain state is not ready (`current_block` and `request_timeout` must both be non-zero).
+/// TODO: requests are accepted automatically; let providers vet them later.
+///
+/// Returns one of several `503`s when a prerequisite is missing: `signing_unavailable`
+/// (no `--keyfile`), `chain_state_not_ready` (`current_block` and `request_timeout` are
+/// not both known from the chain yet), `provider_info_unavailable` (provider not
+/// registered on chain yet — the background reconciler clears this automatically once
+/// registration lands, no restart needed), or `nonce_counter_unavailable` (counter not
+/// yet aligned with the chain's replay window).
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
 
-    let nonce_counter = state
-        .nonce_counter
-        .as_ref()
-        .ok_or(Error::ChainStateNotReady)?;
-
+    // The replay window bounds the signed terms: `valid_until` is derived from
+    // the live chain height plus `RequestTimeout`. Both must be known from the
+    // chain before we can sign, otherwise we'd emit unbounded or stale terms.
     let current_block = state
         .chain_state
         .current_block
@@ -808,14 +823,23 @@ async fn negotiate_terms(
         return Err(Error::ChainStateNotReady);
     }
 
-    // Validate against the provider's on-chain settings
+    // Validate against the provider's on-chain settings. `None` means the
+    // provider isn't registered yet; the reconciler populates it once
+    // registration lands.
     let info = state
-        .chain_state
         .provider_info
         .read()
-        .clone()
+        .ok()
+        .and_then(|guard| guard.clone())
         .ok_or(Error::ProviderInfoUnavailable)?;
     negotiate::validate_request(&req, &info)?;
+
+    // The reconciler bootstraps the counter before publishing `provider_info`,
+    // so a loaded `info` implies a ready counter. Guard anyway so we never sign
+    // a nonce that wasn't derived from on-chain replay state.
+    if !state.nonce_counter.is_bootstrapped() {
+        return Err(Error::NonceCounterUnavailable);
+    }
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,
@@ -823,7 +847,7 @@ async fn negotiate_terms(
         duration: req.duration,
         price_per_byte: info.price_per_byte,
         valid_until: current_block.saturating_add(request_timeout),
-        nonce: nonce_counter.next(),
+        nonce: state.nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
