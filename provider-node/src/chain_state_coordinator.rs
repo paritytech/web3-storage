@@ -7,14 +7,16 @@
 //!   on-chain settings or multiaddr change.
 //!
 //! [`ChainStateCoordinator`] drives a [`BlockSubscriberStream`] in a single
-//! async loop and is meant to run unconditionally whenever a chain RPC is
-//! reachable.
+//! async loop. It is meant to run unconditionally for the life of the node: if
+//! the chain RPC is unreachable at startup or the connection later drops, it
+//! retries with a fixed backoff rather than giving up.
 
 use parking_lot::RwLock;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::time::Duration;
 use storage_client::discovery::ProviderInfo;
 use storage_client::{
     BlockSubscriberStream, ClientConfig, ClientError, EventParser, ProviderClient, StorageEvent,
@@ -64,11 +66,45 @@ impl ChainStateCoordinator {
         }
     }
 
-    /// Connect to the chain and start the coordinator.
+    /// Spawn the coordinator and return immediately.
     ///
-    /// Returns `Err` on a connection-level failure — callers should log and
-    /// continue rather than aborting the server.
-    pub async fn start(self) -> Result<ChainStateCoordinatorHandle, ClientError> {
+    /// The spawned task connects to the chain, follows finalized blocks, and
+    /// reconnects automatically: a chain that is unreachable at startup or that
+    /// drops the connection later is retried with a fixed backoff instead of
+    /// taking the coordinator down. Runs until the returned handle is dropped or
+    /// [`ChainStateCoordinatorHandle::stop`] is called.
+    pub fn start(self) -> ChainStateCoordinatorHandle {
+        let task = tokio::spawn(self.run());
+        ChainStateCoordinatorHandle { task }
+    }
+
+    /// Reconnect loop: (re)connect and follow finalized blocks forever, sleeping
+    /// [`RECONNECT_DELAY`] between attempts so an unreachable chain doesn't spin.
+    async fn run(self) {
+        /// Backoff between connection attempts / after the stream ends.
+        const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+        loop {
+            match self.connect_and_follow().await {
+                // The finalized-block stream ended without an error (e.g. the
+                // RPC closed the subscription). Reconnect.
+                Ok(()) => tracing::warn!(
+                    "chain-state coordinator: block stream ended; reconnecting in {}s",
+                    RECONNECT_DELAY.as_secs()
+                ),
+                Err(e) => tracing::warn!(
+                    "chain-state coordinator: connection lost ({e}); retrying in {}s",
+                    RECONNECT_DELAY.as_secs()
+                ),
+            }
+            tokio::time::sleep(RECONNECT_DELAY).await;
+        }
+    }
+
+    /// Connect to the chain, then drive the finalized-block stream until it
+    /// ends. Returns `Err` if connecting fails; `Ok(())` if the stream simply
+    /// terminates — either way the caller ([`Self::run`]) reconnects.
+    async fn connect_and_follow(&self) -> Result<(), ClientError> {
         let mut stream = BlockSubscriberStream::connect(&self.chain_ws_url).await?;
 
         // A client for re-fetching full provider info on registration.
@@ -81,34 +117,34 @@ impl ChainStateCoordinator {
         )?;
         client.connect().await?;
 
-        let task = tokio::spawn(async move {
-            while let Some(block) = stream.next().await {
-                let block_hash = H256::from_slice(block.hash().as_ref());
-                let block_number = block.number();
+        tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
-                tracing::debug!("Finalized block: {}", block_number);
+        while let Some(block) = stream.next().await {
+            let block_hash = H256::from_slice(block.hash().as_ref());
+            let block_number = block.number();
 
-                // handle update ChainState in a single call
-                self.chain_state
-                    .current_block
-                    .store(block_number, std::sync::atomic::Ordering::Relaxed);
+            tracing::debug!("Finalized block: {}", block_number);
 
-                let events = match block.events().await {
-                    Ok(events) => events,
-                    Err(e) => {
-                        tracing::warn!(
-                            "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
-                        );
-                        continue;
-                    }
-                };
+            // handle update ChainState in a single call
+            self.chain_state
+                .current_block
+                .store(block_number, std::sync::atomic::Ordering::Relaxed);
 
-                self.process_provider_info_update(&client, &events, block_hash, block_number)
-                    .await;
-            }
-        });
+            let events = match block.events().await {
+                Ok(events) => events,
+                Err(e) => {
+                    tracing::warn!(
+                        "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
+                    );
+                    continue;
+                }
+            };
 
-        Ok(ChainStateCoordinatorHandle { task })
+            self.process_provider_info_update(&client, &events, block_hash, block_number)
+                .await;
+        }
+
+        Ok(())
     }
 
     /// Apply this provider's settings

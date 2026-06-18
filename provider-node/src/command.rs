@@ -129,7 +129,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone()).await;
+    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
     let checkpoint_handle =
         start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
@@ -165,12 +165,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Bootstrap `chain_state.current_block` from the latest block and start the
-/// chain-state coordinator.
+/// Start the chain-state coordinator, which keeps `chain_state.current_block`
+/// and `chain_state.provider_info` in sync with the chain.
 ///
-/// Failure to connect is logged and non-fatal — the coordinator simply won't
-/// run and `current_block` will remain 0.
-async fn start_chain_state_coordinator(
+/// Returns `None` only when the provider id isn't a valid account. The
+/// coordinator itself never fails to start: it connects in the background and
+/// retries with a backoff if the chain is unreachable, so `current_block` is
+/// populated as soon as the chain comes up.
+fn start_chain_state_coordinator(
     cli: &Cli,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
@@ -191,18 +193,8 @@ async fn start_chain_state_coordinator(
         state.chain_state.clone(),
     );
 
-    match coordinator.start().await {
-        Ok(handle) => {
-            tracing::info!("Chain-state coordinator started");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Chain-state coordinator failed to start: {e}; current_block will not update"
-            );
-            None
-        }
-    }
+    tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
+    Some(coordinator.start())
 }
 
 async fn start_checkpoint_coordinator(
