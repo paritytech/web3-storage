@@ -388,9 +388,7 @@ async fn apply_registered(
     }
     sync_request_timeout(chain_rpc, state).await;
 
-    if let Ok(mut guard) = state.provider_info.write() {
-        *guard = Some(info.clone());
-    }
+    *state.chain_state.provider_info.write() = Some(info.clone());
 
     if !*was_registered {
         *was_registered = true;
@@ -455,9 +453,7 @@ async fn sync_request_timeout(chain_rpc: &str, state: &ProviderState) {
 
 /// Clear cached registration info when the provider isn't registered on chain.
 fn apply_unregistered(state: &ProviderState, was_registered: &mut bool) {
-    if let Ok(mut guard) = state.provider_info.write() {
-        *guard = None;
-    }
+    *state.chain_state.provider_info.write() = None;
     if *was_registered {
         *was_registered = false;
         tracing::warn!(

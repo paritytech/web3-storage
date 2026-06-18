@@ -170,11 +170,7 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
-    let provider_registration_info = state
-        .provider_info
-        .read()
-        .ok()
-        .and_then(|guard| guard.clone());
+    let provider_registration_info = state.chain_state.provider_info.read().clone();
 
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
@@ -829,10 +825,10 @@ async fn negotiate_terms(
     // provider isn't registered yet; the reconciler populates it once
     // registration lands.
     let info = state
+        .chain_state
         .provider_info
         .read()
-        .ok()
-        .and_then(|guard| guard.clone())
+        .clone()
         .ok_or(Error::ProviderInfoUnavailable)?;
     negotiate::validate_request(&req, &info)?;
 

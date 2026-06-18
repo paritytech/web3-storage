@@ -40,7 +40,7 @@ impl TestServer {
         // provider is registered. Also simulate a live-synced chain state so the
         // `ChainStateNotReady` guard passes — together these satisfy every
         // `/negotiate` prerequisite.
-        *state.provider_info.write().unwrap() = Some(info);
+        *state.chain_state.provider_info.write() = Some(info);
         state.nonce_counter.bootstrap_from_hsn(0);
         state
             .chain_state
@@ -253,7 +253,7 @@ async fn negotiate_503_when_provider_info_unavailable() {
     // counter with the replay window, then publish provider_info), negotiation
     // succeeds.
     state.nonce_counter.bootstrap_from_hsn(0);
-    *state.provider_info.write().unwrap() = Some(provider_info());
+    *state.chain_state.provider_info.write() = Some(provider_info());
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -271,7 +271,7 @@ async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
     state
         .request_timeout
         .store(200, std::sync::atomic::Ordering::Relaxed);
-    *state.provider_info.write().unwrap() = Some(provider_info());
+    *state.chain_state.provider_info.write() = Some(provider_info());
     // nonce_counter intentionally left un-bootstrapped.
     let server = TestServer::serve(Arc::new(state)).await;
 

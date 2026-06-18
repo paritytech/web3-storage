@@ -57,9 +57,8 @@ pub use types::*;
 
 use std::str::FromStr;
 use std::sync::atomic::AtomicU32;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
 use subxt_signer::sr25519;
 use tokio::sync::mpsc;
 
@@ -68,11 +67,6 @@ use tokio::sync::mpsc;
 /// replay window once the provider is registered. Use
 /// [`NonceCounter::is_bootstrapped`] to tell whether that has happened.
 pub type StateNonceCounter = Arc<NonceCounter>;
-/// The provider's on-chain registration info, or `None` until the provider is
-/// registered. The background reconciler keeps this current, so it can flip to
-/// `Some` after startup (registration) and back to `None` (deregistration)
-/// without restarting the node.
-pub type StateProviderInfo = Arc<RwLock<Option<ProviderInfo>>>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -98,14 +92,11 @@ pub struct ProviderState {
     /// nonces for provider-signed `AgreementTerms`. Bootstrapped from the
     /// chain's replay window by the background reconciler.
     pub nonce_counter: StateNonceCounter,
-    /// On-chain provider registration info, kept current by the background
-    /// reconciler. `None` until the provider is registered on chain. This is the
-    /// source of truth read by `/negotiate` (the reconciler bootstraps the nonce
-    /// counter before publishing it).
-    pub provider_info: StateProviderInfo,
-    /// Live chain state (current block height + provider info) kept in sync
-    /// by the chain-state coordinator. Supplies `current_block` for the
-    /// `/negotiate` replay window.
+    /// Live chain state (current block height + provider registration info) kept
+    /// in sync by the chain-state coordinator and the background reconciler.
+    /// `chain_state.provider_info` is the source of truth read by `/negotiate`
+    /// (the reconciler bootstraps the nonce counter before publishing it), and
+    /// `chain_state.current_block` supplies the `/negotiate` replay window.
     pub chain_state: Arc<ChainState>,
     /// On-chain `StorageProvider::RequestTimeout` constant, kept current by the
     /// background reconciler (see [`crate::command`]). `0` means "not yet known"
@@ -126,7 +117,6 @@ impl ProviderState {
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: Arc::new(NonceCounter::new(1)),
-            provider_info: Arc::new(RwLock::new(None)),
             chain_state: Arc::new(ChainState::default()),
             request_timeout: AtomicU32::new(0),
         }
@@ -151,7 +141,6 @@ impl ProviderState {
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: Arc::new(NonceCounter::new(1)),
-            provider_info: Arc::new(RwLock::new(None)),
             chain_state: Arc::new(ChainState::default()),
             request_timeout: AtomicU32::new(0),
         })
