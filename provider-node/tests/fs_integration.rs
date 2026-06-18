@@ -352,6 +352,37 @@ async fn test_fs_put_invalid_path() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Path traversal (`..`) rejected on every fs endpoint → 400
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_fs_rejects_path_traversal() {
+    let server = TestServer::new().await;
+
+    // Each tuple is (HTTP method, URL) for a path containing `..`.
+    let put = server
+        .client
+        .put(server.url("/fs/1/file?path=/../../etc/passwd"));
+    let get = server.client.get(server.url("/fs/1/file?path=/../secret"));
+    let del = server
+        .client
+        .delete(server.url("/fs/1/file?path=/a/../../b"));
+    let mkdir = server.client.post(server.url("/fs/1/mkdir?path=/x/../y"));
+    let ls = server.client.get(server.url("/fs/1/ls?path=/../"));
+
+    for req in [put, get, del, mkdir, ls] {
+        let resp = req.body("data").send().await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "path containing '..' must be rejected"
+        );
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_path");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Overwrite
 // ─────────────────────────────────────────────────────────────────────────────
 
