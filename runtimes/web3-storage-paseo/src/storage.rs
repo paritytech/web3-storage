@@ -89,6 +89,7 @@ impl pallet_storage_provider::Config for Runtime {
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
+    type MaxChallengesPerBlock = ConstU32<1024>;
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
     type WeightInfo = crate::weights::pallet_storage_provider::WeightInfo<Runtime>;
 }

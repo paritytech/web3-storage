@@ -98,6 +98,7 @@ impl pallet_storage_provider::Config for Test {
     type MaxMembers = MaxMembers;
     type MaxPrimaryProviders = MaxPrimaryProviders;
     type MaxBucketsPerMember = ConstU32<100>;
+    type MaxChallengesPerBlock = ConstU32<1024>;
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = MaxChunkSize;
     type ChallengeTimeout = ChallengeTimeout;

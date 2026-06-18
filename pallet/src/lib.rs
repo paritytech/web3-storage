@@ -149,6 +149,10 @@ pub mod pallet {
         #[pallet::constant]
         type MaxBucketsPerMember: Get<u32>;
 
+        /// Maximum number of challenges that can share a single deadline block.
+        #[pallet::constant]
+        type MaxChallengesPerBlock: Get<u32>;
+
         /// Minimum number of blocks between announcing a deregistration and
         /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
         /// challenge against this provider that was created up to the
@@ -201,10 +205,13 @@ pub mod pallet {
 
     /// Pending challenges indexed by deadline block.
     #[pallet::storage]
-    #[pallet::unbounded]
     #[pallet::getter(fn challenges)]
-    pub type Challenges<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+    pub type Challenges<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        BlockNumberFor<T>,
+        BoundedVec<Challenge<T>, T::MaxChallengesPerBlock>,
+    >;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -839,6 +846,8 @@ pub mod pallet {
         ProviderNotInSnapshot,
         LeafBeyondCanonical,
         InvalidDeletionProof,
+        /// Too many challenges already share this deadline block.
+        TooManyChallenges,
 
         // Checkpoint errors
         InvalidSignature,
@@ -3239,12 +3248,17 @@ pub mod pallet {
                 deposit,
             };
 
-            let index = Challenges::<T>::mutate(deadline, |challenges| {
-                let challenges = challenges.get_or_insert_with(Vec::new);
-                let idx = challenges.len() as u16;
-                challenges.push(challenge);
-                idx
-            });
+            let index = Challenges::<T>::try_mutate(
+                deadline,
+                |challenges| -> Result<u16, DispatchError> {
+                    let challenges = challenges.get_or_insert_with(Default::default);
+                    let idx = challenges.len() as u16;
+                    challenges
+                        .try_push(challenge)
+                        .map_err(|_| Error::<T>::TooManyChallenges)?;
+                    Ok(idx)
+                },
+            )?;
 
             // Update provider stats
             Providers::<T>::mutate(&provider, |maybe_provider| {

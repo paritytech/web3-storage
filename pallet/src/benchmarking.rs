@@ -222,7 +222,8 @@ fn insert_challenge<T: Config>(
         chunk_index: 0,
         deposit: 100u32.into(),
     };
-    Challenges::<T>::insert(deadline, alloc::vec![challenge]);
+    let challenges = BoundedVec::truncate_from(alloc::vec![challenge]);
+    Challenges::<T>::insert(deadline, challenges);
     storage_primitives::ChallengeId { deadline, index: 0 }
 }
 
