@@ -20,7 +20,7 @@ function healthUrl(base: string): string {
  * URLs). Returns the live { ws, http } statuses; re-runs whenever the resolved
  * URLs change.
  */
-function useEndpointProbes(ws: string, http?: string) {
+function useEndpointProbes(ws: string, http: string) {
   const [wsStatus, setWsStatus] = useState<Status>('idle')
   const [httpStatus, setHttpStatus] = useState<Status>('idle')
   const tokenRef = useRef(0)
@@ -165,6 +165,8 @@ export interface NetworkPickerProps {
   className?: string
   /** Color scheme. Default: "light". */
   theme?: "light" | "dark"
+  // show provider status
+  showProviderStatus?: boolean
 }
 
 export function NetworkPicker(props: NetworkPickerProps) {
@@ -179,6 +181,7 @@ function InlinePicker({
   onSelectCustom,
   className,
   theme = 'light',
+  showProviderStatus = false,
 }: NetworkPickerProps) {
   return (
     <div className={`np-root ${className ?? ''}`} data-theme={theme} data-testid="network-picker">
@@ -187,6 +190,7 @@ function InlinePicker({
         networkList={networkList}
         onSelect={onSelect}
         onSelectCustom={onSelectCustom}
+        showProviderStatus={showProviderStatus}
       />
     </div>
   )
@@ -199,11 +203,13 @@ function CompactPicker({
   onSelectCustom,
   className,
   theme = 'light',
+  showProviderStatus = false
 }: NetworkPickerProps) {
   const [open, setOpen] = useState(false)
   // Probes run for the button indicator regardless of popover state.
   const { wsStatus, httpStatus } = useEndpointProbes(
     selectedNetwork.parachainWs,
+    selectedNetwork.providerHttp,
   )
   const overall = combinedStatus(wsStatus, httpStatus)
 
@@ -229,6 +235,7 @@ function CompactPicker({
               networkList={networkList}
               onSelect={(id) => { void onSelect(id) }}
               onSelectCustom={(input) => { void onSelectCustom(input) }}
+              showProviderStatus={showProviderStatus}
             />
           </div>
         </>
@@ -242,16 +249,18 @@ function PickerBody({
   networkList,
   onSelect,
   onSelectCustom,
-}: Pick<NetworkPickerProps, 'selectedNetwork' | 'networkList' | 'onSelect' | 'onSelectCustom'>) {
+  showProviderStatus,
+}: Pick<NetworkPickerProps, 'selectedNetwork' | 'networkList' | 'onSelect' | 'onSelectCustom' | 'showProviderStatus'>) {
   const isCustom = selectedNetwork.id === 'custom'
   const [customWs, setCustomWs] = useState(isCustom ? selectedNetwork.parachainWs : '')
   const [customHttp, setCustomHttp] = useState(isCustom ? selectedNetwork.providerHttp : '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const displayedWs = isCustom ? customWs.trim() : selectedNetwork.parachainWs
+  const displayedHttp = isCustom ? customHttp.trim() : selectedNetwork.providerHttp
   const placeholder = isCustom ? '(not set)' : 'Not deployed yet'
 
-  const { wsStatus } = useEndpointProbes(displayedWs)
+  const { wsStatus, httpStatus } = useEndpointProbes(displayedWs, displayedHttp)
 
   const hasCustomOption = useMemo(() => !networkList.some((n) => n.id === 'custom'), [networkList])
 
@@ -320,6 +329,11 @@ function PickerBody({
 
       <dl className="np-endpoints">
         <EndpointRow label="Parachain RPC" url={displayedWs} status={wsStatus} placeholder={placeholder} testidPrefix="network-picker-endpoint-ws" />
+        {
+          showProviderStatus ? (
+            <EndpointRow label="Provider HTTP" url={displayedHttp} status={httpStatus} placeholder={placeholder} testidPrefix="network-picker-endpoint-http" />
+          ) : (<></>)
+        }
       </dl>
     </>
   )
