@@ -13,10 +13,10 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "file:.papi/descriptors",
-    "@polkadot-api/substrate-bindings": "^0.16.5",
+    "@polkadot-api/substrate-bindings": "^0.20.3",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "polkadot-api": "^2.1.0",
+    "polkadot-api": "^2.1.6",
     "viem": "^2.21.0",
     "ws": "^8.18.0"
   },
