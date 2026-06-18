@@ -17,7 +17,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::{create_router, NegotiateRequest, ProviderState, SignedTerms, Storage};
+use storage_provider_node::{
+    create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderState, SignedTerms,
+    Storage,
+};
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -35,20 +38,20 @@ impl TestServer {
     async fn ready(info: ProviderInfo) -> Self {
         let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
             .expect("//Alice is a valid SURI");
-        // Publish on-chain registration info and align the nonce counter with
-        // the replay window (hsn 0), mirroring what the reconciler does once the
-        // provider is registered. Also simulate a live-synced chain state so the
-        // `ChainStateNotReady` guard passes — together these satisfy every
-        // `/negotiate` prerequisite.
-        *state.chain_state.provider_info.write() = Some(info);
-        state.nonce_counter.bootstrap_from_hsn(0);
+        // Simulate what the coordinator does once registration lands: publish
+        // constants, bootstrap the nonce counter, then publish provider_info.
+        // Together these satisfy every `/negotiate` prerequisite.
         state
             .chain_state
             .current_block
             .store(100, std::sync::atomic::Ordering::Relaxed);
-        state
-            .request_timeout
-            .store(200, std::sync::atomic::Ordering::Relaxed);
+        *state.chain_state.constants.write() = Some(PalletConstants {
+            request_timeout: 200,
+        });
+        let counter = std::sync::Arc::new(NonceCounter::new(1));
+        counter.bootstrap_from_hsn(0);
+        *state.chain_state.nonce_counter.write() = Some(counter);
+        *state.chain_state.provider_info.write() = Some(info);
         Self::serve(Arc::new(state)).await
     }
 
@@ -237,10 +240,10 @@ async fn negotiate_503_when_provider_info_unavailable() {
         .chain_state
         .current_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    state
-        .request_timeout
-        .store(200, std::sync::atomic::Ordering::Relaxed);
-    // provider_info intentionally left None.
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    // provider_info and nonce_counter intentionally left None.
     let state = Arc::new(state);
     let server = TestServer::serve(state.clone()).await;
 
@@ -249,10 +252,11 @@ async fn negotiate_503_when_provider_info_unavailable() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "provider_info_unavailable");
 
-    // Once on-chain info lands (mirroring the reconciler: align the nonce
-    // counter with the replay window, then publish provider_info), negotiation
-    // succeeds.
-    state.nonce_counter.bootstrap_from_hsn(0);
+    // Once on-chain info lands (mirroring the coordinator: bootstrap nonce
+    // counter, then publish provider_info), negotiation succeeds.
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
     *state.chain_state.provider_info.write() = Some(provider_info());
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -268,11 +272,11 @@ async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
         .chain_state
         .current_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
-    state
-        .request_timeout
-        .store(200, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
     *state.chain_state.provider_info.write() = Some(provider_info());
-    // nonce_counter intentionally left un-bootstrapped.
+    // nonce_counter intentionally left None (un-bootstrapped).
     let server = TestServer::serve(Arc::new(state)).await;
 
     let resp = server.negotiate(&primary_request()).await;

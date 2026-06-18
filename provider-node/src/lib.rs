@@ -31,7 +31,9 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
-pub use chain_state_coordinator::{ChainState, ChainStateCoordinator, ChainStateCoordinatorHandle};
+pub use chain_state_coordinator::{
+    ChainState, ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants,
+};
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
@@ -56,17 +58,10 @@ pub use storage::{
 pub use types::*;
 
 use std::str::FromStr;
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
 use subxt_signer::sr25519;
 use tokio::sync::mpsc;
-
-/// Monotonic nonce counter for provider-signed terms. Always present; the
-/// background reconciler (see [`crate::command`]) aligns it with the chain's
-/// replay window once the provider is registered. Use
-/// [`NonceCounter::is_bootstrapped`] to tell whether that has happened.
-pub type StateNonceCounter = Arc<NonceCounter>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -88,20 +83,10 @@ pub struct ProviderState {
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
-    /// Monotonic nonce counter used by `/negotiate` to allocate fresh
-    /// nonces for provider-signed `AgreementTerms`. Bootstrapped from the
-    /// chain's replay window by the background reconciler.
-    pub nonce_counter: StateNonceCounter,
-    /// Live chain state (current block height + provider registration info) kept
-    /// in sync by the chain-state coordinator and the background reconciler.
-    /// `chain_state.provider_info` is the source of truth read by `/negotiate`
-    /// (the reconciler bootstraps the nonce counter before publishing it), and
-    /// `chain_state.current_block` supplies the `/negotiate` replay window.
+    /// Live chain state kept in sync by the chain-state coordinator — the single
+    /// writer for `current_block`, `constants`, `provider_info`, and
+    /// `nonce_counter`. `/negotiate` gates on all four before signing.
     pub chain_state: Arc<ChainState>,
-    /// On-chain `StorageProvider::RequestTimeout` constant, kept current by the
-    /// background reconciler (see [`crate::command`]). `0` means "not yet known"
-    /// — `/negotiate` returns 503 until the reconciler populates it.
-    pub request_timeout: AtomicU32,
 }
 
 impl ProviderState {
@@ -116,9 +101,7 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
-            nonce_counter: Arc::new(NonceCounter::new(1)),
             chain_state: Arc::new(ChainState::default()),
-            request_timeout: AtomicU32::new(0),
         }
     }
 
@@ -140,9 +123,7 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
-            nonce_counter: Arc::new(NonceCounter::new(1)),
             chain_state: Arc::new(ChainState::default()),
-            request_timeout: AtomicU32::new(0),
         })
     }
 
@@ -268,46 +249,6 @@ mod tests {
         // Sanity: //Alice's own signature still verifies under her own key.
         let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
         assert!(sr25519::verify(&alice_sig, msg, &alice_pub));
-    }
-
-    #[test]
-    fn chain_state_defaults_to_unknown() {
-        use std::sync::atomic::Ordering;
-        let cs = ChainState::default();
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 0);
-        assert!(cs.provider_info.read().is_none());
-    }
-
-    #[test]
-    fn chain_state_current_block_round_trips() {
-        use std::sync::atomic::Ordering;
-        let cs = ChainState::default();
-        cs.current_block.store(42, Ordering::Relaxed);
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 42);
-    }
-
-    #[test]
-    fn chain_state_provider_info_round_trips() {
-        use storage_client::discovery::ProviderInfo;
-        let cs = ChainState::default();
-        let info = ProviderInfo {
-            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
-            stake: 0,
-            price_per_byte: 1_000,
-            min_duration: 100,
-            max_duration: 10_000,
-            max_capacity: 0,
-            committed_bytes: 0,
-            accepting_primary: true,
-            accepting_extensions: true,
-            replica_sync_price: None,
-            agreements_total: 0,
-            challenges_failed: 0,
-        };
-        *cs.provider_info.write() = Some(info.clone());
-        let read_back = cs.provider_info.read().clone().unwrap();
-        assert_eq!(read_back.price_per_byte, info.price_per_byte);
-        assert_eq!(read_back.multiaddr, info.multiaddr);
     }
 
     #[test]

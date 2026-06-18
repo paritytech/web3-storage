@@ -470,20 +470,17 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   };
   await updateProviderSettings(api, provider, providerSettings);
 
-  // wait for provider-node fully sync data
-  let providerInfo = await getProviderNodeInfo(providerUrl);
-  const expectedProviderInfo = stringify(providerSettings);
-  while (!providerInfo.provider_registration_info || stringify(providerInfo.provider_registration_info) !== expectedProviderInfo) {
-    await new Promise((r) => setTimeout(r, 3000));
-    providerInfo = await getProviderNodeInfo(providerUrl);
+  // Wait until the provider node has synced from chain
+  const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const info = await getProviderNodeInfo(providerUrl);
+    const r = info.readiness;
+    if (r.signing_configured && r.nonce_counter_ready && r.provider_info_loaded) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
-}
-
-function stringify(object) {
-  if (!object) return "";
-  return JSON.stringify(object, (_k, v) =>
-    typeof v === "bigint" ? v.toString() : v,
-  )
+  throw new Error(
+    `Provider node at ${providerUrl} did not become ready within ${MAX_ATTEMPTS * 3}s`
+  );
 }
 
 function bytesEq(a, b) {

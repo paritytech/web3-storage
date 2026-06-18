@@ -1,16 +1,21 @@
 //! Chain-state coordinator: keeps the provider node's view of the runtime in
 //! sync via a finalized-block subscription.
 //!
-//! [`ChainState`] is the live-synced slice of [`crate::ProviderState`]:
-//! - [`ChainState::current_block`] is written on every finalized block.
-//! - [`ChainState::provider_info`] is re-fetched whenever the provider's
-//!   on-chain settings or multiaddr change.
+//! [`ChainState`] is the single source of truth for all on-chain state the
+//! provider node needs at runtime:
+//! - [`ChainState::current_block`] — latest finalized block height.
+//! - [`ChainState::constants`] — pallet constants fetched once on connect.
+//! - [`ChainState::provider_info`] — full provider registration info.
+//! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
+//!   chain's replay window. `None` until the provider is registered.
 //!
-//! [`ChainStateCoordinator`] drives a [`BlockSubscriberStream`] in a single
-//! async loop. It is meant to run unconditionally for the life of the node: if
-//! the chain RPC is unreachable at startup or the connection later drops, it
-//! retries with a fixed backoff rather than giving up.
+//! [`ChainStateCoordinator`] is the **only writer** for all four fields.  It
+//! drives a [`BlockSubscriberStream`] in a reconnect loop; on every relevant
+//! provider event it re-fetches the full `ProviderInfo` so `committed_bytes`,
+//! `stake`, and all settings stay current — no field-patching, no partial
+//! updates, no second writer.
 
+use crate::negotiate::NonceCounter;
 use parking_lot::RwLock;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -33,12 +38,25 @@ use tokio::task::JoinHandle;
 /// its own handle without a back-reference to the whole node state.
 #[derive(Default)]
 pub struct ChainState {
-    /// Latest finalized block height. `0` means not yet known — the coordinator
-    /// writes the real value once it first connects.
+    /// Latest finalized block height. `0` means not yet known.
     pub current_block: AtomicU32,
-    /// Provider's on-chain registration info. `None` until first fetch; updated
-    /// whenever a settings or multiaddr-change event lands.
+    /// Pallet constants fetched once per connection. `None` until the first
+    /// successful fetch; `/negotiate` returns 503 until this is `Some`.
+    pub constants: RwLock<Option<PalletConstants>>,
+    /// Provider's on-chain registration info. `None` until registered on chain;
+    /// re-fetched (full) on every relevant provider event so `committed_bytes`,
+    /// `stake`, and all settings stay current.
     pub provider_info: RwLock<Option<ProviderInfo>>,
+    /// Nonce counter bootstrapped from the chain's replay window. `None` until
+    /// the provider is registered and the replay state is available.
+    /// `/negotiate` returns 503 while `None`.
+    pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
+}
+
+/// Pallet constants that only change across runtime upgrades.
+pub struct PalletConstants {
+    /// Chain-enforced validity window (in blocks) for provider-signed terms.
+    pub request_timeout: u32,
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -81,13 +99,10 @@ impl ChainStateCoordinator {
     /// Reconnect loop: (re)connect and follow finalized blocks forever, sleeping
     /// [`RECONNECT_DELAY`] between attempts so an unreachable chain doesn't spin.
     async fn run(self) {
-        /// Backoff between connection attempts / after the stream ends.
         const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
         loop {
             match self.connect_and_follow().await {
-                // The finalized-block stream ended without an error (e.g. the
-                // RPC closed the subscription). Reconnect.
                 Ok(()) => tracing::warn!(
                     "chain-state coordinator: block stream ended; reconnecting in {}s",
                     RECONNECT_DELAY.as_secs()
@@ -101,13 +116,12 @@ impl ChainStateCoordinator {
         }
     }
 
-    /// Connect to the chain, then drive the finalized-block stream until it
-    /// ends. Returns `Err` if connecting fails; `Ok(())` if the stream simply
-    /// terminates — either way the caller ([`Self::run`]) reconnects.
+    /// Connect to the chain, bootstrap initial state, then drive the finalized-block
+    /// stream until it ends. Returns `Err` if connecting fails; `Ok(())` if the
+    /// stream terminates cleanly — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), ClientError> {
         let mut stream = BlockSubscriberStream::connect(&self.chain_ws_url).await?;
 
-        // A client for re-fetching full provider info on registration.
         let mut client = ProviderClient::new(
             ClientConfig {
                 chain_ws_url: self.chain_ws_url.clone(),
@@ -119,13 +133,19 @@ impl ChainStateCoordinator {
 
         tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
+        // Fetch pallet constants once per connection (they only change on runtime upgrade).
+        self.sync_constants().await;
+
+        // Bootstrap from any existing on-chain state so a restarted node that was
+        // already registered picks up its provider_info and nonce counter immediately
+        // rather than waiting for the next relevant event.
+        self.refresh_provider_state(&client).await;
+
         while let Some(block) = stream.next().await {
             let block_hash = H256::from_slice(block.hash().as_ref());
             let block_number = block.number();
 
             tracing::debug!("Finalized block: {}", block_number);
-
-            // handle update ChainState in a single call
             self.chain_state
                 .current_block
                 .store(block_number, std::sync::atomic::Ordering::Relaxed);
@@ -140,15 +160,84 @@ impl ChainStateCoordinator {
                 }
             };
 
-            self.process_provider_info_update(&client, &events, block_hash, block_number)
+            self.process_provider_events(&client, &events, block_hash, block_number)
                 .await;
         }
 
         Ok(())
     }
 
-    /// Apply this provider's settings
-    async fn process_provider_info_update(
+    /// Fetch the `StorageProvider::RequestTimeout` runtime constant and store it
+    /// in `chain_state.constants`. Called once on each (re)connect. Logs at warn
+    /// if absent so operators notice a metadata problem rather than silent 503s.
+    async fn sync_constants(&self) {
+        match storage_client::ProviderClient::fetch_request_timeout(&self.chain_ws_url).await {
+            Ok(Some(timeout)) => {
+                *self.chain_state.constants.write() = Some(PalletConstants {
+                    request_timeout: timeout,
+                });
+                tracing::debug!("chain-state coordinator: RequestTimeout = {timeout}");
+            }
+            Ok(None) => tracing::warn!(
+                "chain-state coordinator: RequestTimeout constant absent from runtime metadata;"
+            ),
+            Err(e) => {
+                tracing::warn!("chain-state coordinator: failed to fetch RequestTimeout: {e}")
+            }
+        }
+    }
+
+    /// Re-fetch the full `ProviderInfo` and replay state from chain and update
+    /// `chain_state` atomically.
+    ///
+    /// The nonce counter is bootstrapped *before* `provider_info` is published so
+    /// `/negotiate` never sees a populated info without a ready counter.
+    ///
+    /// Called both on the initial connect (restart recovery) and on every
+    /// relevant provider event. Using a full re-fetch (rather than field-patching)
+    /// keeps `committed_bytes`, `stake`, and all settings consistent in one shot.
+    async fn refresh_provider_state(&self, client: &ProviderClient) {
+        match client.get_provider_info(&self.provider_account).await {
+            Ok(Some(info)) => {
+                match storage_client::ProviderClient::fetch_replay_hsn(
+                    &self.chain_ws_url,
+                    &self.provider_account,
+                )
+                .await
+                {
+                    Ok(Some(hsn)) => {
+                        let counter = Arc::new(NonceCounter::new(1));
+                        counter.bootstrap_from_hsn(hsn);
+                        *self.chain_state.nonce_counter.write() = Some(counter);
+                        *self.chain_state.provider_info.write() = Some(info);
+                        tracing::info!("chain-state coordinator: provider state synced");
+                    }
+                    // Registered but no replay state yet — registration inserts both
+                    // atomically, so this is a transient view. The next event or block
+                    // that triggers a refresh will resolve it.
+                    Ok(None) => tracing::debug!(
+                        "chain-state coordinator: replay state not found, deferring"
+                    ),
+                    Err(e) => {
+                        tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}")
+                    }
+                }
+            }
+            // Provider is not (or no longer) registered on chain.
+            Ok(None) => {
+                *self.chain_state.provider_info.write() = None;
+                *self.chain_state.nonce_counter.write() = None;
+                tracing::debug!("chain-state coordinator: provider not registered on chain");
+            }
+            Err(e) => tracing::warn!("chain-state coordinator: failed to fetch provider info: {e}"),
+        }
+    }
+
+    /// Check whether this block contains any relevant provider events and, if so,
+    /// trigger a full state refresh.  Collapsing multiple events in one block to
+    /// a single refresh is correct: `refresh_provider_state` always reads the
+    /// latest chain state, so no intermediate event is "missed".
+    async fn process_provider_events(
         &self,
         client: &ProviderClient,
         events: &subxt::events::Events<subxt::PolkadotConfig>,
@@ -161,55 +250,22 @@ impl ChainStateCoordinator {
             block_hash,
             block_number,
         );
-        if parsed.is_empty() {
-            return;
-        }
-        let mut new_provider_info = self.chain_state.provider_info.read().clone();
-        for event in parsed {
-            match event {
-                StorageEvent::ProviderSettingsUpdated {
-                    provider,
-                    provider_settings,
-                    ..
-                } if provider == self.provider_account => {
-                    tracing::debug!("Received StorageEvent::ProviderSettingsUpdated");
-                    if let Some(info) = new_provider_info.as_mut() {
-                        info.price_per_byte = provider_settings.price_per_byte;
-                        info.min_duration = provider_settings.min_duration;
-                        info.max_duration = provider_settings.max_duration;
-                        info.accepting_primary = provider_settings.accepting_primary;
-                        info.replica_sync_price = provider_settings.replica_sync_price;
-                        info.accepting_extensions = provider_settings.accepting_extensions;
-                        info.max_capacity = provider_settings.max_capacity;
-                    }
-                }
-                StorageEvent::ProviderMultiaddrUpdated {
-                    provider,
-                    multiaddr,
-                    ..
-                } if provider == self.provider_account => {
-                    tracing::debug!("Received StorageEvent::ProviderMultiaddrUpdated");
-                    if let Some(info) = new_provider_info.as_mut() {
-                        info.multiaddr = multiaddr;
-                    }
-                }
-                StorageEvent::ProviderRegistered { provider, .. }
-                    if provider == self.provider_account =>
-                {
-                    tracing::debug!("Received StorageEvent::ProviderRegistered");
-                    match client.get_provider_info(&self.provider_account).await {
-                        Ok(info) => new_provider_info = info,
-                        Err(e) => tracing::warn!(
-                            "chain-state coordinator: failed to fetch provider_info after registration: {e}"
-                        ),
-                    }
-                }
-                _ => {}
-            }
-        }
 
-        tracing::debug!("Update provider_info to: {:#?}", new_provider_info);
-        *self.chain_state.provider_info.write() = new_provider_info;
+        let relevant = parsed.iter().any(|e| match e {
+            StorageEvent::ProviderRegistered { provider, .. }
+            | StorageEvent::ProviderSettingsUpdated { provider, .. }
+            | StorageEvent::ProviderMultiaddrUpdated { provider, .. } => {
+                provider == &self.provider_account
+            }
+            _ => false,
+        });
+
+        if relevant {
+            tracing::debug!(
+                "chain-state coordinator: provider event in block {block_number}, refreshing state"
+            );
+            self.refresh_provider_state(client).await;
+        }
     }
 }
 
@@ -224,18 +280,13 @@ impl ChainStateCoordinatorHandle {
     /// Stop the coordinator. Aborting the loop drops the stream, which aborts the
     /// underlying block subscription.
     pub async fn stop(self) {
-        tracing::info!("ChainCoordinator stopped");
+        tracing::info!("chain-state coordinator: stopped");
         self.task.abort();
         let _ = self.task.await;
     }
 }
 
 /// Filter a block's events down to a single pallet and parse them with `P`.
-///
-/// ```ignore
-/// let pallet_storage_provider_events = parse_pallet_events::<StorageEvent, StorageProviderEventParser>(&events, storage_client::substrate::PALLET_NAME, hash, num);
-/// let pallet_s3_registry_events = parse_pallet_events::<S3Event, S3EventParser>(&events, s3_client::substrate::PALLET_NAME, hash, num);
-/// ```
 fn parse_pallet_events<E, P: EventParser<E>>(
     events: &subxt::events::Events<subxt::PolkadotConfig>,
     pallet_name: &str,
@@ -278,7 +329,9 @@ mod tests {
     fn chain_state_defaults_to_unknown() {
         let cs = ChainState::default();
         assert_eq!(cs.current_block.load(Ordering::Relaxed), 0);
+        assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
+        assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
@@ -297,5 +350,25 @@ mod tests {
         assert_eq!(info.price_per_byte, 5);
         assert_eq!(info.committed_bytes, 500);
         assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
+    }
+
+    #[test]
+    fn chain_state_nonce_counter_round_trips() {
+        let cs = ChainState::default();
+        assert!(cs.nonce_counter.read().is_none());
+        let counter = Arc::new(NonceCounter::new(1));
+        counter.bootstrap_from_hsn(5);
+        *cs.nonce_counter.write() = Some(counter);
+        assert!(cs.nonce_counter.read().is_some());
+    }
+
+    #[test]
+    fn chain_state_constants_round_trips() {
+        let cs = ChainState::default();
+        assert!(cs.constants.read().is_none());
+        *cs.constants.write() = Some(PalletConstants {
+            request_timeout: 100,
+        });
+        assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
     }
 }

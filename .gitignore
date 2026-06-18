@@ -1,6 +1,7 @@
 # Generated files
 /target/
 **/*.rs.bk
+coverage
 
 # IDE
 .idea/
