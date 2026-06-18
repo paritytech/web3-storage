@@ -51,7 +51,7 @@ async function matchEntry(api, who, { bytesNeeded, minDuration, maxPricePerByte 
     },
     50
   );
-  return matches.find((m) => toHex(m.account.asBytes()) === toHex(who.publicKey));
+  return matches.find((m) => toHex(m.account) === toHex(who.publicKey));
 }
 
 async function main() {
@@ -126,7 +126,7 @@ async function main() {
       const newAddr = "/ip4/127.0.0.1/tcp/9999";
       await updateProviderMultiaddr(api, charlie, newAddr);
       const stored = await api.query.StorageProvider.Providers.getValue(charlie.address, READ_OPTS);
-      const decoded = new TextDecoder().decode(stored.multiaddr.asBytes());
+      const decoded = new TextDecoder().decode(stored.multiaddr);
       assert.strictEqual(decoded, newAddr, "Multiaddr should be updated");
       // Restore original
       const port = new URL(PROVIDER_URL).port;
@@ -156,12 +156,8 @@ async function main() {
     name: "1.6 Duplicate registration",
     fn: async () => {
       const tx = api.tx.StorageProvider.register_provider({
-        multiaddr: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("/ip4/127.0.0.1/tcp/3333")
-        ),
-        public_key: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          charlie.publicKey
-        ),
+        multiaddr: new TextEncoder().encode("/ip4/127.0.0.1/tcp/3333"),
+        public_key: charlie.publicKey,
         stake: 1000n * UNIT,
       });
       await submitTxExpectFailure(tx, charlie.signer, "ProviderAlreadyRegistered", "1.6");
@@ -173,12 +169,8 @@ async function main() {
     fn: async () => {
       // Dave is not registered — try with very low stake.
       const tx = api.tx.StorageProvider.register_provider({
-        multiaddr: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          new TextEncoder().encode("/ip4/127.0.0.1/tcp/4444")
-        ),
-        public_key: (await import("@polkadot-api/substrate-bindings")).Binary.fromBytes(
-          dave.publicKey
-        ),
+        multiaddr: new TextEncoder().encode("/ip4/127.0.0.1/tcp/4444"),
+        public_key: dave.publicKey,
         stake: 1n, // Way too low
       });
       await submitTxExpectFailure(tx, dave.signer, "InsufficientStake", "1.7");

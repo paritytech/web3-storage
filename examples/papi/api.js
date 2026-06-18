@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Binary, Enum } from "@polkadot-api/substrate-bindings";
+import { Enum } from "@polkadot-api/substrate-bindings";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   hexToBytes,
@@ -21,8 +21,8 @@ export async function registerProvider(api, provider, providerUrl, stake = 1_000
   const multiaddr = new TextEncoder().encode(`/ip4/127.0.0.1/tcp/${port}`);
   return submitTx(
     api.tx.StorageProvider.register_provider({
-      multiaddr: Binary.fromBytes(multiaddr),
-      public_key: Binary.fromBytes(provider.publicKey),
+      multiaddr: multiaddr,
+      public_key: provider.publicKey,
       stake,
     }),
     provider.signer,
@@ -85,7 +85,7 @@ export function buildSignedTermsArgs(provider, signed) {
   if (!variantName) {
     throw new Error(`unknown MultiSignature variant byte: ${variantIdx}`);
   }
-  const sig = Enum(variantName, Binary.fromBytes(sigBytes.slice(1)));
+  const sig = Enum(variantName, sigBytes.slice(1));
 
   const t = signed.terms;
   const terms = {
@@ -267,7 +267,7 @@ export async function updateProviderMultiaddr(api, provider, multiaddr) {
     : multiaddr;
   return submitTx(
     api.tx.StorageProvider.update_provider_multiaddr({
-      multiaddr: Binary.fromBytes(bytes),
+      multiaddr: bytes,
     }),
     provider.signer,
     "update_provider_multiaddr"
@@ -442,7 +442,7 @@ export async function reportMissedCheckpoint(api, reporter, bucketId, window) {
 export async function createDrive(api, owner, name, provider, signed) {
   const result = await submitTx(
     api.tx.DriveRegistry.create_drive({
-      name: Binary.fromBytes(new TextEncoder().encode(name)),
+      name: new TextEncoder().encode(name),
       ...buildSignedTermsArgs(provider, signed),
     }),
     owner.signer,
@@ -518,7 +518,7 @@ export async function deleteDrive(api, owner, driveId) {
 export async function createS3Bucket(api, client, name, provider, signed) {
   const result = await submitTx(
     api.tx.S3Registry.create_s3_bucket({
-      name: Binary.fromBytes(new TextEncoder().encode(name)),
+      name: new TextEncoder().encode(name),
       ...buildSignedTermsArgs(provider, signed),
     }),
     client.signer,
@@ -539,13 +539,13 @@ export async function putObjectMetadata(api, client, s3BucketId, key, obj, conte
   return submitTx(
     api.tx.S3Registry.put_object_metadata({
       s3_bucket_id: s3BucketId,
-      key: Binary.fromBytes(new TextEncoder().encode(key)),
-      cid: Binary.fromBytes(obj.cid),
+      key: new TextEncoder().encode(key),
+      cid: obj.cid,
       size: obj.size,
-      content_type: Binary.fromBytes(new TextEncoder().encode(contentType)),
+      content_type: new TextEncoder().encode(contentType),
       user_metadata: userMetadata.map(([k, v]) => [
-        Binary.fromBytes(new TextEncoder().encode(k)),
-        Binary.fromBytes(new TextEncoder().encode(v)),
+        new TextEncoder().encode(k),
+        new TextEncoder().encode(v),
       ]),
     }),
     client.signer,
@@ -557,9 +557,9 @@ export async function copyObjectMetadata(api, client, srcBucketId, srcKey, dstBu
   return submitTx(
     api.tx.S3Registry.copy_object_metadata({
       src_bucket_id: srcBucketId,
-      src_key: Binary.fromBytes(new TextEncoder().encode(srcKey)),
+      src_key: new TextEncoder().encode(srcKey),
       dst_bucket_id: dstBucketId,
-      dst_key: Binary.fromBytes(new TextEncoder().encode(dstKey)),
+      dst_key: new TextEncoder().encode(dstKey),
     }),
     client.signer,
     `copy_object_metadata(${srcKey} -> ${dstKey})`
@@ -570,7 +570,7 @@ export async function deleteObjectMetadata(api, client, s3BucketId, key) {
   return submitTx(
     api.tx.S3Registry.delete_object_metadata({
       s3_bucket_id: s3BucketId,
-      key: Binary.fromBytes(new TextEncoder().encode(key)),
+      key: new TextEncoder().encode(key),
     }),
     client.signer,
     `delete_object_metadata(${key})`

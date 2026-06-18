@@ -12,7 +12,6 @@
  * different field name, adjust here.
  */
 
-import { Binary } from "@polkadot-api/substrate-bindings";
 import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 
@@ -148,10 +147,10 @@ export async function deployContract(
     value,
     weight_limit: gasLimit,
     storage_deposit_limit: storageDepositLimit,
-    code: Binary.fromBytes(bytecode),
-    data: Binary.fromBytes(constructorData),
+    code: bytecode,
+    data: constructorData,
     // Option<[u8; 32]>: PAPI surfaces None as `undefined`.
-    salt: salt ? Binary.fromBytes(salt) : undefined,
+    salt: salt ? salt : undefined,
   });
 
   const result = await submitTx(tx, deployer.signer, "Revive.instantiate_with_code");
@@ -188,11 +187,11 @@ export async function callContract(
   } = {}
 ) {
   const tx = api.tx.Revive.call({
-    dest: Binary.fromBytes(contractAddressBytes),
+    dest: contractAddressBytes,
     value,
     weight_limit: gasLimit,
     storage_deposit_limit: storageDepositLimit,
-    data: Binary.fromBytes(data),
+    data: data,
   });
   const submit = finalized ? submitTxFinalized : submitTx;
   return submit(tx, signer.signer, "Revive.call");
