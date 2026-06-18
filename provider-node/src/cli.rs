@@ -95,6 +95,17 @@ pub struct RpcParams {
     /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
     #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
     pub public_multiaddr: Option<String>,
+
+    /// Comma-separated list of browser origins allowed via CORS
+    /// (e.g. "https://app.example.com,http://localhost:5174").
+    /// When unset, all origins are allowed (permissive) — set this in production.
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        env = "CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 /// Parameters for provider identity and signing keys.

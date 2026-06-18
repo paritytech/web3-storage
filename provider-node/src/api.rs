@@ -48,6 +48,19 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
             .expect("static `/negotiate` rate-limit config is valid"),
     );
 
+    // Restrict CORS to the configured origins, or stay permissive when unset.
+    let cors = match &state.cors_allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let allowed: Vec<axum::http::HeaderValue> =
+                origins.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(allowed)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+        }
+        _ => CorsLayer::permissive(),
+    };
+
     Router::new()
         // Health and info
         .route("/health", get(health))
@@ -108,7 +121,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
 }
 

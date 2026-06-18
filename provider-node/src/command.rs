@@ -50,6 +50,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let state = match &seed {
         Some(seed) => {
             let mut state = ProviderState::with_seed(storage, seed)?;
+            state.cors_allowed_origins = cli.rpc.cors_allowed_origins.clone();
             tracing::info!("Signing enabled for account: {}", state.provider_id);
 
             // Wire up auth if enabled
@@ -81,6 +82,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let mut state = ProviderState::new(storage, provider_id);
+            state.cors_allowed_origins = cli.rpc.cors_allowed_origins.clone();
 
             if cli.auth.enable_auth {
                 let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());

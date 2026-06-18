@@ -98,6 +98,9 @@ pub struct ProviderState {
     /// On-chain provider registration info, kept current by the background
     /// reconciler. `None` until the provider is registered on chain.
     pub provider_info: StateProviderInfo,
+    /// Browser origins allowed via CORS. `None` (the default) keeps the
+    /// permissive policy; `Some(list)` restricts to exactly those origins.
+    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 impl ProviderState {
@@ -114,6 +117,7 @@ impl ProviderState {
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: Arc::new(NonceCounter::new(1)),
             provider_info: Arc::new(RwLock::new(None)),
+            cors_allowed_origins: None,
         }
     }
 
@@ -137,6 +141,7 @@ impl ProviderState {
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: Arc::new(NonceCounter::new(1)),
             provider_info: Arc::new(RwLock::new(None)),
+            cors_allowed_origins: None,
         })
     }
 
