@@ -254,7 +254,10 @@ impl ChainStateCoordinator {
         let relevant = parsed.iter().any(|e| match e {
             StorageEvent::ProviderRegistered { provider, .. }
             | StorageEvent::ProviderSettingsUpdated { provider, .. }
-            | StorageEvent::ProviderMultiaddrUpdated { provider, .. } => {
+            | StorageEvent::ProviderMultiaddrUpdated { provider, .. }
+            | StorageEvent::DeregisterAnnounced { provider, .. }
+            | StorageEvent::ProviderDeregistered { provider, .. }
+            | StorageEvent::DeregisterCancelled { provider, .. } => {
                 provider == &self.provider_account
             }
             _ => false,
@@ -322,6 +325,7 @@ mod tests {
             accepting_extensions: true,
             agreements_total: 3,
             challenges_failed: 1,
+            deregister_at: None,
         }
     }
 

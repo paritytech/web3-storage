@@ -209,6 +209,14 @@ impl ProviderClient {
                 .ok_or_else(|| ClientError::Chain("Missing 'accepting_extensions'".to_string()))?,
             agreements_total,
             challenges_failed,
+            deregister_at: named_field(&value, "deregister_at").and_then(|v| match &v.value {
+                ValueDef::Variant(Variant { name, values }) if name == "Some" => values
+                    .values()
+                    .next()
+                    .and_then(|v| v.as_u128())
+                    .map(|n| n as u32),
+                _ => None,
+            }),
         }))
     }
 

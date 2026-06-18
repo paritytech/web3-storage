@@ -169,6 +169,7 @@ mod tests {
             accepting_extensions: true,
             agreements_total: 0,
             challenges_failed: 0,
+            deregister_at: None,
         }
     }
 

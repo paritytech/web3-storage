@@ -4230,6 +4230,12 @@ pub mod pallet {
             let mut results: Vec<MatchedProvider> = Vec::new();
 
             for (account, info) in Providers::<T>::iter() {
+                // Skip providers that have announced deregistration — they are
+                // winding down and must not be offered for new agreements.
+                if info.deregister_at.is_some() {
+                    continue;
+                }
+
                 let max_capacity = info.settings.max_capacity;
                 let available = if max_capacity > 0 {
                     max_capacity.saturating_sub(info.committed_bytes)

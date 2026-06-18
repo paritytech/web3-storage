@@ -178,6 +178,9 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
             signing_configured: state.keypair.is_some(),
             nonce_counter_ready: state.chain_state.nonce_counter.read().is_some(),
             provider_info_loaded: provider_registration_info.is_some(),
+            deregistering: provider_registration_info
+                .as_ref()
+                .is_some_and(|info| info.deregister_at.is_some()),
         },
         provider_registration_info,
     })
@@ -793,12 +796,17 @@ async fn get_historical_roots(
 ///
 /// TODO: requests are accepted automatically; let providers vet them later.
 ///
-/// Returns one of several `503`s when a prerequisite is missing: `signing_unavailable`
-/// (no `--keyfile`), `chain_state_not_ready` (`current_block` and `request_timeout` are
-/// not both known from the chain yet), `provider_info_unavailable` (provider not
-/// registered on chain yet — the background reconciler clears this automatically once
-/// registration lands, no restart needed), or `nonce_counter_unavailable` (counter not
-/// yet aligned with the chain's replay window).
+/// Returns one of several `503`s when a prerequisite is missing:
+/// - `signing_unavailable` — no `--keyfile`.
+/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
+///   known from the chain yet.
+/// - `provider_info_unavailable` — provider not registered on chain yet; the
+///   background reconciler clears this automatically once registration lands, no
+///   restart needed.
+/// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
+///   window.
+/// - `provider_deregistering` — provider has announced deregistration and no longer
+///   signs new terms.
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
@@ -830,6 +838,13 @@ async fn negotiate_terms(
         .read()
         .clone()
         .ok_or(Error::ProviderInfoUnavailable)?;
+
+    // A provider that has announced deregistration is winding down and must not
+    // sign new terms — the on-chain pallet rejects them too once deregistering.
+    if info.deregister_at.is_some() {
+        return Err(Error::ProviderDeregistering);
+    }
+
     negotiate::validate_request(&req, &info)?;
 
     // The coordinator bootstraps the nonce counter before publishing

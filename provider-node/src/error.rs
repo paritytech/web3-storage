@@ -100,6 +100,9 @@ pub enum Error {
     #[error("Provider on-chain info unavailable; cannot validate terms")]
     ProviderInfoUnavailable,
 
+    #[error("Provider is deregistering; not accepting new agreements")]
+    ProviderDeregistering,
+
     #[error("Chain state not ready: current_block and request_timeout must both be non-zero")]
     ChainStateNotReady,
 
@@ -337,6 +340,16 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "current_block or request_timeout is 0; \
                                     the node has not yet synced with the chain"
+                    })),
+                },
+            ),
+            Error::ProviderDeregistering => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "provider_deregistering".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider has announced deregistration and is no \
+                                    longer accepting new storage agreements"
                     })),
                 },
             ),

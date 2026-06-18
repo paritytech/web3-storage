@@ -86,6 +86,17 @@ impl TestServer {
             .await
             .unwrap()
     }
+
+    async fn info(&self) -> Value {
+        self.client
+            .get(self.url("/info"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
 }
 
 /// Provider settings that accept the [`primary_request`] below: open for
@@ -105,6 +116,7 @@ fn provider_info() -> ProviderInfo {
         accepting_extensions: true,
         agreements_total: 0,
         challenges_failed: 0,
+        deregister_at: None,
     }
 }
 
@@ -260,6 +272,153 @@ async fn negotiate_503_when_provider_info_unavailable() {
     *state.chain_state.provider_info.write() = Some(provider_info());
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn negotiate_503_when_provider_deregistering() {
+    // Every prerequisite satisfied, but the provider has announced deregistration:
+    // it is winding down and must refuse to sign new terms.
+    let mut info = provider_info();
+    info.deregister_at = Some(150);
+    let server = TestServer::ready(info).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "provider_deregistering");
+}
+
+// ─── /info readiness flag tests ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn info_deregistering_false_for_active_provider() {
+    // A fully-ready provider with no pending deregistration shows
+    // `readiness.deregistering: false`.
+    let server = TestServer::ready(provider_info()).await;
+    let body = server.info().await;
+
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], true);
+    // deregister_at absent from provider_registration_info.
+    assert!(body["provider_registration_info"]["deregister_at"].is_null());
+}
+
+#[tokio::test]
+async fn info_deregistering_true_and_block_surfaced_when_announced() {
+    // After DeregisterAnnounced, the coordinator re-fetches and publishes an
+    // info where deregister_at = Some(150). The /info response must reflect
+    // this in both the readiness flag and the raw provider_registration_info.
+    let mut info = provider_info();
+    info.deregister_at = Some(150);
+    let server = TestServer::ready(info).await;
+
+    let body = server.info().await;
+
+    assert_eq!(body["readiness"]["deregistering"], true);
+    // Every other readiness flag is still true — the node is still up.
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], true);
+    // The raw block number surfaces so operators can see when deregistration
+    // becomes finalisable.
+    assert_eq!(body["provider_registration_info"]["deregister_at"], 150);
+}
+
+#[tokio::test]
+async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
+    // Lifecycle: announced → negotiate is blocked → complete_deregister fires
+    // → coordinator gets ProviderDeregistered → re-fetches storage which now
+    // returns None → clears provider_info. Subsequent negotiate calls should
+    // return provider_info_unavailable, not provider_deregistering (the info is
+    // just gone at that point).
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    // Phase 1: deregistration announced.
+    let mut deregistering = provider_info();
+    deregistering.deregister_at = Some(150);
+    *state.chain_state.provider_info.write() = Some(deregistering);
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_deregistering"
+    );
+
+    // Phase 2: complete_deregister — coordinator clears provider_info and
+    // nonce_counter (same as when the storage query returns None).
+    *state.chain_state.provider_info.write() = None;
+    *state.chain_state.nonce_counter.write() = None;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_info_unavailable"
+    );
+
+    // /info reflects both cleared flags.
+    let body = server.info().await;
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], false);
+    assert!(body["provider_registration_info"].is_null());
+}
+
+#[tokio::test]
+async fn negotiate_recovers_after_deregister_cancelled() {
+    // Lifecycle: announced → negotiate blocked → DeregisterCancelled fires →
+    // coordinator re-fetches storage which now reports deregister_at = None →
+    // negotiate signs again. Mirrors the coordinator clearing the deregistering
+    // state when a provider backs out of winding down.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    let mut deregistering = provider_info();
+    deregistering.deregister_at = Some(150);
+    *state.chain_state.provider_info.write() = Some(deregistering);
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
+
+    // Announced: refused.
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_deregistering"
+    );
+
+    // Cancelled: coordinator re-publishes info with deregister_at back to None.
+    *state.chain_state.provider_info.write() = Some(provider_info());
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // /info confirms the flag cleared while the provider stays registered.
+    let body = server.info().await;
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert!(body["provider_registration_info"]["deregister_at"].is_null());
 }
 
 #[tokio::test]

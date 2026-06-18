@@ -152,6 +152,29 @@ pub enum StorageEvent {
         block_number: u32,
     },
 
+    /// A provider announced intent to deregister; stake locked until `complete_after`.
+    DeregisterAnnounced {
+        provider: AccountId32,
+        complete_after: u32,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    /// A provider completed deregistration and had their stake returned.
+    ProviderDeregistered {
+        provider: AccountId32,
+        stake_returned: u128,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    /// A provider cancelled a previously-announced deregistration.
+    DeregisterCancelled {
+        provider: AccountId32,
+        block_hash: H256,
+        block_number: u32,
+    },
+
     // ========================================================================
     // Agreement Events
     // ========================================================================
@@ -283,6 +306,9 @@ impl StorageEvent {
             StorageEvent::PrimaryProviderRemoved { provider, .. } => Some(provider),
             StorageEvent::ProviderSettingsUpdated { provider, .. } => Some(provider),
             StorageEvent::ProviderMultiaddrUpdated { provider, .. } => Some(provider),
+            StorageEvent::DeregisterAnnounced { provider, .. } => Some(provider),
+            StorageEvent::ProviderDeregistered { provider, .. } => Some(provider),
+            StorageEvent::DeregisterCancelled { provider, .. } => Some(provider),
             StorageEvent::StorageAgreementEstablished { provider, .. } => Some(provider),
             StorageEvent::ReplicaAgreementEstablished { provider, .. } => Some(provider),
             StorageEvent::AgreementAccepted { provider, .. } => Some(provider),
@@ -304,6 +330,9 @@ impl StorageEvent {
             StorageEvent::PrimaryProviderRemoved { block_hash, .. } => *block_hash,
             StorageEvent::ProviderSettingsUpdated { block_hash, .. } => *block_hash,
             StorageEvent::ProviderMultiaddrUpdated { block_hash, .. } => *block_hash,
+            StorageEvent::DeregisterAnnounced { block_hash, .. } => *block_hash,
+            StorageEvent::ProviderDeregistered { block_hash, .. } => *block_hash,
+            StorageEvent::DeregisterCancelled { block_hash, .. } => *block_hash,
             StorageEvent::StorageAgreementEstablished { block_hash, .. } => *block_hash,
             StorageEvent::ReplicaAgreementEstablished { block_hash, .. } => *block_hash,
             StorageEvent::AgreementAccepted { block_hash, .. } => *block_hash,
@@ -328,6 +357,9 @@ impl StorageEvent {
             StorageEvent::PrimaryProviderRemoved { block_number, .. } => *block_number,
             StorageEvent::ProviderSettingsUpdated { block_number, .. } => *block_number,
             StorageEvent::ProviderMultiaddrUpdated { block_number, .. } => *block_number,
+            StorageEvent::DeregisterAnnounced { block_number, .. } => *block_number,
+            StorageEvent::ProviderDeregistered { block_number, .. } => *block_number,
+            StorageEvent::DeregisterCancelled { block_number, .. } => *block_number,
             StorageEvent::StorageAgreementEstablished { block_number, .. } => *block_number,
             StorageEvent::ReplicaAgreementEstablished { block_number, .. } => *block_number,
             StorageEvent::AgreementAccepted { block_number, .. } => *block_number,
@@ -489,7 +521,10 @@ impl EventFilter {
             | StorageEvent::ProviderAddedToBucket { .. }
             | StorageEvent::PrimaryProviderRemoved { .. }
             | StorageEvent::ProviderSettingsUpdated { .. }
-            | StorageEvent::ProviderMultiaddrUpdated { .. } => self.include_provider_events,
+            | StorageEvent::ProviderMultiaddrUpdated { .. }
+            | StorageEvent::DeregisterAnnounced { .. }
+            | StorageEvent::ProviderDeregistered { .. }
+            | StorageEvent::DeregisterCancelled { .. } => self.include_provider_events,
             StorageEvent::ReplicaSynced { .. } => self.include_replica_events,
             StorageEvent::Unknown { .. } => self.include_unknown,
         }
@@ -1010,6 +1045,23 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                     "multiaddr",
                 )?)
                 .into_owned(),
+                block_hash,
+                block_number,
+            }),
+            "DeregisterAnnounced" => Some(StorageEvent::DeregisterAnnounced {
+                provider: scale_decode::field_account(&fields, "provider")?,
+                complete_after: scale_decode::field_u32(&fields, "complete_after")?,
+                block_hash,
+                block_number,
+            }),
+            "ProviderDeregistered" => Some(StorageEvent::ProviderDeregistered {
+                provider: scale_decode::field_account(&fields, "provider")?,
+                stake_returned: scale_decode::field_u128(&fields, "stake_returned")?,
+                block_hash,
+                block_number,
+            }),
+            "DeregisterCancelled" => Some(StorageEvent::DeregisterCancelled {
+                provider: scale_decode::field_account(&fields, "provider")?,
                 block_hash,
                 block_number,
             }),
