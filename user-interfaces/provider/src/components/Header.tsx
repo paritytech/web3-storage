@@ -240,6 +240,8 @@ export function Header() {
               networkList={networkList}
               onSelect={(id) => { void selectNetwork(id); }}
               onSelectCustom={(input) => { void selectCustomNetwork(input); }}
+              theme='dark'
+              showProviderStatus
             />
 
             {/* Connection Status */}
