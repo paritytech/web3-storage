@@ -608,3 +608,36 @@ fn respond_to_challenge_superseded_emits_defended_event() {
             .any(|r| r.event == expected_event));
     });
 }
+
+#[test]
+fn challenge_rejected_when_deadline_full() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // A challenge created at block 1 matures at deadline 1 + ChallengeTimeout(100) = 101.
+        // Fill that deadline's list to capacity (MaxChallengesPerBlock) so the next push overflows.
+        let dummy = Challenge::<Test> {
+            bucket_id,
+            provider: 2,
+            challenger: 3,
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_index: 0,
+            chunk_index: 0,
+            deposit: 100,
+        };
+        let mut full = frame_support::BoundedVec::<
+            Challenge<Test>,
+            <Test as Config>::MaxChallengesPerBlock,
+        >::new();
+        while full.try_push(dummy.clone()).is_ok() {}
+        Challenges::<Test>::insert(101, full);
+
+        // The next challenge for the same deadline is rejected (and the deposit is rolled back).
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            Error::<Test>::TooManyChallenges
+        );
+    });
+}
