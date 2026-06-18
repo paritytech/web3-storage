@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Benchmarking setup for `pallet-s3-registry`.
 //!
 //! Each benchmark configures the pallet to exercise the most expensive

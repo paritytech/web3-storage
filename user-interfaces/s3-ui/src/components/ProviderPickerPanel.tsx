@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useEffect } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,17 +14,6 @@ interface ProviderPickerPanelProps {
   requiredDuration: number;
   requiredPricePerByte: bigint;
   disabled?: boolean;
-}
-
-function humanizeReason(reason: string): string {
-  const map: Record<string, string> = {
-    PriceTooHigh: "Price too high",
-    InsufficientCapacity: "Insufficient capacity",
-    DurationTooShort: "Duration too short",
-    DurationTooLong: "Duration too long",
-    NotAccepting: "Not accepting",
-  };
-  return map[reason] || reason || "";
 }
 
 export default function ProviderPickerPanel({

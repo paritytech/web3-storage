@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Off-chain terms negotiation — provider-signed [`AgreementTerms`].
 //!
 //! Bucket owners ask the provider node for signed terms via
 //! `POST /negotiate`. The provider node:
 //!
 //! 1. Allocates a fresh nonce from an in-memory monotonic counter
-//!    ([`NonceCounter`]). The counter is initialized at startup from the
-//!    chain's `ProviderReplayState.hsn + 1`, so a restart can't reissue a
-//!    nonce the chain already accepted (the on-chain replay window is
-//!    authoritative and rejects any out-of-range reuse).
+//!    ([`NonceCounter`]). A background reconciler aligns the counter with the
+//!    chain's `ProviderReplayState.hsn + 1` (at startup and on every poll), so
+//!    a restart can't reissue a nonce the chain already accepted (the on-chain
+//!    replay window is authoritative and rejects any out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_block + valid_until_offset`.
@@ -17,7 +19,7 @@
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
@@ -78,9 +80,9 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
 /// In-memory monotonic nonce counter for provider-signed terms.
 ///
 /// Nonces are atomically allocated via [`Self::next`]. There is no local
-/// persistence: at startup the caller reconciles against the chain by
-/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain
-/// `hsn`, so the counter resumes at `hsn + 1`. This:
+/// persistence: the background reconciler aligns it against the chain by
+/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain `hsn`
+/// (at startup and on every poll), so the counter resumes at `hsn + 1`. This:
 ///
 /// * survives a restart (the chain hsn is the source of truth);
 /// * survives a restart where the chain advanced past our last view
@@ -91,24 +93,38 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
 /// window without effect. The on-chain replay window is authoritative
 /// and rejects any out-of-range reuse, so a missed nonce can never lead
 /// to a double redemption.
+///
+/// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
+/// been reconciled with the chain, so `/negotiate` must not sign with it; query
+/// [`Self::is_bootstrapped`] to gate that.
 #[derive(Debug)]
 pub struct NonceCounter {
     counter: AtomicU64,
+    /// Set once the counter has been aligned with the chain's replay window.
+    bootstrapped: AtomicBool,
 }
 
 impl NonceCounter {
-    /// Create a counter starting at `start`. In normal operation the
-    /// caller follows up with [`Self::bootstrap_from_hsn`] to align with
-    /// the chain.
+    /// Create a counter starting at `start`. The counter is *not* considered
+    /// bootstrapped until [`Self::bootstrap_from_hsn`] aligns it with the chain.
     pub fn new(start: u64) -> Self {
         Self {
             counter: AtomicU64::new(start),
+            bootstrapped: AtomicBool::new(false),
         }
     }
 
-    /// Advance the counter to at least `hsn + 1`. Idempotent — only
-    /// advances forward.
+    /// Whether the counter has been reconciled with the chain's replay window
+    /// at least once. `/negotiate` gates on this so it never signs a nonce
+    /// that was not derived from on-chain state.
+    pub fn is_bootstrapped(&self) -> bool {
+        self.bootstrapped.load(Ordering::SeqCst)
+    }
+
+    /// Advance the counter to at least `hsn + 1` and mark it bootstrapped.
+    /// Idempotent — only advances forward.
     pub fn bootstrap_from_hsn(&self, hsn: u64) {
+        self.bootstrapped.store(true, Ordering::SeqCst);
         let target = hsn.saturating_add(1);
         // Standard CAS loop — bump only if our target is higher than
         // whatever is already there.
@@ -286,5 +302,17 @@ mod tests {
         assert_eq!(c.next(), 10);
         c.bootstrap_from_hsn(20); // higher — advance
         assert_eq!(c.next(), 21);
+    }
+
+    #[test]
+    fn is_bootstrapped_flips_on_first_reconcile() {
+        // A fresh counter has not been aligned with the chain, so `/negotiate`
+        // must not sign with it yet. The flag flips on the first bootstrap,
+        // even when the hsn is lower than the current value (a no-op advance
+        // still counts as a successful reconcile).
+        let c = NonceCounter::new(10);
+        assert!(!c.is_bootstrapped());
+        c.bootstrap_from_hsn(5);
+        assert!(c.is_bootstrapped());
     }
 }

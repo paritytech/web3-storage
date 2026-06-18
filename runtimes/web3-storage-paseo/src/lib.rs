@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Paseo Web3 Storage Parachain.
 //!
 //! A minimal parachain runtime that includes the storage provider pallet
@@ -9,14 +11,6 @@
 // Make the WASM binary available.
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
-
-/// Provides the `WASM_BINARY` build with `fast-runtime` feature enabled.
-///
-/// This is for example useful for local test chains.
-#[cfg(feature = "std")]
-pub mod fast_runtime_binary {
-    include!(concat!(env!("OUT_DIR"), "/fast_runtime_binary.rs"));
-}
 
 pub mod genesis_config_presets;
 pub mod migrations;
@@ -184,9 +178,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.2.0 -> 2_000. Must stay > the deployed value so the upgrade is
-    // accepted and migrations run (previous release was `1`).
-    spec_version: 2_000,
+    // 0.4.1 -> 4_001. Must stay > the deployed value so the upgrade is
+    // accepted and migrations run (previous release was `4_000`).
+    spec_version: 4_001,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -324,6 +318,13 @@ impl pallet_transaction_payment::Config for Runtime {
     type FeeMultiplierUpdate = polkadot_runtime_common::SlowAdjustingFeeUpdate<Self>;
     type OperationalFeeMultiplier = ConstU8<5>;
     type WeightInfo = weights::pallet_transaction_payment::WeightInfo<Runtime>;
+}
+
+impl pallet_utility::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type RuntimeCall = RuntimeCall;
+    type PalletsOrigin = OriginCaller;
+    type WeightInfo = weights::pallet_utility::WeightInfo<Runtime>;
 }
 
 impl pallet_sudo::Config for Runtime {
@@ -548,6 +549,10 @@ mod runtime {
     #[runtime::pallet_index(33)]
     pub type MessageQueue = pallet_message_queue;
 
+    // Handy utilities. Utility / Multisig / Proxy / Indices ...
+    #[runtime::pallet_index(34)]
+    pub type Utility = pallet_utility;
+
     // Weight reclaim
     #[runtime::pallet_index(40)]
     pub type WeightReclaim = cumulus_pallet_weight_reclaim;
@@ -590,6 +595,7 @@ mod benches {
         [pallet_drive_registry, DriveRegistry]
         [pallet_s3_registry, S3Registry]
         [pallet_revive, Revive]
+        [pallet_utility, Utility]
         [cumulus_pallet_xcmp_queue, XcmpQueue]
         [pallet_xcm, PalletXcmExtrinsicsBenchmark::<Runtime>]
         [pallet_message_queue, MessageQueue]

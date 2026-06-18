@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Single-block storage migrations for the Paseo Web3 Storage runtime.
 //!
 //! Wired into the runtime via `frame_system::Config::SingleBlockMigrations`.

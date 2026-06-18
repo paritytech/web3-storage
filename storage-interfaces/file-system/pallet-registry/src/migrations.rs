@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Storage migrations for `pallet-drive-registry`.
 
 extern crate alloc;

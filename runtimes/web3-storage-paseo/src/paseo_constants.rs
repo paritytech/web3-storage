@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Web3 Storage Paseo Parachain runtime constants used by this runtime.
 
 /// Inlined subset of the Paseo relay chain runtime constants crate.

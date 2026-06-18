@@ -6,7 +6,7 @@ members = [
 	"pallet",
 	"primitives",
 	"provider-node",
-	"runtime",
+	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
 
 	# Smart-contract precompiles (pallet_revive integration)
@@ -28,8 +28,8 @@ members = [
 [workspace.package]
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/parity/scalable-web3-storage"
+license = "GPL-3.0-only"
+repository = "https://github.com/paritytech/web3-storage"
 
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
@@ -38,7 +38,7 @@ pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", d
 pallet-storage-provider = { path = "pallet", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
 storage-client = { path = "client" }
-storage-parachain-runtime = { path = "runtime" }
+storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
 
@@ -75,6 +75,7 @@ pallet-sudo = { version = "46.0.0", default-features = false }
 pallet-timestamp = { version = "45.0.0", default-features = false }
 pallet-transaction-payment = { version = "46.0.0", default-features = false }
 pallet-transaction-payment-rpc-runtime-api = { version = "46.0.0", default-features = false }
+pallet-utility = { version = "46.0.0", default-features = false }
 
 # Substrate primitives
 sp-api = { version = "41.0.0", default-features = false }

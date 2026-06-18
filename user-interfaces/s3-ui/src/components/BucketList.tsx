@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
-import { Archive, MoreHorizontal, Plus, Trash2, Users } from "lucide-react";
+import { Archive, MoreHorizontal, Plus, Server, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -20,6 +22,37 @@ import { toast } from "@/components/ui/toaster";
 import ConfirmDialog from "./ConfirmDialog";
 import NewBucketDialog from "./NewBucketDialog";
 import ManageAccessDialog from "./ManageAccessDialog";
+
+function shortAddress(account: string): string {
+  return `${account.slice(0, 6)}…${account.slice(-4)}`;
+}
+
+function providerHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Primary-provider display parts for a bucket: address, optional host, extra count. */
+function providerParts(providers: BucketInfo["providerInfo"]) {
+  const first = providers[0];
+  if (!first) return null;
+  return {
+    addr: shortAddress(first.account),
+    host: first.url ? providerHost(first.url) : null,
+    extra: providers.length - 1,
+  };
+}
+
+/** Full provider details for the hover tooltip — one provider per line. */
+function providerTitle(providers: BucketInfo["providerInfo"]): string {
+  if (providers.length === 0) return "No primary provider";
+  return providers
+    .map((p) => `${p.account}${p.url ? ` — ${p.url}` : p.multiaddr ? ` — ${p.multiaddr}` : ""}`)
+    .join("\n");
+}
 
 export default function BucketList() {
   const buckets = useBuckets();
@@ -77,6 +110,29 @@ export default function BucketList() {
                     <p className="text-xs text-muted-foreground">
                       ID: {bucket.s3BucketId.toString()}
                     </p>
+                    {(() => {
+                      const p = providerParts(bucket.providerInfo);
+                      return (
+                        <div
+                          className="flex items-start gap-1 text-xs text-muted-foreground"
+                          title={providerTitle(bucket.providerInfo)}
+                          data-testid={`bucket-list-provider-${bucket.s3BucketId}`}
+                        >
+                          <Server className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                          {p ? (
+                            <span className="flex flex-col min-w-0 leading-tight">
+                              <span className="truncate">
+                                {p.addr}
+                                {p.extra > 0 ? ` +${p.extra}` : ""}
+                              </span>
+                              {p.host && <span className="truncate">{p.host}</span>}
+                            </span>
+                          ) : (
+                            <span className="truncate">No provider</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button

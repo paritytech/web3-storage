@@ -1,6 +1,7 @@
 {
   "name": "web3-storage-papi-demo",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "papi:generate": "papi add -w ws://localhost:2222 parachain && papi generate",

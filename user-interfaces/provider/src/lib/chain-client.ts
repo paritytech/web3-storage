@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Chain Client - Direct blockchain interaction via WebSocket.
  *
@@ -7,7 +9,7 @@
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
  */
 
-import { createClient, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from 'polkadot-api'
+import { createClient, Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from 'polkadot-api'
 import { getWsProvider } from 'polkadot-api/ws'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { parachain } from '@polkadot-api/descriptors'
@@ -221,6 +223,7 @@ export interface OnChainProviderInfo {
   activeBuckets: number
   registeredAt: number
   multiaddr?: string
+  deregisterAt?: number
 }
 
 export interface OnChainProviderSettings {
@@ -272,6 +275,9 @@ export interface OnChainChallenge {
   challenger: string
   provider: string
   leafIndex: number
+  chunkIndex: number
+  mmrRoot: string
+  startSeq: number
   status: 'pending' | 'responded' | 'slashed' | 'expired'
   challengeType?: 'offchain' | 'checkpoint' | 'unknown'
   createdAt: number
@@ -333,6 +339,7 @@ export async function getProviderData(
     activeBuckets: provider.stats.agreements_total,
     registeredAt: provider.stats.registered_at,
     multiaddr: new TextDecoder().decode(provider.multiaddr),
+    deregisterAt: provider.deregister_at ?? undefined,
   }
   const s = provider.settings
   const settings: OnChainProviderSettings = {
@@ -528,6 +535,9 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
         challenger: ch.challenger,
         provider: ch.provider,
         leafIndex: Number(ch.leaf_index),
+        chunkIndex: Number(ch.chunk_index),
+        mmrRoot: ch.mmr_root,
+        startSeq: Number(ch.start_seq),
         status: currentBlock > deadline ? 'expired' : 'pending',
         createdAt: 0,
         deadline,
@@ -611,10 +621,130 @@ export async function submitAddStake(
   await submit(tx, signer, 'Add stake')
 }
 
-// submitChallengeResponse intentionally omitted — challenge response requires
-// a structured `ChallengeResponse` payload (not just bytes) and a structured
-// `ChallengeId { deadline, index }`. The Challenges UI doesn't currently
-// invoke it; add back when implementing manual challenge response.
+export async function submitDeregisterProvider(
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<void> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing de-registration announcement...' })
+  const tx = a.tx.StorageProvider.deregister_provider()
+  await submit(tx, signer, 'Deregister provider', onProgress)
+}
+
+export async function submitCompleteDeregister(
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<void> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing de-registration completion...' })
+  const tx = a.tx.StorageProvider.complete_deregister()
+  await submit(tx, signer, 'Complete deregister', onProgress)
+}
+
+// ── Challenge proof fetching & response submission ──────────────────────────
+
+export interface ChallengeProofData {
+  chunkData: Uint8Array
+  mmrProof: {
+    peaks: string[]
+    leaf: { dataRoot: string; dataSize: bigint; totalSize: bigint }
+    leafProof: { siblings: string[]; path: boolean[] }
+  }
+  chunkProof: { siblings: string[]; path: boolean[] }
+}
+
+/**
+ * Fetch MMR proof + chunk proof from the provider node HTTP API.
+ */
+export async function fetchChallengeProof(
+  providerHttp: string,
+  bucketId: number,
+  leafIndex: number,
+  chunkIndex: number,
+): Promise<ChallengeProofData> {
+  // Step 1: MMR proof
+  const mmrRes = await fetch(
+    `${providerHttp}/mmr_proof?bucket_id=${bucketId}&leaf_index=${leafIndex}`,
+  )
+  if (!mmrRes.ok) {
+    throw new Error(`MMR proof fetch failed: ${mmrRes.status} ${await mmrRes.text()}`)
+  }
+  const mmr = await mmrRes.json()
+
+  // Step 2: Chunk proof — provider hex_decode doesn't accept 0x prefix
+  const dataRoot: string = mmr.leaf.data_root
+  const dataRootBare = dataRoot.replace(/^0x/, '')
+  const chunkRes = await fetch(
+    `${providerHttp}/chunk_proof?data_root=${dataRootBare}&chunk_index=${chunkIndex}`,
+  )
+  if (!chunkRes.ok) {
+    throw new Error(`Chunk proof fetch failed: ${chunkRes.status} ${await chunkRes.text()}`)
+  }
+  const chunk = await chunkRes.json()
+
+  // Decode base64 chunk_data to Uint8Array
+  const chunkData = chunk.chunk_data
+    ? Uint8Array.from(atob(chunk.chunk_data), (c) => c.charCodeAt(0))
+    : new Uint8Array(0)
+
+  return {
+    chunkData,
+    mmrProof: {
+      peaks: mmr.proof.peaks as string[],
+      leaf: {
+        dataRoot,
+        dataSize: BigInt(mmr.leaf.data_size),
+        totalSize: BigInt(mmr.leaf.total_size),
+      },
+      leafProof: {
+        siblings: mmr.proof.siblings as string[],
+        path: mmr.proof.path as boolean[],
+      },
+    },
+    chunkProof: {
+      siblings: chunk.proof.siblings as string[],
+      path: chunk.proof.path as boolean[],
+    },
+  }
+}
+
+/**
+ * Build and submit a `respond_to_challenge` extrinsic with a Proof response.
+ */
+export async function submitRespondToChallenge(
+  challengeId: { deadline: number; index: number },
+  proof: ChallengeProofData,
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<TxFinalizedPayload> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing challenge response...' })
+
+  const tx = a.tx.StorageProvider.respond_to_challenge({
+    challenge_id: challengeId,
+    response: Enum('Proof', {
+      chunk_data: proof.chunkData,
+      mmr_proof: {
+        peaks: proof.mmrProof.peaks,
+        leaf: {
+          data_root: proof.mmrProof.leaf.dataRoot,
+          data_size: proof.mmrProof.leaf.dataSize,
+          total_size: proof.mmrProof.leaf.totalSize,
+        },
+        leaf_proof: {
+          siblings: proof.mmrProof.leafProof.siblings,
+          path: proof.mmrProof.leafProof.path,
+        },
+      },
+      chunk_proof: {
+        siblings: proof.chunkProof.siblings,
+        path: proof.chunkProof.path,
+      },
+    }),
+  })
+
+  return submit(tx, signer, 'Challenge response', onProgress)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Subscriptions
@@ -651,11 +781,14 @@ export function subscribeToChallengeEvents(
           bucketId: Number(payload.bucket_id),
           challenger: payload.challenger,
           provider: payload.provider,
-          // leafIndex isn't part of the ChallengeCreated event payload — it
-          // lives on the storage `Challenges` entry, not the event. Default
-          // to 0 here; the Challenges page reads the storage entry for the
-          // full record when rendering.
+          // leafIndex/chunkIndex aren't part of the ChallengeCreated event
+          // payload — they live on the storage `Challenges` entry, not the
+          // event. Default to 0 here; the Challenges page reads the storage
+          // entry for the full record when rendering.
           leafIndex: 0,
+          chunkIndex: 0,
+          mmrRoot: '',
+          startSeq: 0,
           status: 'pending',
           challengeType: 'unknown',
           createdAt: block.number,
@@ -675,6 +808,9 @@ export function subscribeToChallengeEvents(
           challenger: '',
           provider: address,
           leafIndex: 0,
+          chunkIndex: 0,
+          mmrRoot: '',
+          startSeq: 0,
           status: 'responded',
           createdAt: 0,
           deadline: Number(payload.challenge_id.deadline),
@@ -693,6 +829,9 @@ export function subscribeToChallengeEvents(
           challenger: '',
           provider: address,
           leafIndex: 0,
+          chunkIndex: 0,
+          mmrRoot: '',
+          startSeq: 0,
           status: 'slashed',
           createdAt: 0,
           deadline: Number(payload.challenge_id.deadline),

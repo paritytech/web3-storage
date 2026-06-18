@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate as pallet_drive_registry;
 use frame_support::{
     derive_impl, parameter_types,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { Header } from '@/components/Header'
@@ -10,10 +12,12 @@ import { Challenges } from '@/pages/Challenges'
 import { Earnings } from '@/pages/Earnings'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { loadProviderData, addChallengeFromEvent } from '@/state/provider.state'
+import { useAutoRefreshSecs } from '@/state/settings.state'
 import { subscribeToChallengeEvents } from '@/lib/chain-client'
 
 function App() {
   const selectedAccount = useSelectedAccount()
+  const autoRefreshSecs = useAutoRefreshSecs()
 
   // Load provider data at app level so all pages have it on initial render
   useEffect(() => {
@@ -21,6 +25,18 @@ function App() {
       loadProviderData(selectedAccount.address)
     }
   }, [selectedAccount?.address])
+
+  // Auto-refresh: periodically re-fetch provider data in the background. The
+  // refresh is silent (no loading/error flashes) and the interval is
+  // user-configurable from the header; `0` disables it.
+  useEffect(() => {
+    const address = selectedAccount?.address
+    if (!address || autoRefreshSecs <= 0) return
+    const id = setInterval(() => {
+      loadProviderData(address, { silent: true })
+    }, autoRefreshSecs * 1000)
+    return () => clearInterval(id)
+  }, [selectedAccount?.address, autoRefreshSecs])
 
   // Subscribe to challenge events in real-time so they're captured
   // while the block is still pinned (scanning old blocks doesn't work)

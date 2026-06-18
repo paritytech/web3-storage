@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { test as base, expect, type Page } from "@playwright/test";
 import { getApi, getBestBlockNumber, disconnect, type ParachainApi } from "./chain-api";
 

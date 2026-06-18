@@ -175,7 +175,7 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
         --rpc-cors all \
         -lruntime=info
 
-# Start the storage provider node
+# Start the storage provider node (without registering on-chain)
 # Examples:
 #   just start-provider                                       # inmemory, //Alice key, port 3333
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
@@ -201,9 +201,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         trap "rm -f $ALICE_KEY" EXIT
     fi
 
-    just register-provider "{{KEYFILE}}"
-    echo ""
-
     ./target/release/storage-provider-node \
         $KEY_ARGS \
         --storage-mode "{{MODE}}" \
@@ -212,8 +209,13 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
+# Register on-chain then start the provider node (original behavior)
+register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
+    just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
+    just register-provider "{{KEYFILE}}"
+
 # Register provider on-chain (idempotent). Requires a running chain.
-# Usually called automatically by start-provider.
+# Called automatically by register-then-start-provider, or run standalone.
 register-provider KEYFILE="":
     #!/usr/bin/env bash
     set -euo pipefail

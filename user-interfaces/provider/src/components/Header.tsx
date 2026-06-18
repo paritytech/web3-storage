@@ -1,4 +1,6 @@
-import { useState } from 'react'
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   Server,
@@ -11,6 +13,8 @@ import {
   TestTube,
   Wallet,
   ArrowLeft,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react'
 
 const LANDING_URL = import.meta.env.DEV ? 'http://127.0.0.1:5176/' : '../'
@@ -35,6 +39,13 @@ import {
   selectNetwork,
   selectCustomNetwork,
 } from '@/state/network.state'
+import { loadProviderData, clearLocalCache } from '@/state/provider.state'
+import {
+  useAutoRefreshSecs,
+  setAutoRefreshSecs,
+  AUTO_REFRESH_OPTIONS,
+  formatInterval,
+} from '@/state/settings.state'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
@@ -61,10 +72,55 @@ export function Header() {
   const accounts = useAccounts()
   const selectedNetwork = useSelectedNetwork()
   const networkList = useNetworkList()
+  const autoRefreshSecs = useAutoRefreshSecs()
 
   const [showConnectOptions, setShowConnectOptions] = useState(false)
   const [showExtensionPicker, setShowExtensionPicker] = useState(false)
   const [showAccountPicker, setShowAccountPicker] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  // The cache-reset action is intentionally hidden: it only appears while Alt
+  // (Option) is held with the settings menu open, so it can't be hit by
+  // accident but is there when an operator needs it.
+  const [altHeld, setAltHeld] = useState(false)
+
+  useEffect(() => {
+    if (!showSettings) {
+      setAltHeld(false)
+      return
+    }
+    const sync = (e: KeyboardEvent) => setAltHeld(e.altKey)
+    window.addEventListener('keydown', sync)
+    window.addEventListener('keyup', sync)
+    return () => {
+      window.removeEventListener('keydown', sync)
+      window.removeEventListener('keyup', sync)
+    }
+  }, [showSettings])
+
+  const handleRefreshNow = async () => {
+    setShowSettings(false)
+    if (!selectedAccount?.address) return
+    setIsRefreshing(true)
+    try {
+      await loadProviderData(selectedAccount.address, { silent: true })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const handleClearCache = async () => {
+    setShowSettings(false)
+    clearLocalCache()
+    if (selectedAccount?.address) {
+      setIsRefreshing(true)
+      try {
+        await loadProviderData(selectedAccount.address, { silent: true })
+      } finally {
+        setIsRefreshing(false)
+      }
+    }
+  }
 
   const handleConnectClick = async () => {
     // Connect to chain first if needed
@@ -133,6 +189,7 @@ export function Header() {
     setShowConnectOptions(false)
     setShowExtensionPicker(false)
     setShowAccountPicker(false)
+    setShowSettings(false)
   }
 
   return (
@@ -183,6 +240,8 @@ export function Header() {
               networkList={networkList}
               onSelect={(id) => { void selectNetwork(id); }}
               onSelectCustom={(input) => { void selectCustomNetwork(input); }}
+              theme='dark'
+              showProviderStatus
             />
 
             {/* Connection Status */}
@@ -198,6 +257,73 @@ export function Header() {
               />
               {connectionStatus === 'connected' && blockNumber > 0 && (
                 <Badge variant="secondary" data-testid="block-number">#{blockNumber.toLocaleString()}</Badge>
+              )}
+            </div>
+
+            {/* Refresh & cache settings */}
+            <div className="relative">
+              <Button
+                data-testid="provider-settings-button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSettings(!showSettings)}
+                title="Auto-refresh & cache"
+                className="flex items-center gap-1.5"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span className="text-xs" data-testid="auto-refresh-current">
+                  {formatInterval(autoRefreshSecs)}
+                </span>
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+
+              {showSettings && (
+                <div className="absolute right-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
+                  <div className="p-3 border-b border-gray-700">
+                    <div className="text-xs text-gray-400 mb-2">Auto-refresh interval</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {AUTO_REFRESH_OPTIONS.map((opt) => (
+                        <button
+                          key={opt}
+                          data-testid={`auto-refresh-${opt}`}
+                          onClick={() => setAutoRefreshSecs(opt)}
+                          className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                            autoRefreshSecs === opt
+                              ? 'bg-purple-500/20 text-purple-400'
+                              : 'text-gray-400 hover:text-gray-100 hover:bg-gray-700'
+                          }`}
+                        >
+                          {formatInterval(opt)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    data-testid="provider-refresh-now"
+                    onClick={() => { void handleRefreshNow() }}
+                    disabled={!selectedAccount || isRefreshing}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    Refresh now
+                  </button>
+
+                  {altHeld ? (
+                    <button
+                      data-testid="provider-clear-cache"
+                      onClick={() => { void handleClearCache() }}
+                      className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-gray-700 border-t border-gray-700 flex items-center gap-2"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Clear cached history
+                    </button>
+                  ) : (
+                    <div className="px-3 py-2 text-[11px] text-gray-600 border-t border-gray-700 select-none">
+                      Hold Alt (⌥) to reveal cache reset
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -378,7 +504,7 @@ export function Header() {
       </div>
 
       {/* Click outside to close dropdowns */}
-      {(showConnectOptions || showExtensionPicker || showAccountPicker) && (
+      {(showConnectOptions || showExtensionPicker || showAccountPicker || showSettings) && (
         <div className="fixed inset-0 z-40" onClick={closeAllDropdowns} />
       )}
     </header>

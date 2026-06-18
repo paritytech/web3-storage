@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the file system HTTP API endpoints.
 
 use axum::http::StatusCode;

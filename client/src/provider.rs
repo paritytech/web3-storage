@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provider Client - For storage providers managing their operations.
 //!
 //! This client provides operations for:

@@ -1,6 +1,15 @@
 # Scalable Web3 Storage
 
+> [!WARNING]
+> This is a prototype/proof-of-concept. It has **not been audited**, is under active development, and is not production-ready. Use at your own risk.
+
 A decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
+
+[![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE-GPL3)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE-APACHE2)
+[![Security: unaudited](https://img.shields.io/badge/security-unaudited-red.svg)](https://github.com/paritytech/web3-storage/security)
+[![Status: prototype](https://img.shields.io/badge/status-experimental-yellow.svg)](#)
+[![Substrate](https://img.shields.io/badge/built%20with-Substrate-green.svg)](#)
 
 ## What It Does
 
@@ -177,7 +186,7 @@ Two types of nodes work together:
 ```
 scalable-web3-storage/
 ├── pallet/               # Substrate pallet (on-chain logic)
-├── runtime/              # Parachain runtime
+├── runtimes/             # Parachain runtimes (web3-storage-local, web3-storage-paseo)
 ├── provider-node/        # Off-chain storage server (HTTP API)
 ├── client/               # Client SDK for applications
 ├── primitives/           # Shared types and utilities
@@ -300,12 +309,24 @@ For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKS
 
 ## Contributing
 
-1. Read [CLAUDE.md](./CLAUDE.md) - Project overview, build commands, and code review guidelines
-2. Read the [Architecture Design](./docs/design/scalable-web3-storage.md)
-3. Check [Implementation Details](./docs/design/scalable-web3-storage-implementation.md)
-4. Run tests: `cargo test`
-5. Follow existing code style: `cargo fmt --check`
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions, PR process,
+code style, and licensing details.
+
+## Security
+
+The security policy for this project is governed by the
+[paritytech organization-level security policy](https://github.com/paritytech/.github/blob/master/SECURITY.md).
+If you discover a vulnerability, please follow the responsible disclosure process described there.
 
 ## License
 
-Apache-2.0
+This project is dual-licensed:
+
+- **Runtime, provider node, and user-interface applications** are licensed under
+  [GPL-3.0-only](LICENSE-GPL3).
+- **Pallets, primitives, client SDKs, and shared libraries** are licensed under
+  [Apache-2.0](LICENSE-APACHE2).
+
+Each crate and package declares its applicable license in its `Cargo.toml` or
+`package.json`. See the individual LICENSE files at the repository root for the
+full license texts.

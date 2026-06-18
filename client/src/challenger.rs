@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Challenger Client - For third parties verifying data integrity.
 //!
 //! This client provides operations for:

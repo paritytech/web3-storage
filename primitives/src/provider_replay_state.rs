@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Per-provider replay protection for signed agreement terms.
 //!
 //! Each provider maintains a sliding window over the most recent

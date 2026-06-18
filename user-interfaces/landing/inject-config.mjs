@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: GPL-3.0-only
 // Substitute landing-page sentinels from the network-config TypeScript source.
 //
 //   __DEFAULT_NETWORK_ID__  ← networks.ts          DEFAULT_NETWORK_ID

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * E2E Workflow 08 — Provider Deregistration
  *
