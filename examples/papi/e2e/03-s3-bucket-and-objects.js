@@ -133,8 +133,8 @@ async function main() {
       );
       assert.ok(copy, "Copy should exist");
       assert.deepStrictEqual(
-        toHex(copy.cid),
-        toHex(original.cid),
+        copy.cid,
+        original.cid,
         "CID should be the same after copy"
       );
     },

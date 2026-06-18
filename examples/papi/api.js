@@ -85,7 +85,7 @@ export function buildSignedTermsArgs(provider, signed) {
   if (!variantName) {
     throw new Error(`unknown MultiSignature variant byte: ${variantIdx}`);
   }
-  const sig = Enum(variantName, sigBytes.slice(1));
+  const sig = Enum(variantName, toHex(sigBytes.slice(1)));
 
   const t = signed.terms;
   const terms = {
@@ -540,7 +540,7 @@ export async function putObjectMetadata(api, client, s3BucketId, key, obj, conte
     api.tx.S3Registry.put_object_metadata({
       s3_bucket_id: s3BucketId,
       key: new TextEncoder().encode(key),
-      cid: obj.cid,
+      cid: toHex(obj.cid),
       size: obj.size,
       content_type: new TextEncoder().encode(contentType),
       user_metadata: userMetadata.map(([k, v]) => [
