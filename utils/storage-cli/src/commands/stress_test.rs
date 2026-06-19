@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `stress-test` subcommands.
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -6,9 +8,38 @@ use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ChunkingStrategy, ClientConfig, StorageUserClient};
 use subxt_signer::{sr25519::Keypair, SecretUri};
+use clap::{Args, Subcommand};
 
-use crate::cli_args::{GlobalArgs, UploadArgs};
-use crate::shared::resolve_suri;
+use crate::cli::{GlobalArgs};
+use crate::common::resolve_suri;
+
+
+// === Stress test subcommands ===
+#[derive(Debug, Subcommand)]
+pub enum StressTest {
+    /// Upload generated data to every bucket the account already has an
+    /// agreement with the given provider for.
+    #[command(name = "upload")]
+    ProviderUpload(UploadArgs),
+}
+
+// === `stress-test provider-upload` subcommand ===
+#[derive(Debug, Args)]
+pub struct UploadArgs {
+    /// Provider account (SS58 or 0x-hex) whose agreements select the target
+    /// buckets.
+    #[arg(long, value_name = "ACCOUNT")]
+    pub provider: String,
+
+    /// Cap the number of buckets written to (default: all matching buckets).
+    #[arg(long, value_name = "N")]
+    pub max_buckets_to_write: Option<usize>,
+
+    /// Bytes of generated data to upload per bucket.
+    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
+    pub size: usize,
+}
+
 
 /// Upload generated data to every bucket the account already has an agreement
 /// with `--provider` for.

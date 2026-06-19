@@ -160,6 +160,8 @@ serde_with = { version = "3.20.0" }
 thiserror = "2.0"
 tracing = { version = "0.1.41", default-features = false }
 tracing-subscriber = { version = "=0.3.19" }
+anyhow = { version = "1.0" }
+hex = { version = "0.4" }
 
 # Async/HTTP (for provider node)
 axum = "0.7"
@@ -188,6 +190,7 @@ sp-keyring = { version = "46.0.0", default-features = false }
 sp-keystore = { version = "0.46.0", default-features = false }
 tempfile = "3"
 tokio-test = "0.4"
+
 
 [profile.release]
 opt-level = 3

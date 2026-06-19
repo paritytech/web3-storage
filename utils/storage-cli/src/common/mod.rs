@@ -1,7 +1,9 @@
-use crate::cli_args::GlobalArgs;
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::cli::GlobalArgs;
 use anyhow::{bail, Context, Result};
 
-/// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required;
+/// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required)
 pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
     match (&global.suri, &global.keyfile) {
         (Some(suri), _) => Ok(suri.clone()),

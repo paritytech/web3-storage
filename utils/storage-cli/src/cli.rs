@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Command-line argument parsing for the storage CLI.
 
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+use crate::commands::stress_test::StressTest;
 
 /// Storage CLI for scalable Web3 storage — drive on-chain and off-chain
 /// storage operations from a single tool.
@@ -54,25 +57,3 @@ pub enum Command {
     StressTest(StressTest),
 }
 
-#[derive(Debug, Subcommand)]
-pub enum StressTest {
-    /// Upload generated data to every bucket the account already has an
-    /// agreement with the given provider for.
-    Upload(UploadArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct UploadArgs {
-    /// Provider account (SS58 or 0x-hex) whose agreements select the target
-    /// buckets.
-    #[arg(long, value_name = "ACCOUNT")]
-    pub provider: String,
-
-    /// Cap the number of buckets written to (default: all matching buckets).
-    #[arg(long, value_name = "N")]
-    pub max_buckets_to_write: Option<usize>,
-
-    /// Bytes of generated data to upload per bucket.
-    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
-    pub size: usize,
-}
