@@ -1005,7 +1005,7 @@ async fn test_checkpoint_sign_happy_path() {
     // Get the real commitment so we can build a matching proposal
     let commitment_resp = server
         .client
-        .get(server.url("/commitment?bucket_id=1"))
+        .get(server.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap();
@@ -1183,6 +1183,7 @@ async fn test_delete_happy_path() {
         .json(&json!({
             "bucket_id": 1,
             "data_roots": [hash1_hex, hash2_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1196,6 +1197,7 @@ async fn test_delete_happy_path() {
             "bucket_id": 1,
             "new_start_seq": 1,
             "admin_signature": "0x00",
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1306,7 +1308,8 @@ async fn test_commit_invalid_hex_data_root() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": ["not_hex"]
+            "data_roots": ["not_hex"],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1344,7 +1347,8 @@ async fn test_commit_without_signing_key() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [hash_hex]
+            "data_roots": [hash_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await

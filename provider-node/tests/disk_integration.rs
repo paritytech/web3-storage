@@ -73,6 +73,7 @@ async fn upload_and_commit(server: &DiskTestServer, bucket_id: u64) -> (String, 
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -138,7 +139,7 @@ async fn disk_commit_and_commitment() {
     // GET /commitment should return consistent state
     let resp = server
         .client
-        .get(server.url("/commitment?bucket_id=1"))
+        .get(server.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap();
@@ -279,7 +280,7 @@ async fn disk_delete_before() {
     server
         .client
         .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [h1_hex, h2_hex] }))
+        .json(&json!({ "bucket_id": 1, "data_roots": [h1_hex, h2_hex], "nonce": 0u64 }))
         .send()
         .await
         .unwrap();
@@ -292,6 +293,7 @@ async fn disk_delete_before() {
             "bucket_id": 1,
             "new_start_seq": 1,
             "admin_signature": "0x00",
+            "nonce": 0u64,
         }))
         .send()
         .await
