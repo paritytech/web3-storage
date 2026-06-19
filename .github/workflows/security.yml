@@ -5,6 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  merge_group:
   # Daily re-scan of unchanged code for newly-published advisories / leaks.
   schedule:
     - cron: '17 6 * * *' # daily at 06:17 UTC
@@ -43,7 +44,7 @@ jobs:
       # Advisory DB drifts over time, so keep it non-blocking on PRs.
       - name: Check advisories
         run: cargo deny --locked check advisories
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        continue-on-error: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
   # gitleaks is not in ci-unified and needs no Rust toolchain — run it standalone.
   gitleaks:
