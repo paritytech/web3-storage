@@ -27,6 +27,7 @@ import {
 import { isSameAddress } from '@web3-storage/papi'
 import { getCurrentBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
+import { challengeKey } from '@/state/challengeKey'
 
 // Types (matching chain types with some UI additions)
 export interface ProviderInfo {
@@ -37,6 +38,7 @@ export interface ProviderInfo {
   bucketCount: number
   registeredAt: number
   multiaddr?: string
+  deregisterAt?: number
 }
 
 export interface ProviderSettings {
@@ -161,6 +163,22 @@ function clearStaleCache(genesisHash: string) {
   localStorage.setItem(CHALLENGES_GENESIS_KEY, genesisHash)
 }
 
+/**
+ * Clear locally-cached chain data — the persisted challenges cache and the
+ * in-memory list. Preferences (wallet, network, auto-refresh) are NOT touched;
+ * those live under different keys. Callers typically follow with
+ * `loadProviderData` to refetch fresh state from chain.
+ */
+export function clearLocalCache(): void {
+  challenges$.next([])
+  try {
+    localStorage.removeItem(CHALLENGES_STORAGE_KEY)
+    localStorage.removeItem(CHALLENGES_GENESIS_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 // State subjects
 const providerInfo$ = new BehaviorSubject<ProviderInfo | null>(null)
 const providerSettings$ = new BehaviorSubject<ProviderSettings | null>(null)
@@ -217,9 +235,18 @@ export const [useProviderError] = bind(error$, null)
 /**
  * Load provider data from chain
  */
-export async function loadProviderData(address: string): Promise<void> {
-  isLoading$.next(true)
-  error$.next(null)
+export async function loadProviderData(
+  address: string,
+  opts: { silent?: boolean } = {},
+): Promise<void> {
+  // Silent refreshes (e.g. the auto-refresh timer) update data in place without
+  // toggling the global loading flag or surfacing transient errors, so the UI
+  // doesn't flash loading/error states on every tick.
+  const silent = opts.silent ?? false
+  if (!silent) {
+    isLoading$.next(true)
+    error$.next(null)
+  }
 
   try {
     // Clear stale challenge cache if chain restarted (different genesis)
@@ -256,9 +283,9 @@ export async function loadProviderData(address: string): Promise<void> {
     const existing = challenges$.getValue()
     const merged = new Map<string, Challenge>()
     // Keep existing (may include responded/slashed from prior polls)
-    for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+    for (const c of existing) merged.set(challengeKey(c), c)
     // Overlay with fresh data (updates status for ones still visible)
-    for (const c of newChallenges) merged.set(`${c.deadline}-${c.id}`, c)
+    for (const c of newChallenges) merged.set(challengeKey(c), c)
     challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 
     // Phase 2: Fetch bucket details (depends on agreement data for bucket IDs)
@@ -321,9 +348,13 @@ export async function loadProviderData(address: string): Promise<void> {
       activeAgreementValue: activeValue,
     })
   } catch (err) {
-    error$.next(err instanceof Error ? err.message : 'Failed to load provider data')
+    if (silent) {
+      console.warn('Auto-refresh failed to load provider data:', err)
+    } else {
+      error$.next(err instanceof Error ? err.message : 'Failed to load provider data')
+    }
   } finally {
-    isLoading$.next(false)
+    if (!silent) isLoading$.next(false)
   }
 }
 
@@ -447,6 +478,59 @@ export async function addStake(
 }
 
 /**
+ * Announce intent to de-register (step 1 of 2).
+ * Requires no active agreements (committed_bytes == 0).
+ */
+export async function deregisterProvider(
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitDeregisterProvider } = await import('@/lib/chain-client')
+    await submitDeregisterProvider(signer, onProgress)
+
+    // Reload from chain to reflect deregisterAt and frozen settings
+    const address = providerInfo$.getValue()?.account
+    if (address) await loadProviderData(address)
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'De-registration announcement failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
+ * Complete de-registration (step 2 of 2).
+ * Requires cooldown period to have elapsed.
+ */
+export async function completeDeregister(
+  signer: import('polkadot-api/pjs-signer').InjectedPolkadotAccount,
+  onProgress?: (status: import('@/lib/chain-client').TxStatus) => void
+): Promise<void> {
+  if (isLoading$.getValue()) throw new Error('Another operation is in progress')
+  isLoading$.next(true)
+  error$.next(null)
+
+  try {
+    const { submitCompleteDeregister } = await import('@/lib/chain-client')
+    await submitCompleteDeregister(signer, onProgress)
+
+    // Provider no longer exists — clear all state
+    clearProviderState()
+  } catch (err) {
+    error$.next(err instanceof Error ? err.message : 'De-registration completion failed')
+    throw err
+  } finally {
+    isLoading$.next(false)
+  }
+}
+
+/**
  * Respond to a challenge: fetch proofs from provider node, submit on-chain.
  */
 export async function respondToChallenge(
@@ -474,10 +558,10 @@ export async function respondToChallenge(
   )
 
   // Step 3: Update local state
-  const key = `${challenge.deadline}-${challenge.id}`
+  const key = challengeKey(challenge)
   const existing = challenges$.getValue()
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+  for (const c of existing) merged.set(challengeKey(c), c)
   merged.set(key, { ...challenge, status: 'responded' })
   challenges$.next(Array.from(merged.values()).sort((a, b) => b.deadline - a.deadline))
 }
@@ -500,10 +584,10 @@ export function clearProviderState(): void {
  */
 export function addChallengeFromEvent(onChainChallenge: import('@/lib/chain-client').OnChainChallenge): void {
   const challenge = convertChallenge(onChainChallenge)
-  const key = `${challenge.deadline}-${challenge.id}`
+  const key = challengeKey(challenge)
   const existing = challenges$.getValue()
   const merged = new Map<string, Challenge>()
-  for (const c of existing) merged.set(`${c.deadline}-${c.id}`, c)
+  for (const c of existing) merged.set(challengeKey(c), c)
 
   const prev = merged.get(key)
   if (prev) {
@@ -529,6 +613,7 @@ function convertProviderInfo(address: string, chain: OnChainProviderInfo): Provi
     bucketCount: chain.activeBuckets,
     registeredAt: chain.registeredAt,
     multiaddr: chain.multiaddr,
+    deregisterAt: chain.deregisterAt,
   }
 }
 
@@ -638,6 +723,9 @@ export const providerActions = {
   updateSettings,
   updateMultiaddr,
   addStake,
+  deregisterProvider,
+  completeDeregister,
   respondToChallenge,
   clearProviderState,
+  clearLocalCache,
 }
