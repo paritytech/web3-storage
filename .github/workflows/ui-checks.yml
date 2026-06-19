@@ -8,6 +8,7 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -22,12 +23,14 @@ jobs:
     name: Detect UI changes
     runs-on: ubuntu-latest
     outputs:
-      ui: ${{ steps.filter.outputs.ui }}
+      ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+      # paths-filter has no diff base on merge_group; run the full suite there.
+      - if: github.event_name != 'merge_group'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
         id: filter
         with:
           filters: |
