@@ -12,6 +12,7 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  merge_group:
   workflow_dispatch:
   schedule:
     - cron: '0 5 * * *' # Daily at 5 AM UTC — refresh cached snapshots
@@ -37,12 +38,14 @@ jobs:
     permissions:
       contents: read
     outputs:
-      runtime: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || steps.filter.outputs.runtime == 'true' }}
+      runtime: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'merge_group' || steps.filter.outputs.runtime == 'true' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+      # paths-filter has no diff base on merge_group; run the full suite there.
+      - if: github.event_name != 'merge_group'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
         id: filter
         with:
           filters: |
