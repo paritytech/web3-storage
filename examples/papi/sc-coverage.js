@@ -36,7 +36,6 @@ import {
   connect,
   ensureProviderRegistered,
   ensureSoleAcceptingProvider,
-  hexToBytes,
   makeSigner,
   parseProviderClientArgs,
   READ_OPTS,
@@ -58,8 +57,9 @@ const { chainWs, providerUrl, providerSeed, clientSeed } = parseProviderClientAr
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONTRACT_JSON = resolve(HERE, "../contracts/build/combined.json");
 
-const WEB3_STORAGE_ADDR = hexToBytes("0x0000000000000000000000000000000009010000");
-const DRIVE_REGISTRY_ADDR = hexToBytes("0x0000000000000000000000000000000009020000");
+// Revive.call `dest` is a SizedHex<20> (hex string) in polkadot-api 2.x.
+const WEB3_STORAGE_ADDR = "0x0000000000000000000000000000000009010000";
+const DRIVE_REGISTRY_ADDR = "0x0000000000000000000000000000000009020000";
 
 /** Send raw calldata to a precompile address as a signed substrate tx. */
 async function callPrecompile(api, signer, addr, abi, fnName, args, opts = {}) {

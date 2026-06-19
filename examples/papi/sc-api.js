@@ -43,8 +43,12 @@ export function substrateToH160(publicKey) {
  * the `owner` of negotiated agreement terms.
  */
 export function h160ToSubstrate(addressBytes) {
+  // The H160 is a SizedHex<20> hex string in polkadot-api 2.x; accept either
+  // that or raw bytes.
+  const bytes =
+    addressBytes instanceof Uint8Array ? addressBytes : hexToBytes(addressBytes);
   const publicKey = new Uint8Array(32).fill(0xee);
-  publicKey.set(addressBytes, 0);
+  publicKey.set(bytes, 0);
   return { publicKey, address: ss58Address(publicKey) };
 }
 
@@ -159,10 +163,14 @@ export async function deployContract(
     api.event.Revive.Instantiated,
     "Revive.Instantiated"
   );
-  const addrBytes = instantiated.contract.asBytes
-    ? instantiated.contract.asBytes()
+  // Revive surfaces the contract H160 as a SizedHex<20> (0x-prefixed hex
+  // string) — keep it as hex, which is what Revive.call `dest`, ContractEmitted
+  // and h160ToSubstrate all consume. (toHex on a hex string would coerce it to
+  // an array length and throw.)
+  const address = instantiated.contract.asHex
+    ? instantiated.contract.asHex()
     : instantiated.contract;
-  return { address: toHex(addrBytes), addressBytes: addrBytes, events: result.events };
+  return { address, addressBytes: address, events: result.events };
 }
 
 /**
@@ -216,10 +224,13 @@ export function decodeContractEmitted(events, api, contractAddressBytes, abi) {
       t.asBytes ? t.asBytes() : t
     );
     try {
+      // In polkadot-api 2.x data/topics already arrive as hex strings; only
+      // raw byte arrays need toHex. viem wants 0x-hex for both.
+      const asHex = (x) => (x instanceof Uint8Array ? toHex(x) : x);
       const log = decodeEventLog({
         abi,
-        data: toHex(dataBytes),
-        topics: topicsBytes.map(toHex),
+        data: asHex(dataBytes),
+        topics: topicsBytes.map(asHex),
       });
       decoded.push(log);
     } catch (_) {
