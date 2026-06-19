@@ -701,8 +701,10 @@ export class S3Client {
 
   async isChallengeActive(deadline: number): Promise<boolean> {
     const api = this.requireApi();
-    const challenges = await api.query.StorageProvider.Challenges.getValue(deadline);
-    return challenges !== undefined && challenges.length > 0;
+    // Challenges is a StorageDoubleMap keyed by (deadline, index); an active
+    // deadline has at least one entry under its prefix.
+    const entries = await api.query.StorageProvider.Challenges.getEntries(deadline);
+    return entries.length > 0;
   }
 
   async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
