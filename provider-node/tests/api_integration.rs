@@ -109,6 +109,13 @@ async fn test_info_endpoint() {
 
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["provider_id"], expect_provider_id);
+
+    // `TestServer::new` seeds a signing key but wires up neither the nonce
+    // counter nor on-chain provider info (those need a live chain at startup),
+    // so the readiness flags must reflect "can sign, not yet ready to negotiate".
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], false);
 }
 
 #[tokio::test]

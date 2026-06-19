@@ -8,14 +8,14 @@ use crate::{
     create_router,
     subxt_client::SubxtChainClient,
     ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, CheckpointCoordinator,
-    CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage, NonceCounter,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
+    CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -68,9 +68,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
-            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
-
             Arc::new(state)
         }
         None => {
@@ -103,6 +100,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(state)
         }
     };
+
+    // Keep the node's view of its own on-chain registration current. The chain
+    // is the source of truth for the provider's settings and replay window, so
+    // we poll it in the background rather than reading once at startup. This
+    // makes registration order irrelevant: the provider can register *after*
+    // the node is already serving (the node picks it up with no restart), and
+    // later settings changes are reflected too. Only meaningful when we can
+    // sign, so gate on having a key.
+    if seed.is_some() {
+        let interval = Duration::from_secs(cli.rpc.reconcile_interval_secs);
+        spawn_chain_reconciler(cli.rpc.chain_rpc.clone(), interval, state.clone());
+    }
 
     // Connect a single chain client shared by every coordinator. One
     // WebSocket connection and one signer (the provider's own account) back
@@ -232,98 +241,131 @@ async fn start_replica_sync_coordinator(
     }
 }
 
-/// Fetch the provider's on-chain registration info once and store it.
+/// Spawn a background task that keeps the node's view of its own on-chain
+/// registration current.
 ///
-/// Returns `None` (and logs a warning) if anything goes wrong, so a transient
-/// chain hiccup or an unregistered provider doesn't take the whole node down.
-async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
-    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
+/// The chain is the source of truth for the provider's settings
+/// ([`ProviderState::provider_info`]) and replay window
+/// ([`ProviderState::nonce_counter`]). Instead of reading these once at
+/// startup — which would miss a provider that registers *after* the node is up
+/// and never notice later settings changes — we poll every `interval`. The
+/// first poll runs immediately, so an already-registered provider is picked up
+/// right away.
+///
+/// All failures are non-fatal: a chain hiccup or an unregistered provider just
+/// means we keep the previous view and retry on the next tick.
+fn spawn_chain_reconciler(chain_rpc: String, interval: Duration, state: Arc<ProviderState>) {
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
         Ok(account) => account,
         Err(e) => {
-            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
-            return None;
+            tracing::warn!(
+                "Provider id {} is not a valid account ({e:?}); skipping on-chain \
+                 reconciliation. Signing endpoints will stay unavailable.",
+                state.provider_id
+            );
+            return;
         }
     };
 
+    tokio::spawn(async move {
+        // Tracks the last observed registration status so we only log on
+        // transitions (registered <-> unregistered) rather than every tick.
+        let mut was_registered = false;
+        loop {
+            reconcile_once(&chain_rpc, &provider_account, &state, &mut was_registered).await;
+            tokio::time::sleep(interval).await;
+        }
+    });
+}
+
+/// Perform a single reconciliation pass against the chain. Best-effort: any
+/// error leaves the existing view untouched and is retried on the next tick.
+async fn reconcile_once(
+    chain_rpc: &str,
+    provider_account: &sp_runtime::AccountId32,
+    state: &ProviderState,
+    was_registered: &mut bool,
+) {
+    let provider_id = &state.provider_id;
+
     let client = storage_client::ProviderClient::new(
         storage_client::ClientConfig {
-            chain_ws_url: cli.rpc.chain_rpc.clone(),
+            chain_ws_url: chain_rpc.to_string(),
             ..Default::default()
         },
-        provider_id.to_string(),
+        provider_id.clone(),
     );
     let mut client = match client {
         Ok(client) => client,
         Err(e) => {
-            tracing::warn!("failed to build provider client: {e:?}");
-            return None;
+            tracing::debug!("reconciler: failed to build provider client: {e:?}");
+            return;
         }
     };
     if let Err(e) = client.connect().await {
-        tracing::warn!("failed to connect to chain: {e:?}");
-        return None;
+        tracing::debug!("reconciler: failed to connect to chain: {e:?}");
+        return;
     }
 
-    let info = match client.get_provider_info(&provider_account).await {
-        Ok(Some(info)) => info,
-        Ok(None) => {
-            tracing::warn!(
-                "provider {provider_id} is not registered on chain; \
-                 register it before starting the node"
-            );
-            return None;
-        }
-        Err(e) => {
-            tracing::warn!("failed to fetch provider info: {e:?}");
-            return None;
-        }
-    };
+    match client.get_provider_info(provider_account).await {
+        Ok(Some(info)) => {
+            // Align the nonce counter with the chain's replay window *before*
+            // publishing `provider_info`. `/negotiate` gates on `provider_info`
+            // being `Some`, so once it is visible the counter is guaranteed to
+            // be bootstrapped (see the defensive check in `negotiate_terms`).
+            match storage_client::ProviderClient::fetch_replay_hsn(chain_rpc, provider_account)
+                .await
+            {
+                Ok(Some(hsn)) => state.nonce_counter.bootstrap_from_hsn(hsn),
+                Ok(None) => {
+                    // Registered but no replay state is a transient/inconsistent
+                    // view (registration inserts both atomically). Defer.
+                    tracing::debug!(
+                        "reconciler: provider {provider_id} registered but replay state \
+                         missing; deferring to next tick"
+                    );
+                    return;
+                }
+                Err(e) => {
+                    tracing::debug!("reconciler: failed to fetch replay hsn: {e:?}");
+                    return;
+                }
+            }
 
-    tracing::info!(
-        "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
-        info.price_per_byte,
-        info.min_duration,
-        info.max_duration,
-        info.max_capacity,
-        info.accepting_primary,
-    );
+            if let Ok(mut guard) = state.provider_info.write() {
+                *guard = Some(info.clone());
+            }
 
-    Some(Arc::new(RwLock::new(info)))
-}
-
-/// Create the in-memory nonce counter and bootstrap it from the chain's
-/// `ProviderReplayState.hsn`. The chain is the source of truth, so there
-/// is nothing to persist locally.
-async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter {
-    // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
-    // reachable yet, set to None
-    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
-        Ok(account) => account,
-        Err(e) => {
-            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
-            return None;
-        }
-    };
-    match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
-        .await
-    {
-        Ok(Some(hsn)) => {
-            tracing::info!(
-                "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
-                hsn,
-                provider_id,
-            );
-            let counter = NonceCounter::new(1);
-            counter.bootstrap_from_hsn(hsn);
-            Some(Arc::new(counter))
+            if !*was_registered {
+                *was_registered = true;
+                tracing::info!(
+                    "Provider {provider_id} is registered on chain: price_per_byte={}, \
+                     duration=[{}, {}], max_capacity={}, accepting_primary={}. Signing \
+                     endpoints are now available.",
+                    info.price_per_byte,
+                    info.min_duration,
+                    info.max_duration,
+                    info.max_capacity,
+                    info.accepting_primary,
+                );
+            }
         }
         Ok(None) => {
-            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
-            None
+            if let Ok(mut guard) = state.provider_info.write() {
+                *guard = None;
+            }
+            if *was_registered {
+                *was_registered = false;
+                tracing::warn!(
+                    "Provider {provider_id} is no longer registered on chain; signing \
+                     endpoints are unavailable until it is re-registered."
+                );
+            } else {
+                tracing::debug!("reconciler: provider {provider_id} not registered on chain yet");
+            }
         }
         Err(e) => {
-            tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
-            None
+            tracing::debug!("reconciler: failed to fetch provider info: {e:?}");
         }
     }
 }

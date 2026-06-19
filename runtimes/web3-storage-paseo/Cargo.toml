@@ -1,6 +1,6 @@
 [package]
 name = "storage-paseo-runtime"
-version = "0.3.0"
+version = "0.4.1"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -236,6 +236,5 @@ try-runtime = [
 	"polkadot-runtime-common/try-runtime",
 	"sp-runtime/try-runtime",
 ]
-fast-runtime = []
 # Enable the metadata hash generation in the wasm builder.
 metadata-hash = ["substrate-wasm-builder/metadata-hash"]
