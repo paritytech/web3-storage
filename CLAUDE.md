@@ -7,6 +7,9 @@
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
 
+**Pull request rules:**
+- ALWAYS open pull requests against the repository's default branch (`dev`)
+
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code
 - ALWAYS run `/format` before creating any git commit
