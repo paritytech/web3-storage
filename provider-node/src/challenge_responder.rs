@@ -359,13 +359,18 @@ impl ChallengeResponder {
 /// requires metadata-aware decoding of generic `BalanceOf<T>` etc. The byte
 /// layout of `Challenge<T>` is stable for the deployed runtimes, so we read
 /// fixed offsets.
-pub(crate) struct DecodedChallenge {
-    pub(crate) bucket_id: u64,
-    pub(crate) challenger: [u8; 32],
-    pub(crate) mmr_root: H256,
-    pub(crate) start_seq: u64,
-    pub(crate) leaf_index: u64,
-    pub(crate) chunk_index: u64,
+///
+/// Exposed (`#[doc(hidden)]`) only so the fixed-offset layout can be exercised
+/// from an integration test against the encoded `Challenge<T>` bytes — it is
+/// not part of the crate's stable public API.
+#[doc(hidden)]
+pub struct DecodedChallenge {
+    pub bucket_id: u64,
+    pub challenger: [u8; 32],
+    pub mmr_root: H256,
+    pub start_seq: u64,
+    pub leaf_index: u64,
+    pub chunk_index: u64,
 }
 
 /// Total SCALE-encoded size of a single `Challenge<T>` value (fixed-width
@@ -388,7 +393,11 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 ///   chunk_index (u64)       — 8
 ///   deposit (Balance u128)  — 16
 /// Total: 144 bytes.
-pub(crate) fn decode_challenge_for_provider(
+///
+/// `#[doc(hidden)] pub` so the fixed-offset layout is reachable from an
+/// integration test; it is an internal helper, not stable public API.
+#[doc(hidden)]
+pub fn decode_challenge_for_provider(
     encoded: &[u8],
     our_bytes: &[u8; 32],
 ) -> Result<Option<DecodedChallenge>, &'static str> {
@@ -421,70 +430,4 @@ pub(crate) fn decode_challenge_for_provider(
         leaf_index,
         chunk_index,
     }))
-}
-
-#[cfg(test)]
-mod scale_decoding_tests {
-    use super::*;
-
-    /// Build raw bytes matching the pallet's `Challenge<T>` layout. We hand-
-    /// roll this rather than rely on the pallet's own struct so the test would
-    /// catch a layout drift between the two crates.
-    fn build_challenge(provider: [u8; 32]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let bucket_id: u64 = 42;
-        let challenger: [u8; 32] = [2u8; 32];
-        let mmr_root: [u8; 32] = [3u8; 32];
-        let start_seq: u64 = 100;
-        let leaf_index: u64 = 7;
-        let chunk_index: u64 = 0;
-        let deposit: u128 = 1_000_000_000_000;
-        buf.extend_from_slice(&bucket_id.to_le_bytes());
-        buf.extend_from_slice(&provider);
-        buf.extend_from_slice(&challenger);
-        buf.extend_from_slice(&mmr_root);
-        buf.extend_from_slice(&start_seq.to_le_bytes());
-        buf.extend_from_slice(&leaf_index.to_le_bytes());
-        buf.extend_from_slice(&chunk_index.to_le_bytes());
-        buf.extend_from_slice(&deposit.to_le_bytes());
-        buf
-    }
-
-    /// A single-value `Challenge` whose provider matches us decodes into
-    /// `Some` with the expected fields.
-    #[test]
-    fn decode_single_challenge_matching_provider() {
-        let our_bytes: [u8; 32] = [9u8; 32];
-        let encoded = build_challenge(our_bytes);
-
-        let decoded = decode_challenge_for_provider(&encoded, &our_bytes)
-            .expect("decodes")
-            .expect("matches our provider");
-        assert_eq!(decoded.bucket_id, 42);
-        assert_eq!(decoded.start_seq, 100);
-        assert_eq!(decoded.leaf_index, 7);
-        assert_eq!(decoded.challenger, [2u8; 32]);
-    }
-
-    /// A `Challenge` targeting a different provider decodes into `None`.
-    #[test]
-    fn decode_single_challenge_other_provider() {
-        let our_bytes: [u8; 32] = [9u8; 32];
-        let other_bytes: [u8; 32] = [1u8; 32];
-        let encoded = build_challenge(other_bytes);
-
-        let decoded = decode_challenge_for_provider(&encoded, &our_bytes).expect("decodes");
-        assert!(
-            decoded.is_none(),
-            "challenge for another provider is filtered out"
-        );
-    }
-
-    /// A truncated value (shorter than the fixed layout) is a decode error.
-    #[test]
-    fn decode_single_challenge_truncated() {
-        let our_bytes: [u8; 32] = [9u8; 32];
-        let encoded = vec![0u8; CHALLENGE_ENTRY_SIZE - 1];
-        assert!(decode_challenge_for_provider(&encoded, &our_bytes).is_err());
-    }
 }
