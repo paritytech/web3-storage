@@ -210,11 +210,14 @@ export async function respondToChallenge(api, provider, challengeId, proof) {
     provider.signer,
     "respond_to_challenge"
   );
-  return requireOneEvent(
+  // Assert the challenge was defended (throws if not exactly one), but return
+  // the full tx result so callers can read its in-block events.
+  requireOneEvent(
     result.events,
     api.event.StorageProvider.ChallengeDefended,
     "ChallengeDefended"
   );
+  return result;
 }
 
 export async function endAgreement(api, client, provider, bucketId, action = "Pay", actionValue) {
