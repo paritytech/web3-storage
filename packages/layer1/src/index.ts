@@ -6,4 +6,8 @@
  */
 export * from "./fs/index.js";
 export * from "./s3/index.js";
-export { ProviderUrlResolver } from "./provider-url.js";
+export {
+  ProviderUrlResolver,
+  negotiateProviderTerms,
+  type NegotiateProviderResult,
+} from "./provider-url.js";

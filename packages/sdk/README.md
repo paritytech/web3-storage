@@ -99,7 +99,7 @@ sr25519 signature — unauthenticated providers still work.
 ## Descriptors
 
 The typed API comes from the single tracked metadata snapshot owned by
-`@web3-storage/papi` (`user-interfaces/shared/papi`). CI re-fetches metadata
+`@web3-storage/papi` (`packages/papi`). CI re-fetches metadata
 from the live chain in the E2E job and fails when the committed snapshot has
 drifted from the runtime. To refresh locally (chain running on :2222):
 

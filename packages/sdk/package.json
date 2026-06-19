@@ -18,7 +18,7 @@
     "@web3-storage/core": "workspace:*",
     "@web3-storage/layer0": "workspace:*",
     "@web3-storage/layer1": "workspace:*",
-    "polkadot-api": "^2.1.0"
+    "polkadot-api": "^2.1.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

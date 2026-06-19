@@ -19,7 +19,7 @@
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "@web3-storage/core": "workspace:*",
     "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.0",
+    "polkadot-api": "^2.1.6",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {

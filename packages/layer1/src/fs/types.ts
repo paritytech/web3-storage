@@ -6,6 +6,9 @@ import type { SignedTerms } from "@web3-storage/core";
 
 import type { ProviderChoice } from "../provider-url.js";
 
+export type { PrimaryProviderInfo } from "../provider-url.js";
+import type { PrimaryProviderInfo } from "../provider-url.js";
+
 export interface DriveInfo {
   driveId: bigint;
   bucketId: bigint;
@@ -16,6 +19,8 @@ export interface DriveInfo {
   createdAt: number;
   storagePeriod: number;
   expiresAt: number;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: PrimaryProviderInfo[];
 }
 
 export interface CreateDriveOptions {

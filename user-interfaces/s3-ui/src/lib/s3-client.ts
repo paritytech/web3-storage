@@ -33,6 +33,7 @@ import {
   type SignedTerms,
 } from "@web3-storage/sdk";
 import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
+import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
@@ -59,6 +60,8 @@ export interface BucketInfo {
   layer0BucketId: bigint;
   owner: string;
   createdAt: bigint;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: PrimaryProviderInfo[];
 }
 
 export interface S3ObjectInfo {
@@ -280,6 +283,7 @@ export class S3Client {
       layer0BucketId: info.layer0BucketId,
       owner: info.owner,
       createdAt: BigInt(info.createdAt),
+      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
     };
   }
 
@@ -291,6 +295,7 @@ export class S3Client {
       layer0BucketId: b.layer0BucketId,
       owner: b.owner,
       createdAt: BigInt(b.createdAt),
+      providerInfo: b.providerInfo,
     }));
   }
 

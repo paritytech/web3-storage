@@ -34,7 +34,11 @@ import {
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import { ProviderUrlResolver, resolveCreationTerms } from "../provider-url.js";
+import {
+  ProviderUrlResolver,
+  resolveBucketProviders,
+  resolveCreationTerms,
+} from "../provider-url.js";
 import type {
   BucketInfo,
   BucketRef,
@@ -165,6 +169,7 @@ export class S3Client {
       owner: signer.address,
       createdAt: 0,
       objectCount: 0,
+      providerInfo: [{ account: provider.address, multiaddr: "", url: null }],
     };
   }
 
@@ -176,6 +181,11 @@ export class S3Client {
     if (bucketId === undefined) return null;
     const bucket = await this.api.query.S3Registry.S3Buckets.getValue(bucketId, this.readOpts);
     if (!bucket) return null;
+    const [providerInfo] = await resolveBucketProviders(
+      this.api,
+      [bucket.layer0_bucket_id],
+      this.readOpts,
+    );
     return {
       s3BucketId: bucketId,
       layer0BucketId: bucket.layer0_bucket_id,
@@ -183,25 +193,47 @@ export class S3Client {
       owner: bucket.owner,
       createdAt: Number(bucket.created_at),
       objectCount: Number(bucket.object_count),
+      providerInfo: providerInfo ?? [],
     };
   }
 
   async listBuckets(owner?: string): Promise<BucketInfo[]> {
     const who = owner ?? this.requireSigner().address;
     const ids = await this.api.query.S3Registry.UserBuckets.getValue(who, this.readOpts);
+    if (!ids || ids.length === 0) return [];
+
+    // Batch the bucket lookups into one query instead of N round-trips.
+    const bucketValues = await this.api.query.S3Registry.S3Buckets.getValues(
+      ids.map((id) => [id] as const),
+      this.readOpts,
+    );
+
     const buckets: BucketInfo[] = [];
-    for (const id of ids ?? []) {
-      const bucket = await this.api.query.S3Registry.S3Buckets.getValue(id, this.readOpts);
-      if (!bucket) continue;
+    const layer0BucketIds: bigint[] = [];
+    bucketValues.forEach((bucket, i) => {
+      if (!bucket) return;
       buckets.push({
-        s3BucketId: id,
+        s3BucketId: ids[i]!,
         layer0BucketId: bucket.layer0_bucket_id,
         name: new TextDecoder().decode(bucket.name),
         owner: bucket.owner,
         createdAt: Number(bucket.created_at),
         objectCount: Number(bucket.object_count),
+        providerInfo: [],
       });
-    }
+      layer0BucketIds.push(bucket.layer0_bucket_id);
+    });
+
+    // `providersByBucket[i]` aligns with `buckets[i]` (both built skipping nulls).
+    const providersByBucket = await resolveBucketProviders(
+      this.api,
+      layer0BucketIds,
+      this.readOpts,
+    );
+    buckets.forEach((bucket, i) => {
+      bucket.providerInfo = providersByBucket[i] ?? [];
+    });
+
     return buckets;
   }
 

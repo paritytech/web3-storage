@@ -35,7 +35,11 @@ import {
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import { ProviderUrlResolver, resolveCreationTerms } from "../provider-url.js";
+import {
+  ProviderUrlResolver,
+  resolveBucketProviders,
+  resolveCreationTerms,
+} from "../provider-url.js";
 import type {
   BucketMember,
   CheckpointDuty,
@@ -148,6 +152,11 @@ export class FileSystemClient {
   async getDrive(driveId: bigint): Promise<DriveInfo | null> {
     const drive = await this.api.query.DriveRegistry.Drives.getValue(driveId, this.readOpts);
     if (!drive) return null;
+    const [providerInfo] = await resolveBucketProviders(
+      this.api,
+      [drive.bucket_id],
+      this.readOpts,
+    );
     return {
       driveId,
       bucketId: drive.bucket_id,
@@ -157,17 +166,45 @@ export class FileSystemClient {
       createdAt: drive.created_at,
       storagePeriod: drive.storage_period,
       expiresAt: drive.expires_at,
+      providerInfo: providerInfo ?? [],
     };
   }
 
   async listDrives(owner?: string): Promise<DriveInfo[]> {
     const who = owner ?? this.requireSigner().address;
     const driveIds = await this.api.query.DriveRegistry.UserDrives.getValue(who, this.readOpts);
+    if (!driveIds || driveIds.length === 0) return [];
+
+    // Batch all drive lookups into one storage query instead of N round-trips.
+    const driveValues = await this.api.query.DriveRegistry.Drives.getValues(
+      driveIds.map((id) => [id] as const),
+      this.readOpts,
+    );
+
     const drives: DriveInfo[] = [];
-    for (const id of driveIds ?? []) {
-      const drive = await this.getDrive(id);
-      if (drive) drives.push(drive);
-    }
+    const bucketIds: bigint[] = [];
+    driveValues.forEach((drive, i) => {
+      if (!drive) return;
+      drives.push({
+        driveId: driveIds[i]!,
+        bucketId: drive.bucket_id,
+        owner: drive.owner,
+        name: decodeName(drive.name),
+        maxCapacity: drive.max_capacity,
+        createdAt: drive.created_at,
+        storagePeriod: drive.storage_period,
+        expiresAt: drive.expires_at,
+        providerInfo: [],
+      });
+      bucketIds.push(drive.bucket_id);
+    });
+
+    // `providersByBucket[i]` aligns with `drives[i]` (both built skipping nulls).
+    const providersByBucket = await resolveBucketProviders(this.api, bucketIds, this.readOpts);
+    drives.forEach((drive, i) => {
+      drive.providerInfo = providersByBucket[i] ?? [];
+    });
+
     return drives;
   }
 

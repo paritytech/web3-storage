@@ -219,7 +219,7 @@ export class DriveClient {
   // ── Drive on-chain operations ─────────────────────────────────────────────
 
   async createDrive(options: CreateDriveOptions): Promise<DriveInfo> {
-    const { driveId, bucketId } = await this.requireFs().createDrive(options);
+    const { driveId, bucketId, provider } = await this.requireFs().createDrive(options);
     return {
       driveId,
       bucketId,
@@ -229,6 +229,7 @@ export class DriveClient {
       createdAt: 0,
       storagePeriod: options.storagePeriod,
       expiresAt: 0,
+      providerInfo: [{ account: provider, multiaddr: "", url: options.provider?.url ?? null }],
     };
   }
 
@@ -347,7 +348,7 @@ export class DriveClient {
   async submitCreateDrive(
     name: string | undefined,
     providerAccount: string,
-    _providerUrl: string,
+    providerUrl: string,
     signed: SignedTerms,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
@@ -376,6 +377,7 @@ export class DriveClient {
       createdAt: 0,
       storagePeriod: signed.terms.duration,
       expiresAt: 0,
+      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
     };
   }
 

@@ -209,6 +209,7 @@ export interface OnChainProviderInfo {
   activeBuckets: number
   registeredAt: number
   multiaddr?: string
+  deregisterAt?: number
 }
 
 export interface OnChainProviderSettings {
@@ -324,6 +325,7 @@ export async function getProviderData(
     activeBuckets: provider.stats.agreements_total,
     registeredAt: provider.stats.registered_at,
     multiaddr: new TextDecoder().decode(provider.multiaddr),
+    deregisterAt: provider.deregister_at ?? undefined,
   }
   const s = provider.settings
   const settings: OnChainProviderSettings = {
@@ -603,6 +605,26 @@ export async function submitAddStake(
   const a = requireApi()
   const tx = a.tx.StorageProvider.add_stake({ amount })
   await submit(tx, signer, 'Add stake')
+}
+
+export async function submitDeregisterProvider(
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<void> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing de-registration announcement...' })
+  const tx = a.tx.StorageProvider.deregister_provider()
+  await submit(tx, signer, 'Deregister provider', onProgress)
+}
+
+export async function submitCompleteDeregister(
+  signer: InjectedPolkadotAccount,
+  onProgress?: TxProgressCallback,
+): Promise<void> {
+  const a = requireApi()
+  onProgress?.({ type: 'signing', message: 'Signing de-registration completion...' })
+  const tx = a.tx.StorageProvider.complete_deregister()
+  await submit(tx, signer, 'Complete deregister', onProgress)
 }
 
 // ── Challenge proof fetching & response submission ──────────────────────────

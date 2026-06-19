@@ -6,6 +6,9 @@ import type { SignedTerms } from "@web3-storage/core";
 
 import type { ProviderChoice } from "../provider-url.js";
 
+export type { PrimaryProviderInfo } from "../provider-url.js";
+import type { PrimaryProviderInfo } from "../provider-url.js";
+
 export interface BucketInfo {
   s3BucketId: bigint;
   layer0BucketId: bigint;
@@ -13,6 +16,8 @@ export interface BucketInfo {
   owner: string;
   createdAt: number;
   objectCount: number;
+  /** Primary providers of the underlying layer-0 bucket. */
+  providerInfo: PrimaryProviderInfo[];
 }
 
 /**

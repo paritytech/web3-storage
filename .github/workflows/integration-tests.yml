@@ -326,16 +326,19 @@ jobs:
 
       - name: Start provider (inmemory)
         run: |
+          # Short reconcile interval so workflow 11 observes on-chain settings
+          # changes within a tick instead of waiting the 30s default.
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
             --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
+            --reconcile-interval-secs 1 \
             --enable-checkpoint-coordinator \
             > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
 
-      # The tracked metadata snapshot in shared/papi is the single descriptor
+      # The tracked metadata snapshot in packages/papi is the single descriptor
       # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
       # from the live chain and fail loudly when the committed snapshot has
       # drifted from the runtime — descriptors would otherwise silently
@@ -359,7 +362,7 @@ jobs:
             echo "::error::SDK no longer typechecks against the live runtime metadata — a runtime API changed."
             echo "::error::Fix the SDK wrappers for the new API, then refresh the committed snapshot (any current bytes; the API is what matters):"
             echo "::error::  (with a local chain running) pnpm --filter @web3-storage/papi run papi:generate"
-            echo "::error::  git add user-interfaces/shared/papi/.papi && git commit -m 'chore(papi): refresh metadata for runtime change'"
+            echo "::error::  git add packages/papi/.papi && git commit -m 'chore(papi): refresh metadata for runtime change'"
             exit 1
           }
           echo "SDK typechecks against the live runtime descriptors."
