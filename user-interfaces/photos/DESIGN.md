@@ -63,7 +63,7 @@ provider node  /fs/{bucketId}/…    holds the photo blobs, thumbnails, and the 
         (off-chain, browser ↔ provider; client-computed tree root anchored on-chain by the contract)
 ```
 
-Origin model (from [`smart-contracts.md`](./smart-contracts.md)): precompile calls dispatch as
+Origin model (from [`smart-contracts.md`](../../docs/design/smart-contracts.md)): precompile calls dispatch as
 `RawOrigin::Signed(contract_account)`, so the **contract** owns every user's drive. Per-user
 attribution lives in the contract (`driveOwner`). At creation the contract grants the user a
 **Writer** role on the drive (`shareDrive` → `set_member_internal` on the storage-provider

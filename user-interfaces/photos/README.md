@@ -2,7 +2,7 @@
 
 Layer 1 (drive-registry) dApp. A custom `Photos.sol` contract creates and owns a **drive** per user via
 the drive-registry precompile (`0x…0902`), grants the user a Writer role, and anchors the album-tree root
-CID on-chain. Design: [`docs/design/photos.md`](../../docs/design/photos.md).
+CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
 
 > Status: **M1** — contract + headless `createLibrary` flow. UI (React/Vite) lands in M4.
 
