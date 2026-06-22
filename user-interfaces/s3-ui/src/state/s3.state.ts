@@ -352,7 +352,6 @@ export function dismissCreation(id: string): void {
 }
 
 interface RetryCtx {
-  name: string;
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
@@ -366,7 +365,9 @@ export function canRetryCreation(id: string): boolean {
 async function runChainSubmit(id: string, ctx: RetryCtx): Promise<BucketInfo | null> {
   updateCreation(id, { stage: "submitting", error: undefined });
   try {
-    const bucket = await client.createBucket(ctx.name, ctx.provider.account, ctx.url, ctx.signed);
+    // Name lives on the creation record (keyed by id), not the retry context.
+    const name = creations$.getValue().find((c) => c.id === id)?.name ?? "";
+    const bucket = await client.createBucket(name, ctx.provider.account, ctx.url, ctx.signed);
     updateCreation(id, { stage: "ready", s3BucketId: bucket.s3BucketId });
     retryCtx.delete(id);
     await refreshBuckets();
@@ -393,7 +394,6 @@ export async function createBucket(input: CreateBucketInput): Promise<BucketInfo
   ]);
 
   const ctx: RetryCtx = {
-    name: input.name,
     provider: input.provider,
     url: input.url,
     signed: input.signed,
@@ -402,9 +402,15 @@ export async function createBucket(input: CreateBucketInput): Promise<BucketInfo
   return runChainSubmit(id, ctx);
 }
 
-export async function retryCreation(id: string): Promise<BucketInfo | null> {
+export async function retryCreation(
+  id: string,
+  name?: string,
+): Promise<BucketInfo | null> {
   const ctx = retryCtx.get(id);
   if (!ctx) return null;
+  // Let the caller override the name on retry (e.g. from the current input).
+  // runChainSubmit reads the name back off the creation record.
+  if (name !== undefined) updateCreation(id, { name });
   return runChainSubmit(id, ctx);
 }
 

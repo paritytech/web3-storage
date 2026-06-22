@@ -19,6 +19,7 @@ import {
   usePendingChallenges,
   respondToChallenge,
 } from '@/state/provider.state'
+import { challengeKey } from '@/state/challengeKey'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { RequireProvider } from '@/components/RequireProvider'
 import { formatAddress, formatBlockNumber } from '@/utils/format'
@@ -35,28 +36,32 @@ function ChallengesContent() {
   const selectedAccount = useSelectedAccount()
   const challenges = useChallenges()
   const pendingChallenges = usePendingChallenges()
-  const [respondingTo, setRespondingTo] = useState<{ id: number; step: string } | null>(null)
-  const [respondError, setRespondError] = useState<{ id: number; message: string } | null>(null)
+  // Track the in-flight/errored challenge by its globally-unique key, not by
+  // `id` alone — `id` is the per-deadline index and collides across deadline
+  // blocks, which would light up every row sharing that index.
+  const [respondingTo, setRespondingTo] = useState<{ key: string; step: string } | null>(null)
+  const [respondError, setRespondError] = useState<{ key: string; message: string } | null>(null)
 
   const handleRespond = async (challenge: typeof challenges[number]) => {
     if (!selectedAccount) return
 
+    const key = challengeKey(challenge)
     setRespondError(null)
-    setRespondingTo({ id: challenge.id, step: 'Fetching proof...' })
+    setRespondingTo({ key, step: 'Fetching proof...' })
     try {
       await respondToChallenge(challenge, selectedAccount, (status) => {
         if (status.type === 'signing') {
-          setRespondingTo({ id: challenge.id, step: status.message.includes('Fetching') ? 'Fetching proof...' : 'Signing...' })
+          setRespondingTo({ key, step: status.message.includes('Fetching') ? 'Fetching proof...' : 'Signing...' })
         } else if (status.type === 'broadcast') {
-          setRespondingTo({ id: challenge.id, step: 'Broadcasting...' })
+          setRespondingTo({ key, step: 'Broadcasting...' })
         } else if (status.type === 'inBlock') {
-          setRespondingTo({ id: challenge.id, step: 'Confirming...' })
+          setRespondingTo({ key, step: 'Confirming...' })
         }
       })
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       console.error('Failed to respond to challenge:', error)
-      setRespondError({ id: challenge.id, message: msg })
+      setRespondError({ key, message: msg })
     } finally {
       setRespondingTo(null)
     }
@@ -202,9 +207,11 @@ function ChallengesContent() {
                     if (a.status !== 'pending' && b.status === 'pending') return 1
                     return b.createdAt - a.createdAt
                   })
-                  .map((challenge) => (
+                  .map((challenge) => {
+                    const rowKey = challengeKey(challenge)
+                    return (
                     <TableRow
-                      key={challenge.id}
+                      key={rowKey}
                       className={
                         challenge.status === 'pending' ? 'bg-yellow-500/5' : undefined
                       }
@@ -253,7 +260,7 @@ function ChallengesContent() {
                               onClick={() => handleRespond(challenge)}
                               disabled={respondingTo !== null}
                             >
-                              {respondingTo?.id === challenge.id ? (
+                              {respondingTo?.key === rowKey ? (
                                 <>
                                   <Spinner size="sm" className="mr-2" />
                                   {respondingTo.step}
@@ -262,7 +269,7 @@ function ChallengesContent() {
                                 'Respond'
                               )}
                             </Button>
-                            {respondError?.id === challenge.id && respondingTo === null && (
+                            {respondError?.key === rowKey && respondingTo === null && (
                               <p className="text-xs text-red-400 max-w-[200px] truncate" title={respondError.message}>
                                 {respondError.message}
                               </p>
@@ -277,7 +284,8 @@ function ChallengesContent() {
                         ) : null}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    )
+                  })}
               </TableBody>
             </Table>
           )}
