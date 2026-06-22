@@ -205,19 +205,19 @@ impl ChainStateCoordinator {
                 )
                 .await
                 {
-                    Ok(Some(hsn)) => {
+                    Ok(hsn) => {
                         let counter = Arc::new(NonceCounter::new(1));
-                        counter.bootstrap_from_hsn(hsn);
+                        if let Some(hsn) = hsn {
+                            tracing::info!("chain-state coordinator: provider state synced");
+                            counter.bootstrap_from_hsn(hsn);
+                        }
+                        // Else:
+                        // Registered but no replay state yet — registration inserts both
+                        // atomically, so this is a transient view. The next event or block
+                        // that triggers a refresh will resolve it.
                         *self.chain_state.nonce_counter.write() = Some(counter);
                         *self.chain_state.provider_info.write() = Some(info);
-                        tracing::info!("chain-state coordinator: provider state synced");
                     }
-                    // Registered but no replay state yet — registration inserts both
-                    // atomically, so this is a transient view. The next event or block
-                    // that triggers a refresh will resolve it.
-                    Ok(None) => tracing::debug!(
-                        "chain-state coordinator: replay state not found, deferring"
-                    ),
                     Err(e) => {
                         tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}")
                     }
