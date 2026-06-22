@@ -238,10 +238,32 @@ fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
     }
 }
 
-/// Verify an sr25519 signature from an Authorization header.
+/// Verify an sr25519 signature from an `Authorization` header.
 ///
-/// Header format: `Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>`
-/// Signed message: `web3storage:<METHOD>:<bucket_id>:<timestamp>`
+/// The client signs the request by building the message
+///
+/// ```text
+/// web3storage:<METHOD>:<bucket_id>:<timestamp>
+/// ```
+///
+/// and sending the signature back in the `Authorization` header
+///
+/// ```text
+/// Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+/// ```
+///
+/// where:
+/// - `METHOD` is the upper-case HTTP verb of the request (`GET`, `PUT`, …).
+/// - `bucket_id` is the decimal bucket id the request targets.
+/// - `timestamp` is the client's current Unix time in **seconds**; the same
+///   string is used in both the signed message and the header. It must be
+///   within `max_skew` of the server clock or the request is rejected with
+///   [`Error::TimestampExpired`].
+/// - `pubkey_hex` / `signature_hex` are hex (optionally `0x`-prefixed) encodings
+///   of the 32-byte sr25519 public key and 64-byte signature.
+///
+/// On success returns the [`AccountId32`] derived from the recovered public key;
+/// the caller maps that account to a bucket role in [`require_role`].
 pub fn verify_signature(
     auth_header: &str,
     method: &str,

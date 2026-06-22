@@ -55,8 +55,18 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
                 origins.iter().filter_map(|o| o.parse().ok()).collect();
             CorsLayer::new()
                 .allow_origin(allowed)
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any)
+                // Only the verbs and request headers the API actually serves.
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::PUT,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::HEAD,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                ])
         }
         _ => CorsLayer::permissive(),
     };
