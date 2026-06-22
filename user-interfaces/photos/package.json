@@ -1,0 +1,28 @@
+{
+  "name": "@web3-storage/photos",
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "description": "Photos — decentralized photo storage dApp (Layer 1 drive registry + custom Photos contract)",
+  "type": "module",
+  "scripts": {
+    "build:contract": "bash contracts/build.sh",
+    "deploy-contract": "tsx scripts/deploy-contract.ts",
+    "photos-flow": "tsx scripts/photos-flow.ts"
+  },
+  "dependencies": {
+    "@polkadot-api/descriptors": "workspace:*",
+    "@polkadot-api/substrate-bindings": "^0.20.3",
+    "@polkadot-api/utils": "^0.4.0",
+    "@polkadot-labs/hdkd": "^0.0.28",
+    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@web3-storage/papi": "workspace:*",
+    "polkadot-api": "^2.1.6",
+    "viem": "^2.21.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3"
+  }
+}

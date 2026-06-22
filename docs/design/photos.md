@@ -315,7 +315,7 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
 - **Deploy**: a **TypeScript** deploy script lives in the app at
   `user-interfaces/photos/scripts/deploy-contract.ts` (run via `tsx`; PAPI
   `Revive.instantiate_with_code`, reading bin from `Photos.json`). It can share the app's own TS
-  deploy/encode helpers with the UI. A `just deploy-photos` recipe just invokes it, then injects
+  deploy/encode helpers with the UI. A `just photos deploy` recipe just invokes it, then injects
   the resulting address (reusing the landing-page injection mechanism, `landing/inject-config.mjs`).
 - **Fallback**: a dev-only "Deploy contract" affordance in the UI when no address is configured
   (deploys the same `Photos.json` bin directly from the browser via `Revive.instantiate_with_code`).
@@ -336,7 +336,7 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
   Writer grant. Add as a **TypeScript** flow in the app —
   `user-interfaces/photos/scripts/photos-flow.ts` (run via `tsx`) — reusing the same app-local TS
   helpers (`Photos.json` ABI, negotiate, drive-client FS ops) the UI uses, plus a
-  `just photos-flow` recipe.
+  `just photos flow` recipe.
 - **UI e2e** (Playwright + `@web3-storage/test-helpers`): the two states + create album + upload +
   edit + download.
 - **Contract**: covered by the integration script; optional Solidity unit tests if a harness is
@@ -354,7 +354,7 @@ deploy/flow scripts are **TypeScript and live in the app** (`user-interfaces/pho
 
 The riskiest seam, isolated. Vendor `contracts/{Photos.sol,IDriveRegistry.sol}` in the app;
 compile via `resolc` to `src/contract/Photos.json`. TS deploy script `scripts/deploy-contract.ts`
-+ `just deploy-photos`. Headless: `ensureAccountMapped` → deploy → `negotiate` terms (owner = the
++ `just photos deploy`. Headless: `ensureAccountMapped` → deploy → `negotiate` terms (owner = the
 contract's mapped account) → `createLibrary(userAccount, name, provider, terms, signature){value}`
 → read back `libraryOf` unsigned (`ReviveApi.call` + viem `decodeFunctionResult`).
 **Done:** drive exists, owned by the contract account, the chosen provider's agreement is active,
@@ -374,7 +374,7 @@ recompute. **Done:** round-trip a photo through an album with a client-computed 
 
 ### M3 — Full headless flow → CI source of truth
 
-Complete `scripts/photos-flow.ts` + `just photos-flow` (mirrors `just sc-team-drive`): create →
+Complete `scripts/photos-flow.ts` + `just photos flow` (mirrors `just sc-team-drive`): create →
 album → upload → **edit (COW)** → `setRoot` → download → assert library state, drive ownership,
 Writer grant, and anchor. **Done:** one command runs deploy → create → albums → upload → edit →
 assert against a local chain+provider. The entire backend is now proven with zero UI.
