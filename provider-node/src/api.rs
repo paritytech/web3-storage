@@ -71,6 +71,10 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/mmr_peaks", get(get_mmr_peaks))
         .route("/mmr_subtree", get(get_mmr_subtree))
         .route("/fetch_nodes", post(fetch_nodes))
+        // L1 offer/want + L3 push protocol
+        .route("/sync/offer", post(sync_offer))
+        .route("/sync/want", post(sync_want))
+        .route("/sync/push", post(sync_push))
         // Off-chain term negotiation (signed AgreementTerms for `establish_storage_agreement`)
         .route(
             "/negotiate",
@@ -607,6 +611,140 @@ async fn fetch_nodes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// L1 offer/want sync protocol
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POST /sync/offer
+///
+/// The requester tells us how many leaves it holds. We enumerate all
+/// content-node hashes under every leaf the requester is missing and return
+/// them as the offer, along with the ordered data_roots so the requester can
+/// commit after transfer.
+async fn sync_offer(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<SyncOfferRequest>,
+) -> Result<Json<SyncOfferResponse>, Error> {
+    let data_roots = state
+        .storage
+        .get_data_roots_from(req.bucket_id, req.leaf_count)?;
+
+    let mut hashes: Vec<String> = Vec::new();
+    for &dr in &data_roots {
+        for h in state.storage.collect_all_node_hashes(dr) {
+            hashes.push(format!("0x{}", hex_encode(h.as_bytes())));
+        }
+    }
+    hashes.dedup();
+
+    Ok(Json(SyncOfferResponse {
+        hashes,
+        data_roots: data_roots
+            .iter()
+            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .collect(),
+    }))
+}
+
+/// POST /sync/want
+///
+/// The requester sends the subset of offered hashes it actually lacks.
+/// We return those nodes in a batch. Identical to /fetch_nodes semantically
+/// but with explicit L1 protocol framing.
+async fn sync_want(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<SyncWantRequest>,
+) -> Result<Json<SyncWantResponse>, Error> {
+    let mut nodes = Vec::new();
+    for hash_str in &req.hashes {
+        let hash_bytes = hex_decode(hash_str).map_err(|_| Error::InvalidHash {
+            expected: hash_str.clone(),
+            actual: "invalid hex".to_string(),
+        })?;
+        let hash = H256::from_slice(&hash_bytes);
+        if let Some(node) = state.storage.get_node(&hash) {
+            nodes.push(FetchedNode {
+                hash: hash_str.clone(),
+                data: BASE64.encode(&node.data),
+                children: node.children.map(|c| {
+                    c.iter()
+                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .collect()
+                }),
+            });
+        }
+    }
+    Ok(Json(SyncWantResponse { nodes }))
+}
+
+/// POST /sync/push
+///
+/// L3 push: the writer sends a batch of nodes to this peer for immediate
+/// replication and expects a signed custody receipt back. The peer stores the
+/// nodes and signs `blake2_256(bucket_id_le ++ committed_root)` to prove it
+/// accepted custody.
+async fn sync_push(
+    State(state): State<Arc<ProviderState>>,
+    Json(req): Json<SyncPushRequest>,
+) -> Result<Json<CustodyReceipt>, Error> {
+    use storage_primitives::blake2_256;
+
+    // Ensure the bucket exists before storing.
+    let _ = state.storage.init_bucket(req.bucket_id, u64::MAX);
+
+    // Store the pushed nodes bottom-up (reverse DFS pre-order).
+    let mut to_store: Vec<(H256, Vec<u8>, Option<Vec<H256>>)> = Vec::new();
+    for node in &req.nodes {
+        let hash_bytes = hex_decode(&node.hash).map_err(|_| Error::InvalidHash {
+            expected: node.hash.clone(),
+            actual: "invalid hex".to_string(),
+        })?;
+        let hash = H256::from_slice(&hash_bytes);
+        let data = BASE64
+            .decode(&node.data)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let children = node
+            .children
+            .as_ref()
+            .map(|c| {
+                c.iter()
+                    .map(|h| {
+                        hex_decode(h).map(|b| H256::from_slice(&b)).map_err(|_| {
+                            Error::InvalidHash {
+                                expected: h.clone(),
+                                actual: "invalid hex".to_string(),
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        to_store.push((hash, data, children));
+    }
+    to_store.reverse();
+    for (hash, data, children) in to_store {
+        let _ = state
+            .storage
+            .store_node(req.bucket_id, hash, data, children);
+    }
+
+    // Sign the receipt: blake2_256(bucket_id_le_bytes ++ committed_root_bytes).
+    let root_bytes = hex_decode(&req.committed_root).map_err(|_| Error::InvalidHash {
+        expected: req.committed_root.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let mut payload = Vec::with_capacity(8 + 32);
+    payload.extend_from_slice(&req.bucket_id.to_le_bytes());
+    payload.extend_from_slice(&root_bytes);
+    let payload_hash = blake2_256(&payload);
+    let signature = state.sign(payload_hash.as_ref())?;
+
+    Ok(Json(CustodyReceipt {
+        provider_id: state.provider_id.clone(),
+        signature,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Checkpoint Coordination
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -865,7 +1003,7 @@ async fn negotiate_terms(
         valid_until: current_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
-        replica_params: req.replica_params,
+        replica_params: req.replica_params.map(Into::into),
     };
     let signature = storage_client::sign_terms(keypair, &terms);
 

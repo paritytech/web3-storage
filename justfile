@@ -209,6 +209,36 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
+start-replica REPLICA_SEED="//Charlie" PORT=REPLICA_PORT: build-provider
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo ""
+    echo "=== Starting Replica Provider Node (//Charlie, port {{PORT}}) ==="
+    echo ""
+    echo "Replica health: http://127.0.0.1:{{PORT}}/health"
+    echo ""
+    REPLICA_KEY=$(mktemp)
+    echo "{{REPLICA_SEED}}" > "$REPLICA_KEY" && chmod 600 "$REPLICA_KEY"
+    trap "rm -f $REPLICA_KEY" EXIT
+    ./target/release/storage-provider-node \
+        --keyfile "$REPLICA_KEY" \
+        --storage-mode inmemory \
+        --bind-addr "0.0.0.0:{{PORT}}" \
+        --chain-rpc "{{ CHAIN_WS }}" \
+        --enable-replica-sync
+
+# End-to-end replica sync demo.
+# Registers primary (Alice) + replica (Charlie), opens agreements, uploads data,
+# submits a checkpoint, then waits for Charlie's coordinator to pull and sync.
+#
+# Prerequisites (three separate terminals):
+#   Terminal 1: just start-chain
+#   Terminal 2: just start-provider       (Alice, port 3333)
+#   Terminal 3: just start-replica        (Charlie, port 3334)
+#   Terminal 4: just replica-demo
+replica-demo PRIMARY_URL=PROVIDER_URL REPLICA_URL=REPLICA_URL PRIMARY_SEED="//Alice" REPLICA_SEED="//Charlie" CLIENT_SEED="//Bob": papi-setup
+    node examples/papi/replica-demo.js "{{ CHAIN_WS }}" "{{ PRIMARY_URL }}" "{{ REPLICA_URL }}" "{{ PRIMARY_SEED }}" "{{ REPLICA_SEED }}" "{{ CLIENT_SEED }}"
+
 # Register on-chain then start the provider node (original behavior)
 register-then-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="":
     just start-provider MODE="{{MODE}}" PORT="{{PORT}}" STORAGE_PATH="{{STORAGE_PATH}}" KEYFILE="{{KEYFILE}}"
@@ -246,6 +276,14 @@ generate-chain-spec: build-runtime
 #   just demo "http://127.0.0.1:3334" "//Charlie" "//Dave"          # target a different provider
 demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/full-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Start a second provider node configured for replica sync (Charlie, port 3334).
+# Run in a separate terminal BEFORE `just replica-demo`.
+# Examples:
+#   just start-replica                                   # default: Charlie key, port 3334
+#   just start-replica PORT=3335 REPLICA_SEED="//Dave"  # custom port + key
+REPLICA_PORT := "3334"
+REPLICA_URL := "http://127.0.0.1:" + REPLICA_PORT
 
 # Compile the example marketplace contract to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).

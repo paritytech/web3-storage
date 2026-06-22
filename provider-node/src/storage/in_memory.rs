@@ -396,6 +396,19 @@ impl StorageBackend for Storage {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
+
+    fn get_data_roots_from(&self, bucket_id: BucketId, from_leaf: u64) -> Result<Vec<H256>, Error> {
+        let buckets = self.buckets.read();
+        let bucket = buckets
+            .get(&bucket_id)
+            .ok_or(Error::BucketNotFound(bucket_id))?;
+        Ok(bucket
+            .leaves
+            .iter()
+            .skip(from_leaf as usize)
+            .map(|l| l.data_root)
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -598,5 +611,56 @@ mod tests {
             "Chunk Merkle proof failed"
         );
         assert!(verify_mmr_proof(&mmr_proof, &mmr_root), "MMR proof failed");
+    }
+
+    #[test]
+    fn test_offer_want_collect_all_node_hashes() {
+        // A leaf with 4 chunks has a 3-level tree: 4 chunks + 3 internal = 7 nodes.
+        let (storage, bucket_id, data_root, _) =
+            setup_bucket_with_chunks(&[b"a", b"b", b"c", b"d"]);
+
+        let all = storage.collect_all_node_hashes(data_root);
+        // data_root itself + 2 mid-level parents + 4 chunks = 7
+        assert_eq!(all.len(), 7, "expected 7 nodes (4 chunks + 3 internal)");
+        assert!(all.contains(&data_root), "root must be in the set");
+
+        // Every hash in the set is actually retrievable
+        for h in &all {
+            assert!(storage.get_node(h).is_some(), "node {h:?} must exist");
+        }
+
+        // Identical state → all hashes already present → want = empty
+        let (_, want) = storage.check_exists(bucket_id, &all);
+        assert!(want.is_empty(), "no gaps when the requester has everything");
+    }
+
+    #[test]
+    fn test_get_data_roots_from() {
+        let storage = Storage::new();
+        let bucket_id: BucketId = 1;
+        storage.init_bucket(bucket_id, u64::MAX);
+
+        // Commit 3 single-chunk leaves
+        let roots: Vec<H256> = (0..3u8)
+            .map(|i| {
+                let data = vec![i; 8];
+                let hash = blake2_256(&data);
+                storage.store_node(bucket_id, hash, data, None).unwrap();
+                hash
+            })
+            .collect();
+        storage.commit(bucket_id, roots.clone()).unwrap();
+
+        // from_leaf=0 → all 3
+        let all = storage.get_data_roots_from(bucket_id, 0).unwrap();
+        assert_eq!(all, roots);
+
+        // from_leaf=2 → only the last one
+        let tail = storage.get_data_roots_from(bucket_id, 2).unwrap();
+        assert_eq!(tail, vec![roots[2]]);
+
+        // from_leaf=3 → empty (no new leaves)
+        let empty = storage.get_data_roots_from(bucket_id, 3).unwrap();
+        assert!(empty.is_empty());
     }
 }

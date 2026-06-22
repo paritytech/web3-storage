@@ -91,6 +91,14 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
 
+    async fn fetch_peer_replica_endpoints(
+        &self,
+        _bucket_id: BucketId,
+        _own_account: &str,
+    ) -> Result<Vec<String>, Error> {
+        Ok(vec![])
+    }
+
     async fn submit_sync_confirmation(
         &self,
         bucket_id: BucketId,
@@ -131,6 +139,7 @@ async fn test_insufficient_balance() {
         target_mmr_root: H256::repeat_byte(0xAA),
         target_leaf_count: 10,
         primary_endpoints: vec![],
+        peer_replica_endpoints: vec![],
         sync_balance: 50,
         sync_price: 100,
         min_sync_interval: 0,
@@ -163,6 +172,7 @@ async fn test_already_synced() {
         target_mmr_root: mmr_root,
         target_leaf_count: 1,
         primary_endpoints: vec![],
+        peer_replica_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -184,6 +194,7 @@ async fn test_no_data_to_sync() {
         target_mmr_root: H256::zero(),
         target_leaf_count: 0,
         primary_endpoints: vec![],
+        peer_replica_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,
@@ -206,6 +217,7 @@ async fn test_primary_unavailable() {
         target_mmr_root: H256::repeat_byte(0xAA),
         target_leaf_count: 10,
         primary_endpoints: vec!["http://127.0.0.1:19999".to_string()],
+        peer_replica_endpoints: vec![],
         sync_balance: 1000,
         sync_price: 100,
         min_sync_interval: 0,

@@ -428,10 +428,7 @@ export async function providerFetch(providerUrl, path, opts = {}) {
  * Re-used by the s3 and drive examples so they can be run standalone (without
  * having to run full-flow.js first to register the provider).
  */
-export async function ensureProviderRegistered(api, provider, providerUrl, {
-  pricePerByte = 1n,
-  maxDuration = 100_000,
-} = {}) {
+export async function ensureProviderRegistered(api, provider, providerUrl, settings) {
   // Import lazily to break the common.js <-> api.js circular import. Both
   // modules finish initialization before this function ever runs.
   const { registerProvider, updateProviderSettings, getProviderNodeInfo } = await import("./api.js");
@@ -460,13 +457,13 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
   }
   // Always (re)apply settings so price/acceptance are correct for this demo.
   const providerSettings = {
-    min_duration: 10,
-    max_duration: maxDuration,
-    price_per_byte: pricePerByte,
-    accepting_primary: true,
-    replica_sync_price: undefined,
-    accepting_extensions: true,
-    max_capacity: 0n,
+    min_duration: settings.minDuration ?? 10,
+    price_per_byte: settings.pricePerByte ?? 1n,
+    max_duration: settings.maxDuration ?? 100_000,
+    accepting_primary: settings.acceptingExtensions ?? true,
+    replica_sync_price: settings.replicaSyncPrice ?? undefined,
+    accepting_extensions: settings.acceptingExtensions ?? true,
+    max_capacity: settings.maxCapacity ?? 0n,
   };
   await updateProviderSettings(api, provider, providerSettings);
 
@@ -477,7 +474,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     const r = info.readiness;
     const priceSynced =
       r.provider_info_loaded &&
-      BigInt(info.provider_registration_info.price_per_byte) === pricePerByte;
+      BigInt(info.provider_registration_info.price_per_byte) === BigInt(providerSettings.price_per_byte);
     if (r.signing_configured && r.nonce_counter_ready && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }

@@ -359,6 +359,59 @@ pub struct FetchNodesResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// L1 offer/want sync protocol types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POST /sync/offer — requester tells the source how many leaves it has;
+/// source returns all content-node hashes under the leaves the requester lacks,
+/// plus the data_roots of those leaves (needed to commit after transfer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncOfferRequest {
+    pub bucket_id: BucketId,
+    /// Number of leaves the requester already holds.
+    pub leaf_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncOfferResponse {
+    /// All content-node hashes under the leaves the requester lacks.
+    pub hashes: Vec<String>,
+    /// data_roots of the new leaves, in order — used by the requester to commit.
+    pub data_roots: Vec<String>,
+}
+
+/// POST /sync/want — requester sends the subset of offered hashes it actually
+/// lacks; source returns those nodes in a batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncWantRequest {
+    pub bucket_id: BucketId,
+    pub hashes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncWantResponse {
+    pub nodes: Vec<FetchedNode>,
+}
+
+/// POST /sync/push — writer pushes a batch of new nodes to a peer and requests
+/// a signed custody receipt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPushRequest {
+    pub bucket_id: BucketId,
+    /// The new committed MMR root these nodes contribute to.
+    pub committed_root: String,
+    pub nodes: Vec<FetchedNode>,
+}
+
+/// Signed custody receipt: the peer's provider_id and its sr25519 signature
+/// over `blake2_256(bucket_id_le_bytes ++ committed_root_bytes)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustodyReceipt {
+    pub provider_id: String,
+    pub signature: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Replica Sync Coordinator Types
 // ─────────────────────────────────────────────────────────────────────────────
 

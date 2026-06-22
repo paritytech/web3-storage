@@ -146,6 +146,34 @@ pub trait StorageBackend: Send + Sync {
         chunks
     }
 
+    /// Collect ALL node hashes (internal + leaf) under a data root (DFS).
+    ///
+    /// Used by the L1 offer/want diff to enumerate what content nodes exist
+    /// under a given data_root so the requester can filter what it already holds.
+    fn collect_all_node_hashes(&self, root: H256) -> Vec<H256> {
+        let mut hashes = Vec::new();
+        let mut stack = vec![root];
+        while let Some(hash) = stack.pop() {
+            if hash == H256::zero() {
+                continue;
+            }
+            if let Some(node) = self.get_node(&hash) {
+                hashes.push(hash);
+                if let Some(ref children) = node.children {
+                    for child in children.iter().rev() {
+                        stack.push(*child);
+                    }
+                }
+            }
+        }
+        hashes
+    }
+
+    /// Return the `data_root`s of leaves starting at `from_leaf` (inclusive).
+    ///
+    /// Used by `/sync/offer` to enumerate which content trees a requester lacks.
+    fn get_data_roots_from(&self, bucket_id: BucketId, from_leaf: u64) -> Result<Vec<H256>, Error>;
+
     /// Collect leaf chunk hashes under a data root (DFS, in order).
     fn collect_chunk_hashes(&self, root: H256) -> Vec<H256> {
         let mut hashes = Vec::new();

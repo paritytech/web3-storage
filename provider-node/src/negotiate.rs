@@ -23,7 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
-pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use storage_client::agreement::{
+    AgreementTermsOf, NegotiateReplicaParams, NegotiateRequest, SignedTerms,
+};
 
 /// Validate a negotiation request against the provider's current on-chain
 /// settings.
@@ -153,7 +155,6 @@ impl NonceCounter {
 mod tests {
     use super::*;
     use sp_runtime::AccountId32;
-    use storage_client::agreement::ReplicaTermsOf;
 
     fn provider_info() -> ProviderInfo {
         ProviderInfo {
@@ -262,7 +263,7 @@ mod tests {
     fn rejects_replica_without_sync_price() {
         let mut req = request();
         req.bucket_id = Some(1);
-        req.replica_params = Some(ReplicaTermsOf {
+        req.replica_params = Some(NegotiateReplicaParams {
             sync_balance: 1_000,
             min_sync_interval: 10,
             sync_price: 10,
@@ -280,7 +281,7 @@ mod tests {
         info.replica_sync_price = Some(7);
         let mut req = request();
         req.bucket_id = Some(1);
-        req.replica_params = Some(ReplicaTermsOf {
+        req.replica_params = Some(NegotiateReplicaParams {
             sync_balance: 1_000,
             min_sync_interval: 10,
             sync_price: 10,

@@ -541,4 +541,15 @@ impl StorageBackend for DiskStorage {
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
     }
+
+    fn get_data_roots_from(&self, bucket_id: BucketId, from_leaf: u64) -> Result<Vec<H256>, Error> {
+        let bucket =
+            DiskStorage::get_bucket(self, bucket_id).ok_or(Error::BucketNotFound(bucket_id))?;
+        Ok(bucket
+            .leaves
+            .iter()
+            .skip(from_leaf as usize)
+            .map(|l| l.data_root)
+            .collect())
+    }
 }

@@ -374,25 +374,12 @@ impl SubxtChainClient {
 
     /// Parse a BucketSnapshot value from scale_value.
     fn parse_bucket_snapshot_value<T>(value: &subxt::ext::scale_value::Value<T>) -> BucketSnapshot {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+        use subxt::ext::scale_value::{At, Primitive, ValueDef};
 
         let mmr_root = if let Some(field0) = value.at(0) {
-            if let ValueDef::Composite(Composite::Unnamed(bytes_vec)) = &field0.value {
-                let bytes: Vec<u8> = bytes_vec
-                    .iter()
-                    .filter_map(|v| {
-                        if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                            Some(*n as u8)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if bytes.len() == 32 {
-                    H256::from_slice(&bytes)
-                } else {
-                    H256::zero()
-                }
+            let bytes = Self::extract_byte_vec(field0);
+            if bytes.len() == 32 {
+                H256::from_slice(&bytes)
             } else {
                 H256::zero()
             }
@@ -531,92 +518,42 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
-        local_buckets: Vec<BucketId>,
+        buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        let provider_account = provider_account.to_string();
-        {
-            let mut agreements = Vec::new();
-
-            let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
-
-            // Query local buckets for agreements
-            for bucket_id in &local_buckets {
-                let storage_address = subxt::dynamic::storage(
-                    "StorageProvider",
-                    "StorageAgreements",
-                    vec![
-                        Value::u128(*bucket_id as u128),
-                        Value::from_bytes(&account_bytes),
-                    ],
-                );
-
-                let storage = self
-                    .api
-                    .storage()
-                    .at_latest()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
-
-                if let Ok(Some(value)) = storage.fetch(&storage_address).await {
-                    let encoded = value.encoded();
-                    if let Ok(agreement) = Self::decode_storage_agreement_bytes(*bucket_id, encoded)
-                    {
-                        agreements.push(agreement);
-                    }
-                }
-            }
-
-            // Also iterate chain storage for agreements we might not have locally
-            let storage_address =
-                subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
-
-            if let Ok(storage) = self.api.storage().at_latest().await {
-                if let Ok(mut iter) = storage.iter(storage_address).await {
-                    while let Some(result) = iter.next().await {
-                        let kv = match result {
-                            Ok(kv) => kv,
-                            Err(e) => {
-                                tracing::debug!("Error iterating storage: {e}");
-                                continue;
-                            }
-                        };
-
-                        let key_bytes = kv.key_bytes;
-                        if key_bytes.len() < 32 + 16 + 8 + 16 + 32 {
-                            continue;
-                        }
-
-                        let bucket_id_start = 32 + 16;
-                        let bucket_id_bytes = &key_bytes[bucket_id_start..bucket_id_start + 8];
-                        let bucket_id =
-                            u64::from_le_bytes(bucket_id_bytes.try_into().unwrap_or([0; 8]));
-
-                        let provider_start = bucket_id_start + 8 + 16;
-                        let provider_bytes = &key_bytes[provider_start..];
-
-                        if provider_bytes.len() < 32 || provider_bytes[..32] != account_bytes[..32]
-                        {
-                            continue;
-                        }
-
-                        let encoded = kv.value.encoded();
-                        if let Ok(agreement) =
-                            Self::decode_storage_agreement_bytes(bucket_id, encoded)
-                        {
-                            if !agreements
-                                .iter()
-                                .any(|a| a.bucket_id == agreement.bucket_id)
-                            {
-                                agreements.push(agreement);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(agreements)
+        if buckets.is_empty() {
+            return Ok(vec![]);
         }
+
+        let account_id: sp_core::crypto::AccountId32 =
+            sp_core::crypto::Ss58Codec::from_ss58check(provider_account)
+                .map_err(|e| Error::Internal(format!("Invalid SS58 account: {e:?}")))?;
+        let account_bytes: [u8; 32] = account_id.into();
+
+        let storage = self
+            .api
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let mut agreements = Vec::new();
+        for bucket_id in buckets {
+            let storage_address = subxt::dynamic::storage(
+                "StorageProvider",
+                "StorageAgreements",
+                vec![
+                    Value::u128(bucket_id as u128),
+                    Value::from_bytes(account_bytes),
+                ],
+            );
+            if let Ok(Some(value)) = storage.fetch(&storage_address).await {
+                let encoded = value.encoded();
+                if let Ok(agreement) = Self::decode_storage_agreement_bytes(bucket_id, encoded) {
+                    agreements.push(agreement);
+                }
+            }
+        }
+        Ok(agreements)
     }
 
     async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
@@ -665,7 +602,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     }
 
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
-        use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
+        use subxt::ext::scale_value::{At, Composite, ValueDef};
 
         let storage_address = subxt::dynamic::storage(
             "StorageProvider",
@@ -691,25 +628,18 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let mut provider_bytes_list = Vec::new();
 
-        // primary_providers is at index 3
+        // primary_providers is at index 3.
+        // Layout: BoundedVec outer → Unnamed([Vec inner → Unnamed([AccountId32 → Unnamed([
+        //   [u8;32] → Unnamed([32 × Primitive::U128])])])])
         if let Some(field3) = decoded.at(3) {
-            if let ValueDef::Composite(Composite::Unnamed(providers_vec)) = &field3.value {
-                for provider_value in providers_vec {
-                    if let ValueDef::Composite(Composite::Unnamed(account_bytes)) =
-                        &provider_value.value
-                    {
-                        let bytes: Vec<u8> = account_bytes
-                            .iter()
-                            .filter_map(|v| {
-                                if let ValueDef::Primitive(Primitive::U128(n)) = &v.value {
-                                    Some(*n as u8)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if bytes.len() == 32 {
-                            provider_bytes_list.push(bytes);
+            if let ValueDef::Composite(Composite::Unnamed(bounded_outer)) = &field3.value {
+                if let Some(vec_inner) = bounded_outer.first() {
+                    if let ValueDef::Composite(Composite::Unnamed(accounts)) = &vec_inner.value {
+                        for account in accounts {
+                            let bytes = Self::extract_byte_vec(account);
+                            if bytes.len() == 32 {
+                                provider_bytes_list.push(bytes);
+                            }
                         }
                     }
                 }
@@ -734,6 +664,111 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
             if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
                 if let Ok(decoded) = value.to_value() {
+                    if let Some(field0) = decoded.at(0) {
+                        let bytes = Self::extract_byte_vec(field0);
+                        if !bytes.is_empty() {
+                            let multiaddr_str = String::from_utf8_lossy(&bytes);
+                            endpoints.push(Self::multiaddr_to_http_endpoint(&multiaddr_str));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(endpoints)
+    }
+
+    async fn fetch_peer_replica_endpoints(
+        &self,
+        bucket_id: BucketId,
+        own_account: &str,
+    ) -> Result<Vec<String>, Error> {
+        // Decode own_account to raw bytes so we can compare against key bytes.
+        let own_bytes = if own_account.starts_with("0x") {
+            hex::decode(own_account.trim_start_matches("0x")).unwrap_or_default()
+        } else {
+            // SS58-encoded; try to parse via AccountId32.
+            use std::str::FromStr;
+            match sp_runtime::AccountId32::from_str(own_account) {
+                Ok(a) => {
+                    let bytes: &[u8] = a.as_ref();
+                    bytes.to_vec()
+                }
+                Err(_) => vec![],
+            }
+        };
+
+        let storage_address = subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
+
+        let storage = match self.api.storage().at_latest().await {
+            Ok(s) => s,
+            Err(_) => return Ok(vec![]),
+        };
+        let mut iter = match storage.iter(storage_address).await {
+            Ok(it) => it,
+            Err(_) => return Ok(vec![]),
+        };
+
+        // Key layout (same as fetch_replica_agreements):
+        //   32 pallet hash + 16 map1 hash + 8 bucket_id + 16 map2 hash + 32 provider
+        let bucket_id_start = 32 + 16;
+        let provider_start = bucket_id_start + 8 + 16;
+
+        let mut peer_provider_bytes: Vec<Vec<u8>> = Vec::new();
+        while let Some(result) = iter.next().await {
+            let kv = match result {
+                Ok(kv) => kv,
+                Err(_) => continue,
+            };
+
+            let key = &kv.key_bytes;
+            if key.len() < provider_start + 32 {
+                continue;
+            }
+
+            // Filter by bucket_id.
+            let id = u64::from_le_bytes(
+                key[bucket_id_start..bucket_id_start + 8]
+                    .try_into()
+                    .unwrap_or([0; 8]),
+            );
+            if id != bucket_id {
+                continue;
+            }
+
+            // Exclude own account.
+            let provider = &key[provider_start..provider_start + 32];
+            if own_bytes.len() == 32 && provider == own_bytes.as_slice() {
+                continue;
+            }
+
+            // Confirm this is a Replica agreement (role byte == 1).
+            let encoded = kv.value.encoded();
+            let role_start = 32 + 8 + 16 + 16 + 4 + 1;
+            if encoded.get(role_start).copied().unwrap_or(0) != 1 {
+                continue;
+            }
+
+            peer_provider_bytes.push(provider.to_vec());
+        }
+
+        // Resolve each peer's multiaddr from Providers.
+        let mut endpoints = Vec::new();
+        for provider_bytes in peer_provider_bytes {
+            let provider_addr = subxt::dynamic::storage(
+                "StorageProvider",
+                "Providers",
+                vec![Value::from_bytes(&provider_bytes)],
+            );
+
+            let storage = match self.api.storage().at_latest().await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
+                if let Ok(decoded) = value.to_value() {
+                    use subxt::ext::scale_value::At;
                     if let Some(field0) = decoded.at(0) {
                         let bytes = Self::extract_byte_vec(field0);
                         if !bytes.is_empty() {

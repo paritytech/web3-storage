@@ -34,6 +34,30 @@ pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 /// `(Balance, BlockNumber) = (u128, u32)`.
 pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
 
+/// Replica parameters accepted by `/negotiate`.
+///
+/// Mirrors [`ReplicaTermsOf`] but with `PickFirst<(DisplayFromStr, _)>` on the
+/// u128 fields so JS callers can send either a plain number or a BigInt string.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NegotiateReplicaParams {
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
+    pub sync_balance: u128,
+    pub min_sync_interval: u32,
+    #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
+    pub sync_price: u128,
+}
+
+impl From<NegotiateReplicaParams> for ReplicaTermsOf {
+    fn from(p: NegotiateReplicaParams) -> Self {
+        ReplicaTermsOf {
+            sync_balance: p.sync_balance,
+            min_sync_interval: p.min_sync_interval,
+            sync_price: p.sync_price,
+        }
+    }
+}
+
 /// The owner proposes the agreement shape they want; the provider node
 /// allocates a fresh nonce and a validity window from its own state,
 /// builds the full [`AgreementTermsOf`], signs it, and returns
@@ -44,23 +68,22 @@ pub struct NegotiateRequest {
     /// Account that will own the resulting bucket.
     pub owner: AccountId32,
     /// Storage quota requested, in bytes.
-    /// FIX: Safely handles the JS BigInt sent as a string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub max_bytes: u64,
     /// Agreement duration in blocks from activation.
     pub duration: u32,
     /// Price per byte per block the owner is willing to lock in.
-    /// FIX: Safely handles the JS BigInt sent as a string
     #[serde_as(as = "PickFirst<(DisplayFromStr, _)>")]
     pub price_per_byte: u128,
     /// Bucket the quote is bound to.
     /// - `None` for primary terms;
     /// - `Some(id)` for replica terms — must match the bucket targeted by
     ///   the extrinsic.
+    #[serde_as(as = "Option<PickFirst<(DisplayFromStr, _)>>")]
     pub bucket_id: Option<BucketId>,
     /// `Some(_)` to negotiate a replica agreement (per-sync funding +
     /// minimum sync interval); `None` for a primary agreement.
-    pub replica_params: Option<ReplicaTermsOf>,
+    pub replica_params: Option<NegotiateReplicaParams>,
 }
 
 /// Provider-signed agreement terms

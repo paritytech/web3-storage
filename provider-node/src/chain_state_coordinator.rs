@@ -8,8 +8,11 @@
 //! - [`ChainState::provider_info`] — full provider registration info.
 //! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
 //!   chain's replay window. `None` until the provider is registered.
+//! - [`ChainState::replica_buckets`] — set of bucket IDs for which this node
+//!   has an active replica agreement; used by the replica sync coordinator to
+//!   discover its duties without scanning local storage.
 //!
-//! [`ChainStateCoordinator`] is the **only writer** for all four fields.  It
+//! [`ChainStateCoordinator`] is the **only writer** for all five fields.  It
 //! drives a [`BlockSubscriberStream`] in a reconnect loop; on every relevant
 //! provider event it re-fetches the full `ProviderInfo` so `committed_bytes`,
 //! `stake`, and all settings stay current — no field-patching, no partial
@@ -19,6 +22,7 @@ use crate::negotiate::NonceCounter;
 use parking_lot::RwLock;
 use sp_core::H256;
 use sp_runtime::AccountId32;
+use std::collections::BTreeSet;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +31,7 @@ use storage_client::{
     BlockSubscriberStream, ClientConfig, ClientError, EventParser, ProviderClient, StorageEvent,
     StorageProviderEventParser,
 };
+use storage_primitives::BucketId;
 use subxt::ext::futures::StreamExt;
 use tokio::task::JoinHandle;
 
@@ -51,6 +56,11 @@ pub struct ChainState {
     /// the provider is registered and the replay state is available.
     /// `/negotiate` returns 503 while `None`.
     pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
+    /// Bucket IDs for which this node has an active replica agreement.
+    /// Populated by the chain-state coordinator from `ReplicaAgreementEstablished`
+    /// events (and cleared on `AgreementEnded`). Used by the replica sync
+    /// coordinator to discover its duties without scanning empty local storage.
+    pub replica_buckets: RwLock<BTreeSet<BucketId>>,
 }
 
 /// Pallet constants that only change across runtime upgrades.
@@ -141,6 +151,10 @@ impl ChainStateCoordinator {
         // rather than waiting for the next relevant event.
         self.refresh_provider_state(&client).await;
 
+        // Bootstrap replica bucket set so a node restarted after agreements were
+        // already established doesn't wait for the next event to discover its duties.
+        self.bootstrap_replica_buckets(&client).await;
+
         while let Some(block) = stream.next().await {
             let block_hash = H256::from_slice(block.hash().as_ref());
             let block_number = block.number();
@@ -160,8 +174,16 @@ impl ChainStateCoordinator {
                 }
             };
 
-            self.process_provider_events(&client, &events, block_hash, block_number)
+            let parsed = parse_pallet_events::<StorageEvent, StorageProviderEventParser>(
+                &events,
+                storage_client::substrate::PALLET_NAME,
+                block_hash,
+                block_number,
+            );
+
+            self.process_provider_events(&client, &parsed, block_number)
                 .await;
+            self.update_replica_buckets(&parsed);
         }
 
         Ok(())
@@ -233,24 +255,39 @@ impl ChainStateCoordinator {
         }
     }
 
+    /// Populate `chain_state.replica_buckets` from the current on-chain
+    /// `StorageAgreements` for this provider. Called once on each (re)connect so
+    /// a restarted node discovers pre-existing replica duties without waiting for
+    /// the next `ReplicaAgreementEstablished` event.
+    async fn bootstrap_replica_buckets(&self, client: &ProviderClient) {
+        match client.list_active_agreements().await {
+            Ok(agreements) => {
+                let replica_ids: BTreeSet<BucketId> = agreements
+                    .iter()
+                    .filter(|a| !a.is_primary)
+                    .map(|a| a.bucket_id)
+                    .collect();
+                let count = replica_ids.len();
+                *self.chain_state.replica_buckets.write() = replica_ids;
+                tracing::debug!("chain-state coordinator: bootstrapped {count} replica bucket(s)");
+            }
+            Err(e) => {
+                tracing::warn!("chain-state coordinator: failed to bootstrap replica buckets: {e}");
+            }
+        }
+    }
+
     /// Check whether this block contains any relevant provider events and, if so,
     /// trigger a full state refresh.  Collapsing multiple events in one block to
     /// a single refresh is correct: `refresh_provider_state` always reads the
-    /// latest chain state, so no intermediate event is "missed".
+    /// latest chain state, so `committed_bytes`, `stake`, `replica_sync_price`, and
+    /// all other settings stay current — no field-patching, no partial updates.
     async fn process_provider_events(
         &self,
         client: &ProviderClient,
-        events: &subxt::events::Events<subxt::PolkadotConfig>,
-        block_hash: H256,
+        parsed: &[StorageEvent],
         block_number: u32,
     ) {
-        let parsed = parse_pallet_events::<StorageEvent, StorageProviderEventParser>(
-            events,
-            storage_client::substrate::PALLET_NAME,
-            block_hash,
-            block_number,
-        );
-
         let relevant = parsed.iter().any(|e| match e {
             StorageEvent::ProviderRegistered { provider, .. }
             | StorageEvent::ProviderSettingsUpdated { provider, .. }
@@ -268,6 +305,37 @@ impl ChainStateCoordinator {
                 "chain-state coordinator: provider event in block {block_number}, refreshing state"
             );
             self.refresh_provider_state(client).await;
+        }
+    }
+
+    /// Update `chain_state.replica_buckets` from a slice of already-parsed events.
+    /// Extracted from `process_provider_events` so it can be unit-tested without
+    /// a live subxt connection.
+    fn update_replica_buckets(&self, parsed: &[StorageEvent]) {
+        for event in parsed {
+            match event {
+                StorageEvent::ReplicaAgreementEstablished {
+                    provider,
+                    bucket_id,
+                    ..
+                } if provider == &self.provider_account => {
+                    tracing::info!(
+                        "chain-state coordinator: replica agreement established for bucket {bucket_id}"
+                    );
+                    self.chain_state.replica_buckets.write().insert(*bucket_id);
+                }
+                StorageEvent::AgreementEnded {
+                    provider,
+                    bucket_id,
+                    ..
+                } if provider == &self.provider_account => {
+                    tracing::debug!(
+                        "chain-state coordinator: agreement ended for bucket {bucket_id}, removing from replica set"
+                    );
+                    self.chain_state.replica_buckets.write().remove(bucket_id);
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -374,5 +442,111 @@ mod tests {
             request_timeout: 100,
         });
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
+    }
+
+    fn make_coordinator(account: AccountId32) -> ChainStateCoordinator {
+        ChainStateCoordinator {
+            chain_ws_url: String::new(),
+            provider_account: account,
+            chain_state: Arc::new(ChainState::default()),
+        }
+    }
+
+    fn zero_hash() -> H256 {
+        H256::zero()
+    }
+
+    #[test]
+    fn replica_buckets_tracks_agreement_established_for_self() {
+        let account = AccountId32::new([1u8; 32]);
+        let other = AccountId32::new([2u8; 32]);
+        let coordinator = make_coordinator(account.clone());
+
+        let events = vec![
+            StorageEvent::ReplicaAgreementEstablished {
+                bucket_id: 7,
+                provider: account.clone(),
+                owner: other.clone(),
+                max_bytes: 0,
+                duration: 0,
+                price_per_byte: 0,
+                expires_at: 0,
+                block_hash: zero_hash(),
+                block_number: 1,
+            },
+            // Different provider — must be ignored.
+            StorageEvent::ReplicaAgreementEstablished {
+                bucket_id: 99,
+                provider: other,
+                owner: account.clone(),
+                max_bytes: 0,
+                duration: 0,
+                price_per_byte: 0,
+                expires_at: 0,
+                block_hash: zero_hash(),
+                block_number: 1,
+            },
+        ];
+
+        coordinator.update_replica_buckets(&events);
+        let buckets = coordinator.chain_state.replica_buckets.read();
+        assert!(buckets.contains(&7), "self's bucket should be tracked");
+        assert!(
+            !buckets.contains(&99),
+            "other provider's bucket must not be tracked"
+        );
+    }
+
+    #[test]
+    fn replica_buckets_removes_on_agreement_ended() {
+        let account = AccountId32::new([1u8; 32]);
+        let coordinator = make_coordinator(account.clone());
+        coordinator.chain_state.replica_buckets.write().insert(7);
+
+        let events = vec![StorageEvent::AgreementEnded {
+            bucket_id: 7,
+            provider: account,
+            payment_to_provider: 0,
+            burned: 0,
+            block_hash: zero_hash(),
+            block_number: 2,
+        }];
+
+        coordinator.update_replica_buckets(&events);
+        assert!(coordinator.chain_state.replica_buckets.read().is_empty());
+    }
+
+    #[test]
+    fn replica_buckets_ignores_ended_for_other_provider() {
+        let account = AccountId32::new([1u8; 32]);
+        let other = AccountId32::new([2u8; 32]);
+        let coordinator = make_coordinator(account);
+        coordinator.chain_state.replica_buckets.write().insert(7);
+
+        let events = vec![StorageEvent::AgreementEnded {
+            bucket_id: 7,
+            provider: other, // different account
+            payment_to_provider: 0,
+            burned: 0,
+            block_hash: zero_hash(),
+            block_number: 2,
+        }];
+
+        coordinator.update_replica_buckets(&events);
+        // Still present — the ended event was for a different provider.
+        assert!(coordinator.chain_state.replica_buckets.read().contains(&7));
+    }
+
+    #[test]
+    fn chain_state_replica_buckets_insert_and_remove() {
+        let cs = ChainState::default();
+        assert!(cs.replica_buckets.read().is_empty());
+        cs.replica_buckets.write().insert(42);
+        cs.replica_buckets.write().insert(99);
+        assert!(cs.replica_buckets.read().contains(&42));
+        assert!(cs.replica_buckets.read().contains(&99));
+        cs.replica_buckets.write().remove(&42);
+        assert!(!cs.replica_buckets.read().contains(&42));
+        assert!(cs.replica_buckets.read().contains(&99));
     }
 }

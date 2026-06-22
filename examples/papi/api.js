@@ -117,6 +117,33 @@ export function buildSignedTermsArgs(provider, signed) {
   return { provider: provider.address, terms, sig };
 }
 
+export async function establishReplicaAgreement(api, client, replica, bucketId, signed) {
+  // replica_params comes back from the server as plain JSON numbers (no serde_as);
+  // PAPI's u128 encoder requires BigInt — normalise here before handing off.
+  const signedNorm = signed;
+  if (signedNorm.terms.replica_params) {
+    const rp = signedNorm.terms.replica_params;
+    signedNorm.terms.replica_params = {
+      sync_balance: BigInt(rp.sync_balance),
+      min_sync_interval: rp.min_sync_interval,
+      sync_price: BigInt(rp.sync_price),
+    };
+  }
+  const result = await submitTx(
+    api.tx.StorageProvider.establish_replica_agreement({
+      bucket_id: bucketId,
+      ...buildSignedTermsArgs(replica, signedNorm),
+    }),
+    client.signer,
+    "establish_replica_agreement"
+  );
+  requireOneEvent(
+    result.events,
+    api.event.StorageProvider.ReplicaAgreementEstablished,
+    "ReplicaAgreementEstablished"
+  );
+}
+
 export async function establishStorageAgreement(api, client, provider, signed) {
   const result = await submitTx(
     api.tx.StorageProvider.establish_storage_agreement(

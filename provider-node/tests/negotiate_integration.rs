@@ -16,10 +16,9 @@ use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
-use storage_primitives::ReplicaTerms;
 use storage_provider_node::{
-    create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderState, SignedTerms,
-    Storage,
+    create_router, NegotiateReplicaParams, NegotiateRequest, NonceCounter, PalletConstants,
+    ProviderState, SignedTerms, Storage,
 };
 use tokio::net::TcpListener;
 
@@ -214,7 +213,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 
     let mut req = primary_request();
     req.bucket_id = Some(42);
-    req.replica_params = Some(ReplicaTerms {
+    req.replica_params = Some(NegotiateReplicaParams {
         sync_balance: 1_000,
         min_sync_interval: 10,
         sync_price: 10,
@@ -521,7 +520,7 @@ async fn negotiate_422_not_accepting_replicas() {
 
     let mut req = primary_request();
     req.bucket_id = Some(1);
-    req.replica_params = Some(ReplicaTerms {
+    req.replica_params = Some(NegotiateReplicaParams {
         sync_balance: 1_000,
         min_sync_interval: 10,
         sync_price: 10,
