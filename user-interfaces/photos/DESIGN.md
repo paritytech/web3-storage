@@ -2,9 +2,9 @@
 
 ## Goal
 
-A fourth app under `user-interfaces/` plus a landing-page card: a normal, polished photo app
-backed by Web3 Storage. A custom Solidity contract (`Photos.sol`) drives **Layer 1** (the drive
-registry) through the drive-registry precompile, walking a signed-in user through:
+Photos is a normal photo app backed by Web3 Storage. A custom Solidity contract
+(`Photos.sol`) drives **Layer 1** (the drive registry) through the drive-registry precompile,
+walking a signed-in user through:
 
 1. **No library** — the user hasn't set up storage yet; let them create one *with a provider they
    choose*.
@@ -74,11 +74,10 @@ your library."
 ## The `Photos` contract
 
 The contract is **part of the app**, not a shared example: its source lives at
-`user-interfaces/photos/contracts/Photos.sol`, with the `IDriveRegistry.sol` interface it imports
-vendored alongside it so the app is self-contained. It compiles (via `resolc`, like
-`examples/contracts/build.sh`) to an ABI + bytecode artifact at
-`user-interfaces/photos/src/contract/Photos.json`, which both the headless deploy recipe and the
-UI import directly (the UI needs the ABI for viem encode/decode anyway).
+`contracts/Photos.sol`, with the `IDriveRegistry.sol` interface it imports vendored alongside it so
+the app is self-contained. It compiles (via `resolc`, like `examples/contracts/build.sh`) to an
+ABI + bytecode artifact at `src/contract/Photos.json`, which both the headless deploy recipe and
+the UI import directly (the UI needs the ABI for viem encode/decode anyway).
 
 Calls only the drive-registry precompile (`IDriveRegistry`, `0x…09020000`).
 
@@ -251,9 +250,9 @@ Implications:
 
 ## Front-end app
 
-A sibling app `user-interfaces/photos/`, matching the React 19 + Vite + Tailwind + PAPI stack and
-the shared packages (`@web3-storage/{network-config,network-picker,papi}`), reusing drive-ui's
-`drive-client`/`crypto` patterns.
+This app matches the React 19 + Vite + Tailwind + PAPI stack and the shared packages
+(`@web3-storage/{network-config,network-picker,papi}`), reusing drive-ui's `drive-client`/`crypto`
+patterns.
 
 | Concern | Choice |
 | --- | --- |
@@ -306,15 +305,14 @@ the shared packages (`@web3-storage/{network-config,network-picker,papi}`), reus
 
 Deployed **once per network**; the UI never asks a user to deploy. Everything contract-related —
 source, build, and deploy — lives **inside the app**, so Photos is self-contained:
-- **Source & build**: `user-interfaces/photos/contracts/{Photos.sol,IDriveRegistry.sol}` compiled
-  with `resolc` to `user-interfaces/photos/src/contract/Photos.json` (abi + bin). A package script
-  (e.g. `pnpm --filter photos build:contract`) produces it; both the deploy script and the UI
-  import `Photos.json` directly.
+- **Source & build**: `contracts/{Photos.sol,IDriveRegistry.sol}` compiled with `resolc` to
+  `src/contract/Photos.json` (abi + bin). A package script (`pnpm --filter @web3-storage/photos
+  build:contract`) produces it; both the deploy script and the UI import `Photos.json` directly.
 - Add an optional `photosContract?: string` (H160) to `NetworkConfig`
   (`user-interfaces/shared/network-config/src/types.ts`), populated per network.
-- **Deploy**: a **TypeScript** deploy script lives in the app at
-  `user-interfaces/photos/scripts/deploy-contract.ts` (run via `tsx`; PAPI
-  `Revive.instantiate_with_code`, reading bin from `Photos.json`). It can share the app's own TS
+- **Deploy**: a **TypeScript** deploy script lives in the app at `scripts/deploy-contract.ts`
+  (run via `tsx`; PAPI `Revive.instantiate_with_code`, reading bin from `Photos.json`). It can
+  share the app's own TS
   deploy/encode helpers with the UI. A `just photos deploy` recipe just invokes it, then injects
   the resulting address (reusing the landing-page injection mechanism, `landing/inject-config.mjs`).
 - **Fallback**: a dev-only "Deploy contract" affordance in the UI when no address is configured
@@ -333,10 +331,9 @@ source, build, and deploy — lives **inside the app**, so Photos is self-contai
   deploy `Photos` → `createLibrary(chosenProvider)` → `mkdir` an album → `PUT` photo + thumbnail →
   recompute the root locally → `setRoot` → re-list and assert the locally-recomputed root equals
   the on-chain anchor → `PUT` an edited photo (COW) → `setRoot` → assert library state, ownership, and the
-  Writer grant. Add as a **TypeScript** flow in the app —
-  `user-interfaces/photos/scripts/photos-flow.ts` (run via `tsx`) — reusing the same app-local TS
-  helpers (`Photos.json` ABI, negotiate, drive-client FS ops) the UI uses, plus a
-  `just photos flow` recipe.
+  Writer grant. Add as a **TypeScript** flow in the app — `scripts/photos-flow.ts` (run via `tsx`)
+  — reusing the same app-local TS helpers (`Photos.json` ABI, negotiate, drive-client FS ops) the
+  UI uses, plus a `just photos flow` recipe.
 - **UI e2e** (Playwright + `@web3-storage/test-helpers`): the two states + create album + upload +
   edit + download.
 - **Contract**: covered by the integration script; optional Solidity unit tests if a harness is
@@ -348,7 +345,7 @@ Built as **minimal, independently reviewable milestones**. The strategy is to pr
 backend headless first (contract → drive → albums → editing), because that's where the risk lives
 (precompile origin, `msg.value`→payment, account mapping, `shareDrive` → `/fs` auth, the root
 anchor); only then build UI on a foundation that already works. All contract source, build, and
-deploy/flow scripts are **TypeScript and live in the app** (`user-interfaces/photos/`).
+deploy/flow scripts are **TypeScript and live in the app**.
 
 ### M1 — `Photos.sol` + deploy + `createLibrary` (headless)
 
