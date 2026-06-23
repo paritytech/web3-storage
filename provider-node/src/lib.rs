@@ -32,7 +32,9 @@ pub mod types;
 
 pub use api::create_router;
 pub use chain_state_coordinator::{
-    ChainState, ChainStateCoordinator, ChainStateCoordinatorHandle, PalletConstants,
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    PalletConstants,
 };
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,

@@ -566,3 +566,67 @@ async fn negotiate_rate_limited_after_burst() {
         "expected the per-IP rate limiter to reject part of a 40-request burst"
     );
 }
+
+// ─── NonceCounter ─────────────────────────────────────────────────────────────
+//
+// `NonceCounter` is the nonce source `/negotiate` allocates from. The HTTP path
+// only ever sees an already-bootstrapped counter, so its readiness gate and the
+// chain-alignment advance are exercised here directly against the public type.
+
+#[test]
+fn nonce_counter_is_unbootstrapped_until_aligned() {
+    let counter = NonceCounter::new(1);
+    // Fresh counter has not been reconciled with the chain's replay window.
+    assert!(!counter.is_bootstrapped());
+    counter.bootstrap_from_hsn(0);
+    assert!(counter.is_bootstrapped());
+}
+
+#[test]
+fn bootstrap_from_hsn_advances_to_hsn_plus_one() {
+    // Counter starts at 1 but the chain's replay head is already at 10, so the
+    // node must resume at 11 — never reissue a nonce the chain has seen.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(10);
+    assert!(counter.is_bootstrapped());
+    assert_eq!(counter.next(), 11);
+    assert_eq!(counter.next(), 12);
+}
+
+#[test]
+fn bootstrap_from_hsn_never_rewinds() {
+    // A stale/lower hsn (e.g. an out-of-order poll) must not pull the counter
+    // back below nonces it may already have issued.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(10); // now at 11
+    assert_eq!(counter.next(), 11); // -> 12
+    counter.bootstrap_from_hsn(3); // lower head: no-op
+    assert_eq!(counter.next(), 12);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_next_allocates_distinct_nonces() {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    // Hammer the atomic from many tasks: every allocation must be unique and the
+    // count exact (exercises the `compare_exchange_weak` retry path under load).
+    let counter = Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+
+    let mut handles = Vec::new();
+    for _ in 0..16 {
+        let c = counter.clone();
+        handles.push(tokio::spawn(async move {
+            (0..256).map(|_| c.next()).collect::<Vec<_>>()
+        }));
+    }
+
+    let mut seen = HashSet::new();
+    for h in handles {
+        for nonce in h.await.unwrap() {
+            assert!(seen.insert(nonce), "nonce {nonce} was allocated twice");
+        }
+    }
+    assert_eq!(seen.len(), 16 * 256);
+}

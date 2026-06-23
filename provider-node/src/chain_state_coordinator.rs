@@ -16,6 +16,7 @@
 //! updates, no second writer.
 
 use crate::negotiate::NonceCounter;
+use async_trait::async_trait;
 use parking_lot::RwLock;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -57,6 +58,58 @@ pub struct ChainState {
 pub struct PalletConstants {
     /// Chain-enforced validity window (in blocks) for provider-signed terms.
     pub request_timeout: u32,
+}
+
+// ── chain reads ───────────────────────────────────────────────────────────────
+
+/// The chain reads the coordinator needs to keep [`ChainState`] in sync.
+///
+/// Abstracted behind a trait — exactly like the other coordinators'
+/// `*ChainClient` traits — so the [`sync_constants`] / [`refresh_provider_state`]
+/// logic can be driven by a mock in tests without a live chain.
+#[async_trait]
+pub trait ChainStateChainClient: Send + Sync {
+    /// Full on-chain `ProviderInfo`, or `None` if the provider is not registered.
+    async fn get_provider_info(
+        &self,
+        who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ClientError>;
+
+    /// Provider's replay-window head sequence (`hsn`), or `None` if no replay
+    /// state exists yet (the provider has never signed any terms).
+    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, ClientError>;
+
+    /// `StorageProvider::RequestTimeout` runtime constant, or `None` if absent
+    /// from the node's metadata.
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ClientError>;
+}
+
+/// Production [`ChainStateChainClient`] backed by a connected [`ProviderClient`].
+///
+/// `get_provider_info` reuses the already-connected client; the two read-only
+/// queries are associated functions that open their own short-lived connection,
+/// so they only need the WS URL.
+struct RealChainStateClient {
+    client: ProviderClient,
+    chain_ws_url: String,
+}
+
+#[async_trait]
+impl ChainStateChainClient for RealChainStateClient {
+    async fn get_provider_info(
+        &self,
+        who: &AccountId32,
+    ) -> Result<Option<ProviderInfo>, ClientError> {
+        self.client.get_provider_info(who).await
+    }
+
+    async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, ClientError> {
+        ProviderClient::fetch_replay_hsn(&self.chain_ws_url, who).await
+    }
+
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ClientError> {
+        ProviderClient::fetch_request_timeout(&self.chain_ws_url).await
+    }
 }
 
 // ── ChainStateCoordinator ─────────────────────────────────────────────────────
@@ -130,16 +183,20 @@ impl ChainStateCoordinator {
             self.provider_account.to_string(),
         )?;
         client.connect().await?;
+        let chain = RealChainStateClient {
+            client,
+            chain_ws_url: self.chain_ws_url.clone(),
+        };
 
         tracing::info!("chain-state coordinator: connected; following finalized blocks");
 
         // Fetch pallet constants once per connection (they only change on runtime upgrade).
-        self.sync_constants().await;
+        sync_constants(&chain, &self.chain_state).await;
 
         // Bootstrap from any existing on-chain state so a restarted node that was
         // already registered picks up its provider_info and nonce counter immediately
         // rather than waiting for the next relevant event.
-        self.refresh_provider_state(&client).await;
+        refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
 
         while let Some(block) = stream.next().await {
             let block_hash = H256::from_slice(block.hash().as_ref());
@@ -160,86 +217,17 @@ impl ChainStateCoordinator {
                 }
             };
 
-            self.process_provider_events(&client, &events, block_hash, block_number)
+            self.process_provider_events(&chain, &events, block_hash, block_number)
                 .await;
         }
 
         Ok(())
     }
 
-    /// Fetch the `StorageProvider::RequestTimeout` runtime constant and store it
-    /// in `chain_state.constants`. Called once on each (re)connect. Logs at warn
-    /// if absent so operators notice a metadata problem rather than silent 503s.
-    async fn sync_constants(&self) {
-        match storage_client::ProviderClient::fetch_request_timeout(&self.chain_ws_url).await {
-            Ok(Some(timeout)) => {
-                *self.chain_state.constants.write() = Some(PalletConstants {
-                    request_timeout: timeout,
-                });
-                tracing::debug!("chain-state coordinator: RequestTimeout = {timeout}");
-            }
-            Ok(None) => tracing::warn!(
-                "chain-state coordinator: RequestTimeout constant absent from runtime metadata;"
-            ),
-            Err(e) => {
-                tracing::warn!("chain-state coordinator: failed to fetch RequestTimeout: {e}")
-            }
-        }
-    }
-
-    /// Re-fetch the full `ProviderInfo` and replay state from chain and update
-    /// `chain_state` atomically.
-    ///
-    /// The nonce counter is bootstrapped *before* `provider_info` is published so
-    /// `/negotiate` never sees a populated info without a ready counter.
-    ///
-    /// Called both on the initial connect (restart recovery) and on every
-    /// relevant provider event. Using a full re-fetch (rather than field-patching)
-    /// keeps `committed_bytes`, `stake`, and all settings consistent in one shot.
-    async fn refresh_provider_state(&self, client: &ProviderClient) {
-        match client.get_provider_info(&self.provider_account).await {
-            Ok(Some(info)) => {
-                match storage_client::ProviderClient::fetch_replay_hsn(
-                    &self.chain_ws_url,
-                    &self.provider_account,
-                )
-                .await
-                {
-                    Ok(hsn) => {
-                        let counter = Arc::new(NonceCounter::new(1));
-                        if let Some(hsn) = hsn {
-                            tracing::info!("chain-state coordinator: provider state synced");
-                            counter.bootstrap_from_hsn(hsn);
-                        }
-                        // Else:
-                        // Registered but no replay state yet — registration inserts both
-                        // atomically, so this is a transient view. The next event or block
-                        // that triggers a refresh will resolve it.
-                        *self.chain_state.nonce_counter.write() = Some(counter);
-                        *self.chain_state.provider_info.write() = Some(info);
-                    }
-                    Err(e) => {
-                        tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}")
-                    }
-                }
-            }
-            // Provider is not (or no longer) registered on chain.
-            Ok(None) => {
-                *self.chain_state.provider_info.write() = None;
-                *self.chain_state.nonce_counter.write() = None;
-                tracing::debug!("chain-state coordinator: provider not registered on chain");
-            }
-            Err(e) => tracing::warn!("chain-state coordinator: failed to fetch provider info: {e}"),
-        }
-    }
-
-    /// Check whether this block contains any relevant provider events and, if so,
-    /// trigger a full state refresh.  Collapsing multiple events in one block to
-    /// a single refresh is correct: `refresh_provider_state` always reads the
-    /// latest chain state, so no intermediate event is "missed".
+    /// Parse this block's pallet events and refresh state if any are relevant.
     async fn process_provider_events(
         &self,
-        client: &ProviderClient,
+        chain: &dyn ChainStateChainClient,
         events: &subxt::events::Events<subxt::PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
@@ -251,24 +239,118 @@ impl ChainStateCoordinator {
             block_number,
         );
 
-        let relevant = parsed.iter().any(|e| match e {
-            StorageEvent::ProviderRegistered { provider, .. }
-            | StorageEvent::ProviderSettingsUpdated { provider, .. }
-            | StorageEvent::ProviderMultiaddrUpdated { provider, .. }
-            | StorageEvent::DeregisterAnnounced { provider, .. }
-            | StorageEvent::ProviderDeregistered { provider, .. }
-            | StorageEvent::DeregisterCancelled { provider, .. } => {
-                provider == &self.provider_account
-            }
-            _ => false,
-        });
+        refresh_if_relevant_event(
+            chain,
+            &self.chain_state,
+            &self.provider_account,
+            &parsed,
+            block_number,
+        )
+        .await;
+    }
+}
 
-        if relevant {
-            tracing::debug!(
-                "chain-state coordinator: provider event in block {block_number}, refreshing state"
-            );
-            self.refresh_provider_state(client).await;
+// ── state synchronisation (chain-client-agnostic) ─────────────────────────────
+
+/// Fetch the `StorageProvider::RequestTimeout` runtime constant and store it in
+/// `chain_state.constants`. Called once on each (re)connect. Logs at warn if
+/// absent so operators notice a metadata problem rather than silent 503s.
+pub async fn sync_constants(chain: &dyn ChainStateChainClient, chain_state: &ChainState) {
+    match chain.fetch_request_timeout().await {
+        Ok(Some(timeout)) => {
+            *chain_state.constants.write() = Some(PalletConstants {
+                request_timeout: timeout,
+            });
+            tracing::debug!("chain-state coordinator: RequestTimeout = {timeout}");
         }
+        Ok(None) => tracing::warn!(
+            "chain-state coordinator: RequestTimeout constant absent from runtime metadata;"
+        ),
+        Err(e) => tracing::warn!("chain-state coordinator: failed to fetch RequestTimeout: {e}"),
+    }
+}
+
+/// Re-fetch the full `ProviderInfo` and replay state from chain and update
+/// `chain_state` atomically.
+///
+/// The nonce counter is bootstrapped *before* `provider_info` is published so
+/// `/negotiate` never sees a populated info without a ready counter.
+///
+/// Called both on the initial connect (restart recovery) and on every relevant
+/// provider event. Using a full re-fetch (rather than field-patching) keeps
+/// `committed_bytes`, `stake`, and all settings consistent in one shot.
+pub async fn refresh_provider_state(
+    chain: &dyn ChainStateChainClient,
+    chain_state: &ChainState,
+    provider_account: &AccountId32,
+) {
+    match chain.get_provider_info(provider_account).await {
+        Ok(Some(info)) => {
+            match chain.fetch_replay_hsn(provider_account).await {
+                Ok(hsn) => {
+                    let counter = Arc::new(NonceCounter::new(1));
+                    if let Some(hsn) = hsn {
+                        tracing::info!("chain-state coordinator: provider state synced");
+                        counter.bootstrap_from_hsn(hsn);
+                    }
+                    // Else:
+                    // Registered but no replay state yet — registration inserts both
+                    // atomically, so this is a transient view. The next event or block
+                    // that triggers a refresh will resolve it.
+                    *chain_state.nonce_counter.write() = Some(counter);
+                    *chain_state.provider_info.write() = Some(info);
+                }
+                Err(e) => {
+                    tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}")
+                }
+            }
+        }
+        // Provider is not (or no longer) registered on chain.
+        Ok(None) => {
+            *chain_state.provider_info.write() = None;
+            *chain_state.nonce_counter.write() = None;
+            tracing::debug!("chain-state coordinator: provider not registered on chain");
+        }
+        Err(e) => tracing::warn!("chain-state coordinator: failed to fetch provider info: {e}"),
+    }
+}
+
+/// Refresh provider state iff at least one of `events` is relevant to
+/// `provider_account`. Collapsing multiple events in one block to a single
+/// refresh is correct: [`refresh_provider_state`] always reads the latest chain
+/// state, so no intermediate event is "missed".
+pub async fn refresh_if_relevant_event(
+    chain: &dyn ChainStateChainClient,
+    chain_state: &ChainState,
+    provider_account: &AccountId32,
+    events: &[StorageEvent],
+    block_number: u32,
+) {
+    let relevant = events
+        .iter()
+        .any(|e| is_relevant_provider_event(e, provider_account));
+
+    if relevant {
+        tracing::debug!(
+            "chain-state coordinator: provider event in block {block_number}, refreshing state"
+        );
+        refresh_provider_state(chain, chain_state, provider_account).await;
+    }
+}
+
+/// Whether `event` is a provider lifecycle event for `provider_account` — i.e. one
+/// that should trigger a [`refresh_provider_state`]. Settings, multiaddr, and the
+/// (de)registration events all change state `/negotiate` depends on; everything
+/// else (checkpoints, challenges, agreements, other providers) is ignored.
+pub fn is_relevant_provider_event(event: &StorageEvent, provider_account: &AccountId32) -> bool {
+    match event {
+        StorageEvent::ProviderRegistered { provider, .. }
+        | StorageEvent::ProviderSettingsUpdated { provider, .. }
+        | StorageEvent::ProviderMultiaddrUpdated { provider, .. }
+        | StorageEvent::DeregisterAnnounced { provider, .. }
+        | StorageEvent::ProviderDeregistered { provider, .. }
+        | StorageEvent::DeregisterCancelled { provider, .. } => provider == provider_account,
+        _ => false,
     }
 }
 
