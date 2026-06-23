@@ -2,9 +2,9 @@
 
 //! Command-line argument parsing for the storage CLI.
 
+use crate::commands::stress_test::StressTest;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
-use crate::commands::stress_test::StressTest;
 
 /// Storage CLI for scalable Web3 storage — drive on-chain and off-chain
 /// storage operations from a single tool.
@@ -56,4 +56,3 @@ pub enum Command {
     #[command(subcommand)]
     StressTest(StressTest),
 }
-

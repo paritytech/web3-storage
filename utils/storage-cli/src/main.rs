@@ -6,14 +6,13 @@
 //! subcommands.
 
 mod cli;
-mod common;
 mod commands;
+mod common;
 
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
 use crate::commands::stress_test::StressTest;
-
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

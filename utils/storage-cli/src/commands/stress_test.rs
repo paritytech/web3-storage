@@ -3,16 +3,15 @@
 //! `stress-test` subcommands.
 
 use anyhow::{anyhow, bail, Context, Result};
+use clap::{Args, Subcommand};
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ChunkingStrategy, ClientConfig, StorageUserClient};
 use subxt_signer::{sr25519::Keypair, SecretUri};
-use clap::{Args, Subcommand};
 
-use crate::cli::{GlobalArgs};
+use crate::cli::GlobalArgs;
 use crate::common::resolve_suri;
-
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
@@ -39,7 +38,6 @@ pub struct UploadArgs {
     #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
     pub size: usize,
 }
-
 
 /// Upload generated data to every bucket the account already has an agreement
 /// with `--provider` for.
