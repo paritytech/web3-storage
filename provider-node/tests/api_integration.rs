@@ -43,7 +43,7 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
-        Self::with_state(Arc::new(ProviderState::new(
+        Self::with_state(Arc::new(ProviderState::with_provider_id(
             Arc::new(Storage::new()),
             "0xtest_provider".to_string(),
         )))

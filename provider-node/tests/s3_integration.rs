@@ -18,7 +18,10 @@ struct TestServer {
 impl TestServer {
     async fn new() -> Self {
         let storage = Arc::new(Storage::new());
-        let state = Arc::new(ProviderState::new(storage, "0xtest_provider".to_string()));
+        let state = Arc::new(ProviderState::with_provider_id(
+            storage,
+            "0xtest_provider".to_string(),
+        ));
 
         let app = create_router(state);
 

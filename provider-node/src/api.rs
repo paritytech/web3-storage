@@ -263,8 +263,18 @@ async fn get_node(
 
 async fn upload_node(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "PUT",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     // Decode hash
     let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
         expected: request.hash.clone(),
@@ -340,8 +350,18 @@ async fn check_exists(
 
 async fn commit(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
@@ -545,8 +565,11 @@ async fn delete_data(
     headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Pruning bucket data is destructive and admin-only: require an Admin-signed
-    // request, same as every other mutating endpoint.
+    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
+    // prune rewrites the underlying MMR (dropping every leaf below
+    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
+    // leave the tree intact. Rewriting the commitment is strictly more
+    // destructive, so it warrants the highest role.
     check_role(
         &state,
         &headers,

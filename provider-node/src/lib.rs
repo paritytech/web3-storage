@@ -104,11 +104,17 @@ pub struct ProviderState {
 }
 
 impl ProviderState {
-    pub fn new(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
+    /// Shared constructor body for [`with_provider_id`](Self::with_provider_id)
+    /// and [`with_seed`](Self::with_seed). All other fields take their defaults;
+    fn from_parts(
+        storage: Arc<dyn StorageBackend>,
+        provider_id: String,
+        keypair: Option<sr25519::Keypair>,
+    ) -> Self {
         Self {
             storage,
             provider_id,
-            keypair: None,
+            keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
             checkpoint_cmd_tx: std::sync::Mutex::new(None),
@@ -121,6 +127,13 @@ impl ProviderState {
         }
     }
 
+    /// Create state for a provider that cannot sign: `provider_id` is used as-is
+    /// for identity and on-chain reconciliation, and signing endpoints stay
+    /// unavailable. For a signing provider use [`with_seed`](Self::with_seed).
+    pub fn with_provider_id(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
+        Self::from_parts(storage, provider_id, None)
+    }
+
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
     pub fn with_seed(storage: Arc<dyn StorageBackend>, seed: &str) -> Result<Self, String> {
         let suri = subxt_signer::SecretUri::from_str(seed).expect("Failed to parse SURI");
@@ -129,20 +142,26 @@ impl ProviderState {
 
         let provider_id = keypair.public_key().to_account_id().to_string();
 
-        Ok(Self {
-            storage,
-            provider_id,
-            keypair: Some(keypair),
-            s3_index: S3IndexManager::new(),
-            fs_index: FsIndexManager::new(),
-            checkpoint_cmd_tx: std::sync::Mutex::new(None),
-            auth_enabled: false,
-            membership_cache: None,
-            auth_max_skew: Duration::from_secs(300),
-            nonce_counter: Arc::new(NonceCounter::new(1)),
-            provider_info: Arc::new(RwLock::new(None)),
-            cors_allowed_origins: None,
-        })
+        Ok(Self::from_parts(storage, provider_id, Some(keypair)))
+    }
+
+    /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
+    /// the permissive policy; `Some(list)` restricts to exactly those origins.
+    pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
+        self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Enable membership-based auth, wiring in the role-lookup cache and the
+    /// maximum tolerated clock skew for request timestamps.
+    pub fn set_auth_config(
+        &mut self,
+        membership_cache: Arc<auth::MembershipCache>,
+        max_skew: Duration,
+    ) {
+        self.auth_enabled = true;
+        self.membership_cache = Some(membership_cache);
+        self.auth_max_skew = max_skew;
     }
 
     /// Set the checkpoint coordinator command sender (called after coordinator starts).
@@ -179,7 +198,7 @@ mod tests {
         // contract is that `sign()` MUST return `Err(SigningUnavailable)`
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
-        let state = ProviderState::new(test_storage(), "no-key-provider".to_string());
+        let state = ProviderState::with_provider_id(test_storage(), "no-key-provider".to_string());
         let err = state
             .sign(b"any message")
             .expect_err("must refuse to sign without a keypair");
