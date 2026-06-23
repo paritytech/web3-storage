@@ -1,4 +1,4 @@
-# Photos dApp (Layer 1) — contract + headless M1 flow.
+# Photos dApp (Layer 1) — contract + headless M1+M2 flow.
 #
 # Invoked as a module from the root justfile: `just photos <recipe>`
 # (e.g. `just photos deploy`). Run `just photos` to list the recipes.
@@ -27,6 +27,8 @@ build:
 deploy seed='//Alice':
     cd '{{ ui }}' && pnpm --filter {{ pkg }} deploy-contract -- '{{ chain_ws }}' '{{ seed }}'
 
-# Deploy → negotiate terms → createLibrary → assert (the headless M1 flow).
+# Headless M1+M2 flow: deploy → negotiate → createLibrary → mkdir album →
+# PUT photo + thumbnail → compute metadata root client-side → setRoot →
+# re-list + recompute + assert against the on-chain anchor and index_root.
 flow provider_seed='//Alice' client_seed='//Bob':
     cd '{{ ui }}' && pnpm --filter {{ pkg }} photos-flow -- '{{ chain_ws }}' '{{ provider_url }}' '{{ provider_seed }}' '{{ client_seed }}'

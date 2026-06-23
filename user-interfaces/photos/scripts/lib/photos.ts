@@ -4,11 +4,12 @@
 // unsigned via the `ReviveApi.call` runtime API (no signature, no gas) — the
 // same state-detection read the UI will use.
 
+import assert from "node:assert";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { decodeFunctionResult, type Abi } from "viem";
-import { asHex, hexToBytes, type ParachainApi } from "@web3-storage/sdk";
-import { encodeCall } from "@web3-storage/sdk/revive";
+import { asHex, hexToBytes, type ChainSigner, type ParachainApi } from "@web3-storage/sdk";
+import { callContract, decodeContractEmitted, encodeCall } from "@web3-storage/sdk/revive";
 
 /** Default artifact path: `<app>/src/contract/Photos.json` (produced by `build:contract`). */
 export const ARTIFACT_URL = new URL("../../src/contract/Photos.json", import.meta.url);
@@ -66,4 +67,22 @@ export async function readLibraryOf(
     data: asHex(res.result.value.data),
   }) as unknown as [bigint, `0x${string}`, boolean];
   return { driveId: decoded[0], rootCid: decoded[1], exists: decoded[2] };
+}
+
+/**
+ * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
+ * signed write keyed by `signer`'s library. Asserts the contract's `RootUpdated`
+ * event fired. `rootCid` is the client-computed root as `0x`-prefixed 32-byte hex.
+ */
+export async function anchorRoot(
+  api: ParachainApi,
+  signer: ChainSigner,
+  contractAddressBytes: Uint8Array,
+  rootCid: `0x${string}`,
+  abi: Abi,
+): Promise<void> {
+  const data = encodeCall(abi, "setRoot", [rootCid]);
+  const r = await callContract(api, signer, contractAddressBytes, data);
+  const logs = decodeContractEmitted(r.events, api, asHex(contractAddressBytes), abi);
+  assert.ok(logs.some((l) => l.eventName === "RootUpdated"), "RootUpdated event not emitted");
 }
