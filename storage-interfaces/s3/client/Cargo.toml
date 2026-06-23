@@ -23,16 +23,16 @@ tokio = { workspace = true }
 # Subxt for chain interaction
 subxt = { workspace = true }
 subxt-signer = { workspace = true }
-bip39 = "2.0"
+bip39 = { workspace = true }
 
 # Utilities
-hex = "0.4"
-thiserror = "2.0"
+hex = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full", "macros"] }
+tokio = { workspace = true }
 
 [[example]]
 name = "basic_usage"
