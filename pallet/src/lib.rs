@@ -131,19 +131,6 @@ pub mod pallet {
             NextChallengeIndex::<T>::remove(n);
         }
 
-        /// Invariant: the deregistration announcement window must be at least
-        /// as long as the challenge response timeout, so any challenge created
-        /// up to the announcement block matures (and the provider stays
-        /// slashable) before the provider can complete deregistration.
-        fn integrity_test() {
-            assert!(
-                T::DeregisterAnnouncementPeriod::get() >= T::ChallengeTimeout::get(),
-                "DeregisterAnnouncementPeriod must be >= ChallengeTimeout so a \
-                 challenge created at the announcement block matures while the \
-                 provider is still slashable"
-            );
-        }
-
         fn integrity_test() {
             // The re-register replay defense relies on RequestTimeout being strictly
             // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
@@ -151,9 +138,18 @@ pub mod pallet {
             // deregistration and re-register (requiring DeregisterAnnouncementPeriod
             // more blocks), so an old quote cannot be replayed against the new
             // incarnation.
+            // At the same time, the deregistration announcement window must be at least
+            // as long as the challenge response timeout, so any challenge created
+            // up to the announcement block matures (and the provider stays
+            // slashable) before the provider can complete deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod to close the re-register replay window"
+                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
+                    && T::DeregisterAnnouncementPeriod::get() >= T::ChallengeTimeout::get(),
+                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
+                to close the re-register replay window, and \
+                DeregisterAnnouncementPeriod must be >= ChallengeTimeout so a \
+                challenge created at the announcement block matures while the \
+                provider is still slashable"
             );
         }
     }
