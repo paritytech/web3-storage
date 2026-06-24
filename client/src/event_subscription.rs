@@ -1158,24 +1158,25 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 /// Read `max_bytes`, `duration`, and `price_per_byte` from a nested `AgreementTerms`
 /// composite. Returns `(0, 0, 0)` if the composite is absent; individual scalars default
 /// to 0 on decode failure so the outer event is never silently dropped.
+///
+/// A missing composite or a field that fails to decode is logged at `warn`: with correct
+/// runtime metadata this never happens, so a hit signals a metadata-shape regression that
+/// would otherwise be masked by the zero default.
 fn field_terms_scalars(fields: &scale_value::Composite<u32>, name: &str) -> (u64, u32, u128) {
     let Some(terms) = fields.at(name) else {
+        tracing::warn!("AgreementTerms field '{name}' absent; defaulting scalars to 0");
         return (0, 0, 0);
     };
-    let max_bytes = terms
-        .at("max_bytes")
-        .and_then(|v| v.as_u128())
-        .map(|n| n as u64)
-        .unwrap_or(0);
-    let duration = terms
-        .at("duration")
-        .and_then(|v| v.as_u128())
-        .map(|n| n as u32)
-        .unwrap_or(0);
-    let price_per_byte = terms
-        .at("price_per_byte")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0);
+    let scalar = |field: &str| {
+        let value = terms.at(field).and_then(|v| v.as_u128());
+        if value.is_none() {
+            tracing::warn!("AgreementTerms.{field} missing or not an integer; defaulting to 0");
+        }
+        value
+    };
+    let max_bytes = scalar("max_bytes").unwrap_or(0) as u64;
+    let duration = scalar("duration").unwrap_or(0) as u32;
+    let price_per_byte = scalar("price_per_byte").unwrap_or(0);
     (max_bytes, duration, price_per_byte)
 }
 
