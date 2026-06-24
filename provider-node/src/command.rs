@@ -55,25 +55,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let seed = cli.key.load_seed()?;
     let mut state = match &seed {
         Some(seed) => {
-            let mut state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-
-            // Wire up auth if enabled
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            state
+            configure_state(state, &cli)
         }
         None => {
             let provider_id = cli
@@ -86,23 +70,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            let mut state = ProviderState::new(storage, provider_id);
-
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            state
+            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
         }
     };
 
@@ -163,6 +131,36 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
+}
+
+/// Apply CLI-derived CORS and auth settings to a freshly constructed state.
+///
+/// Authentication is enforced by default: unless the operator explicitly passed
+/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
+/// resolver so every bucket-scoped request is checked against the caller's role.
+fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
+    let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
+
+    if cli.auth.disable_auth_i_know_what_i_am_doing {
+        state = state.with_auth_disabled();
+        tracing::warn!(
+            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
+             every endpoint is publicly readable and writable by anyone. \
+             Never do this outside a throwaway local environment."
+        );
+    } else {
+        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+        let cache = MembershipCache::new(Box::new(resolver), ttl);
+        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
+        tracing::info!(
+            "Auth enforced (cache_ttl={}s, max_skew={}s)",
+            cli.auth.auth_cache_ttl,
+            cli.auth.auth_max_skew
+        );
+    }
+
+    state
 }
 
 /// Start the chain-state coordinator, which keeps `chain_state.current_block`

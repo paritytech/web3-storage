@@ -177,10 +177,10 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 
 # Start the storage provider node (without registering on-chain)
 # Examples:
-#   just start-provider                                       # inmemory, //Alice key, port 3333
+#   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" DISABLE_AUTH="false": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -191,6 +191,9 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
     EXTRA_ARGS=""
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
+    fi
+    if [ "{{DISABLE_AUTH}}" = "true" ]; then
+        EXTRA_ARGS="$EXTRA_ARGS --disable-auth-i-know-what-i-am-doing"
     fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"

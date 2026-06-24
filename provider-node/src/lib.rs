@@ -79,12 +79,18 @@ pub struct ProviderState {
     pub fs_index: FsIndexManager,
     /// Channel to send commands to the checkpoint coordinator (if running).
     pub checkpoint_cmd_tx: std::sync::Mutex<Option<mpsc::Sender<CoordinatorCommand>>>,
-    /// Whether auth is enabled (opt-in).
+    /// Whether membership auth is enforced. Enforced by default at startup; the
+    /// node clears this only when started with
+    /// `--disable-auth-i-know-what-i-am-doing`.
     pub auth_enabled: bool,
-    /// Membership cache for role lookups (only set when auth is enabled).
+    /// Membership cache for role lookups. Set whenever auth is enforced (i.e.
+    /// always, unless the operator opted out via the escape-hatch flag).
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
+    /// Browser origins allowed via CORS. `None` (the default) keeps the
+    /// permissive policy; `Some(list)` restricts to exactly those origins.
+    pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
     /// writer for `current_block`, `constants`, `provider_info`, and
     /// `nonce_counter`. `/negotiate` gates on all four before signing.
@@ -92,19 +98,33 @@ pub struct ProviderState {
 }
 
 impl ProviderState {
-    pub fn new(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
+    /// Shared constructor body for [`with_provider_id`](Self::with_provider_id)
+    /// and [`with_seed`](Self::with_seed). All other fields take their defaults;
+    fn from_parts(
+        storage: Arc<dyn StorageBackend>,
+        provider_id: String,
+        keypair: Option<sr25519::Keypair>,
+    ) -> Self {
         Self {
             storage,
             provider_id,
-            keypair: None,
+            keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
             checkpoint_cmd_tx: std::sync::Mutex::new(None),
-            auth_enabled: false,
+            auth_enabled: true,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
+            cors_allowed_origins: None,
             chain_state: Arc::new(ChainState::default()),
         }
+    }
+
+    /// Create state for a provider that cannot sign: `provider_id` is used as-is
+    /// for identity and on-chain reconciliation, and signing endpoints stay
+    /// unavailable. For a signing provider use [`with_seed`](Self::with_seed).
+    pub fn with_provider_id(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
+        Self::from_parts(storage, provider_id, None)
     }
 
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
@@ -115,18 +135,35 @@ impl ProviderState {
 
         let provider_id = keypair.public_key().to_account_id().to_string();
 
-        Ok(Self {
-            storage,
-            provider_id,
-            keypair: Some(keypair),
-            s3_index: S3IndexManager::new(),
-            fs_index: FsIndexManager::new(),
-            checkpoint_cmd_tx: std::sync::Mutex::new(None),
-            auth_enabled: false,
-            membership_cache: None,
-            auth_max_skew: Duration::from_secs(300),
-            chain_state: Arc::new(ChainState::default()),
-        })
+        Ok(Self::from_parts(storage, provider_id, Some(keypair)))
+    }
+
+    /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
+    /// the permissive policy; `Some(list)` restricts to exactly those origins.
+    pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
+        self.cors_allowed_origins = origins;
+        self
+    }
+
+    /// Enable membership-based auth, wiring in the role-lookup cache and the
+    /// maximum tolerated clock skew for request timestamps.
+    pub fn set_auth_config(
+        &mut self,
+        membership_cache: Arc<auth::MembershipCache>,
+        max_skew: Duration,
+    ) {
+        self.auth_enabled = true;
+        self.membership_cache = Some(membership_cache);
+        self.auth_max_skew = max_skew;
+    }
+
+    /// Turn off membership auth, leaving every endpoint publicly accessible.
+    /// Reserved for the `--disable-auth-i-know-what-i-am-doing` escape hatch and
+    /// for tests that exercise non-auth behavior.
+    pub fn with_auth_disabled(mut self) -> Self {
+        self.auth_enabled = false;
+        self.membership_cache = None;
+        self
     }
 
     /// Install the nonce-counter persistence backend.
@@ -180,7 +217,7 @@ mod tests {
         // contract is that `sign()` MUST return `Err(SigningUnavailable)`
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
-        let state = ProviderState::new(test_storage(), "no-key-provider".to_string());
+        let state = ProviderState::with_provider_id(test_storage(), "no-key-provider".to_string());
         let err = state
             .sign(b"any message")
             .expect_err("must refuse to sign without a keypair");
@@ -273,7 +310,7 @@ mod tests {
     #[test]
     fn provider_state_chain_defaults_on_new() {
         use std::sync::atomic::Ordering;
-        let state = ProviderState::new(test_storage(), "test-provider".to_string());
+        let state = ProviderState::with_provider_id(test_storage(), "test-provider".to_string());
         assert_eq!(state.chain_state.current_block.load(Ordering::Relaxed), 0);
         assert!(state.chain_state.provider_info.read().is_none());
     }
