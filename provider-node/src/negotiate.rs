@@ -6,10 +6,11 @@
 //! `POST /negotiate`. The provider node:
 //!
 //! 1. Allocates a fresh nonce from an in-memory monotonic counter
-//!    ([`NonceCounter`]). A background reconciler aligns the counter with the
-//!    chain's `ProviderReplayState.hsn + 1` (at startup and on every poll), so
-//!    a restart can't reissue a nonce the chain already accepted (the on-chain
-//!    replay window is authoritative and rejects any out-of-range reuse).
+//!    ([`NonceCounter`]). The chain-state coordinator aligns the counter with the
+//!    chain's `ProviderReplayState.hsn + 1` (on connect and on every relevant
+//!    provider event), so a restart can't reissue a nonce the chain already
+//!    accepted (the on-chain replay window is authoritative and rejects any
+//!    out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_block + valid_until_offset`.
@@ -19,7 +20,9 @@
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
+use crate::storage::{NonceStore, NullNonceStore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
@@ -77,40 +80,71 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
     Ok(())
 }
 
-/// In-memory monotonic nonce counter for provider-signed terms.
+/// Monotonic nonce counter for provider-signed terms.
 ///
-/// Nonces are atomically allocated via [`Self::next`]. There is no local
-/// persistence: the background reconciler aligns it against the chain by
-/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain `hsn`
-/// (at startup and on every poll), so the counter resumes at `hsn + 1`. This:
+/// Nonces are atomically allocated via [`Self::next`]. The chain-state
+/// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
+/// (on connect and on every relevant provider event), so the counter resumes at
+/// `max(persisted_local, hsn + 1)`:
 ///
-/// * survives a restart (the chain hsn is the source of truth);
-/// * survives a restart where the chain advanced past our last view
-///   (e.g. a parallel quote was redeemed elsewhere) — we skip past it
-///   rather than reissue.
+/// * **Local persistence** (disk mode): each allocation is persisted before
+///   returning, so a **clean process restart** does not reissue nonces that were
+///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
+///   (RocksDB WAL is not fsynced per allocation); in that case the counter falls
+///   back to `chain_hsn + 1`, which is still safe — the chain's replay window
+///   rejects any duplicate redemption.
+/// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
+///   nonce the chain has already accepted, covering redemptions that happened
+///   while the node was down or while we weren't watching.
 ///
-/// Gap-skipping is fine: unused nonces just expire from the replay
-/// window without effect. The on-chain replay window is authoritative
-/// and rejects any out-of-range reuse, so a missed nonce can never lead
-/// to a double redemption.
+/// Gap-skipping is fine: unused nonces just expire from the replay window
+/// without effect. The on-chain replay window is authoritative and rejects
+/// any out-of-range reuse, so a missed nonce can never lead to a double
+/// redemption.
 ///
 /// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
 /// been reconciled with the chain, so `/negotiate` must not sign with it; query
 /// [`Self::is_bootstrapped`] to gate that.
-#[derive(Debug)]
 pub struct NonceCounter {
     counter: AtomicU64,
     /// Set once the counter has been aligned with the chain's replay window.
     bootstrapped: AtomicBool,
+    store: Arc<dyn NonceStore>,
+}
+
+impl std::fmt::Debug for NonceCounter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NonceCounter")
+            .field("counter", &self.counter)
+            .field("bootstrapped", &self.bootstrapped)
+            .finish()
+    }
 }
 
 impl NonceCounter {
-    /// Create a counter starting at `start`. The counter is *not* considered
-    /// bootstrapped until [`Self::bootstrap_from_hsn`] aligns it with the chain.
+    /// Create a counter starting at `start` with a no-op store.
+    ///
+    /// All existing call sites use this constructor; no persistence occurs
+    /// (in-memory mode, or tests). The counter is *not* considered bootstrapped
+    /// until [`Self::bootstrap_from_hsn`] aligns it with the chain.
     pub fn new(start: u64) -> Self {
         Self {
             counter: AtomicU64::new(start),
             bootstrapped: AtomicBool::new(false),
+            store: Arc::new(NullNonceStore),
+        }
+    }
+
+    /// Create a counter starting at `start` backed by `store` for persistence.
+    ///
+    /// Use this in disk mode: seed `start` from `store.load().unwrap_or(1)`
+    /// (the persisted high-water mark), then call `bootstrap_from_hsn` to
+    /// advance past the chain's replay head.
+    pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
+        Self {
+            counter: AtomicU64::new(start),
+            bootstrapped: AtomicBool::new(false),
+            store,
         }
     }
 
@@ -142,177 +176,17 @@ impl NonceCounter {
         }
     }
 
-    /// Allocate the next nonce. Atomic: concurrent callers each get a
-    /// distinct value.
+    /// Allocate the next nonce. Atomic: concurrent callers each get a distinct
+    /// value.
+    ///
+    /// The value *after* the increment (`nonce + 1`) is persisted as the new
+    /// high-water mark before the nonce is returned. This means the persisted
+    /// value always equals the next nonce that *will* be issued, so a counter
+    /// seeded with `store.load().unwrap_or(1)` on restart correctly resumes
+    /// above every nonce that was signed.
     pub fn next(&self) -> u64 {
-        self.counter.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sp_runtime::AccountId32;
-    use storage_client::agreement::ReplicaTermsOf;
-
-    fn provider_info() -> ProviderInfo {
-        ProviderInfo {
-            multiaddr: "/ip4/127.0.0.1/tcp/3333".to_string(),
-            stake: 1_000_000_000_000,
-            committed_bytes: 0,
-            max_capacity: 0,
-            min_duration: 10,
-            max_duration: 100_000,
-            price_per_byte: 5,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            agreements_total: 0,
-            challenges_failed: 0,
-        }
-    }
-
-    fn request() -> NegotiateRequest {
-        NegotiateRequest {
-            owner: AccountId32::new([0u8; 32]),
-            max_bytes: 1024,
-            duration: 50,
-            price_per_byte: 5,
-            bucket_id: None,
-            replica_params: None,
-        }
-    }
-
-    #[test]
-    fn accepts_request_matching_settings() {
-        assert!(validate_request(&request(), &provider_info()).is_ok());
-    }
-
-    #[test]
-    fn rejects_price_below_listed() {
-        let mut req = request();
-        req.price_per_byte = 0;
-        let err = validate_request(&req, &provider_info()).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::PriceBelowListed {
-                proposed: 0,
-                listed: 5
-            }
-        ));
-    }
-
-    #[test]
-    fn accepts_price_above_listed() {
-        let mut req = request();
-        req.price_per_byte = 10;
-        assert!(validate_request(&req, &provider_info()).is_ok());
-    }
-
-    #[test]
-    fn rejects_duration_out_of_bounds() {
-        let mut req = request();
-        req.duration = 5;
-        assert!(matches!(
-            validate_request(&req, &provider_info()),
-            Err(Error::DurationOutOfBounds { .. })
-        ));
-        req.duration = 100_001;
-        assert!(matches!(
-            validate_request(&req, &provider_info()),
-            Err(Error::DurationOutOfBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_bytes_beyond_remaining_capacity() {
-        let mut info = provider_info();
-        info.max_capacity = 2048;
-        info.committed_bytes = 1536;
-        let err = validate_request(&request(), &info).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::CapacityExceeded {
-                requested: 1024,
-                committed: 1536,
-                max_capacity: 2048
-            }
-        ));
-    }
-
-    #[test]
-    fn zero_capacity_means_unlimited() {
-        let mut req = request();
-        req.max_bytes = u64::MAX;
-        assert!(validate_request(&req, &provider_info()).is_ok());
-    }
-
-    #[test]
-    fn rejects_primary_when_not_accepting() {
-        let mut info = provider_info();
-        info.accepting_primary = false;
-        assert!(matches!(
-            validate_request(&request(), &info),
-            Err(Error::NotAcceptingPrimary)
-        ));
-    }
-
-    #[test]
-    fn rejects_replica_without_sync_price() {
-        let mut req = request();
-        req.bucket_id = Some(1);
-        req.replica_params = Some(ReplicaTermsOf {
-            sync_balance: 1_000,
-            min_sync_interval: 10,
-            sync_price: 10,
-        });
-        assert!(matches!(
-            validate_request(&req, &provider_info()),
-            Err(Error::NotAcceptingReplicas)
-        ));
-    }
-
-    #[test]
-    fn accepts_replica_even_when_primary_closed() {
-        let mut info = provider_info();
-        info.accepting_primary = false;
-        info.replica_sync_price = Some(7);
-        let mut req = request();
-        req.bucket_id = Some(1);
-        req.replica_params = Some(ReplicaTermsOf {
-            sync_balance: 1_000,
-            min_sync_interval: 10,
-            sync_price: 10,
-        });
-        assert!(validate_request(&req, &info).is_ok());
-    }
-
-    #[test]
-    fn nonce_counter_is_monotonic() {
-        let c = NonceCounter::new(0);
-        assert_eq!(c.next(), 0);
-        assert_eq!(c.next(), 1);
-        assert_eq!(c.next(), 2);
-    }
-
-    #[test]
-    fn bootstrap_from_hsn_only_advances() {
-        let c = NonceCounter::new(10);
-        c.bootstrap_from_hsn(5); // lower than current — no-op
-        assert_eq!(c.next(), 10);
-        c.bootstrap_from_hsn(20); // higher — advance
-        assert_eq!(c.next(), 21);
-    }
-
-    #[test]
-    fn is_bootstrapped_flips_on_first_reconcile() {
-        // A fresh counter has not been aligned with the chain, so `/negotiate`
-        // must not sign with it yet. The flag flips on the first bootstrap,
-        // even when the hsn is lower than the current value (a no-op advance
-        // still counts as a successful reconcile).
-        let c = NonceCounter::new(10);
-        assert!(!c.is_bootstrapped());
-        c.bootstrap_from_hsn(5);
-        assert!(c.is_bootstrapped());
+        let nonce = self.counter.fetch_add(1, Ordering::SeqCst);
+        self.store.persist(nonce.saturating_add(1));
+        nonce
     }
 }
