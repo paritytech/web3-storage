@@ -266,6 +266,9 @@ pub struct ProviderReadiness {
     pub nonce_counter_ready: bool,
     /// On-chain provider registration info has been loaded.
     pub provider_info_loaded: bool,
+    /// The provider has announced deregistration; `/negotiate` is disabled and
+    /// returns 503 even when every other flag is `true`.
+    pub deregistering: bool,
 }
 
 /// Health check response.

@@ -49,7 +49,8 @@ async function matchEntry(api, who, { bytesNeeded, minDuration, maxPricePerByte 
       max_price_per_byte: maxPricePerByte,
       primary_only: true,
     },
-    50
+    50,
+    READ_OPTS,
   );
   return matches.find((m) => toHex(m.account.asBytes()) === toHex(who.publicKey));
 }

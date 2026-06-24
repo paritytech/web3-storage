@@ -73,18 +73,6 @@ pub struct RpcParams {
     )]
     pub chain_rpc: String,
 
-    /// How often (in seconds) to reconcile the node's view of its own on-chain
-    /// registration — provider settings and the nonce-counter replay window.
-    /// Lower values pick up (de)registration faster at the cost of more RPC
-    /// polling; mainly useful to shorten for tests.
-    #[arg(
-        long,
-        value_name = "SECS",
-        default_value_t = 30,
-        env = "RECONCILE_INTERVAL_SECS"
-    )]
-    pub reconcile_interval_secs: u64,
-
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
     /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not

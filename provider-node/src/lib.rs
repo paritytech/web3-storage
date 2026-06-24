@@ -12,6 +12,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub mod checkpoint_coordinator;
 pub mod cli;
@@ -30,6 +31,11 @@ pub(crate) mod subxt_client;
 pub mod types;
 
 pub use api::create_router;
+pub use chain_state_coordinator::{
+    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
+    PalletConstants,
+};
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
@@ -48,28 +54,16 @@ pub use replica_sync_coordinator::{
 };
 pub use s3_index::S3IndexManager;
 pub use storage::{
-    build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo, DiskStorage,
-    Storage, StorageBackend, StoredNode,
+    build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo,
+    DiskNonceStore, DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend, StoredNode,
 };
 pub use types::*;
 
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
 use subxt_signer::sr25519;
 use tokio::sync::mpsc;
-
-/// Monotonic nonce counter for provider-signed terms. Always present; the
-/// background reconciler (see [`crate::command`]) aligns it with the chain's
-/// replay window once the provider is registered. Use
-/// [`NonceCounter::is_bootstrapped`] to tell whether that has happened.
-pub type StateNonceCounter = Arc<NonceCounter>;
-/// The provider's on-chain registration info, or `None` until the provider is
-/// registered. The background reconciler keeps this current, so it can flip to
-/// `Some` after startup (registration) and back to `None` (deregistration)
-/// without restarting the node.
-pub type StateProviderInfo = Arc<RwLock<Option<ProviderInfo>>>;
 
 /// Provider node state shared across handlers.
 pub struct ProviderState {
@@ -91,13 +85,10 @@ pub struct ProviderState {
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
-    /// Monotonic nonce counter used by `/negotiate` to allocate fresh
-    /// nonces for provider-signed `AgreementTerms`. Bootstrapped from the
-    /// chain's replay window by the background reconciler.
-    pub nonce_counter: StateNonceCounter,
-    /// On-chain provider registration info, kept current by the background
-    /// reconciler. `None` until the provider is registered on chain.
-    pub provider_info: StateProviderInfo,
+    /// Live chain state kept in sync by the chain-state coordinator — the single
+    /// writer for `current_block`, `constants`, `provider_info`, and
+    /// `nonce_counter`. `/negotiate` gates on all four before signing.
+    pub chain_state: Arc<ChainState>,
 }
 
 impl ProviderState {
@@ -112,8 +103,7 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
-            nonce_counter: Arc::new(NonceCounter::new(1)),
-            provider_info: Arc::new(RwLock::new(None)),
+            chain_state: Arc::new(ChainState::default()),
         }
     }
 
@@ -135,9 +125,25 @@ impl ProviderState {
             auth_enabled: false,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
-            nonce_counter: Arc::new(NonceCounter::new(1)),
-            provider_info: Arc::new(RwLock::new(None)),
+            chain_state: Arc::new(ChainState::default()),
         })
+    }
+
+    /// Install the nonce-counter persistence backend.
+    ///
+    /// Must be called while `self` is still solely owned — before it is wrapped
+    /// in an `Arc` and shared with the coordinators — because `chain_state` is
+    /// mutated in place via `Arc::get_mut`. If `chain_state` is already shared
+    /// the store is left as the default `NullNonceStore` (disk-mode persistence
+    /// disabled) and an error is logged rather than silently dropping it.
+    pub fn set_nonce_store(&mut self, store: Arc<dyn NonceStore>) {
+        match Arc::get_mut(&mut self.chain_state) {
+            Some(cs) => cs.nonce_store = store,
+            None => tracing::error!(
+                "nonce store install skipped: chain_state Arc has multiple owners; \
+                 disk-mode persistence is disabled for this run"
+            ),
+        }
     }
 
     /// Set the checkpoint coordinator command sender (called after coordinator starts).
@@ -262,5 +268,13 @@ mod tests {
         // Sanity: //Alice's own signature still verifies under her own key.
         let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
         assert!(sr25519::verify(&alice_sig, msg, &alice_pub));
+    }
+
+    #[test]
+    fn provider_state_chain_defaults_on_new() {
+        use std::sync::atomic::Ordering;
+        let state = ProviderState::new(test_storage(), "test-provider".to_string());
+        assert_eq!(state.chain_state.current_block.load(Ordering::Relaxed), 0);
+        assert!(state.chain_state.provider_info.read().is_none());
     }
 }
