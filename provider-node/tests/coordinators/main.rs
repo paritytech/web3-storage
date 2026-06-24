@@ -18,7 +18,10 @@ pub const ALICE_SEED: &str = "//Alice";
 /// Create a standard test `ProviderState` for coordinator tests.
 pub fn test_state() -> Arc<ProviderState> {
     let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()))
+    Arc::new(ProviderState::with_provider_id(
+        storage,
+        ALICE_SS58.to_string(),
+    ))
 }
 
 /// Create a test `ProviderState` with a keypair derived from the given seed.

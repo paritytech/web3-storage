@@ -178,7 +178,10 @@ fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
         created_at_block: 900,
     };
 
-    let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
+    let state = Arc::new(ProviderState::with_provider_id(
+        storage,
+        ALICE_SS58.to_string(),
+    ));
     (state, challenge)
 }
 

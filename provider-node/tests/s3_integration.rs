@@ -18,7 +18,12 @@ struct TestServer {
 impl TestServer {
     async fn new() -> Self {
         let storage = Arc::new(Storage::new());
-        let state = Arc::new(ProviderState::new(storage, "0xtest_provider".to_string()));
+        // Functional tests, not auth tests: run with auth disabled (auth is
+        // enforced by default; see auth_integration.rs for the auth coverage).
+        let state = Arc::new(
+            ProviderState::with_provider_id(storage, "0xtest_provider".to_string())
+                .with_auth_disabled(),
+        );
 
         let app = create_router(state);
 

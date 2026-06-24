@@ -17,7 +17,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::{create_router, NegotiateRequest, ProviderState, SignedTerms, Storage};
+use storage_provider_node::{
+    create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
+    PalletConstants, ProviderState, SignedTerms, Storage,
+};
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -35,11 +38,20 @@ impl TestServer {
     async fn ready(info: ProviderInfo) -> Self {
         let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
             .expect("//Alice is a valid SURI");
-        // Publish on-chain registration info and align the nonce counter with
-        // the replay window (hsn 0), mirroring what the reconciler does once the
-        // provider is registered — satisfying every `/negotiate` prerequisite.
-        *state.provider_info.write().unwrap() = Some(info);
-        state.nonce_counter.bootstrap_from_hsn(0);
+        // Simulate what the coordinator does once registration lands: publish
+        // constants, bootstrap the nonce counter, then publish provider_info.
+        // Together these satisfy every `/negotiate` prerequisite.
+        state
+            .chain_state
+            .current_block
+            .store(100, std::sync::atomic::Ordering::Relaxed);
+        *state.chain_state.constants.write() = Some(PalletConstants {
+            request_timeout: 200,
+        });
+        let counter = std::sync::Arc::new(NonceCounter::new(1));
+        counter.bootstrap_from_hsn(0);
+        *state.chain_state.nonce_counter.write() = Some(counter);
+        *state.chain_state.provider_info.write() = Some(info);
         Self::serve(Arc::new(state)).await
     }
 
@@ -74,6 +86,17 @@ impl TestServer {
             .await
             .unwrap()
     }
+
+    async fn info(&self) -> Value {
+        self.client
+            .get(self.url("/info"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
 }
 
 /// Provider settings that accept the [`primary_request`] below: open for
@@ -93,6 +116,7 @@ fn provider_info() -> ProviderInfo {
         accepting_extensions: true,
         agreements_total: 0,
         challenges_failed: 0,
+        deregister_at: None,
     }
 }
 
@@ -206,7 +230,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 #[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
-    let server = TestServer::serve(Arc::new(ProviderState::new(
+    let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
         Arc::new(Storage::new()),
         "0xtest_provider".to_string(),
     )))
@@ -220,26 +244,224 @@ async fn negotiate_503_when_no_signing_key() {
 
 #[tokio::test]
 async fn negotiate_503_when_provider_info_unavailable() {
-    // Keypair present but no on-chain registration info loaded (the reconciler
-    // never ran): the node cannot validate terms it would be bound to, so it
-    // must refuse. `provider_info` defaults to `None`.
+    // Keypair present and chain state ready, but no on-chain registration info
+    // loaded (the reconciler never published it): the node cannot validate terms
+    // it would be bound to, so it must refuse. `provider_info` defaults to `None`.
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
-    let server = TestServer::serve(Arc::new(state)).await;
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    // provider_info and nonce_counter intentionally left None.
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
 
     let resp = server.negotiate(&primary_request()).await;
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "provider_info_unavailable");
+
+    // Once on-chain info lands (mirroring the coordinator: bootstrap nonce
+    // counter, then publish provider_info), negotiation succeeds.
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
-    // Registered (provider_info loaded) but the nonce counter has not been
-    // aligned with the chain's replay window yet. The handler must refuse
-    // rather than sign a nonce not derived from on-chain state.
+async fn negotiate_503_when_provider_deregistering() {
+    // Every prerequisite satisfied, but the provider has announced deregistration:
+    // it is winding down and must refuse to sign new terms.
+    let mut info = provider_info();
+    info.deregister_at = Some(150);
+    let server = TestServer::ready(info).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "provider_deregistering");
+}
+
+// ─── /info readiness flag tests ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn info_deregistering_false_for_active_provider() {
+    // A fully-ready provider with no pending deregistration shows
+    // `readiness.deregistering: false`.
+    let server = TestServer::ready(provider_info()).await;
+    let body = server.info().await;
+
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], true);
+    // deregister_at absent from provider_registration_info.
+    assert!(body["provider_registration_info"]["deregister_at"].is_null());
+}
+
+#[tokio::test]
+async fn info_deregistering_true_and_block_surfaced_when_announced() {
+    // After DeregisterAnnounced, the coordinator re-fetches and publishes an
+    // info where deregister_at = Some(150). The /info response must reflect
+    // this in both the readiness flag and the raw provider_registration_info.
+    let mut info = provider_info();
+    info.deregister_at = Some(150);
+    let server = TestServer::ready(info).await;
+
+    let body = server.info().await;
+
+    assert_eq!(body["readiness"]["deregistering"], true);
+    // Every other readiness flag is still true — the node is still up.
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], true);
+    // The raw block number surfaces so operators can see when deregistration
+    // becomes finalisable.
+    assert_eq!(body["provider_registration_info"]["deregister_at"], 150);
+}
+
+#[tokio::test]
+async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
+    // Lifecycle: announced → negotiate is blocked → complete_deregister fires
+    // → coordinator gets ProviderDeregistered → re-fetches storage which now
+    // returns None → clears provider_info. Subsequent negotiate calls should
+    // return provider_info_unavailable, not provider_deregistering (the info is
+    // just gone at that point).
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
-    *state.provider_info.write().unwrap() = Some(provider_info());
-    // nonce_counter intentionally left un-bootstrapped.
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    // Phase 1: deregistration announced.
+    let mut deregistering = provider_info();
+    deregistering.deregister_at = Some(150);
+    *state.chain_state.provider_info.write() = Some(deregistering);
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_deregistering"
+    );
+
+    // Phase 2: complete_deregister — coordinator clears provider_info and
+    // nonce_counter (same as when the storage query returns None).
+    *state.chain_state.provider_info.write() = None;
+    *state.chain_state.nonce_counter.write() = None;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_info_unavailable"
+    );
+
+    // /info reflects both cleared flags.
+    let body = server.info().await;
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], false);
+    assert!(body["provider_registration_info"].is_null());
+}
+
+#[tokio::test]
+async fn negotiate_recovers_after_deregister_cancelled() {
+    // Lifecycle: announced → negotiate blocked → DeregisterCancelled fires →
+    // coordinator re-fetches storage which now reports deregister_at = None →
+    // negotiate signs again. Mirrors the coordinator clearing the deregistering
+    // state when a provider backs out of winding down.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    let mut deregistering = provider_info();
+    deregistering.deregister_at = Some(150);
+    *state.chain_state.provider_info.write() = Some(deregistering);
+    let state = Arc::new(state);
+    let server = TestServer::serve(state.clone()).await;
+
+    // Announced: refused.
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap()["error"],
+        "provider_deregistering"
+    );
+
+    // Cancelled: coordinator re-publishes info with deregister_at back to None.
+    *state.chain_state.provider_info.write() = Some(provider_info());
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // /info confirms the flag cleared while the provider stays registered.
+    let body = server.info().await;
+    assert_eq!(body["readiness"]["deregistering"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], true);
+    assert!(body["provider_registration_info"]["deregister_at"].is_null());
+}
+
+#[tokio::test]
+async fn negotiate_503_when_nonce_counter_absent() {
+    // Registered (provider_info loaded) but the coordinator has not yet
+    // published any nonce counter (nonce_counter == None). The handler must
+    // refuse so we never sign a nonce not derived from on-chain state.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    // nonce_counter intentionally left None.
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "nonce_counter_unavailable");
+}
+
+#[tokio::test]
+async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
+    // Exercises the transient window where the coordinator has published a
+    // Some counter but bootstrap_from_hsn has not yet been called (e.g. the
+    // chain returned the provider info but replay state was not yet visible).
+    // The handler must refuse until is_bootstrapped() is true.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    // Counter is Some but not bootstrapped (no bootstrap_from_hsn call).
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    *state.chain_state.nonce_counter.write() = Some(counter);
     let server = TestServer::serve(Arc::new(state)).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -369,4 +591,103 @@ async fn negotiate_rate_limited_after_burst() {
         limited > 0,
         "expected the per-IP rate limiter to reject part of a 40-request burst"
     );
+}
+
+// ─── NonceCounter ─────────────────────────────────────────────────────────────
+//
+// `NonceCounter` is the nonce source `/negotiate` allocates from. The
+// chain-alignment advance and bootstrap semantics are exercised here directly
+// against the public type.
+
+#[test]
+fn nonce_counter_is_unbootstrapped_until_aligned() {
+    let counter = NonceCounter::new(1);
+    // Fresh counter has not been reconciled with the chain's replay window.
+    assert!(!counter.is_bootstrapped());
+    counter.bootstrap_from_hsn(0);
+    assert!(counter.is_bootstrapped());
+}
+
+#[test]
+fn bootstrap_from_hsn_advances_to_hsn_plus_one() {
+    // Counter starts at 1 but the chain's replay head is already at 10, so the
+    // node must resume at 11 — never reissue a nonce the chain has seen.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(10);
+    assert!(counter.is_bootstrapped());
+    assert_eq!(counter.next(), 11);
+    assert_eq!(counter.next(), 12);
+}
+
+#[test]
+fn bootstrap_from_hsn_never_rewinds() {
+    // A stale/lower hsn (e.g. an out-of-order poll) must not pull the counter
+    // back below nonces it may already have issued.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(10); // now at 11
+    assert_eq!(counter.next(), 11); // -> 12
+    counter.bootstrap_from_hsn(3); // lower head: no-op
+    assert_eq!(counter.next(), 12);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_next_allocates_distinct_nonces() {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    // Hammer the atomic from many tasks: every allocation must be unique and the
+    // count exact (exercises the `compare_exchange_weak` retry path under load).
+    let counter = Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+
+    let mut handles = Vec::new();
+    for _ in 0..16 {
+        let c = counter.clone();
+        handles.push(tokio::spawn(async move {
+            (0..256).map(|_| c.next()).collect::<Vec<_>>()
+        }));
+    }
+
+    let mut seen = HashSet::new();
+    for h in handles {
+        for nonce in h.await.unwrap() {
+            assert!(seen.insert(nonce), "nonce {nonce} was allocated twice");
+        }
+    }
+    assert_eq!(seen.len(), 16 * 256);
+}
+
+// ─── NonceCounter persistence (with_store) ────────────────────────────────────
+
+#[test]
+fn with_store_counter_persists_on_next() {
+    // A counter backed by a DiskNonceStore persists each allocation so a fresh
+    // counter seeded from the store resumes above the last issued nonce.
+    let dir = tempfile::TempDir::new().unwrap();
+    let storage = DiskStorage::new(dir.path()).unwrap();
+    let store = storage.nonce_store();
+
+    let counter = NonceCounter::with_store(1, store.clone());
+    counter.bootstrap_from_hsn(0); // counter now at 1
+    assert_eq!(counter.next(), 1); // persist(1) → next starts at 2
+    assert_eq!(counter.next(), 2); // persist(2)
+
+    // A fresh counter seeded from the stored value resumes above the issued nonces.
+    let new_counter = NonceCounter::with_store(store.load().unwrap_or(1), store.clone());
+    new_counter.bootstrap_from_hsn(0); // chain hsn=0, so floor=1, but stored=2 wins
+    assert!(
+        new_counter.next() > 2,
+        "restarted counter must resume above the last issued nonce"
+    );
+}
+
+#[test]
+fn new_counter_uses_null_store_so_existing_tests_compile() {
+    // Regression: NonceCounter::new must still work with no store argument.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(5);
+    assert_eq!(counter.next(), 6);
+    // NullNonceStore persists nothing — load returns None.
+    let null: NullNonceStore = Default::default();
+    assert!(null.load().is_none());
 }

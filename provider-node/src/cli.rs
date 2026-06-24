@@ -73,18 +73,6 @@ pub struct RpcParams {
     )]
     pub chain_rpc: String,
 
-    /// How often (in seconds) to reconcile the node's view of its own on-chain
-    /// registration — provider settings and the nonce-counter replay window.
-    /// Lower values pick up (de)registration faster at the cost of more RPC
-    /// polling; mainly useful to shorten for tests.
-    #[arg(
-        long,
-        value_name = "SECS",
-        default_value_t = 30,
-        env = "RECONCILE_INTERVAL_SECS"
-    )]
-    pub reconcile_interval_secs: u64,
-
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
     /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
@@ -95,6 +83,17 @@ pub struct RpcParams {
     /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
     #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
     pub public_multiaddr: Option<String>,
+
+    /// Comma-separated list of browser origins allowed via CORS
+    /// (e.g. "https://app.example.com,http://localhost:5174").
+    /// When unset, all origins are allowed (permissive) — set this in production.
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        env = "CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 /// Parameters for provider identity and signing keys.
@@ -177,12 +176,17 @@ pub struct CheckpointParams {
 }
 
 /// Parameters for authentication and authorization.
+///
+/// Authentication and role-based access control are enforced by default. The
+/// only way to turn them off is the deliberately verbose
+/// `--disable-auth-i-know-what-i-am-doing` flag below.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
-    /// Enable authentication and role-based access control.
-    /// When disabled (default), all requests are allowed without auth headers.
-    #[arg(long, env = "ENABLE_AUTH")]
-    pub enable_auth: bool,
+    /// Disable ALL authentication and role-based access control. Every endpoint
+    /// becomes publicly readable AND writable by anyone. Intended only for
+    /// throwaway local experiments — never run a real provider this way.
+    #[arg(long)]
+    pub disable_auth_i_know_what_i_am_doing: bool,
 
     /// Cache TTL in seconds for membership lookups from the chain.
     #[arg(

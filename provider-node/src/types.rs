@@ -205,12 +205,13 @@ pub struct MerkleProofData {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Request to delete data (admin only).
+///
+/// Authorization is carried in the `Authorization` header (`Web3Storage …`,
+/// verified against the bucket's Admin members), not in the body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
-    /// Admin signature authorizing deletion
-    pub admin_signature: String,
 }
 
 /// Response from delete operation.
@@ -266,6 +267,9 @@ pub struct ProviderReadiness {
     pub nonce_counter_ready: bool,
     /// On-chain provider registration info has been loaded.
     pub provider_info_loaded: bool,
+    /// The provider has announced deregistration; `/negotiate` is disabled and
+    /// returns 503 even when every other flag is `true`.
+    pub deregistering: bool,
 }
 
 /// Health check response.

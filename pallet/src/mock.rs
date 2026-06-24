@@ -7,7 +7,7 @@ use frame_support::{
     derive_impl,
     traits::{ConstU32, ConstU64, Hooks},
 };
-use sp_core::{Pair as _, H256};
+use sp_core::{Get, Pair as _, H256};
 use sp_runtime::{
     traits::{BlakeTwo256, IdentityLookup},
     BuildStorage,
@@ -87,15 +87,15 @@ impl pallet_storage_provider::Config for Test {
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ConstU64<100>;
     type SettlementTimeout = ConstU64<50>;
-    type RequestTimeout = ConstU64<100>;
+    type RequestTimeout = ConstU64<50>;
     // Provider-initiated checkpoint config
     type DefaultCheckpointInterval = ConstU64<10>; // 10 blocks for testing
     type DefaultCheckpointGrace = ConstU64<5>; // 5 blocks grace
     type CheckpointReward = ConstU64<10>; // 10 units reward
     type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
     type MaxBucketsPerMember = ConstU32<100>;
-    // Must be >= ChallengeTimeout (100 in this mock). Set to a small
-    // multiple so tests can advance past the period quickly.
+    // Must be >= ChallengeTimeout (100 in this mock) AND > RequestTimeout (50).
+    // Set to a small multiple so tests can advance past the period quickly.
     type DeregisterAnnouncementPeriod = ConstU64<100>;
     type WeightInfo = ();
 }
@@ -251,7 +251,9 @@ pub fn sign_terms(
     sp_runtime::MultiSignature::Sr25519(pair.sign(&hash))
 }
 
-/// Helper: primary terms with a fresh nonce, valid forever.
+/// Helper: primary terms
+/// + with a fresh nonce
+/// + valid for the current RequestTimeout window.
 #[allow(dead_code)]
 pub fn primary_terms(
     owner: u64,
@@ -264,14 +266,16 @@ pub fn primary_terms(
         max_bytes,
         duration,
         price_per_byte,
-        valid_until: u64::MAX,
+        valid_until: frame_system::Pallet::<Test>::block_number()
+            .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce: next_terms_nonce(),
         bucket_id: None,
         replica_params: None,
     }
 }
 
-/// Helper: replica terms bound to `bucket_id`, with a fresh nonce.
+/// Helper: replica terms bound to `bucket_id`,
+/// + valid for the current RequestTimeout window.
 #[allow(dead_code)]
 pub fn replica_terms(
     owner: u64,
@@ -286,7 +290,8 @@ pub fn replica_terms(
         max_bytes,
         duration,
         price_per_byte,
-        valid_until: u64::MAX,
+        valid_until: frame_system::Pallet::<Test>::block_number()
+            .saturating_add(<Test as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce: next_terms_nonce(),
         bucket_id: Some(bucket_id),
         replica_params: Some(params),
