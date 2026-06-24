@@ -143,6 +143,19 @@ pub mod pallet {
                  provider is still slashable"
             );
         }
+
+        fn integrity_test() {
+            // The re-register replay defense relies on RequestTimeout being strictly
+            // shorter than DeregisterAnnouncementPeriod: a quote signed at block S
+            // expires at S+RequestTimeout, which is before the provider can complete
+            // deregistration and re-register (requiring DeregisterAnnouncementPeriod
+            // more blocks), so an old quote cannot be replayed against the new
+            // incarnation.
+            assert!(
+                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
+                "RequestTimeout must be less than DeregisterAnnouncementPeriod to close the re-register replay window"
+            );
+        }
     }
 
     #[pallet::config]
@@ -732,6 +745,7 @@ pub mod pallet {
         },
         ProviderMultiaddrUpdated {
             provider: T::AccountId,
+            multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
         },
         ExtensionsBlocked {
             bucket_id: BucketId,
@@ -1048,6 +1062,9 @@ pub mod pallet {
         InvalidProviderSignature,
         /// Signed terms have passed their `valid_until` block.
         TermsExpired,
+        /// Signed terms' `valid_until` extends beyond `now + RequestTimeout` —
+        /// the provider-signed validity window cap enforced on-chain.
+        TermsValidityTooLong,
         /// The terms' nonce has already been consumed inside the provider's
         /// replay window.
         NonceAlreadyUsed,
@@ -1333,11 +1350,14 @@ pub mod pallet {
                     .as_mut()
                     .ok_or(Error::<T>::ProviderNotFound)?;
 
-                provider.multiaddr = multiaddr;
+                provider.multiaddr = multiaddr.clone();
                 Ok(())
             })?;
 
-            Self::deposit_event(Event::ProviderMultiaddrUpdated { provider: who });
+            Self::deposit_event(Event::ProviderMultiaddrUpdated {
+                provider: who,
+                multiaddr,
+            });
 
             Ok(())
         }
@@ -4337,9 +4357,14 @@ pub mod pallet {
             // Request's terms.max_bytes must greater than 0
             ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
-            // Quote must not be stale.
+            // Quote must not be stale and must not exceed the chain-enforced window.
+            // `terms.valid_until` must in range [current_block, current_block + RequestTimeout]
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+            ensure!(
+                terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
+                Error::<T>::TermsValidityTooLong
+            );
 
             // Provider lookup + signature check over
             // blake2_256(PRIMARY_TERM_CONTEXT | SCALE(terms)).
@@ -4464,9 +4489,13 @@ pub mod pallet {
             // Request's terms.max_bytes must greater than 0
             ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
-            // Quote must not be stale.
+            // Quote must not be stale and must not exceed the chain-enforced window.
             let current_block = frame_system::Pallet::<T>::block_number();
             ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+            ensure!(
+                terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
+                Error::<T>::TermsValidityTooLong
+            );
 
             // Target bucket must exist.
             ensure!(
@@ -4636,6 +4665,12 @@ pub mod pallet {
             let mut results: Vec<MatchedProvider> = Vec::new();
 
             for (account, info) in Providers::<T>::iter() {
+                // Skip providers that have announced deregistration — they are
+                // winding down and must not be offered for new agreements.
+                if info.deregister_at.is_some() {
+                    continue;
+                }
+
                 let max_capacity = info.settings.max_capacity;
                 let available = if max_capacity > 0 {
                     max_capacity.saturating_sub(info.committed_bytes)

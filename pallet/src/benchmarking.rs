@@ -74,7 +74,7 @@ fn build_primary_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: BlockNumberFor::<T>::max_value(),
+        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
@@ -94,7 +94,7 @@ fn build_replica_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: BlockNumberFor::<T>::max_value(),
+        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {

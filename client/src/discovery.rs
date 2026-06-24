@@ -92,6 +92,8 @@ pub struct ProviderInfo {
     pub agreements_total: u32,
     /// Failed challenges count.
     pub challenges_failed: u32,
+    /// Block at which deregistration becomes finalisable (`None` = not deregistering).
+    pub deregister_at: Option<u32>,
 }
 
 /// Provider recommendation with additional context.
@@ -656,6 +658,15 @@ fn parse_provider_info(value: &subxt::ext::scale_value::Value<u32>) -> Option<Pr
         .and_then(|v| v.as_u128())
         .unwrap_or(0) as u32;
 
+    let deregister_at = named_field(value, "deregister_at").and_then(|v| match &v.value {
+        ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
+        ValueDef::Variant(Variant {
+            name,
+            values: Composite::Unnamed(items),
+        }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u32),
+        _ => None,
+    });
+
     Some(ProviderInfo {
         multiaddr,
         stake,
@@ -669,6 +680,7 @@ fn parse_provider_info(value: &subxt::ext::scale_value::Value<u32>) -> Option<Pr
         accepting_extensions,
         agreements_total,
         challenges_failed,
+        deregister_at,
     })
 }
 
