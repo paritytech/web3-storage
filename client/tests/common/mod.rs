@@ -240,8 +240,11 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// (`/commit`, `/commitment`, `/checkpoint/sign`, `/delete`) work end-to-end.
 pub async fn start_test_provider() -> String {
     let storage = Arc::new(Storage::new());
-    let state =
-        Arc::new(ProviderState::with_seed(storage, "//Alice").expect("//Alice is a valid SURI"));
+    let state = Arc::new(
+        ProviderState::with_seed(storage, "//Alice")
+            .expect("//Alice is a valid SURI")
+            .with_auth_disabled(),
+    );
     let app = create_router(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
