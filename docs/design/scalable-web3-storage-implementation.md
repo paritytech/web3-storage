@@ -794,7 +794,13 @@ pub enum Event<T: Config> {
         challenger: T::AccountId,
         respond_by: BlockNumberFor<T>,
     },
-    /// Provider responded successfully to a challenge
+    /// Provider responded successfully to a challenge.
+    /// `provider_cost` is the fraction of the response tx fee the provider
+    /// bears itself (paid from its account, never its stake): a share per the
+    /// cost-split table for authorized challengers, and always 0 for public
+    /// challengers (who fund the provider's fee in full). `challenger_cost` is
+    /// what the challenger's deposit ultimately funded; any excess deposit is
+    /// returned.
     ChallengeDefended {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
@@ -1504,6 +1510,38 @@ impl<T: Config> Pallet<T> {
     // but this is acceptable: active writers have signatures and can use
     // challenge_offchain. The snapshot primarily protects cold/archival data
     // where nobody has recent signatures or doesn't bother to dig them up.
+    //
+    // **Who may challenge, and at what cost (all three modes):**
+    // Any signed account may challenge. The challenger's deposit must cover the
+    // provider's on-chain response cost (generously over-estimated; excess is
+    // refunded on resolution). On a valid response the provider's stake is
+    // never touched—only its response transaction fee is at issue, and the
+    // deposit reimburses it. How much of that cost the provider is made to bear
+    // depends on the challenger:
+    //
+    //   - **Authorized accounts** — `is_authorized(who, bucket)` is true:
+    //     bucket members (Admin/Writer/Reader) or the owner of any storage
+    //     agreement on the bucket (so replica funders qualify). The provider is
+    //     made to bear a fraction of the cost per the cost-split table
+    //     (response-time based); the challenger's deposit covers the rest. The
+    //     challenger's share never drops below 50%, so the split is leverage to
+    //     pressure the provider into serving—not a cheap recovery channel, even
+    //     for the owner.
+    //
+    //   - **General public** — everyone else: the challenger pays 100%; the
+    //     provider is reimbursed in full and loses no money on a valid response.
+    //     Still able to detect and slash a dead provider, and to recover a
+    //     chunk—at full cost. No split for two reasons: (1) a provider can't
+    //     serve everyone equally well, so a stranger being made to wait isn't
+    //     evidence of fault; (2) anti-DoS—if strangers got the split, a crowd
+    //     could each pay little while collectively draining the provider, so the
+    //     full-cost rule makes the attackers' cost scale with the damage.
+    //
+    // `is_authorized` is the single authorization predicate shared with
+    // private-bucket read access control. No per-challenge rate limiting or
+    // stored "last challenge" timestamp is needed: full-cost public challenges
+    // are self-limiting (the challenger pays in full every time) and leave an
+    // honest provider financially unharmed.
 
     /// Challenge on-chain checkpoint (no signatures needed).
     /// Provider must be in current snapshot's provider list.
@@ -2307,41 +2345,51 @@ pub struct MmrProof {
 ### Timeline
 
 ```
-1. Client initiates challenge on-chain
+1. Challenger initiates challenge on-chain
    └─ Provides: signed commitment, leaf_index, chunk_index
-   └─ Locks 100% of estimated challenge cost as deposit (margin for price fluctuations)
+   └─ Locks a generously over-estimated deposit covering the provider's
+      on-chain response cost (margin for fee fluctuations)
+   └─ Tier determined by is_authorized(challenger, bucket):
+      authorized (member or agreement owner) vs. general public
 
 2. Challenge window opens (1-2 days)
    └─ Provider must respond within window
-   └─ Cost split calculated based on response time (in blocks)
+   └─ Provider pays its response tx fee from its own account—NOT its stake
 
 3a. Provider responds with valid proof
-    └─ Challenge rejected
-    └─ Base cost split: 75% client / 25% provider (from stake)
-    └─ Dynamic adjustment based on response time:
-       • Fast response → provider pays less (e.g., 15%), client refunded more
-       • Slow response → provider pays more (e.g., 50%), client refunded less
-    └─ Client's deposit: pays their share, remainder refunded
-    └─ Client recovers data via the on-chain proof
+    └─ Challenge rejected; stake untouched
+    └─ Provider's response fee is reimbursed from the challenger's deposit:
+       • General public  → 100% reimbursed; provider bears nothing (money)
+       • Authorized      → reimbursed per the cost-split table; provider
+         is made to bear the remaining fraction (response-time based:
+         fast → provider bears less; slow → more). The challenger's
+         share never drops below 50%.
+    └─ Any deposit beyond what was used is returned to the challenger
+    └─ Challenger obtains the chunk via the on-chain proof (full on-chain
+       cost applies—a last-resort recovery path, not a cheap bulk channel)
 
 3b. Provider responds with deletion proof
     └─ Shows newer admin-signed commitment with start_seq > challenged seq
-    └─ Challenge rejected
-    └─ Challenger loses deposit (invalid challenge)
+    └─ Challenge rejected (data was legitimately deleted)
+    └─ Treated as a valid response: provider's fee reimbursed as in 3a,
+       remainder returned to challenger; stake untouched
 
 3c. Provider fails to respond / invalid proof
     └─ Provider's contract stake fully slashed
     └─ Challenger made whole from the slash: deposit refunded, tx fees
        reimbursed—but no reward beyond actual costs (no profit motive
-       for forcing slashes)
+       for forcing slashes), regardless of tier
     └─ Clear on-chain evidence of provider fault
 ```
 
-**Why this cost split?**
-- Provider always pays *something* when challenged (deterrent for ignoring off-chain requests)
-- Attacker pays more than victim in base case (griefing is expensive)
-- Fast responses are rewarded, slow responses penalized
-- The on-chain path is expensive for both parties, incentivizing off-chain resolution
+**Why this cost model?**
+- **Strangers can't drain a provider (anti-DoS)**: A public challenge leaves an honest provider whole in money terms (fee fully reimbursed, stake untouched). If strangers got the split instead, a crowd could each pay little while collectively draining the provider; full-cost-per-stranger makes the attackers' cost scale with the damage. A stranger can still impose on-chain work and a reputation hit, but cannot extract value or grind down stake.
+- **A provider can't serve everyone equally**: so a stranger being made to wait isn't evidence of fault—unlike a paying counterparty's unanswered request, which is exactly what the split is meant to penalize.
+- **Owners get leverage, not cheap recovery**: the split lets a counterparty pressure the provider into serving, but with the challenger's share floored at 50% of a high on-chain cost, it stays a last-resort tool—recovering data at scale this way is unreasonably expensive even for the owner.
+- **Monetary exposure is bounded to chosen counterparties**: a provider is made to bear cost only for accounts it accepted agreements with (or the admin added)—it controls that risk by vetting whom it signs with.
+- **Off-chain resolution preferred**: answering on-chain means posting the data as a transaction—far costlier than serving the same bytes off-chain (the bandwidth is spent either way)—plus in-window hassle and reputation damage, even when the fee is reimbursed. So the provider serves directly.
+
+> **Note on the deposit/fee mechanic.** The deposit is sized to the *transaction cost* of the provider's response, not a slice of stake. A simple implementation: the provider pays the response fee from its account when it submits the proof, and the challenge-resolution logic refunds that fee out of the locked deposit (in full for public challengers, or the table fraction for authorized ones), returning any remainder to the challenger. No stake movement occurs on a valid response—stake is only ever touched by the slash in 3c.
 
 ### Verification
 
