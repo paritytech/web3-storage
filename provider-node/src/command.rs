@@ -8,8 +8,9 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle, CheckpointCoordinator,
-    CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
+    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
     StorageBackend,
 };
