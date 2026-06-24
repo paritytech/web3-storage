@@ -240,11 +240,11 @@ const TX_MODE_CONFIG = {
   },
   [TX_MODE_IN_BLOCK]: {
     match: (ev) => ev.type === "txBestBlocksState" && ev.found,
-    log: (label, ev) => `📦 ${label} included in block ${ev.block.hash}`,
+    log: (label, ev) => `📦 ${label} included in block hash ${ev.block.hash} - block number ${ev.block.number}`,
   },
   [TX_MODE_FINALIZED_BLOCK]: {
     match: (ev) => ev.type === "finalized",
-    log: (label, ev) => `📦 ${label} finalized in block ${ev.block.hash}`,
+    log: (label, ev) => `📦 ${label} finalized in block ${ev.block.hash} - block number ${ev.block.number}`,
   },
 };
 
@@ -434,7 +434,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
 } = {}) {
   // Import lazily to break the common.js <-> api.js circular import. Both
   // modules finish initialization before this function ever runs.
-  const { registerProvider, updateProviderSettings } = await import("./api.js");
+  const { registerProvider, updateProviderSettings, getProviderNodeInfo } = await import("./api.js");
   const existing = await api.query.StorageProvider.Providers.getValue(
     provider.address,
     READ_OPTS
@@ -459,7 +459,7 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     }
   }
   // Always (re)apply settings so price/acceptance are correct for this demo.
-  await updateProviderSettings(api, provider, {
+  const providerSettings = {
     min_duration: 10,
     max_duration: maxDuration,
     price_per_byte: pricePerByte,
@@ -467,7 +467,23 @@ export async function ensureProviderRegistered(api, provider, providerUrl, {
     replica_sync_price: undefined,
     accepting_extensions: true,
     max_capacity: 0n,
-  });
+  };
+  await updateProviderSettings(api, provider, providerSettings);
+
+  // Wait until the provider node has synced from chain
+  const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const info = await getProviderNodeInfo(providerUrl);
+    const r = info.readiness;
+    const priceSynced =
+      r.provider_info_loaded &&
+      BigInt(info.provider_registration_info.price_per_byte) === pricePerByte;
+    if (r.signing_configured && r.nonce_counter_ready && priceSynced) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  throw new Error(
+    `Provider node at ${providerUrl} did not become ready within ${MAX_ATTEMPTS * 3}s`
+  );
 }
 
 function bytesEq(a, b) {
