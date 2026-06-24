@@ -15,7 +15,7 @@ use crate::types::*;
 use crate::ProviderState;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::{from_fn_with_state, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -413,7 +413,7 @@ async fn get_content(
     let mut response = (StatusCode::OK, body).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        "application/octet-stream".parse().unwrap(),
+        HeaderValue::from_static("application/octet-stream"),
     );
     Ok(response)
 }
