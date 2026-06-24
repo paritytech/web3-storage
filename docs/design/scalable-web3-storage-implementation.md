@@ -1720,8 +1720,10 @@ Rules:
   `Writer` for uploads/commits, `Admin` for delete and other destructive ops.
 - The membership cache uses stale-while-revalidate: if the chain is briefly
   unreachable, cached membership keeps working.
-- When the provider node is launched without auth (`--auth-disabled`), all
-  endpoints are permissive — useful for local demos, never in production.
+- Authentication is enforced by default. The only way to turn it off is the
+  deliberately verbose `--disable-auth-i-know-what-i-am-doing` flag, which makes
+  every endpoint publicly readable and writable. It exists for throwaway local
+  experiments only and must never be used for a real provider.
 
 ### Content-Addressed Storage
 
@@ -1916,12 +1918,14 @@ Response (404 Not Found):
 Delete Data (admin only)
 ────────────────────────
 POST /delete
+Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+  // admin-signed header (same scheme as other mutating endpoints);
+  // the signer must be an Admin member of the bucket
 
 Request:
 {
   "bucket_id": "0x1234...",
-  "new_start_seq": 10,
-  "admin_signature": "0x..."  // signs {bucket_id, new_start_seq}
+  "new_start_seq": 10
 }
 
 Response (200 OK):
