@@ -4,12 +4,14 @@
 
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
+    chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -30,28 +32,32 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    // Create storage backend
-    let storage: Arc<dyn StorageBackend> = match cli.storage.storage_mode {
-        StorageMode::Inmemory => {
-            tracing::info!("Using in-memory storage (data will be lost on restart)");
-            Arc::new(Storage::new())
-        }
-        StorageMode::Disk => {
-            tracing::info!(
-                "Using persistent disk storage at: {}",
-                cli.storage.storage_path.display()
-            );
-            Arc::new(DiskStorage::new(&cli.storage.storage_path)?)
-        }
-    };
+    // Create storage backend and the associated nonce store (which follows the
+    // same persistence mode so the nonce counter survives disk restarts).
+    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
+        match cli.storage.storage_mode {
+            StorageMode::Inmemory => {
+                tracing::info!("Using in-memory storage (data will be lost on restart)");
+                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
+            }
+            StorageMode::Disk => {
+                tracing::info!(
+                    "Using persistent disk storage at: {}",
+                    cli.storage.storage_path.display()
+                );
+                let disk = DiskStorage::new(&cli.storage.storage_path)?;
+                let store = disk.nonce_store();
+                (Arc::new(disk), store)
+            }
+        };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let state = match &seed {
+    let mut state = match &seed {
         Some(seed) => {
             let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-            Arc::new(configure_state(state, &cli))
+            configure_state(state, &cli)
         }
         None => {
             let provider_id = cli
@@ -64,24 +70,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            Arc::new(configure_state(
-                ProviderState::with_provider_id(storage, provider_id),
-                &cli,
-            ))
+            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
         }
     };
 
-    // Keep the node's view of its own on-chain registration current. The chain
-    // is the source of truth for the provider's settings and replay window, so
-    // we poll it in the background rather than reading once at startup. This
-    // makes registration order irrelevant: the provider can register *after*
-    // the node is already serving (the node picks it up with no restart), and
-    // later settings changes are reflected too. Only meaningful when we can
-    // sign, so gate on having a key.
-    if seed.is_some() {
-        let interval = Duration::from_secs(cli.rpc.reconcile_interval_secs);
-        spawn_chain_reconciler(cli.rpc.chain_rpc.clone(), interval, state.clone());
-    }
+    // Install the nonce store before sharing `state` across coordinators: while
+    // it is still solely owned here, `chain_state`'s Arc has a single owner, so
+    // the in-place install succeeds.
+    state.set_nonce_store(nonce_store);
+
+    let state = Arc::new(state);
 
     // Connect a single chain client shared by every coordinator. One
     // WebSocket connection and one signer (the provider's own account) back
@@ -99,6 +97,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start optional background services (failures are non-fatal)
+    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
     let checkpoint_handle =
         start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
@@ -164,6 +163,38 @@ fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
     state
 }
 
+/// Start the chain-state coordinator, which keeps `chain_state.current_block`
+/// and `chain_state.provider_info` in sync with the chain.
+///
+/// Returns `None` only when the provider id isn't a valid account. The
+/// coordinator itself never fails to start: it connects in the background and
+/// retries with a backoff if the chain is unreachable, so `current_block` is
+/// populated as soon as the chain comes up.
+fn start_chain_state_coordinator(
+    cli: &Cli,
+    state: Arc<ProviderState>,
+) -> Option<ChainStateCoordinatorHandle> {
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
+                state.provider_id
+            );
+            return None;
+        }
+    };
+
+    let coordinator = ChainStateCoordinator::new(
+        cli.rpc.chain_rpc.clone(),
+        provider_account,
+        state.chain_state.clone(),
+    );
+
+    tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
+    Some(coordinator.start())
+}
+
 async fn start_checkpoint_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
@@ -177,7 +208,7 @@ async fn start_checkpoint_coordinator(
         Some(c) => c.clone(),
         None => {
             tracing::error!(
-                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Disabled."
             );
             return None;
         }
@@ -235,135 +266,6 @@ async fn start_replica_sync_coordinator(
         Err(e) => {
             tracing::error!("Failed to start replica sync coordinator: {}", e);
             None
-        }
-    }
-}
-
-/// Spawn a background task that keeps the node's view of its own on-chain
-/// registration current.
-///
-/// The chain is the source of truth for the provider's settings
-/// ([`ProviderState::provider_info`]) and replay window
-/// ([`ProviderState::nonce_counter`]). Instead of reading these once at
-/// startup — which would miss a provider that registers *after* the node is up
-/// and never notice later settings changes — we poll every `interval`. The
-/// first poll runs immediately, so an already-registered provider is picked up
-/// right away.
-///
-/// All failures are non-fatal: a chain hiccup or an unregistered provider just
-/// means we keep the previous view and retry on the next tick.
-fn spawn_chain_reconciler(chain_rpc: String, interval: Duration, state: Arc<ProviderState>) {
-    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
-        Ok(account) => account,
-        Err(e) => {
-            tracing::warn!(
-                "Provider id {} is not a valid account ({e:?}); skipping on-chain \
-                 reconciliation. Signing endpoints will stay unavailable.",
-                state.provider_id
-            );
-            return;
-        }
-    };
-
-    tokio::spawn(async move {
-        // Tracks the last observed registration status so we only log on
-        // transitions (registered <-> unregistered) rather than every tick.
-        let mut was_registered = false;
-        loop {
-            reconcile_once(&chain_rpc, &provider_account, &state, &mut was_registered).await;
-            tokio::time::sleep(interval).await;
-        }
-    });
-}
-
-/// Perform a single reconciliation pass against the chain. Best-effort: any
-/// error leaves the existing view untouched and is retried on the next tick.
-async fn reconcile_once(
-    chain_rpc: &str,
-    provider_account: &sp_runtime::AccountId32,
-    state: &ProviderState,
-    was_registered: &mut bool,
-) {
-    let provider_id = &state.provider_id;
-
-    let client = storage_client::ProviderClient::new(
-        storage_client::ClientConfig {
-            chain_ws_url: chain_rpc.to_string(),
-            ..Default::default()
-        },
-        provider_id.clone(),
-    );
-    let mut client = match client {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::debug!("reconciler: failed to build provider client: {e:?}");
-            return;
-        }
-    };
-    if let Err(e) = client.connect().await {
-        tracing::debug!("reconciler: failed to connect to chain: {e:?}");
-        return;
-    }
-
-    match client.get_provider_info(provider_account).await {
-        Ok(Some(info)) => {
-            // Align the nonce counter with the chain's replay window *before*
-            // publishing `provider_info`. `/negotiate` gates on `provider_info`
-            // being `Some`, so once it is visible the counter is guaranteed to
-            // be bootstrapped (see the defensive check in `negotiate_terms`).
-            match storage_client::ProviderClient::fetch_replay_hsn(chain_rpc, provider_account)
-                .await
-            {
-                Ok(Some(hsn)) => state.nonce_counter.bootstrap_from_hsn(hsn),
-                Ok(None) => {
-                    // Registered but no replay state is a transient/inconsistent
-                    // view (registration inserts both atomically). Defer.
-                    tracing::debug!(
-                        "reconciler: provider {provider_id} registered but replay state \
-                         missing; deferring to next tick"
-                    );
-                    return;
-                }
-                Err(e) => {
-                    tracing::debug!("reconciler: failed to fetch replay hsn: {e:?}");
-                    return;
-                }
-            }
-
-            if let Ok(mut guard) = state.provider_info.write() {
-                *guard = Some(info.clone());
-            }
-
-            if !*was_registered {
-                *was_registered = true;
-                tracing::info!(
-                    "Provider {provider_id} is registered on chain: price_per_byte={}, \
-                     duration=[{}, {}], max_capacity={}, accepting_primary={}. Signing \
-                     endpoints are now available.",
-                    info.price_per_byte,
-                    info.min_duration,
-                    info.max_duration,
-                    info.max_capacity,
-                    info.accepting_primary,
-                );
-            }
-        }
-        Ok(None) => {
-            if let Ok(mut guard) = state.provider_info.write() {
-                *guard = None;
-            }
-            if *was_registered {
-                *was_registered = false;
-                tracing::warn!(
-                    "Provider {provider_id} is no longer registered on chain; signing \
-                     endpoints are unavailable until it is re-registered."
-                );
-            } else {
-                tracing::debug!("reconciler: provider {provider_id} not registered on chain yet");
-            }
-        }
-        Err(e) => {
-            tracing::debug!("reconciler: failed to fetch provider info: {e:?}");
         }
     }
 }

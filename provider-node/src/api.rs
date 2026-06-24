@@ -193,20 +193,22 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
-    let provider_registration_info = state
-        .provider_info
-        .read()
-        .ok()
-        .and_then(|guard| guard.clone());
+    let provider_registration_info = state.chain_state.provider_info.read().clone();
 
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
             signing_configured: state.keypair.is_some(),
-            // The counter is always allocated, but it can only sign once the
-            // reconciler has aligned it with the chain's replay window.
-            nonce_counter_ready: state.nonce_counter.is_bootstrapped(),
+            nonce_counter_ready: state
+                .chain_state
+                .nonce_counter
+                .read()
+                .as_ref()
+                .is_some_and(|c| c.is_bootstrapped()),
             provider_info_loaded: provider_registration_info.is_some(),
+            deregistering: provider_registration_info
+                .as_ref()
+                .is_some_and(|info| info.deregister_at.is_some()),
         },
         provider_registration_info,
     })
@@ -854,32 +856,69 @@ async fn get_historical_roots(
 ///
 /// TODO: requests are accepted automatically; let providers vet them later.
 ///
-/// Returns one of three `503`s when a prerequisite is missing: `signing_unavailable`
-/// (no `--keyfile`), `provider_info_unavailable` (provider not registered on chain
-/// yet — the background reconciler clears this automatically once registration
-/// lands, no restart needed), or `nonce_counter_unavailable` (counter not yet
-/// aligned with the chain's replay window).
+/// Returns one of several `503`s when a prerequisite is missing:
+/// - `signing_unavailable` — no `--keyfile`.
+/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
+///   known from the chain yet.
+/// - `provider_info_unavailable` — provider not registered on chain yet; the
+///   chain-state coordinator clears this automatically once registration lands, no
+///   restart needed.
+/// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
+///   window.
+/// - `provider_deregistering` — provider has announced deregistration and no longer
+///   signs new terms.
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
 
-    // Validate against the provider's on-chain settings. `None` means the
-    // provider isn't registered yet; the reconciler populates it once
-    // registration lands.
+    // Both current_block and RequestTimeout must be known before we can sign —
+    // otherwise we'd emit unbounded or already-expired terms.
+    let current_block = state
+        .chain_state
+        .current_block
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let request_timeout = state
+        .chain_state
+        .constants
+        .read()
+        .as_ref()
+        .map(|c| c.request_timeout)
+        .unwrap_or(0);
+    if current_block == 0 || request_timeout == 0 {
+        return Err(Error::ChainStateNotReady);
+    }
+
+    // Validate against the provider's on-chain settings. `None` means not
+    // registered yet; the coordinator populates it once registration lands.
     let info = state
+        .chain_state
         .provider_info
         .read()
-        .ok()
-        .and_then(|guard| guard.clone())
+        .clone()
         .ok_or(Error::ProviderInfoUnavailable)?;
+
+    // A provider that has announced deregistration is winding down and must not
+    // sign new terms — the on-chain pallet rejects them too once deregistering.
+    if info.deregister_at.is_some() {
+        return Err(Error::ProviderDeregistering);
+    }
+
     negotiate::validate_request(&req, &info)?;
 
-    // The reconciler bootstraps the counter before publishing `provider_info`,
-    // so a loaded `info` implies a ready counter. Guard anyway so we never sign
-    // a nonce that wasn't derived from on-chain replay state.
-    if !state.nonce_counter.is_bootstrapped() {
+    // Guard on both presence and bootstrap status: during the transient window
+    // where the chain has a provider entry but no replay state yet, the
+    // coordinator publishes a Some counter that has not yet been aligned with
+    // the on-chain replay head. Signing with it would issue nonces not derived
+    // from chain state, so we reject until is_bootstrapped() is true.
+    let nonce_counter = state
+        .chain_state
+        .nonce_counter
+        .read()
+        .clone()
+        .ok_or(Error::NonceCounterUnavailable)?;
+    if !nonce_counter.is_bootstrapped() {
         return Err(Error::NonceCounterUnavailable);
     }
 
@@ -888,9 +927,8 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        // TODO: current_block + StorageProvider::RequestTimeout
-        valid_until: u32::MAX,
-        nonce: state.nonce_counter.next(),
+        valid_until: current_block.saturating_add(request_timeout),
+        nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
