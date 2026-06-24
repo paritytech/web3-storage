@@ -14,7 +14,11 @@ just health           # check provider is up
 
 ## Authentication
 
-Mutating and bucket-scoped endpoints require a signed `Authorization` header.
+Authentication is enforced by default. Mutating and bucket-scoped endpoints
+require a signed `Authorization` header; the only way to turn enforcement off is
+the `--disable-auth-i-know-what-i-am-doing` flag, which opens every endpoint to
+the public and is meant strictly for throwaway local experiments.
+
 The client signs an sr25519 message binding the request to a bucket and a
 timestamp:
 

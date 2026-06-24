@@ -330,7 +330,9 @@ pub fn verify_signature(
 
 /// Check that the caller has sufficient permissions.
 ///
-/// If auth is disabled, this is a no-op (returns Ok).
+/// Auth is enforced by default. This is a no-op (returns `Ok`) only when the
+/// operator started the node with `--disable-auth-i-know-what-i-am-doing`, which
+/// strips the membership config from the state.
 pub async fn require_role(
     state: &ProviderState,
     auth_header: Option<&str>,

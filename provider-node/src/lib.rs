@@ -85,9 +85,12 @@ pub struct ProviderState {
     pub fs_index: FsIndexManager,
     /// Channel to send commands to the checkpoint coordinator (if running).
     pub checkpoint_cmd_tx: std::sync::Mutex<Option<mpsc::Sender<CoordinatorCommand>>>,
-    /// Whether auth is enabled (opt-in).
+    /// Whether membership auth is enforced. Enforced by default at startup; the
+    /// node clears this only when started with
+    /// `--disable-auth-i-know-what-i-am-doing`.
     pub auth_enabled: bool,
-    /// Membership cache for role lookups (only set when auth is enabled).
+    /// Membership cache for role lookups. Set whenever auth is enforced (i.e.
+    /// always, unless the operator opted out via the escape-hatch flag).
     pub membership_cache: Option<Arc<auth::MembershipCache>>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
@@ -118,7 +121,7 @@ impl ProviderState {
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
             checkpoint_cmd_tx: std::sync::Mutex::new(None),
-            auth_enabled: false,
+            auth_enabled: true,
             membership_cache: None,
             auth_max_skew: Duration::from_secs(300),
             nonce_counter: Arc::new(NonceCounter::new(1)),
@@ -162,6 +165,15 @@ impl ProviderState {
         self.auth_enabled = true;
         self.membership_cache = Some(membership_cache);
         self.auth_max_skew = max_skew;
+    }
+
+    /// Turn off membership auth, leaving every endpoint publicly accessible.
+    /// Reserved for the `--disable-auth-i-know-what-i-am-doing` escape hatch and
+    /// for tests that exercise non-auth behavior.
+    pub fn with_auth_disabled(mut self) -> Self {
+        self.auth_enabled = false;
+        self.membership_cache = None;
+        self
     }
 
     /// Set the checkpoint coordinator command sender (called after coordinator starts).

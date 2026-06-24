@@ -188,12 +188,17 @@ pub struct CheckpointParams {
 }
 
 /// Parameters for authentication and authorization.
+///
+/// Authentication and role-based access control are enforced by default. The
+/// only way to turn them off is the deliberately verbose
+/// `--disable-auth-i-know-what-i-am-doing` flag below.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
-    /// Enable authentication and role-based access control.
-    /// When disabled (default), all requests are allowed without auth headers.
-    #[arg(long, env = "ENABLE_AUTH")]
-    pub enable_auth: bool,
+    /// Disable ALL authentication and role-based access control. Every endpoint
+    /// becomes publicly readable AND writable by anyone. Intended only for
+    /// throwaway local experiments — never run a real provider this way.
+    #[arg(long)]
+    pub disable_auth_i_know_what_i_am_doing: bool,
 
     /// Cache TTL in seconds for membership lookups from the chain.
     #[arg(
