@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Chunking strategies for content storage.
 //!
 //! - [`chunk_fixed`]: even-sized chunks. A single-byte insertion at the start
