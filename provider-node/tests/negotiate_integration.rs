@@ -18,8 +18,8 @@ use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
 use storage_provider_node::{
-    create_router, NegotiateRequest, NonceCounter, PalletConstants, ProviderState, SignedTerms,
-    Storage,
+    create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
+    PalletConstants, ProviderState, SignedTerms, Storage,
 };
 use tokio::net::TcpListener;
 
@@ -422,10 +422,10 @@ async fn negotiate_recovers_after_deregister_cancelled() {
 }
 
 #[tokio::test]
-async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
-    // Registered (provider_info loaded) but the nonce counter has not been
-    // aligned with the chain's replay window yet. The handler must refuse
-    // rather than sign a nonce not derived from on-chain state.
+async fn negotiate_503_when_nonce_counter_absent() {
+    // Registered (provider_info loaded) but the coordinator has not yet
+    // published any nonce counter (nonce_counter == None). The handler must
+    // refuse so we never sign a nonce not derived from on-chain state.
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
@@ -435,7 +435,33 @@ async fn negotiate_503_when_nonce_counter_not_bootstrapped() {
         request_timeout: 200,
     });
     *state.chain_state.provider_info.write() = Some(provider_info());
-    // nonce_counter intentionally left None (un-bootstrapped).
+    // nonce_counter intentionally left None.
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "nonce_counter_unavailable");
+}
+
+#[tokio::test]
+async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
+    // Exercises the transient window where the coordinator has published a
+    // Some counter but bootstrap_from_hsn has not yet been called (e.g. the
+    // chain returned the provider info but replay state was not yet visible).
+    // The handler must refuse until is_bootstrapped() is true.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    // Counter is Some but not bootstrapped (no bootstrap_from_hsn call).
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    *state.chain_state.nonce_counter.write() = Some(counter);
     let server = TestServer::serve(Arc::new(state)).await;
 
     let resp = server.negotiate(&primary_request()).await;
@@ -569,9 +595,9 @@ async fn negotiate_rate_limited_after_burst() {
 
 // ─── NonceCounter ─────────────────────────────────────────────────────────────
 //
-// `NonceCounter` is the nonce source `/negotiate` allocates from. The HTTP path
-// only ever sees an already-bootstrapped counter, so its readiness gate and the
-// chain-alignment advance are exercised here directly against the public type.
+// `NonceCounter` is the nonce source `/negotiate` allocates from. The
+// chain-alignment advance and bootstrap semantics are exercised here directly
+// against the public type.
 
 #[test]
 fn nonce_counter_is_unbootstrapped_until_aligned() {
@@ -629,4 +655,39 @@ async fn concurrent_next_allocates_distinct_nonces() {
         }
     }
     assert_eq!(seen.len(), 16 * 256);
+}
+
+// ─── NonceCounter persistence (with_store) ────────────────────────────────────
+
+#[test]
+fn with_store_counter_persists_on_next() {
+    // A counter backed by a DiskNonceStore persists each allocation so a fresh
+    // counter seeded from the store resumes above the last issued nonce.
+    let dir = tempfile::TempDir::new().unwrap();
+    let storage = DiskStorage::new(dir.path()).unwrap();
+    let store = storage.nonce_store();
+
+    let counter = NonceCounter::with_store(1, store.clone());
+    counter.bootstrap_from_hsn(0); // counter now at 1
+    assert_eq!(counter.next(), 1); // persist(1) → next starts at 2
+    assert_eq!(counter.next(), 2); // persist(2)
+
+    // A fresh counter seeded from the stored value resumes above the issued nonces.
+    let new_counter = NonceCounter::with_store(store.load().unwrap_or(1), store.clone());
+    new_counter.bootstrap_from_hsn(0); // chain hsn=0, so floor=1, but stored=2 wins
+    assert!(
+        new_counter.next() > 2,
+        "restarted counter must resume above the last issued nonce"
+    );
+}
+
+#[test]
+fn new_counter_uses_null_store_so_existing_tests_compile() {
+    // Regression: NonceCounter::new must still work with no store argument.
+    let counter = NonceCounter::new(1);
+    counter.bootstrap_from_hsn(5);
+    assert_eq!(counter.next(), 6);
+    // NullNonceStore persists nothing — load returns None.
+    let null: NullNonceStore = Default::default();
+    assert!(null.load().is_none());
 }

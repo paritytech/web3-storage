@@ -176,7 +176,12 @@ async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
         provider_id: state.provider_id.clone(),
         readiness: ProviderReadiness {
             signing_configured: state.keypair.is_some(),
-            nonce_counter_ready: state.chain_state.nonce_counter.read().is_some(),
+            nonce_counter_ready: state
+                .chain_state
+                .nonce_counter
+                .read()
+                .as_ref()
+                .is_some_and(|c| c.is_bootstrapped()),
             provider_info_loaded: provider_registration_info.is_some(),
             deregistering: provider_registration_info
                 .as_ref()
@@ -847,15 +852,20 @@ async fn negotiate_terms(
 
     negotiate::validate_request(&req, &info)?;
 
-    // The coordinator bootstraps the nonce counter before publishing
-    // `provider_info`, so a loaded `info` implies a ready counter. Guard
-    // anyway so we never sign a nonce not derived from on-chain replay state.
+    // Guard on both presence and bootstrap status: during the transient window
+    // where the chain has a provider entry but no replay state yet, the
+    // coordinator publishes a Some counter that has not yet been aligned with
+    // the on-chain replay head. Signing with it would issue nonces not derived
+    // from chain state, so we reject until is_bootstrapped() is true.
     let nonce_counter = state
         .chain_state
         .nonce_counter
         .read()
         .clone()
         .ok_or(Error::NonceCounterUnavailable)?;
+    if !nonce_counter.is_bootstrapped() {
+        return Err(Error::NonceCounterUnavailable);
+    }
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,

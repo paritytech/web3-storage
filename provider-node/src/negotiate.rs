@@ -20,6 +20,7 @@
 
 use crate::error::Error;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
@@ -77,40 +78,99 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
     Ok(())
 }
 
-/// In-memory monotonic nonce counter for provider-signed terms.
+/// Persistence layer for the nonce counter's high-water mark.
 ///
-/// Nonces are atomically allocated via [`Self::next`]. There is no local
-/// persistence: the background reconciler aligns it against the chain by
-/// calling [`Self::bootstrap_from_hsn`] with the provider's on-chain `hsn`
-/// (at startup and on every poll), so the counter resumes at `hsn + 1`. This:
+/// [`DiskNonceStore`] is backed by the provider's RocksDB instance.
+/// [`NullNonceStore`] is the default: in-memory mode or tests that don't
+/// need persistence use it.
+pub trait NonceStore: Send + Sync {
+    /// Return the highest nonce value that was persisted, or `None` if nothing
+    /// has been written yet (fresh DB or in-memory mode).
+    fn load(&self) -> Option<u64>;
+
+    /// Persist `value` as the new high-water mark. Monotonic: a call with a
+    /// lower value than the current persisted mark is silently ignored.
+    /// Best-effort: errors are logged but not propagated.
+    fn persist(&self, value: u64);
+}
+
+/// No-op [`NonceStore`]: `load` always returns `None`, `persist` does nothing.
 ///
-/// * survives a restart (the chain hsn is the source of truth);
-/// * survives a restart where the chain advanced past our last view
-///   (e.g. a parallel quote was redeemed elsewhere) — we skip past it
-///   rather than reissue.
+/// Used in in-memory mode and as the default for [`NonceCounter::new`] so
+/// existing call sites need no changes.
+#[derive(Debug, Default)]
+pub struct NullNonceStore;
+
+impl NonceStore for NullNonceStore {
+    fn load(&self) -> Option<u64> {
+        None
+    }
+
+    fn persist(&self, _value: u64) {}
+}
+
+/// Monotonic nonce counter for provider-signed terms.
 ///
-/// Gap-skipping is fine: unused nonces just expire from the replay
-/// window without effect. The on-chain replay window is authoritative
-/// and rejects any out-of-range reuse, so a missed nonce can never lead
-/// to a double redemption.
+/// Nonces are atomically allocated via [`Self::next`]. The background
+/// reconciler aligns the counter with the chain's `ProviderReplayState.hsn + 1`
+/// (at startup and on every poll), so the counter resumes at
+/// `max(persisted_local, hsn + 1)`:
+///
+/// * **Local persistence** (disk mode): each allocation is persisted
+///   synchronously so a restart never reissues a nonce that was signed but
+///   not yet redeemed on chain.
+/// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
+///   nonce the chain has already accepted, covering redemptions that happened
+///   while the node was down or while we weren't watching.
+///
+/// Gap-skipping is fine: unused nonces just expire from the replay window
+/// without effect. The on-chain replay window is authoritative and rejects
+/// any out-of-range reuse, so a missed nonce can never lead to a double
+/// redemption.
 ///
 /// Until the first successful [`Self::bootstrap_from_hsn`] the counter has not
 /// been reconciled with the chain, so `/negotiate` must not sign with it; query
 /// [`Self::is_bootstrapped`] to gate that.
-#[derive(Debug)]
 pub struct NonceCounter {
     counter: AtomicU64,
     /// Set once the counter has been aligned with the chain's replay window.
     bootstrapped: AtomicBool,
+    store: Arc<dyn NonceStore>,
+}
+
+impl std::fmt::Debug for NonceCounter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NonceCounter")
+            .field("counter", &self.counter)
+            .field("bootstrapped", &self.bootstrapped)
+            .finish()
+    }
 }
 
 impl NonceCounter {
-    /// Create a counter starting at `start`. The counter is *not* considered
-    /// bootstrapped until [`Self::bootstrap_from_hsn`] aligns it with the chain.
+    /// Create a counter starting at `start` with a no-op store.
+    ///
+    /// All existing call sites use this constructor; no persistence occurs
+    /// (in-memory mode, or tests). The counter is *not* considered bootstrapped
+    /// until [`Self::bootstrap_from_hsn`] aligns it with the chain.
     pub fn new(start: u64) -> Self {
         Self {
             counter: AtomicU64::new(start),
             bootstrapped: AtomicBool::new(false),
+            store: Arc::new(NullNonceStore),
+        }
+    }
+
+    /// Create a counter starting at `start` backed by `store` for persistence.
+    ///
+    /// Use this in disk mode: seed `start` from `store.load().unwrap_or(1)`
+    /// (the persisted high-water mark), then call `bootstrap_from_hsn` to
+    /// advance past the chain's replay head.
+    pub fn with_store(start: u64, store: Arc<dyn NonceStore>) -> Self {
+        Self {
+            counter: AtomicU64::new(start),
+            bootstrapped: AtomicBool::new(false),
+            store,
         }
     }
 
@@ -142,9 +202,17 @@ impl NonceCounter {
         }
     }
 
-    /// Allocate the next nonce. Atomic: concurrent callers each get a
-    /// distinct value.
+    /// Allocate the next nonce. Atomic: concurrent callers each get a distinct
+    /// value.
+    ///
+    /// The value *after* the increment (`nonce + 1`) is persisted as the new
+    /// high-water mark before the nonce is returned. This means the persisted
+    /// value always equals the next nonce that *will* be issued, so a counter
+    /// seeded with `store.load().unwrap_or(1)` on restart correctly resumes
+    /// above every nonce that was signed.
     pub fn next(&self) -> u64 {
-        self.counter.fetch_add(1, Ordering::SeqCst)
+        let nonce = self.counter.fetch_add(1, Ordering::SeqCst);
+        self.store.persist(nonce.saturating_add(1));
+        nonce
     }
 }

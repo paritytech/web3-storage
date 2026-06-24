@@ -7,9 +7,10 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
+    negotiate::NullNonceStore,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, DiskStorage, ProviderState, ReplicaSyncCoordinator,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, ProviderState, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
 };
 use clap::Parser;
@@ -31,20 +32,24 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    // Create storage backend
-    let storage: Arc<dyn StorageBackend> = match cli.storage.storage_mode {
-        StorageMode::Inmemory => {
-            tracing::info!("Using in-memory storage (data will be lost on restart)");
-            Arc::new(Storage::new())
-        }
-        StorageMode::Disk => {
-            tracing::info!(
-                "Using persistent disk storage at: {}",
-                cli.storage.storage_path.display()
-            );
-            Arc::new(DiskStorage::new(&cli.storage.storage_path)?)
-        }
-    };
+    // Create storage backend and the associated nonce store (which follows the
+    // same persistence mode so the nonce counter survives disk restarts).
+    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
+        match cli.storage.storage_mode {
+            StorageMode::Inmemory => {
+                tracing::info!("Using in-memory storage (data will be lost on restart)");
+                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
+            }
+            StorageMode::Disk => {
+                tracing::info!(
+                    "Using persistent disk storage at: {}",
+                    cli.storage.storage_path.display()
+                );
+                let disk = DiskStorage::new(&cli.storage.storage_path)?;
+                let store = disk.nonce_store();
+                (Arc::new(disk), store)
+            }
+        };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
@@ -68,6 +73,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
+            // Install the nonce store before wrapping state in Arc. At this point
+            // no other thread holds a reference to chain_state, so get_mut succeeds.
+            if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
+                cs.nonce_store = nonce_store.clone();
+            }
             Arc::new(state)
         }
         None => {
@@ -97,6 +107,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
+            // Install the nonce store before wrapping state in Arc. At this point
+            // no other thread holds a reference to chain_state, so get_mut succeeds.
+            if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
+                cs.nonce_store = nonce_store.clone();
+            }
             Arc::new(state)
         }
     };

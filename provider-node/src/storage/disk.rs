@@ -7,18 +7,24 @@
 
 use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
+use crate::negotiate::NonceStore;
 use crate::types::*;
 use codec::Encode;
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
+/// Small metadata values (e.g. the nonce counter high-water mark).
+const CF_METADATA: &str = "metadata";
+
+/// RocksDB key for the persisted nonce counter high-water mark.
+const KEY_NONCE: &[u8] = b"nonce_counter";
 
 /// Bucket state managed by this provider (serialized to disk).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,7 +65,7 @@ impl DiskStorage {
         opts.create_missing_column_families(true);
 
         // Define column families
-        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET];
+        let cf_names = vec![CF_NODES, CF_BUCKETS, CF_ROOT_TO_BUCKET, CF_METADATA];
 
         let db = DB::open_cf(&opts, path, &cf_names)
             .map_err(|e| Error::Storage(format!("Failed to open RocksDB: {e}")))?;
@@ -464,6 +470,14 @@ impl DiskStorage {
 
         Ok((mmr.root(), mmr.peaks()))
     }
+
+    /// Return a nonce store backed by this DB's metadata column family.
+    ///
+    /// The returned [`DiskNonceStore`] shares the open [`DB`] handle so there
+    /// is no second DB to manage. Pass it to [`NonceCounter::with_store`].
+    pub fn nonce_store(&self) -> Arc<dyn NonceStore> {
+        Arc::new(DiskNonceStore::new(self.db.clone()))
+    }
 }
 
 impl StorageBackend for DiskStorage {
@@ -540,5 +554,68 @@ impl StorageBackend for DiskStorage {
 
     fn get_mmr_peaks(&self, bucket_id: BucketId) -> Result<(H256, Vec<H256>), Error> {
         self.get_mmr_peaks(bucket_id)
+    }
+}
+
+// ─── NonceStore ───────────────────────────────────────────────────────────────
+
+/// Monotonic nonce-counter persistence
+///
+/// Holds a shared reference to the open DB handle (same instance as
+/// [`DiskStorage`]). All writes are monotonic: a call with a value lower than
+/// the currently-persisted high-water mark is silently ignored.
+pub struct DiskNonceStore {
+    db: Arc<DB>,
+    /// Monotonicity guard: always holds the highest value written so far,
+    /// so concurrent `persist` calls can cheaply skip stale lower writes.
+    watermark: Mutex<u64>,
+}
+
+impl DiskNonceStore {
+    pub fn new(db: Arc<DB>) -> Self {
+        // Initialize the in-memory watermark from the DB so we're consistent
+        // from the first call to persist() even if load() is never called.
+        let initial = Self::read_from_db(&db).unwrap_or(0);
+        Self {
+            db,
+            watermark: Mutex::new(initial),
+        }
+    }
+
+    fn read_from_db(db: &DB) -> Option<u64> {
+        let cf = db.cf_handle(CF_METADATA)?;
+        let bytes = db.get_cf(&cf, KEY_NONCE).ok()??;
+        bytes.try_into().ok().map(u64::from_le_bytes)
+    }
+}
+
+impl NonceStore for DiskNonceStore {
+    fn load(&self) -> Option<u64> {
+        Self::read_from_db(&self.db)
+    }
+
+    fn persist(&self, value: u64) {
+        let mut wm = match self.watermark.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("nonce persist: watermark lock poisoned: {e}");
+                return;
+            }
+        };
+        if value <= *wm {
+            return; // monotonic: ignore stale / lower values
+        }
+        let cf = match self.db.cf_handle(CF_METADATA) {
+            Some(cf) => cf,
+            None => {
+                tracing::warn!("nonce persist: metadata CF not found");
+                return;
+            }
+        };
+        if let Err(e) = self.db.put_cf(&cf, KEY_NONCE, value.to_le_bytes()) {
+            tracing::warn!("nonce persist: RocksDB write failed: {e}");
+            return;
+        }
+        *wm = value;
     }
 }

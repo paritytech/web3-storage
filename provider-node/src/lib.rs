@@ -46,7 +46,9 @@ pub use checkpoint_coordinator::{
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
-pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
+pub use negotiate::{
+    AgreementTermsOf, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore, SignedTerms,
+};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -54,8 +56,8 @@ pub use replica_sync_coordinator::{
 };
 pub use s3_index::S3IndexManager;
 pub use storage::{
-    build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo, DiskStorage,
-    Storage, StorageBackend, StoredNode,
+    build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo,
+    DiskNonceStore, DiskStorage, Storage, StorageBackend, StoredNode,
 };
 pub use types::*;
 

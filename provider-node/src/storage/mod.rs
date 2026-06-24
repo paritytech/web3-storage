@@ -9,7 +9,7 @@
 pub mod disk;
 pub mod in_memory;
 
-pub use disk::DiskStorage;
+pub use disk::{DiskNonceStore, DiskStorage};
 pub use in_memory::Storage;
 
 use crate::error::Error;

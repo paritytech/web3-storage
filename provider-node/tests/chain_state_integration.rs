@@ -8,8 +8,7 @@
 //! 1. **State synchronisation.** [`sync_constants`] and [`refresh_provider_state`]
 //!    are driven through [`MockChainClient`] across every branch — registered,
 //!    not-registered, with/without replay state, and each chain-error path — and
-//!    we assert the resulting [`ChainState`]. This pins the publish ordering
-//!    `/negotiate` relies on (nonce counter ready *before* `provider_info`).
+//!    we assert the resulting [`ChainState`].
 //!
 //! 2. **Event relevance.** [`is_relevant_provider_event`] decides which block
 //!    events trigger a refresh; tested across the provider lifecycle variants,
@@ -30,7 +29,8 @@ use storage_client::discovery::ProviderInfo;
 use storage_client::{ClientError, ProviderSettings, StorageEvent};
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, PalletConstants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
+    PalletConstants,
 };
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
@@ -346,10 +346,10 @@ async fn refresh_leaves_existing_state_untouched_on_get_info_error() {
 }
 
 #[tokio::test]
-async fn refresh_does_not_publish_when_replay_fetch_errors() {
-    // Provider is registered, but reading the replay window fails: neither info
-    // nor counter is published (the handler can't sign a nonce it can't align),
-    // and any prior state is left as-is.
+async fn refresh_publishes_info_but_leaves_counter_when_replay_fetch_errors() {
+    // Provider is registered, but reading the replay window fails: info is still
+    // published (settings/multiaddr remain fresh) but the counter is left as-is
+    // (None here) so /negotiate stays correctly gated by is_bootstrapped().
     let cs = ChainState::default();
     let chain = MockChainClient {
         info: Some(sample_provider_info()),
@@ -359,8 +359,59 @@ async fn refresh_does_not_publish_when_replay_fetch_errors() {
 
     refresh_provider_state(&chain, &cs, &provider_account()).await;
 
-    assert!(cs.provider_info.read().is_none());
+    assert!(cs.provider_info.read().is_some());
     assert!(cs.nonce_counter.read().is_none());
+}
+
+#[tokio::test]
+async fn refresh_preserves_bootstrapped_counter_on_later_event() {
+    // A live, bootstrapped counter is never recreated on subsequent refreshes —
+    // recreating would reset to hsn+1 and reissue nonces for in-flight quotes.
+    let cs = ChainState::default();
+    let counter = Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(10); // counter now at 11
+    counter.next(); // 11 -> 12
+    counter.next(); // 12 -> 13 (two nonces issued beyond hsn+1)
+    *cs.nonce_counter.write() = Some(counter);
+    *cs.provider_info.write() = Some(sample_provider_info());
+
+    // Chain reports hsn=0 — if we recreated the counter it would reset to 1.
+    let chain = MockChainClient {
+        info: Some(sample_provider_info()),
+        hsn: Some(0),
+        ..Default::default()
+    };
+    refresh_provider_state(&chain, &cs, &provider_account()).await;
+
+    // Info was refreshed, but the counter is the original object at 13, not reset.
+    assert!(cs.provider_info.read().is_some());
+    let guard = cs.nonce_counter.read();
+    let c = guard.as_ref().expect("counter still present");
+    assert!(c.is_bootstrapped());
+    assert_eq!(c.next(), 13, "counter must not have been reset");
+}
+
+#[tokio::test]
+async fn refresh_completes_pending_bootstrap_when_replay_state_appears() {
+    // After the transient window where hsn was None, a later refresh with a real
+    // hsn must bootstrap the existing counter rather than leave it unbootstrapped.
+    let cs = ChainState::default();
+    let counter = Arc::new(NonceCounter::new(1));
+    // Un-bootstrapped (simulates the hsn=None transient window).
+    *cs.nonce_counter.write() = Some(counter);
+    *cs.provider_info.write() = Some(sample_provider_info());
+
+    let chain = MockChainClient {
+        info: Some(sample_provider_info()),
+        hsn: Some(5),
+        ..Default::default()
+    };
+    refresh_provider_state(&chain, &cs, &provider_account()).await;
+
+    let guard = cs.nonce_counter.read();
+    let c = guard.as_ref().expect("counter present");
+    assert!(c.is_bootstrapped(), "counter must now be bootstrapped");
+    assert_eq!(c.next(), 6, "counter resumes at hsn+1");
 }
 
 // ── is_relevant_provider_event ────────────────────────────────────────────────
@@ -524,4 +575,63 @@ async fn empty_block_does_not_refresh() {
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &[], 1).await;
 
     assert!(cs.provider_info.read().is_none());
+}
+
+// ─── Nonce counter persistence (nonce_store seeding) ──────────────────────────
+
+/// A minimal in-memory NonceStore for testing: holds the persisted value in a
+/// Mutex so we can inspect it without touching disk.
+struct RecordingNonceStore(std::sync::Mutex<Option<u64>>);
+
+impl RecordingNonceStore {
+    fn new(initial: Option<u64>) -> Self {
+        Self(std::sync::Mutex::new(initial))
+    }
+}
+
+impl NonceStore for RecordingNonceStore {
+    fn load(&self) -> Option<u64> {
+        *self.0.lock().unwrap()
+    }
+
+    fn persist(&self, value: u64) {
+        let mut guard = self.0.lock().unwrap();
+        if guard.is_none_or(|prev| value > prev) {
+            *guard = Some(value);
+        }
+    }
+}
+
+#[tokio::test]
+async fn refresh_seeds_counter_from_persisted_value_above_chain_hsn() {
+    // When the persisted nonce high-water is higher than the chain's hsn+1,
+    // the counter must resume above the persisted value — not reset to hsn+1.
+    // This prevents reissuing nonces that were signed but not yet redeemed.
+
+    // Simulate: last issued nonce was 20 (watermark = 21 = "next to issue").
+    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(21)));
+    // In production, command.rs installs the store before the coordinator starts.
+    // Since nonce_store is pub, set it directly.
+    let cs = ChainState {
+        nonce_store: store,
+        ..Default::default()
+    };
+
+    // Chain reports hsn=5 → floor = 6. Persisted watermark = 21 wins.
+    let chain = MockChainClient {
+        info: Some(sample_provider_info()),
+        hsn: Some(5),
+        ..Default::default()
+    };
+    refresh_provider_state(&chain, &cs, &provider_account()).await;
+
+    let guard = cs.nonce_counter.read();
+    let counter = guard.as_ref().expect("counter created");
+    assert!(counter.is_bootstrapped());
+    // bootstrap_from_hsn(5) sets floor=6; counter was seeded at 21 which is
+    // higher, so next() must be ≥ 21.
+    assert!(
+        counter.next() >= 21,
+        "counter must resume at the persisted watermark, not at hsn+1"
+    );
 }

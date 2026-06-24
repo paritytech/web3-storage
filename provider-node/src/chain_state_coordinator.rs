@@ -15,7 +15,7 @@
 //! `stake`, and all settings stay current — no field-patching, no partial
 //! updates, no second writer.
 
-use crate::negotiate::NonceCounter;
+use crate::negotiate::{NonceCounter, NonceStore, NullNonceStore};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use sp_core::H256;
@@ -37,7 +37,6 @@ use tokio::task::JoinHandle;
 ///
 /// Held behind `Arc` inside [`crate::ProviderState`] so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
-#[derive(Default)]
 pub struct ChainState {
     /// Latest finalized block height. `0` means not yet known.
     pub current_block: AtomicU32,
@@ -52,6 +51,23 @@ pub struct ChainState {
     /// the provider is registered and the replay state is available.
     /// `/negotiate` returns 503 while `None`.
     pub nonce_counter: RwLock<Option<Arc<NonceCounter>>>,
+    /// Persistence backing for the nonce counter. In disk mode this is a
+    /// `DiskNonceStore`; in in-memory mode it is the no-op `NullNonceStore`.
+    /// The coordinator uses it to seed a restarted counter above the last
+    /// issued nonce.
+    pub nonce_store: Arc<dyn NonceStore>,
+}
+
+impl Default for ChainState {
+    fn default() -> Self {
+        Self {
+            current_block: AtomicU32::new(0),
+            constants: RwLock::new(None),
+            provider_info: RwLock::new(None),
+            nonce_counter: RwLock::new(None),
+            nonce_store: Arc::new(NullNonceStore),
+        }
+    }
 }
 
 /// Pallet constants that only change across runtime upgrades.
@@ -207,8 +223,13 @@ impl ChainStateCoordinator {
                 .current_block
                 .store(block_number, std::sync::atomic::Ordering::Relaxed);
 
-            let events = match block.events().await {
-                Ok(events) => events,
+            let parsed = match block.events().await {
+                Ok(events) => parse_pallet_events::<StorageEvent, StorageProviderEventParser>(
+                    &events,
+                    storage_client::substrate::PALLET_NAME,
+                    block_hash,
+                    block_number,
+                ),
                 Err(e) => {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
@@ -217,33 +238,25 @@ impl ChainStateCoordinator {
                 }
             };
 
-            self.process_provider_events(&chain, &events, block_hash, block_number)
+            self.process_provider_events(&chain, &parsed, block_number)
                 .await;
         }
 
         Ok(())
     }
 
-    /// Parse this block's pallet events and refresh state if any are relevant.
+    /// Refresh state if any of `parsed` is a relevant provider event.
     async fn process_provider_events(
         &self,
         chain: &dyn ChainStateChainClient,
-        events: &subxt::events::Events<subxt::PolkadotConfig>,
-        block_hash: H256,
+        parsed: &[StorageEvent],
         block_number: u32,
     ) {
-        let parsed = parse_pallet_events::<StorageEvent, StorageProviderEventParser>(
-            events,
-            storage_client::substrate::PALLET_NAME,
-            block_hash,
-            block_number,
-        );
-
         refresh_if_relevant_event(
             chain,
             &self.chain_state,
             &self.provider_account,
-            &parsed,
+            parsed,
             block_number,
         )
         .await;
@@ -270,15 +283,21 @@ pub async fn sync_constants(chain: &dyn ChainStateChainClient, chain_state: &Cha
     }
 }
 
-/// Re-fetch the full `ProviderInfo` and replay state from chain and update
-/// `chain_state` atomically.
+/// Re-fetch `ProviderInfo` from chain and update `chain_state`.
 ///
-/// The nonce counter is bootstrapped *before* `provider_info` is published so
-/// `/negotiate` never sees a populated info without a ready counter.
+/// **Nonce-counter lifecycle** (bootstrap-once / preserve / drop):
+/// - While registered, the counter is bootstrapped at most once. If the counter
+///   is already `Some` and bootstrapped, it is left completely untouched (and
+///   `fetch_replay_hsn` is not called) so that in-flight nonces are never
+///   reissued. If it is `None` or not yet bootstrapped, the replay head is
+///   fetched and a new counter is created.
+/// - `provider_info` is always refreshed when the provider is registered,
+///   regardless of whether the hsn fetch errors (counter left as-is).
+/// - When the provider is not (or no longer) registered, both `provider_info`
+///   and `nonce_counter` are cleared.
 ///
 /// Called both on the initial connect (restart recovery) and on every relevant
-/// provider event. Using a full re-fetch (rather than field-patching) keeps
-/// `committed_bytes`, `stake`, and all settings consistent in one shot.
+/// provider event.
 pub async fn refresh_provider_state(
     chain: &dyn ChainStateChainClient,
     chain_state: &ChainState,
@@ -286,24 +305,41 @@ pub async fn refresh_provider_state(
 ) {
     match chain.get_provider_info(provider_account).await {
         Ok(Some(info)) => {
-            match chain.fetch_replay_hsn(provider_account).await {
-                Ok(hsn) => {
-                    let counter = Arc::new(NonceCounter::new(1));
-                    if let Some(hsn) = hsn {
-                        tracing::info!("chain-state coordinator: provider state synced");
-                        counter.bootstrap_from_hsn(hsn);
+            // Check bootstrap status before taking any write lock.
+            let needs_bootstrap = chain_state
+                .nonce_counter
+                .read()
+                .as_ref()
+                .is_none_or(|c| !c.is_bootstrapped());
+
+            if needs_bootstrap {
+                match chain.fetch_replay_hsn(provider_account).await {
+                    Ok(hsn) => {
+                        // Seed from the locally-persisted high-water mark so a
+                        // restart resumes at max(persisted, hsn+1) rather than
+                        // resetting to hsn+1 (which would reissue un-redeemed nonces).
+                        let start = chain_state.nonce_store.load().unwrap_or(1);
+                        tracing::debug!("chain-state coordinator: loaded nonce counter start from {}", start);
+                        let counter = Arc::new(NonceCounter::with_store(
+                            start,
+                            chain_state.nonce_store.clone(),
+                        ));
+                        if let Some(hsn) = hsn {
+                            counter.bootstrap_from_hsn(hsn);
+                            tracing::info!("chain-state coordinator: provider state synced");
+                        }
+                        // Registered but no replay state yet — transient view;
+                        // a later refresh will call bootstrap_from_hsn.
+                        *chain_state.nonce_counter.write() = Some(counter);
                     }
-                    // Else:
-                    // Registered but no replay state yet — registration inserts both
-                    // atomically, so this is a transient view. The next event or block
-                    // that triggers a refresh will resolve it.
-                    *chain_state.nonce_counter.write() = Some(counter);
-                    *chain_state.provider_info.write() = Some(info);
-                }
-                Err(e) => {
-                    tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}")
+                    Err(e) => {
+                        tracing::debug!("chain-state coordinator: failed to fetch replay hsn: {e}");
+                        // Leave the counter as-is; info is still published below.
+                    }
                 }
             }
+
+            *chain_state.provider_info.write() = Some(info);
         }
         // Provider is not (or no longer) registered on chain.
         Ok(None) => {
@@ -458,3 +494,4 @@ mod tests {
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
     }
 }
+

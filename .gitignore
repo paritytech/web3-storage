@@ -2,6 +2,7 @@
 /target/
 **/*.rs.bk
 coverage
+provider-data 
 
 # IDE
 .idea/
