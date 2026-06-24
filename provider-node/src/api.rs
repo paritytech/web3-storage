@@ -15,8 +15,9 @@ use crate::types::*;
 use crate::ProviderState;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
+    http::{header, StatusCode},
     middleware::{from_fn_with_state, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
@@ -59,6 +60,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         // Commit and read
         .route("/commit", post(commit))
         .route("/read", get(read_chunks))
+        .route("/content", get(get_content))
         // Commitment and proofs
         .route("/commitment", get(get_commitment))
         .route("/checkpoint-signature", get(get_checkpoint_signature))
@@ -386,6 +388,42 @@ async fn read_chunks(
     }
 
     Ok(Json(ReadResponse { chunks }))
+}
+
+#[derive(serde::Deserialize)]
+struct GetContentQuery {
+    data_root: String,
+}
+
+/// GET /content?data_root=<hex>
+///
+/// Reassembles bytes by CID, regardless of which S3/FS key currently points
+/// at it. `/read` assumes fixed-size chunks and can't serve CDC-chunked roots.
+async fn get_content(
+    State(state): State<Arc<ProviderState>>,
+    Query(query): Query<GetContentQuery>,
+) -> Result<Response, Error> {
+    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+        expected: query.data_root.clone(),
+        actual: "invalid hex".to_string(),
+    })?;
+    let data_root = H256::from_slice(&root_bytes);
+
+    let chunks = state.storage.collect_chunks(data_root);
+    if chunks.is_empty() && data_root != H256::zero() {
+        return Err(Error::NodeNotFound(query.data_root));
+    }
+    let total: usize = chunks.iter().map(Vec::len).sum();
+    let mut body = Vec::with_capacity(total);
+    for chunk in chunks {
+        body.extend_from_slice(&chunk);
+    }
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream".parse().unwrap(),
+    );
+    Ok(response)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

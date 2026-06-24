@@ -15,6 +15,9 @@ use core::fmt::Debug;
 use scale_info::TypeInfo;
 use sp_core::H256;
 
+#[cfg(feature = "std")]
+pub mod chunking;
+
 pub mod agreement_term;
 pub mod provider_replay_state;
 

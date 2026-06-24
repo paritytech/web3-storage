@@ -37,4 +37,5 @@ async-trait = "0.1"
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
+rand = "0.8"
 tempfile = "3"

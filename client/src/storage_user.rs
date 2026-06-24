@@ -467,12 +467,9 @@ impl StorageUserClient {
     fn chunk_data(data: &[u8], strategy: ChunkingStrategy) -> Vec<Vec<u8>> {
         match strategy {
             ChunkingStrategy::Fixed(chunk_size) => {
-                data.chunks(chunk_size).map(|c| c.to_vec()).collect()
+                storage_primitives::chunking::chunk_fixed(data, chunk_size)
             }
-            ChunkingStrategy::ContentDefined => {
-                // TODO: Implement content-defined chunking
-                Self::chunk_data(data, ChunkingStrategy::Fixed(256 * 1024))
-            }
+            ChunkingStrategy::ContentDefined => storage_primitives::chunking::chunk_cdc(data),
         }
     }
 

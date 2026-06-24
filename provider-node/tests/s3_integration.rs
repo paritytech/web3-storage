@@ -318,9 +318,8 @@ async fn test_s3_index_root() {
 async fn test_s3_large_file_multi_chunk() {
     let server = TestServer::new().await;
 
-    // Create data larger than one chunk (256 KiB = 262144 bytes)
-    // Use 300 KB to get 2 chunks
-    let data = vec![0x42u8; 300 * 1024];
+    // Big enough that CDC will emit multiple chunks (>= CDC_MAX_SIZE = 1 MiB).
+    let data = vec![0x42u8; 3 * 1024 * 1024];
 
     let response = server
         .client
@@ -333,7 +332,7 @@ async fn test_s3_large_file_multi_chunk() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["size"], 300 * 1024);
+    assert_eq!(body["size"], 3 * 1024 * 1024);
 
     // GET and verify round-trip
     let response = server
@@ -345,7 +344,7 @@ async fn test_s3_large_file_multi_chunk() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let returned_data = response.bytes().await.unwrap();
-    assert_eq!(returned_data.len(), 300 * 1024);
+    assert_eq!(returned_data.len(), 3 * 1024 * 1024);
     assert_eq!(returned_data.as_ref(), data.as_slice());
 }
 
@@ -425,6 +424,92 @@ async fn test_s3_mmr_proof_works_with_s3_data() {
     let body: Value = proof_response.json().await.unwrap();
     assert!(body["leaf"]["data_root"].is_string());
     assert!(body["proof"]["peaks"].is_array());
+}
+
+#[tokio::test]
+async fn test_s3_cdc_dedup_across_versions() {
+    use rand::{RngCore, SeedableRng};
+
+    let server = TestServer::new().await;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0xCD0);
+    let mut v1 = vec![0u8; 8 * 1024 * 1024];
+    rng.fill_bytes(&mut v1);
+    let mut v2 = v1.clone();
+    let mid = v2.len() / 2;
+    v2.splice(mid..mid, [0xAB; 200].iter().copied());
+
+    async fn total_nodes(server: &TestServer) -> u64 {
+        let r: Value = server
+            .client
+            .get(server.url("/stats"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        r["total_nodes"].as_u64().unwrap()
+    }
+
+    let r = server
+        .client
+        .put(server.url("/s3/1/object?key=doc.bin"))
+        .body(v1.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let after_v1 = total_nodes(&server).await;
+    assert!(after_v1 > 0);
+
+    let r = server
+        .client
+        .put(server.url("/s3/1/object?key=doc.bin"))
+        .body(v2.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let after_v2 = total_nodes(&server).await;
+
+    // A fixed-size chunker would invalidate every chunk past the insertion;
+    // CDC should stay well under v1/4.
+    let added = after_v2 - after_v1;
+    assert!(
+        added < after_v1 / 4,
+        "CDC dedup weak: v1 added {after_v1} nodes, v2 added {added} more \
+         (expected < {} ≈ v1/4)",
+        after_v1 / 4
+    );
+}
+
+#[tokio::test]
+async fn test_get_content_returns_full_bytes() {
+    let server = TestServer::new().await;
+
+    let body = vec![0xA5u8; 2 * 1024 * 1024];
+    let put: Value = server
+        .client
+        .put(server.url("/s3/1/object?key=blob.bin"))
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let data_root = put["data_root"].as_str().unwrap().to_string();
+
+    let r = server
+        .client
+        .get(server.url(&format!("/content?data_root={data_root}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let returned = r.bytes().await.unwrap();
+    assert_eq!(returned.as_ref(), body.as_slice());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

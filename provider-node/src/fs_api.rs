@@ -68,12 +68,12 @@ pub async fn fs_put_file(
     // Initialize bucket if needed
     let _ = state.storage.init_bucket(bucket_id, u64::MAX);
 
-    // 1. Split into chunks (256 KiB)
-    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+    // An empty file still gets one empty leaf so its data_root is the
+    // deterministic blake2_256(&[]).
     let chunks: Vec<&[u8]> = if data.is_empty() {
         vec![&[]]
     } else {
-        data.chunks(chunk_size).collect()
+        storage_primitives::chunking::chunk_cdc_borrowed(&data)
     };
 
     // 2. Hash and store each chunk
