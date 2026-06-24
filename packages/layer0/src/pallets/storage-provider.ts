@@ -13,6 +13,7 @@ import { Enum } from "polkadot-api";
 import type { SignedTerms } from "@web3-storage/core";
 
 import { asHex, bytesEq, hexToBytes, type ParachainApi } from "../address.js";
+import { getProviderNodeInfo } from "../provider-http.js";
 import type { ChainSigner } from "../signers.js";
 import { READ_OPTS, requireOneEvent, submitTx, submitTxFinalized, type SubmitOpts } from "../tx.js";
 
@@ -95,6 +96,25 @@ export async function ensureProviderRegistered(
       max_capacity: 0n,
     },
     opts,
+  );
+
+  // The provider node keeps its chain state (signing key, nonce counter,
+  // registered settings) live from finalized blocks and rejects /negotiate
+  // with 503 ChainStateNotReady until it has synced. Wait for it to catch up
+  // to this registration + price so the very next negotiate succeeds.
+  const MAX_ATTEMPTS = 20; // 20 × 3s = 60s
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const { readiness, provider_registration_info } = await getProviderNodeInfo(providerUrl);
+    const priceSynced =
+      readiness.provider_info_loaded &&
+      provider_registration_info != null &&
+      BigInt(provider_registration_info.price_per_byte) === pricePerByte;
+    if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  throw new Error(
+    `Provider node at ${providerUrl} did not sync this registration within ` +
+      `${MAX_ATTEMPTS * 3}s (still reporting not-ready from /info)`,
   );
 }
 

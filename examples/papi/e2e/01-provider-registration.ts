@@ -61,7 +61,8 @@ async function matchEntry(
       max_price_per_byte: maxPricePerByte,
       primary_only: true,
     },
-    50
+    50,
+    READ_OPTS,
   );
   // find_matching_providers returns `account` as the raw 32-byte public key
   // (a Uint8Array), not an SS58 string or a Binary — compare bytes directly.

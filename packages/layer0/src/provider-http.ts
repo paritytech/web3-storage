@@ -36,6 +36,37 @@ export async function providerFetch(
   return resp.json();
 }
 
+export interface ProviderNodeReadiness {
+  /** The node holds a signing keypair (from --keyfile). */
+  signing_configured: boolean;
+  /** The replay-nonce counter is bootstrapped, so /negotiate can issue quotes. */
+  nonce_counter_ready: boolean;
+  /** The node has synced its on-chain registration from a finalized block. */
+  provider_info_loaded: boolean;
+  /** The synced registration is in its deregister-announcement window. */
+  deregistering: boolean;
+}
+
+export interface ProviderNodeInfo {
+  provider_id?: string;
+  readiness: ProviderNodeReadiness;
+  /**
+   * The provider's on-chain registration as the node currently sees it; `null`
+   * until `readiness.provider_info_loaded`.
+   */
+  provider_registration_info: { price_per_byte: string | number | bigint } | null;
+}
+
+/**
+ * GET the provider node's `/info`: readiness flags plus the on-chain
+ * registration it has synced. The node syncs chain state asynchronously and
+ * rejects `/negotiate` with `503 ChainStateNotReady` until ready, so callers
+ * that register-then-negotiate should gate on this (see `ensureProviderRegistered`).
+ */
+export async function getProviderNodeInfo(providerUrl: string): Promise<ProviderNodeInfo> {
+  return providerFetch(providerUrl, "/info");
+}
+
 export interface PutChunkResult {
   hash: string;
   cid: Uint8Array;
