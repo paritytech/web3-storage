@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Headless M1+M2 flow:
+// Headless M1+M2+M3 flow:
 //   M1 — deploy Photos → negotiate terms → createLibrary → assert.
 //   M2 — mkdir album → PUT photo + thumbnail → compute the metadata Merkle root
 //        client-side → setRoot → re-list, recompute from scratch, and assert it
 //        equals both the on-chain anchor and the provider's index_root; plus a
 //        tamper check. Mirrors `examples/papi/sc-team-drive.js`.
-// The edit/COW step lands in M3.
+//   M3 — edit the photo copy-on-write: re-PUT edited bytes to the *same* path
+//        (a new content-addressed blob; the pre-edit blob lingers) → recompute
+//        + setRoot → download back and byte-compare → assert the anchor moved,
+//        the entry set is unchanged (replace, not add), and library/ownership/
+//        Writer grant survive the edit.
 //
 // Usage: tsx scripts/photos-flow.ts [chain_ws] [provider_url] [provider_seed] [client_seed]
 //   defaults: ws://127.0.0.1:2222  http://127.0.0.1:3333  //Alice  //Bob
@@ -37,7 +41,7 @@ import {
 } from "@web3-storage/sdk/revive";
 import { h160ToSubstrate, negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
-import { enumerateEntries, indexRoot, mkdir, putFile } from "./lib/fs-client.js";
+import { downloadFile, enumerateEntries, indexRoot, mkdir, putFile } from "./lib/fs-client.js";
 import { computeDataRoot, metadataMerkleRoot } from "./lib/merkle.js";
 
 // pnpm forwards a literal `--` into argv; drop it.
@@ -70,7 +74,7 @@ function makeBytes(len: number, seed: number): Uint8Array {
 }
 
 async function main() {
-  console.log("=== Photos M1+M2 flow ===");
+  console.log("=== Photos M1+M2+M3 flow ===");
   console.log(" chain    :", chainWs);
   console.log(" provider :", providerUrl, `(${providerSeed})`);
   console.log(" user     :", clientSeed);
@@ -211,12 +215,79 @@ async function main() {
     assert.notStrictEqual(tamperedRoot, anchored.rootCid.toLowerCase(), "tampered root unexpectedly matched the anchor");
     console.log("  tampered root differs from anchor ✓");
 
-    // End state — the contract this flow deployed (an ephemeral instance,
-    // distinct from `just photos deploy`) now holds the anchored root.
-    console.log(`\n📌 end state — contract ${deployed.address}  libraryOf(user).rootCid = ${anchored.rootCid}`);
-    assert.ok(!/^0x0+$/.test(anchored.rootCid), "end-state rootCid is still zero — setRoot did not persist");
+    // ── M3: edit a photo (copy-on-write, same path) ──
+    console.log("\n=== M3: edit (copy-on-write) ===");
 
-    console.log("\n✅ Photos M1+M2 flow completed — album + photo round-tripped, client-computed root anchored and verified against the on-chain anchor and index_root.");
+    // Pre-edit snapshot to prove the edit's effect (and its limits).
+    const rootBeforeEdit = anchored.rootCid.toLowerCase();
+    const entriesBeforeEdit = fresh.length;
+    const photoRootBeforeEdit = photoPut.dataRoot.toLowerCase();
+
+    // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Storage
+    // is content-addressed copy-on-write, so this writes a new blob (new
+    // data_root) and repoints the path; the pre-edit blob lingers (no GC). Real
+    // canvas crop/rotate is browser-only (M6) — here a fresh seed stands in.
+    console.log("\n[M3 1/4] Edit photo in place (re-PUT same path)…");
+    const editedBytes = makeBytes(2 * 1024 * 1024 + 6_789, 0xed17ed);
+    const editPut = await putFile(providerUrl, bucketId, PHOTO, editedBytes, "image/jpeg");
+    console.log(`  edited photo: data_root=${editPut.dataRoot} size=${editPut.size}`);
+    assert.strictEqual(toHex(computeDataRoot(editedBytes)).toLowerCase(), editPut.dataRoot.toLowerCase(), "local edited data_root != provider data_root");
+    assert.notStrictEqual(editPut.dataRoot.toLowerCase(), photoRootBeforeEdit, "edited data_root unchanged — the COW write did not produce a new blob");
+
+    // [M3 2/4] Recompute the metadata root over the post-edit tree → re-anchor.
+    // Same path replaced (not added), so the entry set size is unchanged; only
+    // the edited leaf differs, so the root moves.
+    console.log("\n[M3 2/4] Recompute metadata root → setRoot…");
+    const afterEdit = await enumerateEntries(providerUrl, bucketId);
+    assert.strictEqual(afterEdit.length, entriesBeforeEdit, "entry count changed after a same-path edit — expected replace, not add");
+    const editedRoot = toHex(metadataMerkleRoot(afterEdit)) as `0x${string}`;
+    console.log(`  editedRoot=${editedRoot}`);
+    assert.notStrictEqual(editedRoot.toLowerCase(), rootBeforeEdit, "metadata root unchanged after edit — the edit was not reflected in the tree");
+    await anchorRoot(api, user, deployed.addressBytes, editedRoot, abi);
+
+    // [M3 3/4] Verify the new anchor: recompute from a fresh listing and assert
+    // it equals the on-chain rootCid (retrying for best-block lag) and index_root.
+    console.log("\n[M3 3/4] Re-read anchor + recompute + assert…");
+    const freshAfterEdit = await enumerateEntries(providerUrl, bucketId);
+    const recomputedAfterEdit = (toHex(metadataMerkleRoot(freshAfterEdit)) as `0x${string}`).toLowerCase();
+    let editAnchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
+    for (let i = 0; i < 5 && editAnchored.rootCid.toLowerCase() === rootBeforeEdit; i++) {
+      await waitForNextBlock(papi);
+      editAnchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
+    }
+    const idxAfterEdit = await indexRoot(providerUrl, bucketId);
+    console.log(`  recomputed=${recomputedAfterEdit}`);
+    console.log(`  on-chain  =${editAnchored.rootCid.toLowerCase()}`);
+    console.log(`  index_root=${idxAfterEdit.metadataMerkleRoot.toLowerCase()}`);
+    assert.strictEqual(recomputedAfterEdit, editAnchored.rootCid.toLowerCase(), "recomputed root != on-chain rootCid (post-edit)");
+    assert.strictEqual(recomputedAfterEdit, idxAfterEdit.metadataMerkleRoot.toLowerCase(), "recomputed root != provider index_root (post-edit)");
+    assert.notStrictEqual(editAnchored.rootCid.toLowerCase(), rootBeforeEdit, "on-chain rootCid did not move after the edit");
+
+    // [M3 4/4] Download the same path back: the bytes must be the edited blob,
+    // proving the path was repointed (not the original, lingering blob).
+    console.log("\n[M3 4/4] Download same path + byte-compare against edited bytes…");
+    const downloaded = await downloadFile(providerUrl, bucketId, PHOTO);
+    assert.deepStrictEqual(downloaded, editedBytes, "downloaded photo bytes != edited bytes — path was not repointed to the edited blob");
+    console.log(`  downloaded ${downloaded.length} bytes — matches edited photo ✓`);
+
+    // Invariants that must survive an edit: the library still exists with the
+    // same driveId, the drive is still owned by the contract account, and the
+    // user still holds the Writer grant on the bucket. The edit touches data
+    // only — never ownership or ACLs.
+    assert.ok(editAnchored.exists, "libraryOf.exists became false after edit");
+    assert.strictEqual(editAnchored.driveId, driveId, "libraryOf.driveId changed after edit");
+    const driveAfterEdit: any = await api.query.DriveRegistry.Drives.getValue(driveId, READ_OPTS);
+    assert.ok(driveAfterEdit, "drive vanished from DriveRegistry after edit");
+    assert.ok(isSameAddress(driveAfterEdit.owner, contractAccount.address), "drive owner is no longer the contract account after edit");
+    const bucketAfterEdit: any = await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS);
+    assert.ok(bucketAfterEdit?.members?.some((m: any) => isSameAddress(m.account, user.address)), "user lost the Writer grant after edit");
+
+    // End state — the contract this flow deployed (an ephemeral instance,
+    // distinct from `just photos deploy`) now holds the post-edit anchored root.
+    console.log(`\n📌 end state — contract ${deployed.address}  libraryOf(user).rootCid = ${editAnchored.rootCid}`);
+    assert.ok(!/^0x0+$/.test(editAnchored.rootCid), "end-state rootCid is still zero — setRoot did not persist");
+
+    console.log("\n✅ Photos M1+M2+M3 flow completed — album + photo round-tripped, edited copy-on-write at the same path, client-computed root re-anchored, and verified against the on-chain anchor and index_root throughout.");
   } finally {
     papi.destroy();
   }
