@@ -41,8 +41,8 @@ import {
 } from "@web3-storage/sdk/revive";
 import { h160ToSubstrate, negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
-import { downloadFile, enumerateEntries, indexRoot, mkdir, putFile } from "./lib/fs-client.js";
-import { computeDataRoot, metadataMerkleRoot } from "./lib/merkle.js";
+import { downloadFile, enumerateEntries, indexRoot, listDir, mkdir, putFile } from "./lib/fs-client.js";
+import { computeDataRoot, metadataMerkleRoot, type MerkleEntry } from "./lib/merkle.js";
 
 // pnpm forwards a literal `--` into argv; drop it.
 const args = process.argv.slice(2).filter((a) => a !== "--");
@@ -61,6 +61,8 @@ const LIBRARY_NAME = "my-photos";
 const ALBUM = "/Beach";
 const PHOTO = `${ALBUM}/photo.jpg`;
 const THUMB = `/.thumbs${ALBUM}/photo.jpg`;
+// Directories the client creates — the source of truth for the root's dir leaves.
+const ALBUM_DIRS = [ALBUM, "/.thumbs", `/.thumbs${ALBUM}`];
 
 /** Deterministic pseudo-random bytes (a stand-in for real photo/thumbnail data). */
 function makeBytes(len: number, seed: number): Uint8Array {
@@ -157,9 +159,7 @@ async function main() {
 
     // [M2 1/5] Create the album and its parallel thumbnail subtree.
     console.log("\n[M2 1/5] mkdir album + thumbnail subtree…");
-    await mkdir(providerUrl, bucketId, ALBUM);
-    await mkdir(providerUrl, bucketId, "/.thumbs");
-    await mkdir(providerUrl, bucketId, `/.thumbs${ALBUM}`);
+    for (const dir of ALBUM_DIRS) await mkdir(providerUrl, bucketId, dir);
 
     // [M2 2/5] Upload a multi-MB photo (spans several 256 KiB chunks) + a small
     // placeholder thumbnail (real canvas downscaling lands in M6).
@@ -176,22 +176,40 @@ async function main() {
     assert.strictEqual(toHex(computeDataRoot(photoBytes)).toLowerCase(), photoPut.dataRoot.toLowerCase(), "local photo data_root != provider data_root");
     assert.strictEqual(toHex(computeDataRoot(thumbBytes)).toLowerCase(), thumbPut.dataRoot.toLowerCase(), "local thumb data_root != provider data_root");
 
-    // [M2 3/5] Compute the metadata Merkle root locally → anchor it on-chain.
-    console.log("\n[M2 3/5] Compute metadata root locally → setRoot…");
-    const entries = await enumerateEntries(providerUrl, bucketId);
-    console.log(`  entries=${entries.length}`, entries.map((e) => e.path));
-    assert.ok(
-      entries.length > 0,
-      `drive listing is empty after mkdir/PUT — the /fs writes or recursive ls did not populate the index (bucket ${bucketId})`,
-    );
-    const localRoot = toHex(metadataMerkleRoot(entries)) as `0x${string}`;
+    // [M2 3/5] Build the anchor from the *client's* own state (uploaded bytes +
+    // created dirs), not a provider round-trip — re-deriving it from the provider
+    // would only prove the provider agrees with itself. The listing is used
+    // solely to assert the structure matches, never as a source for the root.
+    console.log("\n[M2 3/5] Build root from client state (uploads + mkdirs) → setRoot…");
+    const uploaded = [
+      { path: PHOTO, bytes: photoBytes, dataRoot: computeDataRoot(photoBytes) },
+      { path: THUMB, bytes: thumbBytes, dataRoot: computeDataRoot(thumbBytes) },
+    ];
+    const listing = await listDir(providerUrl, bucketId, "/", true);
+    const providerFilePaths = listing.filter((e) => e.entryType === "file").map((e) => e.path).sort();
+    const providerDirPaths = listing.filter((e) => e.entryType !== "file").map((e) => e.path).sort();
+    assert.deepStrictEqual(providerFilePaths, uploaded.map((u) => u.path).sort(), "provider's file set != the client's uploaded set (hidden/extra/renamed files)");
+    assert.deepStrictEqual(providerDirPaths, [...ALBUM_DIRS].sort(), "provider's directory set != the client's created set (hidden/extra/renamed dirs)");
+    const dirEntries: MerkleEntry[] = ALBUM_DIRS.map((path) => ({ path, dataRoot: new Uint8Array(32), size: 0n }));
+    const fileEntries: MerkleEntry[] = uploaded.map((u) => ({ path: u.path, dataRoot: u.dataRoot, size: BigInt(u.bytes.length) }));
+    const expected = [...dirEntries, ...fileEntries];
+    console.log(`  entries=${expected.length}`, expected.map((e) => e.path));
+    const localRoot = toHex(metadataMerkleRoot(expected)) as `0x${string}`;
     console.log(`  localRoot=${localRoot}`);
     await anchorRoot(api, user, deployed.addressBytes, localRoot, abi);
 
-    // [M2 4/5] Verify: recompute from a fresh listing (downloading every file)
-    // and assert it equals the on-chain anchor and (sanity) the index_root.
-    console.log("\n[M2 4/5] Re-list + recompute + assert against on-chain anchor…");
+    // [M2 4/5] Verify against the client anchor: enumerate the drive fresh
+    // (downloading + re-hashing every file), assert each uploaded file's served
+    // content matches the client's data_root (the real integrity check), then
+    // recompute the root and assert it equals the on-chain anchor and (a sanity
+    // cross-check of the merkle port) the provider's index_root.
+    console.log("\n[M2 4/5] Re-enumerate + assert content + root == anchor + index_root…");
     const fresh = await enumerateEntries(providerUrl, bucketId);
+    for (const u of uploaded) {
+      const entry = fresh.find((e) => e.path === u.path);
+      assert.ok(entry, `provider dropped ${u.path}`);
+      assert.strictEqual(toHex(entry.dataRoot).toLowerCase(), toHex(u.dataRoot).toLowerCase(), `provider-served content for ${u.path} != the client's uploaded bytes`);
+    }
     const recomputed = (toHex(metadataMerkleRoot(fresh)) as `0x${string}`).toLowerCase();
     // Read the anchor back; retry briefly in case the best-block view lags the
     // just-included setRoot (a still-zero rootCid here means the write missed).
@@ -223,10 +241,9 @@ async function main() {
     const entriesBeforeEdit = fresh.length;
     const photoRootBeforeEdit = photoPut.dataRoot.toLowerCase();
 
-    // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Storage
-    // is content-addressed copy-on-write, so this writes a new blob (new
-    // data_root) and repoints the path; the pre-edit blob lingers (no GC). Real
-    // canvas crop/rotate is browser-only (M6) — here a fresh seed stands in.
+    // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Content-
+    // addressed copy-on-write writes a new blob and repoints the path; the old
+    // blob lingers (no GC). Real canvas crop/rotate is M6 — a fresh seed stands in.
     console.log("\n[M3 1/4] Edit photo in place (re-PUT same path)…");
     const editedBytes = makeBytes(2 * 1024 * 1024 + 6_789, 0xed17ed);
     const editPut = await putFile(providerUrl, bucketId, PHOTO, editedBytes, "image/jpeg");
