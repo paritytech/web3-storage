@@ -7,11 +7,11 @@ use crate::{
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
-    negotiate::NullNonceStore,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, DiskStorage, NonceStore, ProviderState, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -77,6 +77,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // no other thread holds a reference to chain_state, so get_mut succeeds.
             if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
                 cs.nonce_store = nonce_store.clone();
+            } else {
+                tracing::error!(
+                    "nonce store install skipped: chain_state Arc has multiple owners; \
+                     disk-mode persistence is disabled for this run"
+                );
             }
             Arc::new(state)
         }
@@ -111,6 +116,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // no other thread holds a reference to chain_state, so get_mut succeeds.
             if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
                 cs.nonce_store = nonce_store.clone();
+            } else {
+                tracing::error!(
+                    "nonce store install skipped: chain_state Arc has multiple owners; \
+                     disk-mode persistence is disabled for this run"
+                );
             }
             Arc::new(state)
         }

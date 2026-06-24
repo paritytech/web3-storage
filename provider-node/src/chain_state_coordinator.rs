@@ -15,7 +15,8 @@
 //! `stake`, and all settings stay current — no field-patching, no partial
 //! updates, no second writer.
 
-use crate::negotiate::{NonceCounter, NonceStore, NullNonceStore};
+use crate::negotiate::NonceCounter;
+use crate::storage::{NonceStore, NullNonceStore};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use sp_core::H256;
@@ -319,7 +320,10 @@ pub async fn refresh_provider_state(
                         // restart resumes at max(persisted, hsn+1) rather than
                         // resetting to hsn+1 (which would reissue un-redeemed nonces).
                         let start = chain_state.nonce_store.load().unwrap_or(1);
-                        tracing::debug!("chain-state coordinator: loaded nonce counter start from {}", start);
+                        tracing::debug!(
+                            "chain-state coordinator: loaded nonce counter start from {}",
+                            start
+                        );
                         let counter = Arc::new(NonceCounter::with_store(
                             start,
                             chain_state.nonce_store.clone(),
@@ -494,4 +498,3 @@ mod tests {
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
     }
 }
-

@@ -12,6 +12,35 @@ pub mod in_memory;
 pub use disk::{DiskNonceStore, DiskStorage};
 pub use in_memory::Storage;
 
+/// Persistence layer for the nonce counter's high-water mark.
+///
+/// [`DiskNonceStore`] is backed by the provider's RocksDB instance.
+/// [`NullNonceStore`] is the default: in-memory mode and any code that does
+/// not need cross-restart durability.
+pub trait NonceStore: Send + Sync {
+    /// Return the highest persisted nonce value, or `None` on a fresh store.
+    fn load(&self) -> Option<u64>;
+
+    /// Persist `value` as the new high-water mark. Monotonic: a lower value
+    /// is silently ignored. Best-effort: errors are logged but not propagated.
+    fn persist(&self, value: u64);
+}
+
+/// No-op [`NonceStore`]: `load` always returns `None`, `persist` does nothing.
+///
+/// Used in in-memory mode and as the default for [`crate::negotiate::NonceCounter::new`]
+/// so existing call sites need no changes.
+#[derive(Debug, Default)]
+pub struct NullNonceStore;
+
+impl NonceStore for NullNonceStore {
+    fn load(&self) -> Option<u64> {
+        None
+    }
+
+    fn persist(&self, _value: u64) {}
+}
+
 use crate::error::Error;
 use crate::types::*;
 use sp_core::H256;

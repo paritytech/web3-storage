@@ -19,6 +19,7 @@
 //!    `replica-term-v1:` depending on the quote's flavour.
 
 use crate::error::Error;
+use crate::storage::{NonceStore, NullNonceStore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
@@ -78,37 +79,6 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
     Ok(())
 }
 
-/// Persistence layer for the nonce counter's high-water mark.
-///
-/// [`DiskNonceStore`] is backed by the provider's RocksDB instance.
-/// [`NullNonceStore`] is the default: in-memory mode or tests that don't
-/// need persistence use it.
-pub trait NonceStore: Send + Sync {
-    /// Return the highest nonce value that was persisted, or `None` if nothing
-    /// has been written yet (fresh DB or in-memory mode).
-    fn load(&self) -> Option<u64>;
-
-    /// Persist `value` as the new high-water mark. Monotonic: a call with a
-    /// lower value than the current persisted mark is silently ignored.
-    /// Best-effort: errors are logged but not propagated.
-    fn persist(&self, value: u64);
-}
-
-/// No-op [`NonceStore`]: `load` always returns `None`, `persist` does nothing.
-///
-/// Used in in-memory mode and as the default for [`NonceCounter::new`] so
-/// existing call sites need no changes.
-#[derive(Debug, Default)]
-pub struct NullNonceStore;
-
-impl NonceStore for NullNonceStore {
-    fn load(&self) -> Option<u64> {
-        None
-    }
-
-    fn persist(&self, _value: u64) {}
-}
-
 /// Monotonic nonce counter for provider-signed terms.
 ///
 /// Nonces are atomically allocated via [`Self::next`]. The background
@@ -116,9 +86,12 @@ impl NonceStore for NullNonceStore {
 /// (at startup and on every poll), so the counter resumes at
 /// `max(persisted_local, hsn + 1)`:
 ///
-/// * **Local persistence** (disk mode): each allocation is persisted
-///   synchronously so a restart never reissues a nonce that was signed but
-///   not yet redeemed on chain.
+/// * **Local persistence** (disk mode): each allocation is persisted before
+///   returning, so a **clean process restart** does not reissue nonces that were
+///   signed but not yet redeemed. Power-loss/kernel-panic may lose the last write
+///   (RocksDB WAL is not fsynced per allocation); in that case the counter falls
+///   back to `chain_hsn + 1`, which is still safe — the chain's replay window
+///   rejects any duplicate redemption.
 /// * **Chain alignment**: `bootstrap_from_hsn` advances the counter past any
 ///   nonce the chain has already accepted, covering redemptions that happened
 ///   while the node was down or while we weren't watching.

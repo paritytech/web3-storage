@@ -5,9 +5,9 @@
 //! This provides the same interface as the in-memory storage but persists
 //! all data to disk for production use.
 
+use super::NonceStore;
 use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::negotiate::NonceStore;
 use crate::types::*;
 use codec::Encode;
 use rocksdb::{Options, DB};
@@ -564,6 +564,17 @@ impl StorageBackend for DiskStorage {
 /// Holds a shared reference to the open DB handle (same instance as
 /// [`DiskStorage`]). All writes are monotonic: a call with a value lower than
 /// the currently-persisted high-water mark is silently ignored.
+///
+/// # Durability guarantee
+///
+/// Writes use default `WriteOptions` (`sync = false`): RocksDB appends to the
+/// in-memory WAL but does **not** fsync to disk. This guarantees that the
+/// high-water mark survives a **clean process restart** (OS flushes the page
+/// cache on normal shutdown). It does **not** guarantee survival of a
+/// power-loss or kernel panic. In the latter case the last persisted nonce
+/// may be lost; the counter falls back to `max(chain_hsn + 1, 1)` as it did
+/// before this persistence layer was added, which is still safe — the chain's
+/// replay window rejects any duplicate redemption.
 pub struct DiskNonceStore {
     db: Arc<DB>,
     /// Monotonicity guard: always holds the highest value written so far,
@@ -613,9 +624,57 @@ impl NonceStore for DiskNonceStore {
             }
         };
         if let Err(e) = self.db.put_cf(&cf, KEY_NONCE, value.to_le_bytes()) {
-            tracing::warn!("nonce persist: RocksDB write failed: {e}");
+            tracing::error!("nonce persist: RocksDB write failed: {e}");
             return;
         }
         *wm = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn nonce_store_persist_and_load_round_trip() {
+        let dir = TempDir::new().unwrap();
+        // Persist a value, then drop the storage handle (closing RocksDB).
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let store = storage.nonce_store();
+            assert!(store.load().is_none(), "fresh DB has no persisted nonce");
+            store.persist(42);
+            assert_eq!(store.load(), Some(42));
+        }
+        // Reopen: value must survive the DB close/reopen cycle.
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let store = storage.nonce_store();
+            assert_eq!(
+                store.load(),
+                Some(42),
+                "persisted value must survive DB reopen"
+            );
+        }
+    }
+
+    #[test]
+    fn nonce_store_persist_is_monotonic() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let store = storage.nonce_store();
+        store.persist(50);
+        assert_eq!(store.load(), Some(50));
+        // A lower value must not regress the stored high-water mark.
+        store.persist(10);
+        assert_eq!(
+            store.load(),
+            Some(50),
+            "lower value must not regress the persisted mark"
+        );
+        // A higher value must advance it.
+        store.persist(51);
+        assert_eq!(store.load(), Some(51));
     }
 }
