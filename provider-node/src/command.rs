@@ -53,7 +53,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let state = match &seed {
+    let mut state = match &seed {
         Some(seed) => {
             let mut state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
@@ -73,17 +73,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            // Install the nonce store before wrapping state in Arc. At this point
-            // no other thread holds a reference to chain_state, so get_mut succeeds.
-            if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
-                cs.nonce_store = nonce_store.clone();
-            } else {
-                tracing::error!(
-                    "nonce store install skipped: chain_state Arc has multiple owners; \
-                     disk-mode persistence is disabled for this run"
-                );
-            }
-            Arc::new(state)
+            state
         }
         None => {
             let provider_id = cli
@@ -112,19 +102,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            // Install the nonce store before wrapping state in Arc. At this point
-            // no other thread holds a reference to chain_state, so get_mut succeeds.
-            if let Some(cs) = Arc::get_mut(&mut state.chain_state) {
-                cs.nonce_store = nonce_store.clone();
-            } else {
-                tracing::error!(
-                    "nonce store install skipped: chain_state Arc has multiple owners; \
-                     disk-mode persistence is disabled for this run"
-                );
-            }
-            Arc::new(state)
+            state
         }
     };
+
+    // Install the nonce store before sharing `state` across coordinators: while
+    // it is still solely owned here, `chain_state`'s Arc has a single owner, so
+    // the in-place install succeeds.
+    state.set_nonce_store(nonce_store);
+
+    let state = Arc::new(state);
 
     // Connect a single chain client shared by every coordinator. One
     // WebSocket connection and one signer (the provider's own account) back

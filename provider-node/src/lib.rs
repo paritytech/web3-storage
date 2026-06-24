@@ -129,6 +129,23 @@ impl ProviderState {
         })
     }
 
+    /// Install the nonce-counter persistence backend.
+    ///
+    /// Must be called while `self` is still solely owned — before it is wrapped
+    /// in an `Arc` and shared with the coordinators — because `chain_state` is
+    /// mutated in place via `Arc::get_mut`. If `chain_state` is already shared
+    /// the store is left as the default `NullNonceStore` (disk-mode persistence
+    /// disabled) and an error is logged rather than silently dropping it.
+    pub fn set_nonce_store(&mut self, store: Arc<dyn NonceStore>) {
+        match Arc::get_mut(&mut self.chain_state) {
+            Some(cs) => cs.nonce_store = store,
+            None => tracing::error!(
+                "nonce store install skipped: chain_state Arc has multiple owners; \
+                 disk-mode persistence is disabled for this run"
+            ),
+        }
+    }
+
     /// Set the checkpoint coordinator command sender (called after coordinator starts).
     pub fn set_checkpoint_handle(&self, handle: &CheckpointCoordinatorHandle) {
         if let Ok(mut tx) = self.checkpoint_cmd_tx.lock() {
