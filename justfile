@@ -277,10 +277,17 @@ sc-token-gated PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//
     node examples/papi/sc-token-gated.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # Mutable-notebook demo: deploys MutableNotebook, edits one file three times,
-# fetches each revision back by CID, asserts the on-chain pointer matches the
-# latest CID. Exercises the same library shape the UI will consume.
+# fetches each revision back by CID, and asserts the on-chain pointer
+# advanced through every revision.
 notebook-demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node examples/papi/mutable-notebook-flow.js "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
+
+# Mutable-notebook in-browser editor: deploy or attach a MutableNotebook,
+# edit files, browse history, revert to old revisions — all going through
+# the real chain and provider.
+notebook-ui: build-contracts
+    cd user-interfaces && pnpm -F @web3-storage/notebook-ui dev
+
 
 # Wait until the parachain's transaction pool is empty (bounded ~60s, then
 # proceeds with a warning). Run between back-to-back integration tests so the

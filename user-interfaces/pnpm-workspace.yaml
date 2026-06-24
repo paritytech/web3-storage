@@ -4,6 +4,7 @@ packages:
   - provider
   - drive-ui
   - s3-ui
+  - notebook-ui
 
 allowBuilds:
   esbuild: true
