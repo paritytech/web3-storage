@@ -806,7 +806,7 @@ async fn get_historical_roots(
 /// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
 ///   known from the chain yet.
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
-///   background reconciler clears this automatically once registration lands, no
+///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
 /// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
 ///   window.

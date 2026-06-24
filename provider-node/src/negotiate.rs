@@ -6,10 +6,11 @@
 //! `POST /negotiate`. The provider node:
 //!
 //! 1. Allocates a fresh nonce from an in-memory monotonic counter
-//!    ([`NonceCounter`]). A background reconciler aligns the counter with the
-//!    chain's `ProviderReplayState.hsn + 1` (at startup and on every poll), so
-//!    a restart can't reissue a nonce the chain already accepted (the on-chain
-//!    replay window is authoritative and rejects any out-of-range reuse).
+//!    ([`NonceCounter`]). The chain-state coordinator aligns the counter with the
+//!    chain's `ProviderReplayState.hsn + 1` (on connect and on every relevant
+//!    provider event), so a restart can't reissue a nonce the chain already
+//!    accepted (the on-chain replay window is authoritative and rejects any
+//!    out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
 //!    `valid_until = current_block + valid_until_offset`.
@@ -81,9 +82,9 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
 
 /// Monotonic nonce counter for provider-signed terms.
 ///
-/// Nonces are atomically allocated via [`Self::next`]. The background
-/// reconciler aligns the counter with the chain's `ProviderReplayState.hsn + 1`
-/// (at startup and on every poll), so the counter resumes at
+/// Nonces are atomically allocated via [`Self::next`]. The chain-state
+/// coordinator aligns the counter with the chain's `ProviderReplayState.hsn + 1`
+/// (on connect and on every relevant provider event), so the counter resumes at
 /// `max(persisted_local, hsn + 1)`:
 ///
 /// * **Local persistence** (disk mode): each allocation is persisted before
