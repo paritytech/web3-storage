@@ -226,6 +226,8 @@ pub struct MerkleProofData {
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
+    /// `CommitmentPayload` nonce for the provider's post-deletion signature.
+    pub nonce: u64,
 }
 
 /// Response from delete operation.
