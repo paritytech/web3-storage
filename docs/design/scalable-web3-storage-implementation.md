@@ -1533,9 +1533,8 @@ impl<T: Config> Pallet<T> {
     //     Still able to detect and slash a dead provider, and to recover a
     //     chunk—at full cost. No split for two reasons: (1) a provider can't
     //     serve everyone equally well, so a stranger being made to wait isn't
-    //     evidence of fault; (2) anti-DoS—if strangers got the split, a crowd
-    //     could each pay little while collectively draining the provider, so the
-    //     full-cost rule makes the attackers' cost scale with the damage.
+    //     evidence of fault; (2) anti-DDoS—if strangers got the split, a crowd
+    //     could each pay little while collectively draining the provider.
     //
     // `is_authorized` is the single authorization predicate shared with
     // private-bucket read access control. No per-challenge rate limiting or
@@ -2383,8 +2382,8 @@ pub struct MmrProof {
 ```
 
 **Why this cost model?**
-- **Strangers can't drain a provider (anti-DoS)**: A public challenge leaves an honest provider whole in money terms (fee fully reimbursed, stake untouched). If strangers got the split instead, a crowd could each pay little while collectively draining the provider; full-cost-per-stranger makes the attackers' cost scale with the damage. A stranger can still impose on-chain work and a reputation hit, but cannot extract value or grind down stake.
-- **A provider can't serve everyone equally**: so a stranger being made to wait isn't evidence of fault—unlike a paying counterparty's unanswered request, which is exactly what the split is meant to penalize.
+- **Strangers can't drain a provider (anti-DDoS)**: A public challenge leaves an honest provider whole in money terms (fee fully reimbursed, stake untouched). If strangers got the split instead, a crowd could each pay little while collectively draining the provider; full-cost-per-stranger makes the attackers' cost scale with the damage. A stranger can still impose on-chain work and a reputation hit, but cannot extract value or grind down stake.
+- **A provider can't serve everyone equally**: so a stranger being made to wait (e.g. under a lot of load) isn't evidence of fault—unlike a paying counterparty's unanswered request.
 - **Owners get leverage, not cheap recovery**: the split lets a counterparty pressure the provider into serving, but with the challenger's share floored at 50% of a high on-chain cost, it stays a last-resort tool—recovering data at scale this way is unreasonably expensive even for the owner.
 - **Monetary exposure is bounded to chosen counterparties**: a provider is made to bear cost only for accounts it accepted agreements with (or the admin added)—it controls that risk by vetting whom it signs with.
 - **Off-chain resolution preferred**: answering on-chain means posting the data as a transaction—far costlier than serving the same bytes off-chain (the bandwidth is spent either way)—plus in-window hassle and reputation damage, even when the fee is reimbursed. So the provider serves directly.
