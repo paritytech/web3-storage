@@ -230,7 +230,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 #[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
-    let server = TestServer::serve(Arc::new(ProviderState::new(
+    let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
         Arc::new(Storage::new()),
         "0xtest_provider".to_string(),
     )))

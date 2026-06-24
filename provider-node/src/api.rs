@@ -48,6 +48,29 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
             .expect("static `/negotiate` rate-limit config is valid"),
     );
 
+    // Restrict CORS to the configured origins, or stay permissive when unset.
+    let cors = match &state.cors_allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let allowed: Vec<axum::http::HeaderValue> =
+                origins.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(allowed)
+                // Only the verbs and request headers the API actually serves.
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::PUT,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::HEAD,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                ])
+        }
+        _ => CorsLayer::permissive(),
+    };
+
     Router::new()
         // Health and info
         .route("/health", get(health))
@@ -108,7 +131,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
 }
 
@@ -242,8 +265,18 @@ async fn get_node(
 
 async fn upload_node(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "PUT",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     // Decode hash
     let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
         expected: request.hash.clone(),
@@ -319,8 +352,18 @@ async fn check_exists(
 
 async fn commit(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
@@ -546,10 +589,22 @@ async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucke
 
 async fn delete_data(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Note: In production, would verify admin_signature
-    let _ = request.admin_signature;
+    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
+    // prune rewrites the underlying MMR (dropping every leaf below
+    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
+    // leave the tree intact. Rewriting the commitment is strictly more
+    // destructive, so it warrants the highest role.
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Admin,
+    )
+    .await?;
 
     let (mmr_root, start_seq, leaf_count) = state
         .storage
