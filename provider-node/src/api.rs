@@ -359,7 +359,15 @@ async fn read_chunks(
     })?;
     let data_root = H256::from_slice(&root_bytes);
 
-    // Calculate chunk indices
+    // `/read`'s offset/length math assumes every leaf except the last is exactly
+    // `DEFAULT_CHUNK_SIZE` bytes. CDC-chunked roots break that assumption — the
+    // math would still compute *a* chunk_index but the bytes wouldn't line up,
+    // silently serving misaligned data. Reject those roots; whole-file readers
+    // should use `GET /content?data_root=` which walks the manifest.
+    if !data_root_is_fixed_size(&*state.storage, data_root)? {
+        return Err(Error::VariableChunkRoot);
+    }
+
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as u64;
     let start_chunk = query.offset / chunk_size;
     let end_chunk = (query.offset + query.length).div_ceil(chunk_size);
@@ -386,6 +394,41 @@ async fn read_chunks(
     }
 
     Ok(Json(ReadResponse { chunks }))
+}
+
+/// Walks the leaves under `data_root` and verifies all-but-last are exactly
+/// `DEFAULT_CHUNK_SIZE` bytes. Used by `/read` to reject CDC roots — the
+/// fixed-size offset math would otherwise serve misaligned bytes.
+///
+/// Returns `Ok(false)` for an empty / unknown root (no leaves to validate);
+/// downstream `get_chunk_at_index` already errors cleanly on those.
+fn data_root_is_fixed_size(
+    storage: &dyn crate::storage::StorageBackend,
+    data_root: H256,
+) -> Result<bool, Error> {
+    let hashes = storage.collect_chunk_hashes(data_root);
+    if hashes.is_empty() {
+        return Ok(false);
+    }
+    let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
+    let (last, prefix) = hashes
+        .split_last()
+        .expect("hashes is non-empty (checked above)");
+    for hash in prefix {
+        let Some(node) = storage.get_node(hash) else {
+            return Err(Error::NodeNotFound(format!(
+                "0x{}",
+                hex_encode(hash.as_bytes())
+            )));
+        };
+        if node.data.len() != chunk_size {
+            return Ok(false);
+        }
+    }
+    // The trailing leaf may be smaller (last fixed-size chunk often is); reject
+    // only if it's *larger*, which a fixed-size chunker can't produce.
+    let last_len = storage.get_node(last).map_or(0, |n| n.data.len());
+    Ok(last_len <= chunk_size)
 }
 
 #[derive(serde::Deserialize)]

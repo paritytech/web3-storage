@@ -512,6 +512,43 @@ async fn test_get_content_returns_full_bytes() {
     assert_eq!(returned.as_ref(), body.as_slice());
 }
 
+/// `/read` must refuse CDC roots — fixed-size offset math would otherwise
+/// silently serve misaligned bytes.
+#[tokio::test]
+async fn test_read_rejects_cdc_root() {
+    use rand::{RngCore, SeedableRng};
+
+    let server = TestServer::new().await;
+
+    // 2 MiB of random data so CDC emits at least two unequal-sized chunks
+    // (CDC_MIN_SIZE = 64 KiB, CDC_AVG_SIZE = 256 KiB, CDC_MAX_SIZE = 1 MiB).
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0xCDC);
+    let mut body = vec![0u8; 2 * 1024 * 1024];
+    rng.fill_bytes(&mut body);
+
+    let put: Value = server
+        .client
+        .put(server.url("/s3/1/object?key=cdc.bin"))
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let data_root = put["data_root"].as_str().unwrap().to_string();
+
+    let r = server
+        .client
+        .get(server.url(&format!("/read?data_root={data_root}&offset=0&length=1024")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["error"], "variable_chunk_root");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Edge cases: empty key, nonexistent HEAD/DELETE, empty body, metadata on GET
 // ─────────────────────────────────────────────────────────────────────────────

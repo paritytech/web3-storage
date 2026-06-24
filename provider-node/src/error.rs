@@ -105,6 +105,13 @@ pub enum Error {
 
     #[error("Too many requests")]
     RateLimited,
+
+    /// Returned by `/read` when called on a `data_root` whose chunks aren't
+    /// `DEFAULT_CHUNK_SIZE`-aligned. The fixed-size offset arithmetic would
+    /// silently serve misaligned bytes; reject instead. Use `GET /content`
+    /// for whole-file reassembly of any root.
+    #[error("data_root is not fixed-size-chunked; use GET /content")]
+    VariableChunkRoot,
 }
 
 #[derive(Serialize)]
@@ -257,6 +264,18 @@ impl IntoResponse for Error {
                         "message": "provider node has not bootstrapped its nonce counter from \
                                     on-chain replay state; ensure the provider is registered and \
                                     the chain is reachable, then retry"
+                    })),
+                },
+            ),
+            Error::VariableChunkRoot => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorResponse {
+                    error: "variable_chunk_root".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "this data_root uses variable-size chunks \
+                                    (e.g. CDC); /read assumes DEFAULT_CHUNK_SIZE. \
+                                    Use GET /content?data_root=... for whole-file \
+                                    reassembly."
                     })),
                 },
             ),
