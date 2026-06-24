@@ -279,7 +279,7 @@ it's someone else's bucket and you're an outsider, you cover the full cost
 yourself. Either case is enough to detect a dead provider and extract a chunk
 you truly need; neither is a cheap way to pull data at scale. If you need more,
 fund your own replica (full control), or—in the read-incentive phase—pay the
-provider directly for bandwidth. If that turns out necessar, we might also bring
+provider directly for bandwidth. If that turns out necessary, we might also bring
 back the cost split in a capped form for the general public.
 
 ---
