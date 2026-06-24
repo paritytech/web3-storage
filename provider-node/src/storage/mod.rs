@@ -24,9 +24,17 @@ pub trait NonceStore: Send + Sync {
     /// Persist `value` as the new high-water mark. Monotonic: a lower value
     /// is silently ignored. Best-effort: errors are logged but not propagated.
     fn persist(&self, value: u64);
+
+    /// Clear the persisted high-water mark so a re-registration starts fresh.
+    ///
+    /// Call this when the provider deregisters. On the next registration the
+    /// counter will seed from `chain_hsn + 1` rather than the old watermark.
+    /// Best-effort: errors are logged but not propagated.
+    fn reset(&self);
 }
 
-/// No-op [`NonceStore`]: `load` always returns `None`, `persist` does nothing.
+/// No-op [`NonceStore`]: `load` always returns `None`, `persist` and `reset`
+/// do nothing.
 ///
 /// Used in in-memory mode and as the default for [`crate::negotiate::NonceCounter::new`]
 /// so existing call sites need no changes.
@@ -39,6 +47,8 @@ impl NonceStore for NullNonceStore {
     }
 
     fn persist(&self, _value: u64) {}
+
+    fn reset(&self) {}
 }
 
 use crate::error::Error;

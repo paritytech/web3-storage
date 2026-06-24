@@ -600,6 +600,10 @@ impl NonceStore for RecordingNonceStore {
             *guard = Some(value);
         }
     }
+
+    fn reset(&self) {
+        *self.0.lock().unwrap() = None;
+    }
 }
 
 #[tokio::test]
@@ -633,5 +637,65 @@ async fn refresh_seeds_counter_from_persisted_value_above_chain_hsn() {
     assert!(
         counter.next() >= 21,
         "counter must resume at the persisted watermark, not at hsn+1"
+    );
+}
+
+#[tokio::test]
+async fn deregister_event_resets_persisted_nonce_store() {
+    // The reset is gated on a confirmed ProviderDeregistered event, not on the
+    // generic Ok(None) absence. This ensures reconnect/bootstrap paths (which
+    // also see Ok(None) when not registered) never wipe a watermark that is
+    // still needed.
+    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
+    let cs = ChainState {
+        nonce_store: store.clone(),
+        ..Default::default()
+    };
+
+    let deregister_event = StorageEvent::ProviderDeregistered {
+        provider: provider_account(),
+        stake_returned: 0,
+        block_hash: H256::zero(),
+        block_number: 1,
+    };
+    // Chain reports provider not registered (after the event).
+    let chain = MockChainClient::default(); // info=None
+    refresh_if_relevant_event(&chain, &cs, &provider_account(), &[deregister_event], 1).await;
+
+    assert!(
+        cs.provider_info.read().is_none(),
+        "provider_info must be cleared"
+    );
+    assert!(
+        cs.nonce_counter.read().is_none(),
+        "nonce_counter must be cleared"
+    );
+    assert!(
+        store.load().is_none(),
+        "persisted nonce store must be reset on confirmed deregister event"
+    );
+}
+
+#[tokio::test]
+async fn ok_none_without_deregister_event_preserves_nonce_watermark() {
+    // A generic Ok(None) — e.g. on reconnect/bootstrap where the provider
+    // is not registered — must NOT reset the persisted watermark, so the
+    // durable backstop is not destroyed by transient/reconnect observations.
+    let store = std::sync::Arc::new(RecordingNonceStore::new(Some(99)));
+    let cs = ChainState {
+        nonce_store: store.clone(),
+        ..Default::default()
+    };
+
+    // Directly call refresh_provider_state with Ok(None) — no deregister event.
+    refresh_provider_state(&MockChainClient::default(), &cs, &provider_account()).await;
+
+    assert!(cs.provider_info.read().is_none(), "provider_info cleared");
+    assert!(cs.nonce_counter.read().is_none(), "nonce_counter cleared");
+    // Watermark must be PRESERVED — this is the core regression fix.
+    assert_eq!(
+        store.load(),
+        Some(99),
+        "watermark must not be wiped on generic Ok(None) — only on a confirmed ProviderDeregistered event"
     );
 }

@@ -20,10 +20,10 @@ use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 const CF_NODES: &str = "nodes";
 const CF_BUCKETS: &str = "buckets";
 const CF_ROOT_TO_BUCKET: &str = "root_to_bucket";
-/// Small metadata values (e.g. the nonce counter high-water mark).
+/// Small metadata values (e.g. the nonce counter highest sequence nonce).
 const CF_METADATA: &str = "metadata";
 
-/// RocksDB key for the persisted nonce counter high-water mark.
+/// RocksDB key for the persisted nonce counter highest sequence nonce.
 const KEY_NONCE: &[u8] = b"nonce_counter";
 
 /// Bucket state managed by this provider (serialized to disk).
@@ -563,13 +563,13 @@ impl StorageBackend for DiskStorage {
 ///
 /// Holds a shared reference to the open DB handle (same instance as
 /// [`DiskStorage`]). All writes are monotonic: a call with a value lower than
-/// the currently-persisted high-water mark is silently ignored.
+/// the currently-persisted highest sequence nonce is silently ignored.
 ///
 /// # Durability guarantee
 ///
 /// Writes use default `WriteOptions` (`sync = false`): RocksDB appends to the
 /// in-memory WAL but does **not** fsync to disk. This guarantees that the
-/// high-water mark survives a **clean process restart** (OS flushes the page
+/// highest sequence nonce survives a **clean process restart** (OS flushes the page
 /// cache on normal shutdown). It does **not** guarantee survival of a
 /// power-loss or kernel panic. In the latter case the last persisted nonce
 /// may be lost; the counter falls back to `max(chain_hsn + 1, 1)` as it did
@@ -629,6 +629,29 @@ impl NonceStore for DiskNonceStore {
         }
         *wm = value;
     }
+
+    fn reset(&self) {
+        let mut wm = match self.watermark.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!("nonce reset: watermark lock poisoned: {e}");
+                return;
+            }
+        };
+        let cf = match self.db.cf_handle(CF_METADATA) {
+            Some(cf) => cf,
+            None => {
+                tracing::warn!("nonce reset: metadata CF not found");
+                return;
+            }
+        };
+        if let Err(e) = self.db.delete_cf(&cf, KEY_NONCE) {
+            tracing::error!("nonce reset: RocksDB delete failed: {e}");
+            return;
+        }
+        *wm = 0;
+        tracing::info!("nonce reset: persisted highest sequence nonce cleared on deregister");
+    }
 }
 
 #[cfg(test)]
@@ -666,7 +689,7 @@ mod tests {
         let store = storage.nonce_store();
         store.persist(50);
         assert_eq!(store.load(), Some(50));
-        // A lower value must not regress the stored high-water mark.
+        // A lower value must not regress the stored highest sequence nonce.
         store.persist(10);
         assert_eq!(
             store.load(),
@@ -676,5 +699,47 @@ mod tests {
         // A higher value must advance it.
         store.persist(51);
         assert_eq!(store.load(), Some(51));
+    }
+
+    #[test]
+    fn nonce_store_reset_clears_persisted_value() {
+        let dir = TempDir::new().unwrap();
+        let storage = DiskStorage::new(dir.path()).unwrap();
+        let store = storage.nonce_store();
+        store.persist(100);
+        assert_eq!(store.load(), Some(100));
+
+        // Reset: value must be gone from the DB.
+        store.reset();
+        assert!(
+            store.load().is_none(),
+            "reset must clear the persisted mark"
+        );
+
+        // Persist at a low value must now succeed (watermark was zeroed by reset).
+        store.persist(2);
+        assert_eq!(store.load(), Some(2));
+    }
+
+    #[test]
+    fn nonce_store_reset_clears_across_reopen() {
+        let dir = TempDir::new().unwrap();
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let store = storage.nonce_store();
+            store.persist(50);
+            store.reset();
+            // Immediately after reset, load is None.
+            assert!(store.load().is_none());
+        }
+        // After reopen, the reset must have been flushed to disk (key deleted).
+        {
+            let storage = DiskStorage::new(dir.path()).unwrap();
+            let store = storage.nonce_store();
+            assert!(
+                store.load().is_none(),
+                "reset must persist across DB reopen"
+            );
+        }
     }
 }
