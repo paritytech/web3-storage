@@ -377,11 +377,22 @@ pub async fn refresh_if_relevant_event(
         refresh_provider_state(chain, chain_state, provider_account).await;
     }
 
-    // Reset the persisted nonce high-water mark only on a confirmed deregister
-    // event, not on a generic Ok(None) from refresh_provider_state (which also
-    // fires on reconnect/bootstrap and at_latest() reads that are not pinned to
-    // the finalized block). This preserves the watermark as a backstop on all
-    // paths that are not a real deregistration.
+    // On a confirmed deregistration, clear the persisted nonce high-water mark so
+    // a later re-registration restarts the sequence from the chain's fresh replay
+    // head (hsn + 1) rather than the stale watermark.
+    //
+    // The reset is deliberate, not cosmetic, and is safe: every quote signed
+    // before deregistration has `valid_until <= sign_block + RequestTimeout`, and
+    // RequestTimeout < DeregisterAnnouncementPeriod, so all such quotes have
+    // already expired by the time `complete_deregister` is callable. No
+    // pre-deregister nonce can be replayed against the new incarnation, so the
+    // counter need not be held above the old watermark. (Keeping it would also be
+    // safe but would needlessly inflate nonces across a re-registration.)
+    //
+    // Gate strictly on a confirmed `ProviderDeregistered` event, not on a generic
+    // `Ok(None)` from `refresh_provider_state` (which also fires on
+    // reconnect/bootstrap and non-finalized reads). This preserves the watermark
+    // as a backstop on every path that is not a real deregistration.
     let deregistered = events.iter().any(|e| {
         matches!(e, StorageEvent::ProviderDeregistered { provider, .. } if provider == provider_account)
     });
