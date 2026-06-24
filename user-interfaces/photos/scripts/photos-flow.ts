@@ -211,11 +211,10 @@ async function main() {
     assert.notStrictEqual(tamperedRoot, anchored.rootCid.toLowerCase(), "tampered root unexpectedly matched the anchor");
     console.log("  tampered root differs from anchor ✓");
 
-    // End-state read-back — the contract this flow deployed (an ephemeral
-    // instance, distinct from `just photos deploy`) now holds the anchored root.
-    const end = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
-    console.log(`\n📌 end state — contract ${deployed.address}  libraryOf(user).rootCid = ${end.rootCid}`);
-    assert.ok(!/^0x0+$/.test(end.rootCid), "end-state rootCid is still zero — setRoot did not persist");
+    // End state — the contract this flow deployed (an ephemeral instance,
+    // distinct from `just photos deploy`) now holds the anchored root.
+    console.log(`\n📌 end state — contract ${deployed.address}  libraryOf(user).rootCid = ${anchored.rootCid}`);
+    assert.ok(!/^0x0+$/.test(anchored.rootCid), "end-state rootCid is still zero — setRoot did not persist");
 
     console.log("\n✅ Photos M1+M2 flow completed — album + photo round-tripped, client-computed root anchored and verified against the on-chain anchor and index_root.");
   } finally {
