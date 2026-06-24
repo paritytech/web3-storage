@@ -15,6 +15,13 @@
 - ALWAYS run `/format` before creating any git commit
 - This ensures all code follows project formatting standards (Rust, TOML, feature propagation) and passes clippy
 
+**File headers:**
+- Every new source file (Rust, TypeScript, JavaScript, Solidity) MUST start with an SPDX license header on the first line, matching the surrounding crate / package. Check a sibling file in the same crate to copy the exact identifier (`Apache-2.0`, `GPL-3.0-only`, etc.).
+- Examples: `// SPDX-License-Identifier: Apache-2.0` for the `primitives` crate, `// SPDX-License-Identifier: GPL-3.0-only` for `provider-node` and the `user-interfaces/` workspace.
+
+**Dependencies:**
+- New external dependencies go in the workspace `Cargo.toml` under `[workspace.dependencies]`, then each consuming crate references them via `{ workspace = true }`. Don't inline version literals in per-crate manifests; that includes `[dev-dependencies]`.
+
 ## Project Overview
 
 Scalable Web3 Storage is a decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.

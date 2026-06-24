@@ -154,6 +154,7 @@ subxt = { version = "0.44.3" }
 subxt-signer = { version = "0.44.3", features = ["sr25519"] }
 
 # Testing
+rand = "0.8"
 sp-keyring = { version = "46.0.0", default-features = false }
 sp-keystore = { version = "0.46.0", default-features = false }
 
