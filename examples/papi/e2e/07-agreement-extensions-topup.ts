@@ -164,15 +164,31 @@ async function main() {
   });
 
   tests.push({
-    name: "7.5 Non-owner extends",
+    name: "7.5 Non-owner can extend by paying",
     fn: async () => {
-      const tx = api.tx.StorageProvider.extend_agreement({
-        bucket_id: bucketId,
-        provider: provider.address,
-        additional_duration: 10,
-        max_payment: maxBytes * 10n * 10n,
+      // extend_agreement intentionally lets ANY caller extend by paying for it:
+      // the extension payment is reserved from the caller, not the bucket owner
+      // (pallet extend_agreement). Only a price increase restricts extension to
+      // the owner (NotAgreementOwner). So Charlie — neither owner nor admin —
+      // can extend Bob's agreement; this is a feature, not a violation.
+      const before = (await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
+        provider.address,
+        READ_OPTS
+      ))!;
+      const extDuration = 300;
+      const result = await extendAgreement(api, charlie, bucketId, provider, {
+        additional_duration: extDuration,
+        max_payment: maxBytes * BigInt(extDuration) * 10n,
       });
-      await submitTxExpectFailure(tx, charlie.signer, "NotBucketAdmin", "7.5");
+      const events = api.event.StorageProvider.AgreementExtended.filter(result.events as never);
+      assert.strictEqual(events.length, 1, "Expected AgreementExtended event");
+      const after = (await api.query.StorageProvider.StorageAgreements.getValue(
+        bucketId,
+        provider.address,
+        READ_OPTS
+      ))!;
+      assert.ok(after.expires_at > before.expires_at, "expires_at should increase");
     },
   });
 
