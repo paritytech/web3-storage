@@ -55,6 +55,8 @@ const UNIT = 10n ** 12n;
 const MAX_BYTES = 1n << 20n; // 1 MiB quota
 const DURATION = 50; // blocks
 const LIBRARY_NAME = "my-photos";
+// Blocks to wait for the best-block view to catch up to a just-included setRoot.
+const ANCHOR_RETRY_BLOCKS = 5;
 
 // M2 album layout: a photo under an album, its thumbnail under a parallel
 // `.thumbs/` subtree (DESIGN.md "Albums, blobs & the root anchor").
@@ -154,6 +156,42 @@ async function main() {
     assert.ok(lib.exists, "libraryOf.exists is false");
     assert.strictEqual(lib.driveId, driveId, "libraryOf.driveId mismatch");
 
+    // Re-enumerate the drive, recompute the metadata root, read the on-chain
+    // anchor back (retrying while it lags the just-included setRoot, per
+    // `isStale`), and assert recomputed == on-chain rootCid == provider
+    // index_root. Returns the fresh entries + reads for callers that need them.
+    const verifyAnchor = async ({
+      expectedEntries,
+      isStale,
+    }: {
+      expectedEntries?: { path: string; dataRoot: Uint8Array }[];
+      isStale: (rootCid: string) => boolean;
+    }) => {
+      const fresh = await enumerateEntries(providerUrl, bucketId);
+      // Assert each uploaded file is served back byte-for-byte (the real
+      // integrity check) — only the initial upload has bytes to cross-check.
+      if (expectedEntries) {
+        for (const u of expectedEntries) {
+          const entry = fresh.find((e) => e.path === u.path);
+          assert.ok(entry, `provider dropped ${u.path}`);
+          assert.strictEqual(toHex(entry.dataRoot).toLowerCase(), toHex(u.dataRoot).toLowerCase(), `provider-served content for ${u.path} != the client's uploaded bytes`);
+        }
+      }
+      const recomputed = (toHex(metadataMerkleRoot(fresh)) as `0x${string}`).toLowerCase();
+      let anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
+      for (let i = 0; i < ANCHOR_RETRY_BLOCKS && isStale(anchored.rootCid.toLowerCase()); i++) {
+        await waitForNextBlock(papi);
+        anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
+      }
+      const idx = await indexRoot(providerUrl, bucketId);
+      console.log(`  recomputed=${recomputed}`);
+      console.log(`  on-chain  =${anchored.rootCid.toLowerCase()}`);
+      console.log(`  index_root=${idx.metadataMerkleRoot.toLowerCase()}`);
+      assert.strictEqual(recomputed, anchored.rootCid.toLowerCase(), "recomputed root != on-chain rootCid");
+      assert.strictEqual(recomputed, idx.metadataMerkleRoot.toLowerCase(), "recomputed root != provider index_root");
+      return { fresh, recomputed, anchored, idx };
+    };
+
     // ── M2: albums + blobs + thumbnails + client-computed root anchor ──
     console.log("\n=== M2: albums + blobs + root anchor ===");
 
@@ -204,26 +242,11 @@ async function main() {
     // recompute the root and assert it equals the on-chain anchor and (a sanity
     // cross-check of the merkle port) the provider's index_root.
     console.log("\n[M2 4/5] Re-enumerate + assert content + root == anchor + index_root…");
-    const fresh = await enumerateEntries(providerUrl, bucketId);
-    for (const u of uploaded) {
-      const entry = fresh.find((e) => e.path === u.path);
-      assert.ok(entry, `provider dropped ${u.path}`);
-      assert.strictEqual(toHex(entry.dataRoot).toLowerCase(), toHex(u.dataRoot).toLowerCase(), `provider-served content for ${u.path} != the client's uploaded bytes`);
-    }
-    const recomputed = (toHex(metadataMerkleRoot(fresh)) as `0x${string}`).toLowerCase();
-    // Read the anchor back; retry briefly in case the best-block view lags the
-    // just-included setRoot (a still-zero rootCid here means the write missed).
-    let anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
-    for (let i = 0; i < 5 && /^0x0+$/.test(anchored.rootCid); i++) {
-      await waitForNextBlock(papi);
-      anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
-    }
-    const idx = await indexRoot(providerUrl, bucketId);
-    console.log(`  recomputed=${recomputed}`);
-    console.log(`  on-chain  =${anchored.rootCid.toLowerCase()}`);
-    console.log(`  index_root=${idx.metadataMerkleRoot.toLowerCase()}`);
-    assert.strictEqual(recomputed, anchored.rootCid.toLowerCase(), "recomputed root != on-chain rootCid");
-    assert.strictEqual(recomputed, idx.metadataMerkleRoot.toLowerCase(), "recomputed root != provider index_root");
+    // First anchor: the on-chain rootCid is still zero until setRoot lands.
+    const { fresh, anchored } = await verifyAnchor({
+      expectedEntries: uploaded,
+      isStale: (rootCid) => /^0x0+$/.test(rootCid),
+    });
 
     // [M2 5/5] Tamper check: a mutated entry set must NOT match the anchor.
     console.log("\n[M2 5/5] Tamper check (mutated entry set must mismatch)…");
@@ -265,19 +288,10 @@ async function main() {
     // [M3 3/4] Verify the new anchor: recompute from a fresh listing and assert
     // it equals the on-chain rootCid (retrying for best-block lag) and index_root.
     console.log("\n[M3 3/4] Re-read anchor + recompute + assert…");
-    const freshAfterEdit = await enumerateEntries(providerUrl, bucketId);
-    const recomputedAfterEdit = (toHex(metadataMerkleRoot(freshAfterEdit)) as `0x${string}`).toLowerCase();
-    let editAnchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
-    for (let i = 0; i < 5 && editAnchored.rootCid.toLowerCase() === rootBeforeEdit; i++) {
-      await waitForNextBlock(papi);
-      editAnchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
-    }
-    const idxAfterEdit = await indexRoot(providerUrl, bucketId);
-    console.log(`  recomputed=${recomputedAfterEdit}`);
-    console.log(`  on-chain  =${editAnchored.rootCid.toLowerCase()}`);
-    console.log(`  index_root=${idxAfterEdit.metadataMerkleRoot.toLowerCase()}`);
-    assert.strictEqual(recomputedAfterEdit, editAnchored.rootCid.toLowerCase(), "recomputed root != on-chain rootCid (post-edit)");
-    assert.strictEqual(recomputedAfterEdit, idxAfterEdit.metadataMerkleRoot.toLowerCase(), "recomputed root != provider index_root (post-edit)");
+    // Post-edit: wait while the on-chain rootCid still reads the pre-edit value.
+    const { anchored: editAnchored } = await verifyAnchor({
+      isStale: (rootCid) => rootCid === rootBeforeEdit,
+    });
     assert.notStrictEqual(editAnchored.rootCid.toLowerCase(), rootBeforeEdit, "on-chain rootCid did not move after the edit");
 
     // [M3 4/4] Download the same path back: the bytes must be the edited blob,
