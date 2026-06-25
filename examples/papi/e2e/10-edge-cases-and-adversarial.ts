@@ -4,12 +4,14 @@
  * E2E Workflow 10 — Edge Cases & Adversarial
  *
  * Tests: balance accounting, capacity tracking, frozen buckets,
- * concurrent operations, data integrity.
+ * concurrent operations, data integrity, and access-control rejections
+ * (non-admin writes, freeze without a checkpoint).
  *
  * Usage: node e2e/10-edge-cases-and-adversarial.js [chain_ws] [provider_url]
  */
 
 import assert from "node:assert";
+import { Enum } from "polkadot-api";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   endAgreement,
@@ -229,6 +231,52 @@ async function main() {
         r2.commit.leaf_indices[0],
         "Leaf indices should differ"
       );
+    },
+  });
+
+  // ── Access Control (adversarial — must be rejected) ───────────────────────
+
+  tests.push({
+    name: "10.10 Non-admin cannot add bucket members",
+    fn: async () => {
+      // Bob owns (and is sole admin of) the bucket; Eve is not even a member.
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
+        duration: 100,
+      });
+      const tx = api.tx.StorageProvider.set_member({
+        bucket_id: bucketId,
+        member: dave.address,
+        role: Enum("Reader"),
+      });
+      // ensure_admin rejects a non-admin caller before any role logic runs.
+      await submitTxExpectFailure(tx, eve.signer, "NotBucketAdmin", "10.10");
+    },
+  });
+
+  tests.push({
+    name: "10.11 Non-admin cannot freeze a bucket",
+    fn: async () => {
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
+        duration: 100,
+      });
+      const tx = api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId });
+      await submitTxExpectFailure(tx, eve.signer, "NotBucketAdmin", "10.11");
+    },
+  });
+
+  tests.push({
+    name: "10.12 Freezing without a checkpoint fails",
+    fn: async () => {
+      // Fresh bucket: no checkpoint submitted, so no snapshot exists yet.
+      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
+        maxBytes,
+        duration: 100,
+      });
+      // Bob is the admin (passes ensure_admin); freeze then trips NoSnapshot.
+      const tx = api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId });
+      await submitTxExpectFailure(tx, bob.signer, "NoSnapshot", "10.12");
     },
   });
 

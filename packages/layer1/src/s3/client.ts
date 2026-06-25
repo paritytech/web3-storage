@@ -168,7 +168,7 @@ export class S3Client {
       name,
       owner: signer.address,
       createdAt: 0,
-      objectCount: 0,
+      objectCount: 0n,
       providerInfo: [{ account: provider.address, multiaddr: "", url: null }],
     };
   }
@@ -192,7 +192,7 @@ export class S3Client {
       name: new TextDecoder().decode(bucket.name),
       owner: bucket.owner,
       createdAt: Number(bucket.created_at),
-      objectCount: Number(bucket.object_count),
+      objectCount: bucket.object_count,
       providerInfo: providerInfo ?? [],
     };
   }
@@ -218,7 +218,7 @@ export class S3Client {
         name: new TextDecoder().decode(bucket.name),
         owner: bucket.owner,
         createdAt: Number(bucket.created_at),
-        objectCount: Number(bucket.object_count),
+        objectCount: bucket.object_count,
         providerInfo: [],
       });
       layer0BucketIds.push(bucket.layer0_bucket_id);

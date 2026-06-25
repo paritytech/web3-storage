@@ -757,7 +757,7 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
 
           if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
-            echo "No baseline found (first run?) — skipping comparison."
+            echo "::warning::No JS coverage baseline found (first run or evicted cache) — regression check skipped, not enforced this run."
             cat /tmp/pr-coverage/coverage-summary.json 2>/dev/null || true
             exit 0
           fi

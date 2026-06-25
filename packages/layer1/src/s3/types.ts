@@ -14,8 +14,10 @@ export interface BucketInfo {
   layer0BucketId: bigint;
   name: string;
   owner: string;
+  /** Creation block number (u32). */
   createdAt: number;
-  objectCount: number;
+  /** On-chain object count (u64); bigint to avoid precision loss above 2^53. */
+  objectCount: bigint;
   /** Primary providers of the underlying layer-0 bucket. */
   providerInfo: PrimaryProviderInfo[];
 }

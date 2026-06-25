@@ -100,12 +100,21 @@ export async function runSuite<C>(
 // ── Failure assertion ───────────────────────────────────────────────────────
 
 /**
- * Submit a transaction and assert it fails with a dispatch error whose
- * stringified representation contains `expectedError`.
+ * Submit a transaction and assert it is *included* but *dispatches with an
+ * error* whose stringified representation contains `expectedError`.
  *
- * Works by catching the error thrown by `submitTx` (which already calls
- * `signAndSubmit` and throws on `!result.ok`). If the tx unexpectedly
- * succeeds, an assertion error is thrown.
+ * The included-block result (`txBestBlocksState`) is the source of truth: a
+ * dispatch failure surfaces as `result.ok === false` with a typed
+ * `result.dispatchError`, which we match via {@link formatDispatchError}. The
+ * "tx succeeded" and "wrong error" assertions are checked on that typed result
+ * and are NOT message-matched against `expectedError` — an earlier version
+ * caught its own assertion errors and, because those messages embed
+ * `expectedError`, silently reported a wrongly-succeeding tx as a pass.
+ *
+ * Only a pre-inclusion throw (PAPI rejecting the tx as invalid before it lands,
+ * or the timeout) reaches the catch. Some runtime rejections do surface that
+ * way, so we accept it only when the thrown message names `expectedError`;
+ * anything else is a genuine infrastructure failure and is re-thrown.
  */
 export async function submitTxExpectFailure(
   tx: SubmittableTx,
@@ -113,9 +122,10 @@ export async function submitTxExpectFailure(
   expectedError: string,
   label: string,
 ) {
+  let result: any;
   try {
     const observable = tx.signSubmitAndWatch(signer);
-    const result = await new Promise<any>((resolve, reject) => {
+    result = await new Promise<any>((resolve, reject) => {
       let done = false;
       let sub: { unsubscribe(): void } | undefined;
       const cleanup = () => {
@@ -144,28 +154,27 @@ export async function submitTxExpectFailure(
         },
       });
     });
-    if (result.ok) {
-      throw new Error(
-        `${label}: expected dispatch failure containing "${expectedError}", but tx succeeded`
-      );
-    }
-    // Dispatch error present — check that it matches.
-    const errStr = formatDispatchError(result.dispatchError);
-    if (!errStr.includes(expectedError)) {
-      throw new Error(
-        `${label}: expected error containing "${expectedError}", got "${errStr}"`
-      );
-    }
-    return result;
   } catch (err) {
-    // submitTx-style wrappers and PAPI can throw various errors. Check if the
-    // error message itself contains what we're looking for.
-    if ((err as Error).message && (err as Error).message.includes(expectedError)) {
-      return; // expected failure — success
-    }
-    // Re-throw: either the tx succeeded unexpectedly or the error didn't match.
+    // Pre-inclusion throw (invalid tx) or timeout. Accept only if it clearly
+    // names the expected dispatch error; otherwise it is an infra failure.
+    if ((err as Error).message?.includes(expectedError)) return;
     throw err;
   }
+
+  // Included. Assert it dispatched with the expected error — on the typed
+  // result, never by message-matching (which would mask a succeeding tx).
+  if (result.ok) {
+    throw new Error(
+      `${label}: expected dispatch failure containing "${expectedError}", but tx succeeded`
+    );
+  }
+  const errStr = formatDispatchError(result.dispatchError);
+  if (!errStr.includes(expectedError)) {
+    throw new Error(
+      `${label}: expected error containing "${expectedError}", got "${errStr}"`
+    );
+  }
+  return result;
 }
 
 // ── Shared setup helper ─────────────────────────────────────────────────────
