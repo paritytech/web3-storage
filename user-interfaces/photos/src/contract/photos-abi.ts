@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// ABI for the Photos contract, transcribed from `contracts/Photos.sol` (and the
+// `PrimitiveAgreementTerms` tuple from `contracts/IDriveRegistry.sol`). The UI
+// needs the ABI for viem encode/decode; it deliberately does NOT import the
+// generated `src/contract/Photos.json` because that artifact is produced by
+// `build:contract` (solc + resolc) and is git-ignored, so it isn't present in a
+// plain checkout or in CI. The contract `bin` (needed only for the optional
+// dev-deploy fallback, M8) still comes from `Photos.json` at that point.
+//
+// Keep in sync with `contracts/Photos.sol` if the contract interface changes.
+
+import type { Abi } from 'viem'
+
+export const PHOTOS_ABI = [
+  {
+    type: 'function',
+    name: 'libraryOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'user', type: 'address' }],
+    outputs: [
+      { name: 'driveId', type: 'uint64' },
+      { name: 'rootCid', type: 'bytes32' },
+      { name: 'exists', type: 'bool' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'setRoot',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'rootCid', type: 'bytes32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'createLibrary',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'userAccount', type: 'bytes32' },
+      { name: 'name', type: 'string' },
+      { name: 'provider', type: 'bytes32' },
+      {
+        name: 'terms',
+        type: 'tuple',
+        components: [
+          { name: 'owner', type: 'bytes32' },
+          { name: 'maxBytes', type: 'uint64' },
+          { name: 'duration', type: 'uint32' },
+          { name: 'pricePerByte', type: 'uint128' },
+          { name: 'validUntil', type: 'uint32' },
+          { name: 'nonce', type: 'uint64' },
+          { name: 'hasBucketId', type: 'bool' },
+          { name: 'bucketId', type: 'uint64' },
+          { name: 'hasReplicaParams', type: 'bool' },
+          {
+            name: 'replicaParams',
+            type: 'tuple',
+            components: [
+              { name: 'syncBalance', type: 'uint128' },
+              { name: 'minSyncInterval', type: 'uint32' },
+              { name: 'syncPrice', type: 'uint128' },
+            ],
+          },
+        ],
+      },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [{ name: 'driveId', type: 'uint64' }],
+  },
+  {
+    type: 'event',
+    name: 'LibraryCreated',
+    inputs: [
+      { name: 'user', type: 'address', indexed: true },
+      { name: 'driveId', type: 'uint64', indexed: true },
+      { name: 'provider', type: 'bytes32', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'RootUpdated',
+    inputs: [
+      { name: 'user', type: 'address', indexed: true },
+      { name: 'driveId', type: 'uint64', indexed: true },
+      { name: 'rootCid', type: 'bytes32', indexed: false },
+    ],
+  },
+] as const satisfies Abi
