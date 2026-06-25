@@ -5,7 +5,7 @@
 // ("drive #N"). No writes: creating a library is M5, albums/upload/grid are M6.
 
 import { useEffect, useState } from 'react'
-import { Image, FolderPlus, Anchor, AlertTriangle, Settings2 } from 'lucide-react'
+import { Image, Anchor, AlertTriangle, Settings2 } from 'lucide-react'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork } from '@/state/network.state'
 import { useConnectionStatus, useConnectionError } from '@/state/chain.state'
@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
+import { CreateLibraryPanel } from '@/components/CreateLibraryPanel'
 import { formatAddress, formatHash } from '@/utils/format'
 
 type ReadState =
@@ -151,32 +152,17 @@ export function Library() {
   const { library } = state
   const anchored = !isZeroRoot(library.rootCid)
 
-  // ── State A — no library ──
+  // ── State A — no library: the interactive create flow (M5) ──
   if (!library.exists) {
     return (
-      <Centered>
-        <Card className="max-w-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FolderPlus className="h-5 w-5 text-purple-500" /> No library yet
-            </CardTitle>
-            <CardDescription>
-              {account.name || formatAddress(account.address)} hasn't set up a photo library on{' '}
-              {network.name}.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-gray-400">
-              Creating a library — picking a storage provider and opening an agreement — lands in
-              the next milestone (M5). This skeleton is read-only.
-            </p>
-            <Button disabled title="Coming in M5">
-              Create library
-            </Button>
-            <ContractFootnote contract={contract} />
-          </CardContent>
-        </Card>
-      </Centered>
+      <div className="pt-8">
+        <CreateLibraryPanel
+          account={account}
+          contract={contract}
+          network={network}
+          onCreated={() => setRefresh((n) => n + 1)}
+        />
+      </div>
     )
   }
 
