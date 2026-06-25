@@ -378,3 +378,79 @@ export function driveIdFromEvents(
   }
   return undefined
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setRoot — anchor the client-computed metadata root (M6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A 32-byte rootCid as `0x`-prefixed lowercase hex. */
+export type RootCid = `0x${string}`
+
+/** Render a 32-byte metadata root as the `bytes32` the contract expects. */
+export function rootToBytes32(root: Uint8Array): RootCid {
+  if (root.length !== 32) throw new Error(`rootCid must be 32 bytes, got ${root.length}`)
+  return toHex(root) as RootCid
+}
+
+/** viem `encodeFunctionData(setRoot)` → raw calldata bytes. */
+export function encodeSetRoot(rootCid: RootCid): Uint8Array {
+  return fromHex(
+    encodeFunctionData({ abi: PHOTOS_ABI, functionName: 'setRoot', args: [rootCid] }),
+  )
+}
+
+/**
+ * Anchor the drive's metadata Merkle root on-chain via `setRoot(rootCid)` — a
+ * signed, value-less `Revive.call`. The browser port of
+ * `scripts/lib/photos.ts:anchorRoot`, submitting with `signAndSubmit` (+ the
+ * shared stale-nonce retry) instead of the script's `submitTx` loop.
+ *
+ * Like `createLibrary`, a contract revert (Photos.sol's `require(lib.exists)`)
+ * does NOT fail the extrinsic, so success is confirmed by the contract's
+ * `RootUpdated` log rather than `result.ok` alone.
+ */
+export async function submitSetRoot(
+  api: ParachainApi,
+  signer: PolkadotSigner,
+  contractAddressBytes: Uint8Array,
+  rootCid: RootCid,
+): Promise<void> {
+  const tx = api.tx.Revive.call({
+    dest: toHex(contractAddressBytes) as `0x${string}`, // SizedHex<20>
+    value: 0n,
+    weight_limit: DEFAULT_GAS_LIMIT,
+    storage_deposit_limit: DEFAULT_STORAGE_DEPOSIT_LIMIT,
+    data: encodeSetRoot(rootCid),
+  })
+  const result = await signAndSubmitWithRetry(tx, signer)
+  if (!result.ok) {
+    throw new Error(`setRoot failed on-chain: ${stringifyDispatchError(result.dispatchError)}`)
+  }
+  if (!rootUpdated(result.events, api, toHex(contractAddressBytes))) {
+    throw new Error(
+      'setRoot did not emit RootUpdated — the call reverted (no library for this account?).',
+    )
+  }
+}
+
+/** True if a `RootUpdated` log from `contractAddress` is present in `events`. */
+function rootUpdated(events: unknown[], api: ParachainApi, contractAddress: string): boolean {
+  const want = contractAddress.toLowerCase()
+  for (const ev of api.event.Revive.ContractEmitted.filter(events as never[]) as Array<{
+    payload: { contract: string; data: Uint8Array; topics?: `0x${string}`[] }
+  }>) {
+    const p = ev.payload
+    if (String(p.contract).toLowerCase() !== want) continue
+    try {
+      const log = decodeEventLog({
+        abi: PHOTOS_ABI,
+        data: toHex(p.data) as `0x${string}`,
+        topics: (p.topics ?? []) as [`0x${string}`, ...`0x${string}`[]],
+      }) as { eventName: string }
+      if (log.eventName === 'RootUpdated') return true
+    } catch {
+      // not in this ABI — skip
+    }
+  }
+  return false
+}
