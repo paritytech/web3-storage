@@ -3,6 +3,9 @@
 use crate::cli::GlobalArgs;
 use anyhow::{bail, Context, Result};
 
+/// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
+pub type BucketId = u64;
+
 /// Resolve the SURI from either `--suri` or `--keyfile` (exactly one is required)
 pub fn resolve_suri(global: &GlobalArgs) -> Result<String> {
     match (&global.suri, &global.keyfile) {

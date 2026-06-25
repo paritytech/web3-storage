@@ -10,30 +10,15 @@ use clap::{Args, Subcommand};
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
-use storage_client::{AdminClient, ChunkingStrategy, ClientConfig, StorageUserClient};
+use storage_client::{AdminClient, ClientConfig, StorageUserClient};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use crate::actions::upload::{upload_once, Upload};
 use crate::cli::GlobalArgs;
-use crate::common::resolve_suri;
-use crate::metrics::{summarize, OpLabels, OpOutcome, OpSummary, Operation};
-
-/// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
-type BucketId = u64;
-
-/// Off-chain HTTP upload to a provider — the operation this scenario exercises.
-struct Upload;
-
-impl Operation for Upload {
-    fn labels(&self) -> OpLabels {
-        OpLabels {
-            verb: "upload",
-            noun_plural: "uploads",
-            past_tense: "uploaded",
-        }
-    }
-}
+use crate::common::{resolve_suri, BucketId};
+use crate::metrics::{summarize, OpOutcome, OpSummary};
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
@@ -110,15 +95,7 @@ async fn do_upload(
         Some(s) => s.acquire().await.ok(),
         None => None,
     };
-    let payload = random_payload(size);
-    let started = Instant::now();
-    match client
-        .upload(bucket, &payload, ChunkingStrategy::default())
-        .await
-    {
-        Ok(_root) => OpOutcome::success(size, started.elapsed()),
-        Err(e) => OpOutcome::failure(size, started.elapsed(), e.to_string()),
-    }
+    upload_once(&client, bucket, &random_payload(size)).await
 }
 
 /// Run a single user's `uploads` uploads, either sequentially or in parallel.
@@ -292,46 +269,38 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
 
     let started = Instant::now();
     let mut outcomes = Vec::with_capacity(total_uploads);
+    // Build each user's future once; spawn it for parallelism or await it in
+    // sequence. Passing the `Copy` config values positionally keeps the spawned
+    // future `'static` (it owns its `usize`/`bool`/`Arc`s), so the closure only
+    // borrows `buckets`/`sem`/`args` locally.
+    let run_one = |user_idx: usize, client: Arc<StorageUserClient>| {
+        run_user(
+            user_idx,
+            client,
+            buckets.clone(),
+            args.uploads_per_user,
+            args.max_payload_size,
+            args.parallel_uploads,
+            sem.clone(),
+        )
+    };
+
     if args.parallel_users {
         let mut users_set = JoinSet::new();
         for (user_idx, client) in clients.into_iter().enumerate() {
-            let buckets = buckets.clone();
-            let sem = sem.clone();
-            let uploads = args.uploads_per_user;
-            let size = args.max_payload_size;
-            let parallel_uploads = args.parallel_uploads;
-            users_set.spawn(async move {
-                run_user(
-                    user_idx,
-                    client,
-                    buckets,
-                    uploads,
-                    size,
-                    parallel_uploads,
-                    sem,
-                )
-                .await
-            });
+            users_set.spawn(run_one(user_idx, client));
         }
         while let Some(res) = users_set.join_next().await {
             match res {
                 Ok(user_outcomes) => outcomes.extend(user_outcomes),
-                Err(join_err) => bail!("user task panicked: {join_err}"),
+                // A panicked user task is a bug, not load — warn and keep the
+                // partial results rather than discarding the whole run.
+                Err(join_err) => eprintln!("warning: a user task failed: {join_err}"),
             }
         }
     } else {
         for (user_idx, client) in clients.into_iter().enumerate() {
-            let user_outcomes = run_user(
-                user_idx,
-                client,
-                buckets.clone(),
-                args.uploads_per_user,
-                args.max_payload_size,
-                args.parallel_uploads,
-                sem.clone(),
-            )
-            .await;
-            outcomes.extend(user_outcomes);
+            outcomes.extend(run_one(user_idx, client).await);
         }
     }
 
@@ -354,13 +323,5 @@ mod tests {
         let buckets = [10u64, 20, 30];
         let picked: Vec<u64> = (0..7).map(|i| bucket_for(i, &buckets)).collect();
         assert_eq!(picked, vec![10, 20, 30, 10, 20, 30, 10]);
-    }
-
-    #[test]
-    fn upload_labels_match() {
-        let l = Upload.labels();
-        assert_eq!(l.verb, "upload");
-        assert_eq!(l.noun_plural, "uploads");
-        assert_eq!(l.past_tense, "uploaded");
     }
 }

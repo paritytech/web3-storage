@@ -5,6 +5,7 @@
 //! [`storage-client`](../../client) SDK. See `--help` for the available
 //! subcommands.
 
+mod actions;
 mod cli;
 mod commands;
 mod common;
