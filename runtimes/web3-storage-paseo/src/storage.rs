@@ -22,6 +22,7 @@ use crate::{
 // current value from unhashed storage, falling back to the default.
 parameter_types! {
     pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
+    pub storage BaseChallengeDeposit: Balance = 100 * UNIT;
     pub storage ChallengeTimeout: BlockNumber = 48 * HOURS;
     pub storage SettlementTimeout: BlockNumber = 24 * HOURS;
     pub storage RequestTimeout: BlockNumber = 6 * HOURS;
