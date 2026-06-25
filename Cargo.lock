@@ -3183,8 +3183,7 @@ dependencies = [
  "sp-runtime",
  "storage-client",
  "storage-primitives",
- "subxt",
- "subxt-signer",
+ "storage-subxt",
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",
@@ -7838,8 +7837,7 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-client",
- "subxt",
- "subxt-signer",
+ "storage-subxt",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -9596,8 +9594,7 @@ dependencies = [
  "sp-runtime",
  "storage-primitives",
  "storage-provider-node",
- "subxt",
- "subxt-signer",
+ "storage-subxt",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -9788,6 +9785,18 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "storage-subxt"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "subxt",
+ "subxt-core",
+ "subxt-signer",
 ]
 
 [[package]]
@@ -11390,18 +11399,6 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "web3-storage-subxt"
-version = "0.1.0"
-dependencies = [
- "parity-scale-codec",
- "scale-info",
- "serde",
- "subxt",
- "subxt-core",
- "subxt-signer",
 ]
 
 [[package]]

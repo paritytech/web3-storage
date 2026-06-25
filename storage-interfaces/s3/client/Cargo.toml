@@ -21,8 +21,7 @@ reqwest = { workspace = true }
 tokio = { workspace = true }
 
 # Subxt for chain interaction
-subxt = { workspace = true }
-subxt-signer = { workspace = true }
+storage-subxt = { workspace = true }
 bip39 = { workspace = true }
 
 # Utilities

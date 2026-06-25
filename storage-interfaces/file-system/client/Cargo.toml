@@ -20,8 +20,7 @@ reqwest = { workspace = true }
 # Substrate/Polkadot
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
-subxt = { workspace = true }
-subxt-signer = { workspace = true }
+storage-subxt = { workspace = true }
 
 # Utilities
 tracing = { workspace = true }

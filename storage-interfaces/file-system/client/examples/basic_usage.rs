@@ -25,7 +25,7 @@ use file_system_client::FileSystemClient;
 use sp_runtime::AccountId32;
 use std::env;
 use storage_client::{NegotiateRequest, ProviderClient};
-use subxt_signer::sr25519::dev as dev_signer;
+use storage_subxt::subxt_signer::sr25519::dev as dev_signer;
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
 const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";

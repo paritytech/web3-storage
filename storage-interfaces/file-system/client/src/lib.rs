@@ -155,7 +155,7 @@ impl FileSystemClient {
     }
 
     /// Set a custom signer for blockchain transactions.
-    pub fn with_signer(mut self, signer: subxt_signer::sr25519::Keypair) -> Self {
+    pub fn with_signer(mut self, signer: storage_subxt::subxt_signer::sr25519::Keypair) -> Self {
         self.substrate_client = self.substrate_client.with_signer(signer);
         self
     }
