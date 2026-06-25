@@ -1,9 +1,0 @@
-packages:
-  - shared/*
-  - shared/papi/.papi/descriptors
-  - provider
-  - drive-ui
-  - s3-ui
-
-allowBuilds:
-  esbuild: true

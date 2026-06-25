@@ -12,7 +12,6 @@
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.20.3",
-    "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "@radix-ui/react-context-menu": "^2.2.6",
     "@radix-ui/react-dialog": "^1.1.6",
@@ -22,7 +21,7 @@
     "@react-rxjs/core": "^0.10.7",
     "@web3-storage/network-config": "workspace:*",
     "@web3-storage/network-picker": "workspace:*",
-    "@web3-storage/papi": "workspace:*",
+    "@web3-storage/sdk": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
