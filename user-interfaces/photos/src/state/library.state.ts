@@ -14,7 +14,6 @@ import { getApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
   computePaymentAndValue,
-  driveIdFromEvents,
   encodeCreateLibrary,
   ensureAccountMapped,
   h160ToSubstrate,
@@ -84,6 +83,9 @@ export async function loadProviders(): Promise<void> {
 }
 
 export function resetCreation(): void {
+  // Drop the cached attempt too, so a later `retryCreate()` can't fire against a
+  // stale account/provider after the user switched context.
+  lastInput = null
   creation$.next({ stage: 'idle' })
 }
 
@@ -125,15 +127,33 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       })
       return
     }
+    // Re-check capacity against fresh state too — the cached list (which gated
+    // the button) can be stale. `max_capacity === 0` is unlimited.
+    const maxCapacity = BigInt(info.settings.max_capacity ?? 0)
+    const committedBytes = BigInt(info.committed_bytes ?? 0)
+    const availableCapacity = maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n
+    if (maxCapacity !== 0n && availableCapacity < sizeBytes) {
+      creation$.next({
+        stage: 'failed',
+        error: {
+          kind: 'capacity',
+          message: `Provider no longer has room for ${sizeBytes} bytes (free: ${availableCapacity}). Pick another provider or reduce the size.`,
+        },
+      })
+      return
+    }
     const pricePerByte = BigInt(info.settings.price_per_byte ?? 0)
     const { value } = computePaymentAndValue(pricePerByte, sizeBytes, durationBlocks)
 
     // The terms are bound to the *contract's* mapped account, not the user's.
     const contractOwner = h160ToSubstrate(fromHex(contract.address))
+    // Negotiate against the provider's *current* endpoint — its registered
+    // multiaddr may have changed since the list loaded.
+    const multiaddr = new TextDecoder().decode(info.multiaddr)
 
     creation$.next({ stage: 'negotiating' })
     const negotiated = await negotiateProviderTerms(
-      { account: contractOwner.address, multiaddr: provider.multiaddr },
+      { account: contractOwner.address, multiaddr },
       {
         owner: contractOwner.address,
         max_bytes: sizeBytes,
@@ -164,8 +184,7 @@ export async function createLibrary(input: CreateLibraryInput): Promise<void> {
       return
     }
 
-    const driveId = driveIdFromEvents(result.events, api, contract.address)
-    creation$.next({ stage: 'ready', driveId })
+    creation$.next({ stage: 'ready', driveId: result.driveId })
   } catch (err) {
     creation$.next({ stage: 'failed', error: { kind: 'unknown', message: formatThrown(err) } })
   }

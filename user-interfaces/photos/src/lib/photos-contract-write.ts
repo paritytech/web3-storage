@@ -11,7 +11,7 @@ import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog, encodeFunctionData } from 'viem'
 import type { PolkadotSigner } from 'polkadot-api'
 import { fromHex, toHex, toSs58, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
-import { subscribeToBlocks } from '@/lib/chain-client'
+import { getClient } from '@/lib/chain-client'
 import { PHOTOS_ABI } from '@/contract/photos-abi'
 
 /** Token base unit (12 decimals, like Polkadot). */
@@ -164,26 +164,47 @@ function isStaleError(err: unknown): boolean {
   return /stale/i.test(text)
 }
 
-/** Resolve once the chain advances past the block seen when this was called. */
-function waitForNextBlock(timeoutMs = 30_000): Promise<void> {
+/**
+ * Resolve once the chain produces a new best block past the one seen when this
+ * was called (best, not finalized — the nonce-collision window closes at
+ * inclusion, matching the headless flow's in-block resolution; waiting for
+ * finalization would add ~12-18s per retry for no benefit). Resolves on a
+ * bounded timeout so a stalled chain can't hang the retry indefinitely.
+ */
+function waitForNextBlock(timeoutMs = 12_000): Promise<void> {
   return new Promise((resolve) => {
+    const client = getClient()
+    if (!client) {
+      setTimeout(resolve, 6_000)
+      return
+    }
     let initial: number | null = null
     let unsubscribe = () => {}
     const timer = setTimeout(() => {
       unsubscribe()
       resolve()
     }, timeoutMs)
-    unsubscribe = subscribeToBlocks((block) => {
-      if (initial === null) {
-        initial = block
-        return
-      }
-      if (block > initial) {
+    const sub = client.bestBlocks$.subscribe({
+      next: (blocks) => {
+        const tip = blocks[0]?.number
+        if (tip == null) return
+        if (initial === null) {
+          initial = tip
+          return
+        }
+        if (tip > initial) {
+          clearTimeout(timer)
+          unsubscribe()
+          resolve()
+        }
+      },
+      error: () => {
         clearTimeout(timer)
         unsubscribe()
         resolve()
-      }
+      },
     })
+    unsubscribe = () => sub.unsubscribe()
   })
 }
 
@@ -208,6 +229,8 @@ export type CreateLibraryErrorKind =
   | 'terms-reused'
   | 'bad-signature'
   | 'already-exists'
+  | 'capacity'
+  | 'reverted'
   | 'negotiate'
   | 'unknown'
 
@@ -217,12 +240,25 @@ export interface CreateLibraryError {
 }
 
 /**
- * Map a `Revive.call` dispatch error to a UI-ready cause. The agreement errors
- * (`PaymentExceedsMax`, `TermsExpired`, …) are pallet errors raised inside
- * `DRIVES.createDrive`, not Solidity reverts, so they surface as a failed
- * dispatch whose stringified shape contains the variant name. Photos.sol's own
- * `require(...)` reverts come back as a generic Revive trap with no reliable
- * reason string.
+ * The honest message for a contract-level revert we can't attribute precisely.
+ * A revert inside `Revive.call` (the `createLibrary` precompile call failing, or
+ * Photos.sol's own `require`) does not fail the extrinsic and carries no
+ * reliable reason string back to the client, so we list the likely causes.
+ */
+export function contractRevertedError(): CreateLibraryError {
+  return {
+    kind: 'reverted',
+    message:
+      'The contract rejected createLibrary. Likely causes: the payment was too low for the provider’s price (pick a cheaper provider or reduce size/duration), the signed terms expired (try again), or a library already exists for this account.',
+  }
+}
+
+/**
+ * Best-effort map of a failed-dispatch error to a UI cause, for the case where a
+ * revert *does* surface as `result.ok === false` (version-dependent). The inner
+ * agreement errors are often collapsed into a generic Revive trap, so an
+ * unmatched error falls through to `unknown` — the no-event guard in
+ * `submitCreateLibrary` is the primary detector of a reverted call.
  */
 export function classifyDispatchError(dispatchError: unknown): CreateLibraryError {
   const raw = stringifyDispatchError(dispatchError)
@@ -271,13 +307,20 @@ export async function ensureAccountMapped(api: ParachainApi, signer: PolkadotSig
 }
 
 export type SubmitCreateLibraryResult =
-  | { ok: true; events: unknown[] }
+  | { ok: true; driveId?: bigint }
   | { ok: false; error: CreateLibraryError }
 
 /**
  * Submit `createLibrary` calldata to the deployed contract via `Revive.call`,
  * attaching `value` (the buffered payment). Returns a discriminated result so
  * the caller can surface a classified error inline rather than catching throws.
+ *
+ * A contract revert (the `createDrive` precompile rejecting the payment/terms,
+ * or Photos.sol's `require`) does NOT fail the `Revive.call` extrinsic —
+ * `result.ok` stays true with no drive created. So success is confirmed the way
+ * the headless flow asserts it (`scripts/photos-flow.ts`): the on-chain
+ * `DriveRegistry.DriveCreated` event (and the contract's `LibraryCreated` log).
+ * Their absence means the call reverted.
  */
 export async function submitCreateLibrary(
   api: ParachainApi,
@@ -297,7 +340,13 @@ export async function submitCreateLibrary(
   if (!result.ok) {
     return { ok: false, error: classifyDispatchError(result.dispatchError) }
   }
-  return { ok: true, events: result.events }
+  const driveId = driveIdFromEvents(result.events, api, toHex(contractAddressBytes))
+  const created =
+    driveId !== undefined || api.event.DriveRegistry.DriveCreated.filter(result.events).length > 0
+  if (!created) {
+    return { ok: false, error: contractRevertedError() }
+  }
+  return { ok: true, driveId }
 }
 
 /**
