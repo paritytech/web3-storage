@@ -11,8 +11,7 @@
   },
   "scripts": {
     "papi:install": "papi generate",
-    "papi:generate": "papi add -w ws://127.0.0.1:2222 parachain && papi generate",
-    "typecheck": "tsc --noEmit"
+    "papi:generate": "papi add -w ws://127.0.0.1:2222 parachain && papi generate"
   },
   "devDependencies": {
     "@polkadot-api/cli": "^0.21.5"
