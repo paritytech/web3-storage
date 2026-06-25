@@ -21,7 +21,9 @@ import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { getApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
+  deleteFile,
   downloadFile,
+  downloadFileWithType,
   listDir,
   mkdir,
   putFile,
@@ -365,6 +367,78 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not save the edit.')
     throw err
+  }
+}
+
+/**
+ * Rename a photo within its album, keeping it content-addressed. The provider has
+ * no move op, so this copies the bytes to the new path (photo + thumbnail) and
+ * deletes the old one — re-PUTting identical bytes yields the same `data_root`, so
+ * no content is duplicated. Refreshes the grid and schedules a background re-anchor.
+ * `rawName` is the full new filename (the caller preserves the extension).
+ */
+export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
+  const ctx = fsContext$.getValue()
+  const album = selectedAlbum$.getValue()
+  if (!ctx || !album) return
+
+  const name = rawName.trim()
+  if (!name || name.includes('/') || name.startsWith('.')) {
+    libraryError$.next('Name cannot be empty, contain "/", or start with ".".')
+    return
+  }
+  if (name === item.name) return
+  if (entries$.getValue().some((e) => e.name === name)) {
+    libraryError$.next(`A photo named "${name}" already exists in this album.`)
+    return
+  }
+
+  const newPath = `/${album}/${name}`
+  const newThumbPath = `${THUMBS_ROOT}/${album}/${name}`
+  libraryError$.next(undefined)
+  try {
+    // Copy first; only delete the old path once the new one is safely in place.
+    const photo = await downloadFileWithType(ctx, item.path)
+    await putVerified(ctx, newPath, photo.bytes, photo.contentType)
+    try {
+      const thumb = await downloadFileWithType(ctx, item.thumbPath)
+      await putVerified(ctx, newThumbPath, thumb.bytes, thumb.contentType)
+    } catch {
+      // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
+    }
+
+    await deleteFile(ctx, item.path)
+    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    dataRootCache.delete(item.path)
+    dataRootCache.delete(item.thumbPath)
+
+    await loadGrid()
+    scheduleReanchor()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
+  }
+}
+
+/**
+ * Delete a photo (and its thumbnail) from the album. Removes the FS index entries;
+ * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
+ * model. Refreshes the grid and schedules a background re-anchor.
+ */
+export async function deletePhoto(item: GridItem): Promise<void> {
+  const ctx = fsContext$.getValue()
+  if (!ctx) return
+
+  libraryError$.next(undefined)
+  try {
+    await deleteFile(ctx, item.path)
+    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    dataRootCache.delete(item.path)
+    dataRootCache.delete(item.thumbPath)
+
+    await loadGrid()
+    scheduleReanchor()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not delete the photo.')
   }
 }
 
