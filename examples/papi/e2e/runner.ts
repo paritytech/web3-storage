@@ -3,7 +3,7 @@
 /**
  * Sequential orchestrator for the E2E test suite.
  *
- * Runs each workflow file (01-10) as a child process, collects exit codes,
+ * Runs each numbered workflow file as a child process, collects exit codes,
  * and prints a summary table at the end.
  *
  * Usage: node e2e/runner.js [chain_ws] [provider_url]
@@ -19,7 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
 
-// Discover workflow files: XX-*.js in this directory, sorted by name.
+// Discover workflow files: XX-*.ts in this directory, sorted by name.
 const files = readdirSync(__dirname)
   .filter((f) => /^\d{2}-.*\.ts$/.test(f))
   .sort();

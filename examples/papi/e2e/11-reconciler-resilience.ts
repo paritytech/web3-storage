@@ -24,8 +24,14 @@
  */
 
 import assert from "node:assert";
-import { updateProviderSettings } from "../api.js";
-import { ensureProviderRegistered, makeSigner, READ_OPTS } from "../common.js";
+import {
+  ensureProviderRegistered,
+  makeSigner,
+  READ_OPTS,
+  updateProviderSettings,
+  type ChainSigner,
+  type ParachainApi,
+} from "@web3-storage/sdk";
 import { negotiateSigned, runSuite, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
@@ -42,9 +48,12 @@ const POLL_INTERVAL_MS = 1_000;
  * that throws (e.g. a quote rejected as underpriced before the reconciler has
  * caught up) is treated as "not yet" and retried.
  */
-async function waitFor(predicate, label) {
+async function waitFor(
+  predicate: () => Promise<boolean>,
+  label: string,
+): Promise<void> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
-  let lastErr;
+  let lastErr: unknown;
   while (Date.now() < deadline) {
     try {
       if (await predicate()) return;
@@ -55,7 +64,7 @@ async function waitFor(predicate, label) {
   }
   throw new Error(
     `${label}: condition not met within ${POLL_TIMEOUT_MS}ms` +
-      (lastErr ? ` (last error: ${lastErr.message})` : "")
+      (lastErr ? ` (last error: ${(lastErr as Error).message})` : ""),
   );
 }
 
@@ -63,7 +72,12 @@ async function waitFor(predicate, label) {
 const QUOTE = { maxBytes: 1024n, duration: 50 };
 
 /** Negotiate at `pricePerByte` and return the price the provider pinned. */
-async function quotedPrice(api, owner, provider, pricePerByte) {
+async function quotedPrice(
+  api: ParachainApi,
+  owner: ChainSigner,
+  provider: ChainSigner,
+  pricePerByte: bigint,
+): Promise<bigint> {
   const signed = await negotiateSigned(api, PROVIDER_URL, owner, provider, {
     ...QUOTE,
     pricePerByte,
@@ -78,7 +92,7 @@ async function main() {
   const { papi, api } = await setupChain(CHAIN_WS);
   await ensureProviderRegistered(api, provider, PROVIDER_URL);
 
-  const tests = [];
+  const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
   tests.push({
     name: "11.1 /info reports the running provider as ready",
@@ -90,17 +104,17 @@ async function main() {
       assert.strictEqual(
         info.readiness.signing_configured,
         true,
-        "node has a --keyfile, so signing must be configured"
+        "node has a --keyfile, so signing must be configured",
       );
       assert.strictEqual(
         info.readiness.provider_info_loaded,
         true,
-        "Alice is registered, so the reconciler must have loaded provider_info"
+        "Alice is registered, so the reconciler must have loaded provider_info",
       );
       assert.strictEqual(
         info.readiness.nonce_counter_ready,
         true,
-        "the nonce counter must be bootstrapped from the replay window"
+        "the nonce counter must be bootstrapped from the replay window",
       );
     },
   });
@@ -108,10 +122,10 @@ async function main() {
   tests.push({
     name: "11.2 Reconciler picks up settings changes without a restart",
     fn: async () => {
-      const stored = await api.query.StorageProvider.Providers.getValue(
+      const stored = (await api.query.StorageProvider.Providers.getValue(
         provider.address,
-        READ_OPTS
-      );
+        READ_OPTS,
+      ))!;
       const base = {
         min_duration: stored.settings.min_duration,
         max_duration: stored.settings.max_duration,
@@ -135,16 +149,18 @@ async function main() {
         // Before the refresh a quote at `bumpedPrice` is pinned to the old,
         // lower listed price; after it, to the new one. Poll for the new price.
         await waitFor(
-          async () => (await quotedPrice(api, owner, provider, bumpedPrice)) === bumpedPrice,
-          "reconciler did not pick up the bumped listed price"
+          async () =>
+            (await quotedPrice(api, owner, provider, bumpedPrice)) === bumpedPrice,
+          "reconciler did not pick up the bumped listed price",
         );
       } finally {
         // Restore the original price and confirm the node converges back, so we
         // leave the shared provider exactly as we found it for later runs.
         await updateProviderSettings(api, provider, base);
         await waitFor(
-          async () => (await quotedPrice(api, owner, provider, originalPrice)) === originalPrice,
-          "reconciler did not converge back to the original listed price"
+          async () =>
+            (await quotedPrice(api, owner, provider, originalPrice)) === originalPrice,
+          "reconciler did not converge back to the original listed price",
         );
       }
     },
