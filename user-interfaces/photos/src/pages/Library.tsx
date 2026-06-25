@@ -35,6 +35,7 @@ import { AlbumBar } from '@/components/AlbumBar'
 import { UploadButton } from '@/components/UploadButton'
 import { PhotoGrid } from '@/components/PhotoGrid'
 import { Lightbox } from '@/components/Lightbox'
+import { PhotoEditor } from '@/components/PhotoEditor'
 import { formatAddress, formatHash } from '@/utils/format'
 
 type ReadState =
@@ -264,6 +265,7 @@ export function Library() {
       </Card>
 
       <Lightbox />
+      <PhotoEditor />
     </div>
   )
 }

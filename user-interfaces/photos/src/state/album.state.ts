@@ -66,6 +66,8 @@ export interface AnchorStatus {
 export interface LightboxState {
   name: string
   url: string
+  /** The grid item it was opened from — carries the path/thumbPath the editor needs. */
+  item: GridItem
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ const uploads$ = new BehaviorSubject<UploadProgress | null>(null)
 const anchorStatus$ = new BehaviorSubject<AnchorStatus>({ stage: 'idle' })
 const lightbox$ = new BehaviorSubject<LightboxState | null>(null)
 const lightboxLoading$ = new BehaviorSubject<boolean>(false)
+const editorOpen$ = new BehaviorSubject<boolean>(false)
 
 export const [useFsContext] = bind(fsContext$, null)
 export const [useLibraryError] = bind(libraryError$, undefined)
@@ -93,6 +96,7 @@ export const [useUploads] = bind(uploads$, null)
 export const [useAnchorStatus] = bind(anchorStatus$, { stage: 'idle' })
 export const [useLightbox] = bind(lightbox$, null)
 export const [useLightboxLoading] = bind(lightboxLoading$, false)
+export const [useEditorOpen] = bind(editorOpen$, false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Non-reactive session state (current library + caches)
@@ -299,7 +303,7 @@ export async function openPhoto(item: GridItem): Promise<void> {
     const bytes = await downloadFile(ctx, item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
-    lightbox$.next({ name: item.name, url })
+    lightbox$.next({ name: item.name, url, item })
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not open the photo.')
   } finally {
@@ -307,10 +311,55 @@ export async function openPhoto(item: GridItem): Promise<void> {
   }
 }
 
-/** Close the lightbox and release its object URL. */
+/** Close the lightbox and release its object URL (also closes the editor). */
 export function closePhoto(): void {
+  editorOpen$.next(false)
   revokeLightbox()
   lightbox$.next(null)
+}
+
+/** Open the crop/rotate editor for the photo currently in the lightbox. */
+export function openEditor(): void {
+  if (lightbox$.getValue()) editorOpen$.next(true)
+}
+
+/** Close the editor, returning to the lightbox. */
+export function closeEditor(): void {
+  editorOpen$.next(false)
+}
+
+/**
+ * Save an edited photo (M7). Re-PUT `editedBytes` to the open photo's *same* path
+ * (copy-on-write: a new content-addressed blob is written and the path repointed;
+ * the original blob lingers), regenerate its thumbnail, then recompute + anchor the
+ * metadata root. Mirrors `uploadPhotos`: a thumbnail failure doesn't abort the edit,
+ * and on error the editor stays open for retry.
+ */
+export async function saveEdit(editedBytes: Uint8Array, contentType: string): Promise<void> {
+  const ctx = fsContext$.getValue()
+  const photo = lightbox$.getValue()
+  if (!ctx || !photo) return
+
+  const { path, thumbPath } = photo.item
+  libraryError$.next(undefined)
+  try {
+    await putVerified(ctx, path, editedBytes, contentType)
+
+    try {
+      const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
+      await putVerified(ctx, thumbPath, thumb.bytes, thumb.contentType)
+    } catch {
+      // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
+    }
+
+    await reanchor()
+    closeEditor()
+    closePhoto()
+    await loadGrid()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not save the edit.')
+    throw err
+  }
 }
 
 /** Tear down the album layer (on wallet/network/drive change). */
@@ -387,6 +436,7 @@ function resetSession(): void {
   replaceGrid([])
   revokeLightbox()
   lightbox$.next(null)
+  editorOpen$.next(false)
   albums$.next([])
   selectedAlbum$.next(null)
   uploads$.next(null)
