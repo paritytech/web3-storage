@@ -72,6 +72,9 @@ pub enum Error {
     #[error("Signing unavailable: provider has no keypair configured")]
     SigningUnavailable,
 
+    #[error("Nonce counter unavailable; provider has not bootstrapped replay state")]
+    NonceCounterUnavailable,
+
     #[error("Provider is not accepting new primary agreements")]
     NotAcceptingPrimary,
 
@@ -96,6 +99,12 @@ pub enum Error {
 
     #[error("Provider on-chain info unavailable; cannot validate terms")]
     ProviderInfoUnavailable,
+
+    #[error("Provider is deregistering; not accepting new agreements")]
+    ProviderDeregistering,
+
+    #[error("Chain state not ready: current_block and request_timeout must both be non-zero")]
+    ChainStateNotReady,
 
     #[error("Storage agreement requested 0 byte")]
     InvalidMaxBytesRequest,
@@ -241,8 +250,18 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "signing_unavailable".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "provider node has no signing key configured; \
-                                    start with --keyfile to enable signing-bound endpoints"
+                        "message": "provider node signer is not available."
+                    })),
+                },
+            ),
+            Error::NonceCounterUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "nonce_counter_unavailable".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider node has not bootstrapped its nonce counter from \
+                                    on-chain replay state; ensure the provider is registered and \
+                                    the chain is reachable, then retry"
                     })),
                 },
             ),
@@ -311,6 +330,26 @@ impl IntoResponse for Error {
                     details: Some(serde_json::json!({
                         "message": "provider's on-chain registration info is not loaded; \
                                     cannot validate agreement terms"
+                    })),
+                },
+            ),
+            Error::ChainStateNotReady => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "chain_state_not_ready".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "current_block or request_timeout is 0; \
+                                    the node has not yet synced with the chain"
+                    })),
+                },
+            ),
+            Error::ProviderDeregistering => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorResponse {
+                    error: "provider_deregistering".to_string(),
+                    details: Some(serde_json::json!({
+                        "message": "provider has announced deregistration and is no \
+                                    longer accepting new storage agreements"
                     })),
                 },
             ),
@@ -416,6 +455,10 @@ mod tests {
             status_of(Error::SigningUnavailable),
             StatusCode::SERVICE_UNAVAILABLE
         );
+        assert_eq!(
+            status_of(Error::NonceCounterUnavailable),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
@@ -447,6 +490,23 @@ mod tests {
         assert!(json["details"]["message"]
             .as_str()
             .unwrap()
-            .contains("no signing key"));
+            .contains("signer is not available."));
+    }
+
+    #[test]
+    fn test_nonce_counter_unavailable_503() {
+        let resp = Error::NonceCounterUnavailable.into_response();
+        let (parts, body) = resp.into_parts();
+        assert_eq!(parts.status, StatusCode::SERVICE_UNAVAILABLE);
+
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { axum::body::to_bytes(body, usize::MAX).await.unwrap() });
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json["error"], "nonce_counter_unavailable");
+        assert!(json["details"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nonce counter"));
     }
 }

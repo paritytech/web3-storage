@@ -7,6 +7,13 @@
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
 
+**Pull request rules:**
+- ALWAYS open pull requests against the repository's default branch (`dev`)
+
+**Cargo dependency rules:**
+- ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
+- On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).
+
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code
 - ALWAYS run `/format` before creating any git commit

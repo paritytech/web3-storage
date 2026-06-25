@@ -48,6 +48,29 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
             .expect("static `/negotiate` rate-limit config is valid"),
     );
 
+    // Restrict CORS to the configured origins, or stay permissive when unset.
+    let cors = match &state.cors_allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let allowed: Vec<axum::http::HeaderValue> =
+                origins.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(allowed)
+                // Only the verbs and request headers the API actually serves.
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::PUT,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::HEAD,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                ])
+        }
+        _ => CorsLayer::permissive(),
+    };
+
     Router::new()
         // Health and info
         .route("/health", get(health))
@@ -108,7 +131,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
 }
 
@@ -170,12 +193,24 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn info(State(state): State<Arc<ProviderState>>) -> Json<InfoResponse> {
+    let provider_registration_info = state.chain_state.provider_info.read().clone();
+
     Json(InfoResponse {
         provider_id: state.provider_id.clone(),
-        provider_registration_info: state
-            .provider_info
-            .as_ref()
-            .and_then(|slot| slot.read().ok().map(|guard| guard.clone())),
+        readiness: ProviderReadiness {
+            signing_configured: state.keypair.is_some(),
+            nonce_counter_ready: state
+                .chain_state
+                .nonce_counter
+                .read()
+                .as_ref()
+                .is_some_and(|c| c.is_bootstrapped()),
+            provider_info_loaded: provider_registration_info.is_some(),
+            deregistering: provider_registration_info
+                .as_ref()
+                .is_some_and(|info| info.deregister_at.is_some()),
+        },
+        provider_registration_info,
     })
 }
 
@@ -230,8 +265,18 @@ async fn get_node(
 
 async fn upload_node(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "PUT",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     // Decode hash
     let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
         expected: request.hash.clone(),
@@ -307,8 +352,18 @@ async fn check_exists(
 
 async fn commit(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
@@ -509,10 +564,22 @@ async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucke
 
 async fn delete_data(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Note: In production, would verify admin_signature
-    let _ = request.admin_signature;
+    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
+    // prune rewrites the underlying MMR (dropping every leaf below
+    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
+    // leave the tree intact. Rewriting the commitment is strictly more
+    // destructive, so it warrants the highest role.
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Admin,
+    )
+    .await?;
 
     let (mmr_root, start_seq, leaf_count) = state
         .storage
@@ -789,33 +856,78 @@ async fn get_historical_roots(
 ///
 /// TODO: requests are accepted automatically; let providers vet them later.
 ///
-/// Returns `503` if the node has no signing key (`--keyfile`) or can't fetch its
-/// on-chain registration info.
+/// Returns one of several `503`s when a prerequisite is missing:
+/// - `signing_unavailable` — no `--keyfile`.
+/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
+///   known from the chain yet.
+/// - `provider_info_unavailable` — provider not registered on chain yet; the
+///   chain-state coordinator clears this automatically once registration lands, no
+///   restart needed.
+/// - `nonce_counter_unavailable` — counter not yet aligned with the chain's replay
+///   window.
+/// - `provider_deregistering` — provider has announced deregistration and no longer
+///   signs new terms.
 async fn negotiate_terms(
     State(state): State<Arc<ProviderState>>,
     Json(req): Json<NegotiateRequest>,
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
-    let nonce_counter = state
-        .nonce_counter
-        .as_ref()
-        .ok_or(Error::SigningUnavailable)?;
 
-    // Validate against the provider's on-chain settings
-    let info = state
-        .provider_info
+    // Both current_block and RequestTimeout must be known before we can sign —
+    // otherwise we'd emit unbounded or already-expired terms.
+    let current_block = state
+        .chain_state
+        .current_block
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let request_timeout = state
+        .chain_state
+        .constants
+        .read()
         .as_ref()
-        .and_then(|slot| slot.read().ok().map(|guard| guard.clone()))
+        .map(|c| c.request_timeout)
+        .unwrap_or(0);
+    if current_block == 0 || request_timeout == 0 {
+        return Err(Error::ChainStateNotReady);
+    }
+
+    // Validate against the provider's on-chain settings. `None` means not
+    // registered yet; the coordinator populates it once registration lands.
+    let info = state
+        .chain_state
+        .provider_info
+        .read()
+        .clone()
         .ok_or(Error::ProviderInfoUnavailable)?;
+
+    // A provider that has announced deregistration is winding down and must not
+    // sign new terms — the on-chain pallet rejects them too once deregistering.
+    if info.deregister_at.is_some() {
+        return Err(Error::ProviderDeregistering);
+    }
+
     negotiate::validate_request(&req, &info)?;
+
+    // Guard on both presence and bootstrap status: during the transient window
+    // where the chain has a provider entry but no replay state yet, the
+    // coordinator publishes a Some counter that has not yet been aligned with
+    // the on-chain replay head. Signing with it would issue nonces not derived
+    // from chain state, so we reject until is_bootstrapped() is true.
+    let nonce_counter = state
+        .chain_state
+        .nonce_counter
+        .read()
+        .clone()
+        .ok_or(Error::NonceCounterUnavailable)?;
+    if !nonce_counter.is_bootstrapped() {
+        return Err(Error::NonceCounterUnavailable);
+    }
 
     let terms: AgreementTermsOf = AgreementTerms {
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        // TODO: current_block + StorageProvider::RequestTimeout
-        valid_until: u32::MAX,
+        valid_until: current_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,

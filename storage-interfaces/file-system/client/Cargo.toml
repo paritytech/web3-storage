@@ -26,11 +26,11 @@ subxt-signer = { workspace = true }
 # Utilities
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-thiserror = "2.0"
-hex = "0.4"
+thiserror = { workspace = true }
+hex = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
+tokio-test = { workspace = true }
 
 [[example]]
 name = "basic_usage"

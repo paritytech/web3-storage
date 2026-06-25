@@ -205,12 +205,13 @@ pub struct MerkleProofData {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Request to delete data (admin only).
+///
+/// Authorization is carried in the `Authorization` header (`Web3Storage …`,
+/// verified against the bucket's Admin members), not in the body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
-    /// Admin signature authorizing deletion
-    pub admin_signature: String,
 }
 
 /// Response from delete operation.
@@ -250,6 +251,25 @@ pub struct ListBucketsResponse {
 pub struct InfoResponse {
     pub provider_id: String,
     pub provider_registration_info: Option<ProviderInfo>,
+    /// Readiness of the signing-bound endpoints (e.g. `/negotiate`). A
+    /// provider can be registered and accepting agreements yet still reject
+    /// `/negotiate` if these are not all `true`.
+    pub readiness: ProviderReadiness,
+}
+
+/// Readiness flags for signing-bound endpoints, surfaced via `/info` so the
+/// reason `/negotiate` is unavailable can be diagnosed without reading logs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderReadiness {
+    /// A signing keypair is configured (node started with `--keyfile`).
+    pub signing_configured: bool,
+    /// The nonce counter is bootstrapped from on-chain replay state.
+    pub nonce_counter_ready: bool,
+    /// On-chain provider registration info has been loaded.
+    pub provider_info_loaded: bool,
+    /// The provider has announced deregistration; `/negotiate` is disabled and
+    /// returns 503 even when every other flag is `true`.
+    pub deregistering: bool,
 }
 
 /// Health check response.

@@ -15,20 +15,25 @@ use crate::{
     AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
+// Storage-backed parameters: each value below is the default, but can be
+// overridden at runtime via `system.setStorage` (under sudo/governance) without
+// a runtime upgrade. Useful for tuning previewnet timing without redeploying the
+// wasm. Each `pub storage X` exposes `X::key()` / `X::set()` and reads the
+// current value from unhashed storage, falling back to the default.
 parameter_types! {
-    pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
-    pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
-    pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-    pub const RequestTimeout: BlockNumber = 6 * HOURS;
+    pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
+    pub storage ChallengeTimeout: BlockNumber = 48 * HOURS;
+    pub storage SettlementTimeout: BlockNumber = 24 * HOURS;
+    pub storage RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
-    pub const MinStakePerByte: Balance = 1_000;
-    pub const DefaultCheckpointInterval: BlockNumber = 100;
-    pub const DefaultCheckpointGrace: BlockNumber = 20;
-    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
-    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
+    pub storage MinStakePerByte: Balance = 1_000;
+    pub storage DefaultCheckpointInterval: BlockNumber = 100;
+    pub storage DefaultCheckpointGrace: BlockNumber = 20;
+    pub storage CheckpointReward: Balance = 1_000_000_000_000; // 1 token
+    pub storage CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `>= ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
-    pub const DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    pub storage DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
 }
 
 /// Treasury account that receives slashed funds.
