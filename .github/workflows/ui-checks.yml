@@ -83,6 +83,8 @@ jobs:
             filter: "@web3-storage/s3-ui"
           - ui: provider
             filter: provider-dashboard
+          - ui: photos
+            filter: "@web3-storage/photos"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
