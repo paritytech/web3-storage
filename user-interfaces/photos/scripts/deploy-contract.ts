@@ -6,8 +6,8 @@
 //
 // Requires a running chain and a built artifact (`build:contract`).
 
-import { connect, makeSigner, waitForChainReady, waitForNextBlock } from "./lib/papi.js";
-import { deployContract, ensureAccountMapped } from "./lib/contract.js";
+import { connect, makeSigner, waitForChainReady, waitForNextBlock } from "@web3-storage/sdk";
+import { deployContract, ensureAccountMapped } from "@web3-storage/sdk/revive";
 import { loadArtifact } from "./lib/photos.js";
 
 // pnpm forwards a literal `--` into argv; drop it.

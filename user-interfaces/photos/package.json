@@ -11,14 +11,10 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-api/substrate-bindings": "^0.20.3",
-    "@polkadot-api/utils": "^0.4.0",
-    "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "@web3-storage/papi": "workspace:*",
+    "@web3-storage/sdk": "workspace:*",
     "polkadot-api": "^2.1.6",
-    "viem": "^2.21.0",
-    "ws": "^8.18.0"
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

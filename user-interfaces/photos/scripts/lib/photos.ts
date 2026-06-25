@@ -7,10 +7,8 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { decodeFunctionResult, type Abi } from "viem";
-import { fromHex, toHex } from "@web3-storage/papi";
-import type { ParachainApi } from "@web3-storage/papi";
-
-import { encodeCall } from "./contract.js";
+import { asHex, hexToBytes, type ParachainApi } from "@web3-storage/sdk";
+import { encodeCall } from "@web3-storage/sdk/revive";
 
 /** Default artifact path: `<app>/src/contract/Photos.json` (produced by `build:contract`). */
 export const ARTIFACT_URL = new URL("../../src/contract/Photos.json", import.meta.url);
@@ -28,7 +26,7 @@ export async function loadArtifact(url: URL = ARTIFACT_URL): Promise<Artifact> {
     throw new Error(`Photos.json not found at ${fileURLToPath(url)} — run \`pnpm --filter @web3-storage/photos build:contract\` first (needs solc + resolc on PATH).`);
   }
   const json = JSON.parse(raw);
-  return { abi: json.abi as Abi, bin: fromHex(json.bin) };
+  return { abi: json.abi as Abi, bin: hexToBytes(json.bin) };
 }
 
 export interface LibraryState {
@@ -45,14 +43,14 @@ export interface LibraryState {
 export async function readLibraryOf(
   api: ParachainApi,
   contractAddressBytes: Uint8Array,
-  userH160: `0x${string}`,
+  userH160: string,
   origin: string,
   abi: Abi,
 ): Promise<LibraryState> {
   const inputData = encodeCall(abi, "libraryOf", [userH160]);
   const res: any = await api.apis.ReviveApi.call(
     origin,
-    toHex(contractAddressBytes) as `0x${string}`, // dest: SizedHex<20>
+    asHex(contractAddressBytes), // dest: SizedHex<20>
     0n,
     undefined, // gas_limit: node default (read)
     undefined, // storage_deposit_limit: none
@@ -65,7 +63,7 @@ export async function readLibraryOf(
   const decoded = decodeFunctionResult({
     abi,
     functionName: "libraryOf",
-    data: toHex(res.result.value.data) as `0x${string}`,
+    data: asHex(res.result.value.data),
   }) as unknown as [bigint, `0x${string}`, boolean];
   return { driveId: decoded[0], rootCid: decoded[1], exists: decoded[2] };
 }

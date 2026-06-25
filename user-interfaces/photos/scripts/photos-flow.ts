@@ -12,19 +12,26 @@
 // artifact (`build:contract`).
 
 import assert from "node:assert";
-import { isSameAddress, toHex } from "@web3-storage/papi";
 
-import { connect, makeSigner, requireOneEvent, waitForChainReady, waitForNextBlock, READ_OPTS } from "./lib/papi.js";
+import {
+  connect,
+  isSameAddress,
+  makeSigner,
+  READ_OPTS,
+  requireOneEvent,
+  toHex,
+  waitForChainReady,
+  waitForNextBlock,
+} from "@web3-storage/sdk";
 import {
   callContract,
   decodeContractEmitted,
   deployContract,
   encodeCall,
   ensureAccountMapped,
-  h160ToSubstrate,
-  negotiatePrecompileTerms,
   substrateToH160,
-} from "./lib/contract.js";
+} from "@web3-storage/sdk/revive";
+import { h160ToSubstrate, negotiatePrecompileTerms } from "./lib/contract.js";
 import { loadArtifact, readLibraryOf } from "./lib/photos.js";
 
 // pnpm forwards a literal `--` into argv; drop it.
