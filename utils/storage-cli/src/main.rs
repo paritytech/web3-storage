@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Non-zero exit if any scenario completed with no successful operations.
     if let Some(m) = all_results.iter().find(|m| m.total > 0 && m.ok == 0) {
-        bail!("all {} {} failed", m.total, m.operation.noun_plural());
+        bail!("all {} {} failed", m.total, m.labels.noun_plural);
     }
 
     Ok(())

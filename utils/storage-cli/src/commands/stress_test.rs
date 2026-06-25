@@ -17,10 +17,23 @@ use tokio::task::JoinSet;
 
 use crate::cli::GlobalArgs;
 use crate::common::resolve_suri;
-use crate::metrics::{summarize, OpOutcome, OpSummary, Operation};
+use crate::metrics::{summarize, OpLabels, OpOutcome, OpSummary, Operation};
 
 /// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
 type BucketId = u64;
+
+/// Off-chain HTTP upload to a provider — the operation this scenario exercises.
+struct Upload;
+
+impl Operation for Upload {
+    fn labels(&self) -> OpLabels {
+        OpLabels {
+            verb: "upload",
+            noun_plural: "uploads",
+            past_tense: "uploaded",
+        }
+    }
+}
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
@@ -321,12 +334,8 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary>
             outcomes.extend(user_outcomes);
         }
     }
-    let elapsed = started.elapsed();
 
-    // Return the aggregated metrics; `main` views them and sets the exit code.
-    // Individual upload failures live in the metrics, not in this `Result` —
-    // only setup errors (chain, args, no buckets) above are propagated as `Err`.
-    Ok(summarize(Operation::Upload, &outcomes, elapsed))
+    Ok(summarize(Upload, &outcomes, started.elapsed()))
 }
 
 #[cfg(test)]
@@ -345,5 +354,13 @@ mod tests {
         let buckets = [10u64, 20, 30];
         let picked: Vec<u64> = (0..7).map(|i| bucket_for(i, &buckets)).collect();
         assert_eq!(picked, vec![10, 20, 30, 10, 20, 30, 10]);
+    }
+
+    #[test]
+    fn upload_labels_match() {
+        let l = Upload.labels();
+        assert_eq!(l.verb, "upload");
+        assert_eq!(l.noun_plural, "uploads");
+        assert_eq!(l.past_tense, "uploaded");
     }
 }

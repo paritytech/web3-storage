@@ -7,7 +7,7 @@
 //! [`OpSummary`], which prints a uniform summary and is returned so callers can
 //! consume the numbers programmatically. The aggregation is operation-agnostic:
 //! adding a `read`/`delete` scenario means producing `Vec<OpOutcome>` and
-//! tagging the summary with the matching [`Operation`] — no new metrics code.
+//! tagging the summary via an [`Operation`] implementor — no new metrics code.
 
 use std::fmt;
 use std::time::Duration;
@@ -22,56 +22,25 @@ pub enum OutputFormat {
     Json,
 }
 
-/// The kind of operation a stress-test scenario exercises. Extend this as new
-/// scenarios are added; [`OpSummary`] formats itself from these labels.
-///
-/// `Read`/`Delete` are declared ahead of their scenarios so the metrics
-/// abstraction is ready for them; they are exercised by tests until the
-/// corresponding `stress-test` subcommands land.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Operation {
-    /// Off-chain HTTP upload to a provider.
-    Upload,
-    /// Off-chain HTTP read/download from a provider.
-    Read,
-    /// Delete of stored data.
-    Delete,
+/// Display labels for one kind of operation. Captured into [`OpSummary`] by
+/// [`summarize`] so a summary formats itself without knowing the concrete op.
+#[derive(Debug, Clone, Copy)]
+pub struct OpLabels {
+    /// Lowercase verb, e.g. `"upload"`.
+    pub verb: &'static str,
+    /// Plural noun for counts/rates, e.g. `"uploads"`.
+    pub noun_plural: &'static str,
+    /// Past-tense verb for the data line, e.g. `"uploaded"`.
+    pub past_tense: &'static str,
 }
 
-impl Operation {
-    /// Lowercase verb naming the operation, e.g. `"upload"`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Operation::Upload => "upload",
-            Operation::Read => "read",
-            Operation::Delete => "delete",
-        }
-    }
-
-    /// Plural noun used for counts and rates, e.g. `"uploads"`.
-    pub fn noun_plural(self) -> &'static str {
-        match self {
-            Operation::Upload => "uploads",
-            Operation::Read => "reads",
-            Operation::Delete => "deletes",
-        }
-    }
-
-    /// Past-tense verb used on the data line, e.g. `"uploaded"`.
-    pub fn past_tense(self) -> &'static str {
-        match self {
-            Operation::Upload => "uploaded",
-            Operation::Read => "read",
-            Operation::Delete => "deleted",
-        }
-    }
-}
-
-impl fmt::Display for Operation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
+/// One kind of operation a stress-test scenario exercises. Implement it on a
+/// marker type in the scenario's own module (e.g. `Upload` in the `stress_test`
+/// command): the labels live with the operation, so there is no central list to
+/// extend and nothing to keep in sync.
+pub trait Operation {
+    /// Display labels for this operation.
+    fn labels(&self) -> OpLabels;
 }
 
 /// Outcome of a single operation attempt. A stress run records every outcome
@@ -120,8 +89,8 @@ const MAX_SAMPLE_ERRORS: usize = 5;
 /// available to callers in addition to the printed summary.
 #[derive(Debug, Clone)]
 pub struct OpSummary {
-    /// Which operation these metrics describe.
-    pub operation: Operation,
+    /// Display labels for the operation these metrics describe.
+    pub labels: OpLabels,
     /// Total operations attempted.
     pub total: usize,
     /// Operations that succeeded.
@@ -166,7 +135,11 @@ impl OpSummary {
 }
 
 /// Aggregate per-operation outcomes against the elapsed duration of the run.
-pub fn summarize(operation: Operation, outcomes: &[OpOutcome], elapsed: Duration) -> OpSummary {
+pub fn summarize(
+    operation: impl Operation,
+    outcomes: &[OpOutcome],
+    elapsed: Duration,
+) -> OpSummary {
     let total = outcomes.len();
     let ok = outcomes.iter().filter(|o| o.ok).count();
     let bytes_ok = outcomes.iter().filter(|o| o.ok).map(|o| o.bytes).sum();
@@ -191,7 +164,7 @@ pub fn summarize(operation: Operation, outcomes: &[OpOutcome], elapsed: Duration
         .collect();
 
     OpSummary {
-        operation,
+        labels: operation.labels(),
         total,
         ok,
         failed: total - ok,
@@ -226,7 +199,7 @@ struct OpSummaryJson<'a> {
 impl OpSummary {
     fn as_json(&self) -> OpSummaryJson<'_> {
         OpSummaryJson {
-            operation: self.operation.as_str(),
+            operation: self.labels.verb,
             total: self.total,
             ok: self.ok,
             failed: self.failed,
@@ -267,19 +240,17 @@ impl fmt::Display for OpSummary {
         writeln!(
             f,
             "{} results: {} total, {} ok, {} failed",
-            self.operation, self.total, self.ok, self.failed
+            self.labels.verb, self.total, self.ok, self.failed
         )?;
         writeln!(
             f,
             "  data:       {:.2} MiB {} in {:.3}s",
-            mib,
-            self.operation.past_tense(),
-            secs
+            mib, self.labels.past_tense, secs
         )?;
         writeln!(
             f,
             "  throughput: {mib_s:.2} MiB/s, {ops:.1} {}/s",
-            self.operation.noun_plural()
+            self.labels.noun_plural
         )?;
         writeln!(
             f,
@@ -302,6 +273,19 @@ impl fmt::Display for OpSummary {
 mod tests {
     use super::*;
 
+    /// Minimal operation fixture so the generic machinery is testable without
+    /// depending on any concrete scenario's operation type.
+    struct TestOp;
+    impl Operation for TestOp {
+        fn labels(&self) -> OpLabels {
+            OpLabels {
+                verb: "test",
+                noun_plural: "tests",
+                past_tense: "tested",
+            }
+        }
+    }
+
     #[test]
     fn summarize_counts_and_bytes() {
         let outcomes = vec![
@@ -309,8 +293,8 @@ mod tests {
             OpOutcome::success(100, Duration::from_millis(30)),
             OpOutcome::failure(100, Duration::from_millis(5), "boom".into()),
         ];
-        let m = summarize(Operation::Upload, &outcomes, Duration::from_secs(1));
-        assert_eq!(m.operation, Operation::Upload);
+        let m = summarize(TestOp, &outcomes, Duration::from_secs(1));
+        assert_eq!(m.labels.verb, "test");
         assert_eq!(m.total, 3);
         assert_eq!(m.ok, 2);
         assert_eq!(m.failed, 1);
@@ -329,7 +313,7 @@ mod tests {
             Duration::from_millis(5),
             "nope".into(),
         )];
-        let m = summarize(Operation::Read, &outcomes, Duration::from_secs(1));
+        let m = summarize(TestOp, &outcomes, Duration::from_secs(1));
         assert_eq!(m.ok, 0);
         assert_eq!(m.bytes_ok, 0);
         assert_eq!(m.lat_min, Duration::ZERO);
@@ -338,23 +322,16 @@ mod tests {
     }
 
     #[test]
-    fn operation_labels_are_distinct() {
-        assert_eq!(Operation::Upload.noun_plural(), "uploads");
-        assert_eq!(Operation::Read.past_tense(), "read");
-        assert_eq!(Operation::Delete.to_string(), "delete");
-    }
-
-    #[test]
     fn to_json_projects_expected_fields() {
         let outcomes = vec![
             OpOutcome::success(1024, Duration::from_millis(10)),
             OpOutcome::failure(1024, Duration::from_millis(5), "boom".into()),
         ];
-        let m = summarize(Operation::Upload, &outcomes, Duration::from_secs(2));
+        let m = summarize(TestOp, &outcomes, Duration::from_secs(2));
         let json = to_json(&[m]).expect("serializes");
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
         let entry = &v[0];
-        assert_eq!(entry["operation"], "upload");
+        assert_eq!(entry["operation"], "test");
         assert_eq!(entry["total"], 2);
         assert_eq!(entry["ok"], 1);
         assert_eq!(entry["failed"], 1);
