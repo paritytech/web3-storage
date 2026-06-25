@@ -26,8 +26,12 @@ impl DiskTestServer {
     async fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let disk = DiskStorage::new(dir.path()).expect("RocksDB should open");
+        // Functional tests, not auth tests: run with auth disabled (auth is
+        // enforced by default; see auth_integration.rs for the auth coverage).
         let state = Arc::new(
-            ProviderState::with_seed(Arc::new(disk), "//Alice").expect("//Alice is valid"),
+            ProviderState::with_seed(Arc::new(disk), "//Alice")
+                .expect("//Alice is valid")
+                .with_auth_disabled(),
         );
 
         let app = create_router(state);

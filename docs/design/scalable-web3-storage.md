@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.1 |
+| **Version** | 2.2 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
 ---
 
@@ -27,8 +28,12 @@ providers. The chain is only needed for setup, checkpoints and disputes.
 We don't stop at storage—we go through some lengths to guarantee retrieval too.
 Challenges extract actual data on-chain. Too slow and expensive for bulk
 recovery, but your most critical data is directly recoverable. More importantly,
-since providers pay part of challenge costs even when they respond, this
-pressures them into serving off-chain directly.
+answering a challenge means posting the data on-chain—far costlier than serving
+the same bytes off-chain—so providers are pressured to serve directly. A
+provider's own counterparties make it bear a share of that cost, so it serves
+them promptly; strangers fund their challenges in full. A provider's
+challenge-cost exposure is thus bounded to the accounts it chose to deal with:
+it controls its risk by vetting whom it signs agreements with.
 
 Existing Web3 storage either proves too much (Filecoin's continuous proofs—heavy,
 slow, chain-bound) or/and guarantees too little (IPFS—no persistence at all). We use
@@ -263,8 +268,19 @@ Or simply **challenge directly.** Anyone can challenge any provider for any data
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
-The point: you're never dependent on trusting others' verification. You can always verify yourself, at any time, for any
-data you care about.
+Challenging always costs the on-chain price of the provider posting the chunk
+and its proofs—it is never free, for anyone, and it is never cheap. What differs
+is who covers it. If the data is your own (you're a bucket member or run a
+replica), the provider is made to bear part of that cost, but you still pay at
+least half. The split is *leverage* to pressure the provider into serving, not a
+way to make recovery affordable. You can keep challenging chunk by chunk, but at
+this price recovering anything sizeable is a last resort, not a bulk channel. If
+it's someone else's bucket and you're an outsider, you cover the full cost
+yourself. Either case is enough to detect a dead provider and extract a chunk
+you truly need; neither is a cheap way to pull data at scale. If you need more,
+fund your own replica (full control), or—in the read-incentive phase—pay the
+provider directly for bandwidth. If that turns out necessary, we might also bring
+back the cost split in a capped form for the general public.
 
 ---
 
@@ -435,12 +451,17 @@ serve it:
 - Provider must produce the data or lose their entire stake
 - The signature proves the provider can't claim "I never had that data"
 
-On-chain challenges are expensive for everyone. The challenger must deposit funds. The provider must submit actual chunk
-data with Merkle proofs. Both sides pay transaction fees.
+On-chain challenges are expensive: the provider must post the chunk and its Merkle proofs as a transaction—orders of
+magnitude costlier than serving the same bytes off-chain. The challenger's deposit covers that on-chain cost up front,
+so a challenge doesn't leave the provider out-of-pocket on its own. What deters the provider is what happens next, and it
+depends on who is challenging.
 
-A rational provider prefers to just serve the data directly. Serving costs only bandwidth. Being challenged costs
-bandwidth *plus* on-chain fees *plus* time *plus* reputation damage. Even honest providers avoid challenges by being
-responsive.
+When the challenger is one of the provider's own counterparties (the accounts it accepted agreements with, plus bucket
+members), the provider is made to bear a share of that cost—so ignoring their off-chain requests until they resort to a
+challenge costs it money. *That* is the deterrent: to avoid paying its share, the provider just serves them directly.
+Strangers, by contrast, fund their challenges in full and cannot make the provider pay anything—so they impose no
+monetary deterrent (only on-chain work and reputation damage). That asymmetry is deliberate: a provider's monetary
+exposure is bounded to the counterparties it chose to deal with.
 
 The expensive on-chain path exists to make the cheap off-chain path incentive-compatible.
 
@@ -489,41 +510,80 @@ stake.
 
 ### The Challenge Game
 
-When a provider doesn't serve data, clients can challenge on-chain:
+When a provider doesn't serve data, anyone can challenge on-chain:
 
 ```
 1. Challenger initiates
    - Specifies: bucket, provider, leaf_index, chunk_index
-   - Deposits: estimated challenge cost
-   - Pays: Transaction fee
+   - Deposits: generously over-estimated challenge cost (the tx cost of the
+     provider's on-chain response, with margin for fee fluctuations)
 
 2. Challenge window opens (~48 hours)
    - Provider must respond with chunk data + Merkle proofs
-   - Challenger can cancel anytime (gets full deposit back, pays cancel tx fee)
-   - Cost split based on response time
+   - The provider pays the response transaction fee from its own account—never
+     from its stake (normal tx fee mechanism)
+   - Challenger can cancel anytime before the response (deposit returned, pays
+     only the cancel tx fee)
 
 3. Resolution
-   - Valid proof: Challenge rejected, cost split by response speed
-   - Cancelled by challenger: Full deposit refunded (only paid tx fees)
-   - Invalid/no proof: Provider's full stake slashed
+   - Valid proof: Challenge rejected. The provider's response fee is reimbursed
+     from the challenger's deposit (in full, or only a fraction—see below).
+     Any excess deposit is returned to the challenger.
+   - Cancelled by challenger: Deposit returned (challenger paid only tx fees)
+   - Invalid/no proof: Provider's full stake slashed; challenger made whole
+     from the slash (deposit and tx fees refunded—no reward beyond costs)
 ```
 
-**Cost split by response time:**
+**Stake is never touched on a valid response.** The only thing in play is who
+pays the *transaction cost* of the on-chain response. The challenger's deposit
+covers it; how much of that cost the provider is then made to bear depends on
+who is challenging.
 
-| Response | Challenger pays | Provider pays |
+**Two tiers of challenger.** Every bucket has a set of **authorized accounts**:
+its members (Admin, Writers, Readers) plus the owner of any storage agreement on
+the bucket (so replica funders count too). Everyone else is the **general
+public**.
+
+- **Authorized accounts** get a *split*: the provider is made to bear part of the
+  response cost, the challenger's deposit covers the rest. The challenger's share
+  never drops below 50%, so even at its cheapest a challenge costs the challenger
+  most of the (already high) on-chain price. This is not a cheap recovery channel
+  even for the owner—recovering data at scale this way is unreasonably expensive.
+  Its purpose is **leverage**: a counterparty can make ignoring its off-chain
+  requests cost the provider something, pressuring it to just serve directly.
+- **The general public** pays the response cost *in full*; the provider is
+  reimbursed 100% and loses no money (it still does the on-chain work and takes
+  the recorded-challenge reputation hit). The public can still detect and slash a
+  dead provider, and recover a chunk if they truly need it—at full cost. Two
+  reasons strangers get no split:
+  1. A provider cannot realistically serve *everyone* equally well, so a
+     stranger being made to wait is not evidence of fault the way a paying
+     counterparty's unanswered request is.
+  2. **Anti-DDoS.** If strangers got the split, a large crowd could each pay
+     little (one challenge apiece) while collectively draining a provider. Making
+     each stranger pay the full cost removes that attack—the cost to the
+     attackers scales with the damage they inflict.
+
+**Cost split for authorized challengers.** Illustrative numbers—the one firm
+rule is that the **challenger's share never drops below 50%** (a lower floor
+would make griefing cheap). Faster responses cost the provider less:
+
+| Response time | Challenger pays | Provider bears |
 | --- | --- | --- |
 | Block 1 | 90% | 10% |
 | Blocks 2-5 | 80% | 20% |
-| Blocks 6-20 | 70% | 30% |
-| Blocks 21-100 | 60% | 40% |
-| 100+ blocks | 50% | 50% |
-| Timeout | 0% (deposit and tx fees refunded from slash) | 100% (slashed) |
+| Blocks 6-24 | 70% | 30% |
+| Blocks 25-95 | 60% | 40% |
+| Blocks 96+ | 50% | 50% |
 
-**Why this structure?**
-- Provider always pays *something* when challenged (even if honest)—incentive to serve directly and avoid challenges entirely
-- Fast responses minimize provider cost—incentive to respond promptly
-- Challenger majority cost for honest provider—griefing is expensive
-- Full slash on failure—catastrophic penalty deters cheating
+The general public is not on this table: the challenger always pays 100%. (The
+failure case—no or invalid response—is separate: the provider's full stake is
+slashed and the challenger is made whole from it, per Resolution above.)
+
+The net effect: a provider's *monetary* challenge exposure is bounded to the
+counterparties it chose to accept—strangers can be a nuisance but can't drain
+it—while a missing or invalid response always costs the full stake. Vetting whom
+it signs agreements with is how a provider controls its risk.
 
 ### The Burn Option
 
@@ -676,7 +736,8 @@ client software optimizes like this automatically.
 If a provider demands more than the challenge cost to serve data, clients can challenge on-chain instead. This caps
 extortion attempts—rational providers price below the challenge threshold to avoid:
 
-- Paying challenge costs
+- Bearing a share of the response fee (the client here is a paying customer, hence an authorized challenger)
+- The on-chain cost of posting the chunk and proofs (the data is served either way; the challenge only *adds* the chain cost). Here the client is a paying customer—an authorized challenger—so the provider bears a share of it.
 - Getting no payment
 - Reputation damage
 
@@ -955,9 +1016,9 @@ limited by throughput and cost, but still valuable:
 
 1. **Last-resort recovery**: Your most precious 1GB of baby photos from a 2TB backup
    is extractable chunk-by-chunk.
-2. **Pressure to serve**: Providers pay part of challenge costs even when they respond.
-   Every challenge hurts, so providers are strongly incentivized to serve off-chain
-   directly.
+2. **Pressure to serve**: Answering a challenge means posting the data on-chain—far
+   costlier than serving it off-chain—and counterparties make the provider bear a share
+   of that cost. So providers serve directly to avoid challenges entirely.
 
 **When Filecoin is better:** Third-party verifiable audit trails—proof that data
 existed at specific times, without being the paying client.
@@ -1041,6 +1102,17 @@ replicas (which lack natural client verification) and fire-and-forget archival�
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
 
+### Capped Split for the General Public
+
+Today the general public gets no cost split (challengers pay the response in
+full) to close the DDoS hole. A capped version could give the public *some*
+leverage without reopening that hole: apply the split to anonymous challenges
+too, but only up to a per-provider budget over a rolling window of X blocks.
+Once the budget is spent, further public challenges revert to full pay until the
+window resets. The budget caps the total a crowd can extract per window, so the
+DDoS attack is bounded rather than open-ended. Left out of the initial design;
+addable later without changing the core mechanism.
+
 ### Isolation Mode
 
 Admins can instruct providers to temporarily refuse serving non-members, then challenge a specific provider. If that
@@ -1055,19 +1127,19 @@ helping catch free-loaders. Latency measurements and high stake should get us ve
 
 ### Challenge Economics: Coordinated Griefing
 
-**Concern**: Coordinated users could grief providers with challenges, paying only 90% of costs.
+**Concern**: Coordinated outsiders could grief a provider by flooding it with challenges.
 
 **Response**:
 
-Multiple protections:
+This is exactly why the general public gets no cost split—it closes the flooding hole:
 
-1. **Challenge cancellation**: Challenger can cancel anytime before response, getting full deposit back minus tx fee. If provider serves data off-chain after challenge initiated, challenger cancels and pays only tx fee.
+1. **Outsiders pay the full cost, provider pays no money**: A public (non-authorized) challenger funds 100% of the provider's response cost; the provider's response fee is fully reimbursed and its stake is untouched. A crowd flooding a provider each pays a full deposit plus a tx fee per challenge, while the provider loses no money—the attackers' cost scales with the damage, so there is no cheap collective drain. What a stranger *can* still impose is non-financial: on-chain response work in-window and recorded challenges (reputation noise). That nuisance can't grind the provider's stake down or extract value, which is what financial griefing would require.
 
-2. **Provider pays even when honest**: This is intentional. Incentive is to serve directly and avoid challenges entirely, not to optimize challenge response.
+2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
 
-3. **Economic rationality**: Coordinated griefing requires funding many challenges. At 90% cost, attacking a provider with 100 challenges costs attackers 9000 DOT to cost provider 1000 DOT. Cheaper to just not use that provider.
+3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain.
 
-4. **Reputation damage**: Provider with many challenges (even successful responses) signals problems. Clients migrate to better providers.
+4. **Reputation damage**: A provider with many challenges (even successful responses) signals problems. Clients migrate to better providers—so even costless-to-defend public challenges should be avoided, but they can't *bleed* an honest provider.
 
 ### Collusion: Providers Sharing Storage
 
@@ -1138,7 +1210,7 @@ Fundamentally different scaling dynamics:
 Why disputes → 0 in normal operation:
 
 1. **Economic deterrent**: Provider risks entire stake for minimal savings. Rational actors don't cheat.
-2. **Challenge cost sharing**: Being challenged costs the provider money even when responding correctly. They serve directly to avoid challenges.
+2. **Challenge cost**: Answering a challenge means posting the data on-chain—far costlier than serving it off-chain—and counterparties make the provider bear a share. They serve directly to avoid challenges.
 3. **Reputation damage**: Challenges signal problems. Providers optimize to avoid them.
 4. **Natural selection**: Bad providers lose clients and leave the market.
 
