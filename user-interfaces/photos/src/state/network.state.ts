@@ -7,7 +7,7 @@
  * to localStorage so it survives page reloads.
  */
 
-import { BehaviorSubject, map } from 'rxjs'
+import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import {
   type NetworkId,
@@ -25,24 +25,7 @@ const persisted = loadSelectedNetwork()
 const selectedNetworkId$ = new BehaviorSubject<NetworkId>(persisted.id)
 const selectedNetwork$ = new BehaviorSubject<NetworkConfig>(persisted.config)
 
-export const [useSelectedNetworkId] = bind(selectedNetworkId$, persisted.id)
 export const [useSelectedNetwork] = bind(selectedNetwork$, persisted.config)
-
-export const [useParachainWs] = bind(
-  selectedNetwork$.pipe(map((n) => n.parachainWs)),
-  persisted.config.parachainWs
-)
-
-export const [useProviderHttp] = bind(
-  selectedNetwork$.pipe(map((n) => n.providerHttp)),
-  persisted.config.providerHttp
-)
-
-export const [useIsTestnet] = bind(
-  selectedNetwork$.pipe(map((n) => n.isTestnet)),
-  persisted.config.isTestnet
-)
-
 export const [useNetworkList] = bind(new BehaviorSubject(NETWORK_LIST), NETWORK_LIST)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,14 +62,6 @@ export async function selectCustomNetwork(input: {
 // Getters (non-reactive)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function getSelectedNetwork(): NetworkConfig {
-  return selectedNetwork$.getValue()
-}
-
 export function getParachainWs(): string {
   return selectedNetwork$.getValue().parachainWs
-}
-
-export function getProviderHttp(): string {
-  return selectedNetwork$.getValue().providerHttp
 }

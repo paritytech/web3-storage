@@ -77,23 +77,23 @@ export async function getChainProperties(): Promise<{
   let genesisHash = ''
 
   if (client && api) {
-    try {
-      const spec = await client.getChainSpecData()
-      genesisHash = spec.genesisHash || genesisHash
-      const props = spec.properties as { ss58Format?: number } | undefined
-      if (props && typeof props.ss58Format === 'number') ss58Prefix = props.ss58Format
-    } catch { /* use defaults */ }
-
-    // If the chain spec didn't carry ss58Format, fall back to the runtime constant.
-    try {
-      ss58Prefix = await api.constants.System.SS58Prefix()
-    } catch { /* use default */ }
-
-    try {
-      const version = await api.constants.System.Version()
-      specName = version.spec_name
-      specVersion = version.spec_version
-    } catch { /* use default */ }
+    const c = client
+    const a = api
+    // Independent reads — run concurrently. The SS58 prefix comes from the
+    // runtime constant (authoritative on this parachain); the chain spec is
+    // read only for the genesis hash. allSettled keeps each field's default
+    // on a per-read failure.
+    const [spec, prefix, version] = await Promise.allSettled([
+      c.getChainSpecData(),
+      a.constants.System.SS58Prefix(),
+      a.constants.System.Version(),
+    ])
+    if (spec.status === 'fulfilled') genesisHash = spec.value.genesisHash || genesisHash
+    if (prefix.status === 'fulfilled') ss58Prefix = prefix.value
+    if (version.status === 'fulfilled') {
+      specName = version.value.spec_name
+      specVersion = version.value.spec_version
+    }
   }
 
   return { ss58Prefix, specName, specVersion, genesisHash }
