@@ -23,6 +23,7 @@ use serde_with::{serde_as, DisplayFromStr, PickFirst};
 use sp_core::hashing::blake2_256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
+use storage_subxt::subxt_signer;
 
 /// Concrete [`AgreementTerms`] type for the storage parachain.
 ///

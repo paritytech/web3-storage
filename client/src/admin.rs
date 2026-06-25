@@ -12,11 +12,13 @@
 use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
+use crate::runtime_convert as rc;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
-use subxt::ext::scale_value::{Composite, ValueDef, Variant};
+use storage_subxt::storage_runtime::api::runtime_types as rt;
+use storage_subxt::subxt_signer;
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -505,94 +507,35 @@ impl AdminClient {
             .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
             .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+        let bucket = thunk;
 
-        let min_providers = named_field(&value, "min_providers")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let frozen_start_seq =
-            named_field(&value, "frozen_start_seq").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-                ValueDef::Variant(Variant {
-                    name,
-                    values: Composite::Unnamed(items),
-                }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u64),
-                _ => None,
-            });
-
-        let members = named_field(&value, "members")
-            .and_then(|v| match &v.value {
-                // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
-                // Peel one level to reach the actual Vec contents.
-                ValueDef::Composite(Composite::Unnamed(outer)) => {
-                    outer.first().and_then(|inner| match &inner.value {
-                        ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
-                        _ => None,
-                    })
-                }
-                _ => None,
+        let members = bucket
+            .members
+            .0
+            .iter()
+            .map(|m| {
+                let account = format!("0x{}", hex::encode(m.account.0));
+                let role = match m.role {
+                    rt::storage_primitives::Role::Admin => Role::Admin,
+                    rt::storage_primitives::Role::Writer => Role::Writer,
+                    rt::storage_primitives::Role::Reader => Role::Reader,
+                };
+                MemberInfo { account, role }
             })
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        let account_bytes =
-                            named_field(item, "account").and_then(decode_account_bytes)?;
-                        let account = format!("0x{}", hex::encode(&account_bytes));
-                        let role = named_field(item, "role").and_then(|r| match &r.value {
-                            ValueDef::Variant(Variant { name, .. }) => match name.as_str() {
-                                "Admin" => Some(Role::Admin),
-                                "Writer" => Some(Role::Writer),
-                                "Reader" => Some(Role::Reader),
-                                _ => None,
-                            },
-                            _ => None,
-                        })?;
-                        Some(MemberInfo { account, role })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+            .collect();
 
-        let snapshot = named_field(&value, "snapshot").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-            ValueDef::Variant(Variant {
-                name,
-                values: Composite::Unnamed(items),
-            }) if name == "Some" => {
-                let snap = items.first()?;
-                let mmr_root_bytes = named_field(snap, "mmr_root")
-                    .and_then(decode_account_bytes)
-                    .filter(|b| b.len() == 32)?;
-                let mut mmr_root = [0u8; 32];
-                mmr_root.copy_from_slice(&mmr_root_bytes);
-                let start_seq = named_field(snap, "start_seq")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-                let leaf_count = named_field(snap, "leaf_count")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-                let checkpoint_block = named_field(snap, "checkpoint_block")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u32;
-                Some(SnapshotInfo {
-                    mmr_root: H256::from(mmr_root),
-                    start_seq,
-                    leaf_count,
-                    checkpoint_block,
-                })
-            }
-            _ => None,
+        let snapshot = bucket.snapshot.map(|snap| SnapshotInfo {
+            mmr_root: rc::from_h256(snap.mmr_root),
+            start_seq: snap.start_seq,
+            leaf_count: snap.leaf_count,
+            checkpoint_block: snap.checkpoint_block,
         });
 
         Ok(BucketInfo {
             bucket_id,
             members,
-            frozen_start_seq,
-            min_providers,
+            frozen_start_seq: bucket.frozen_start_seq,
+            min_providers: bucket.min_providers,
             snapshot,
         })
     }
@@ -631,37 +574,17 @@ impl AdminClient {
                 String::new()
             };
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let payment_locked = named_field(&value, "payment_locked")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0);
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let is_primary = named_field(&value, "role")
-                .map(|r| {
-                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
-                })
-                .unwrap_or(false);
+            let agreement = kv.value;
+            let is_primary = matches!(
+                agreement.role,
+                rt::storage_primitives::ProviderRole::Primary
+            );
 
             agreements.push(AgreementInfo {
                 provider,
-                max_bytes,
-                payment_locked,
-                expires_at,
+                max_bytes: agreement.max_bytes,
+                payment_locked: agreement.payment_locked,
+                expires_at: agreement.expires_at,
                 is_primary,
             });
         }
@@ -688,69 +611,7 @@ impl AdminClient {
             return Ok(vec![]);
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
-
-        // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
-        let bucket_ids = match &value.value {
-            ValueDef::Composite(Composite::Unnamed(outer)) => outer
-                .first()
-                .and_then(|inner| match &inner.value {
-                    ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
-                    _ => None,
-                })
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .filter_map(|v| v.as_u128().map(|n| n as BucketId))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => vec![],
-        };
-
-        Ok(bucket_ids)
-    }
-}
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-/// Decode raw bytes from a SCALE value, handling `AccountId32`'s newtype nesting.
-///
-/// `AccountId32` is decoded by subxt as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
-/// This function recurses through any level of `Composite::Unnamed` wrapping to collect
-/// all `Primitive::U128` leaf values as bytes.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
-    collect_bytes_recursive(value, &mut buf);
-    if buf.is_empty() {
-        None
-    } else {
-        Some(buf)
-    }
-}
-
-fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value<u32>, buf: &mut Vec<u8>) {
-    use subxt::ext::scale_value::Primitive;
-    match &value.value {
-        ValueDef::Primitive(Primitive::U128(n)) => buf.push(*n as u8),
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            for item in items {
-                collect_bytes_recursive(item, buf);
-            }
-        }
-        _ => {}
+        Ok(thunk.0)
     }
 }
 

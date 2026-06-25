@@ -6,14 +6,13 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
-use codec::Encode;
 use futures::StreamExt;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
-use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::{dev, Keypair};
+use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
+use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
 
 pub const PALLET_NAME: &str = "StorageProvider";
 
@@ -111,31 +110,18 @@ impl SubstrateClient {
 /// these automatically from runtime metadata.
 pub mod extrinsics {
     use super::*;
-    use subxt::tx::Payload;
+    use crate::runtime_convert as rc;
+    use storage_subxt::storage_runtime::api as runtime;
+    use storage_subxt::subxt::tx::Payload;
 
-    /// Create a register_provider extrinsic payload.
     pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "register_provider",
-            vec![
-                subxt::dynamic::Value::from_bytes(multiaddr),
-                subxt::dynamic::Value::from_bytes(public_key),
-                subxt::dynamic::Value::u128(stake),
-            ],
+        runtime::tx().storage_provider().register_provider(
+            rc::to_bounded_bytes(multiaddr),
+            rc::to_bounded_bytes(public_key),
+            stake,
         )
     }
 
-    /// Create an update_provider_settings extrinsic payload.
-    ///
-    /// # Parameters
-    /// - `min_duration`: Minimum agreement duration
-    /// - `max_duration`: Maximum agreement duration
-    /// - `price_per_byte`: Price per byte per block
-    /// - `accepting_primary`: Whether accepting primary agreements
-    /// - `replica_sync_price`: Price for replica sync (None = not accepting replicas)
-    /// - `accepting_extensions`: Whether accepting extensions
-    /// - `max_capacity`: Maximum storage capacity in bytes (0 = unlimited)
     #[allow(clippy::too_many_arguments)]
     pub fn update_provider_settings(
         min_duration: u32,
@@ -146,140 +132,35 @@ pub mod extrinsics {
         accepting_extensions: bool,
         max_capacity: u64,
     ) -> impl Payload {
-        let replica_price_value = match replica_sync_price {
-            Some(price) => subxt::dynamic::Value::unnamed_variant(
-                "Some",
-                vec![subxt::dynamic::Value::u128(price)],
-            ),
-            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
+        use crate::provider::ProviderSettings;
+        let settings = ProviderSettings {
+            min_duration,
+            max_duration,
+            price_per_byte,
+            accepting_primary,
+            replica_sync_price,
+            accepting_extensions,
+            max_capacity,
         };
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "update_provider_settings",
-            vec![subxt::dynamic::Value::named_composite([
-                (
-                    "min_duration",
-                    subxt::dynamic::Value::u128(min_duration as u128),
-                ),
-                (
-                    "max_duration",
-                    subxt::dynamic::Value::u128(max_duration as u128),
-                ),
-                (
-                    "price_per_byte",
-                    subxt::dynamic::Value::u128(price_per_byte),
-                ),
-                (
-                    "accepting_primary",
-                    subxt::dynamic::Value::bool(accepting_primary),
-                ),
-                ("replica_sync_price", replica_price_value),
-                (
-                    "accepting_extensions",
-                    subxt::dynamic::Value::bool(accepting_extensions),
-                ),
-                (
-                    "max_capacity",
-                    subxt::dynamic::Value::u128(max_capacity as u128),
-                ),
-            ])],
-        )
+        runtime::tx()
+            .storage_provider()
+            .update_provider_settings(rc::to_provider_settings(&settings))
     }
 
-    /// Encode an [`AgreementTermsOf`](crate::agreement::AgreementTermsOf) as
-    /// a subxt dynamic value matching the on-chain composite.
-    pub fn dynamic_agreement_terms(
-        terms: &crate::agreement::AgreementTermsOf,
-    ) -> subxt::dynamic::Value {
-        let replica_params_value = match &terms.replica_params {
-            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
-            Some(rp) => subxt::dynamic::Value::unnamed_variant(
-                "Some",
-                vec![subxt::dynamic::Value::named_composite([
-                    ("sync_balance", subxt::dynamic::Value::u128(rp.sync_balance)),
-                    (
-                        "min_sync_interval",
-                        subxt::dynamic::Value::u128(rp.min_sync_interval as u128),
-                    ),
-                ])],
-            ),
-        };
-        let bucket_id_value = match terms.bucket_id {
-            None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
-            Some(id) => subxt::dynamic::Value::unnamed_variant(
-                "Some",
-                vec![subxt::dynamic::Value::u128(id as u128)],
-            ),
-        };
-        subxt::dynamic::Value::named_composite([
-            (
-                "owner",
-                subxt::dynamic::Value::from_bytes(terms.owner.as_ref() as &[u8]),
-            ),
-            (
-                "max_bytes",
-                subxt::dynamic::Value::u128(terms.max_bytes as u128),
-            ),
-            (
-                "duration",
-                subxt::dynamic::Value::u128(terms.duration as u128),
-            ),
-            (
-                "price_per_byte",
-                subxt::dynamic::Value::u128(terms.price_per_byte),
-            ),
-            (
-                "valid_until",
-                subxt::dynamic::Value::u128(terms.valid_until as u128),
-            ),
-            ("nonce", subxt::dynamic::Value::u128(terms.nonce as u128)),
-            ("bucket_id", bucket_id_value),
-            ("replica_params", replica_params_value),
-        ])
-    }
-
-    /// Encode a [`sp_runtime::MultiSignature`] as a subxt dynamic variant.
-    ///
-    /// Variant names and payloads mirror the pallet's
-    /// `verify_terms_signature` match: the signature travels as the
-    /// variant's raw inner bytes.
-    pub fn dynamic_multi_signature(sig: &sp_runtime::MultiSignature) -> subxt::dynamic::Value {
-        let (variant, bytes) = match sig {
-            sp_runtime::MultiSignature::Sr25519(s) => ("Sr25519", s.encode()),
-            sp_runtime::MultiSignature::Ed25519(s) => ("Ed25519", s.encode()),
-            sp_runtime::MultiSignature::Ecdsa(s) => ("Ecdsa", s.encode()),
-            sp_runtime::MultiSignature::Eth(s) => ("Eth", s.encode()),
-        };
-        subxt::dynamic::Value::unnamed_variant(
-            variant,
-            vec![subxt::dynamic::Value::from_bytes(bytes)],
-        )
-    }
-
-    /// Build an `establish_storage_agreement` extrinsic payload.
-    ///
-    /// Bundles the SCALE-encoded provider-signed terms and signature into
-    /// the dynamic call shape Layer 0 expects. The chain hashes
-    /// `blake2_256(TERM_CONTEXT | SCALE(terms))` and verifies the
-    /// signature against the provider's registered public key.
     pub fn establish_storage_agreement(
         provider: AccountId32,
         terms: &crate::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "establish_storage_agreement",
-            vec![
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                dynamic_agreement_terms(terms),
-                dynamic_multi_signature(sig),
-            ],
-        )
+        runtime::tx()
+            .storage_provider()
+            .establish_storage_agreement(
+                rc::to_account(&provider),
+                rc::to_agreement_terms(terms),
+                rc::to_multi_sig(sig),
+            )
     }
 
-    /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
     pub fn checkpoint(
         bucket_id: u64,
         mmr_root: H256,
@@ -287,54 +168,29 @@ pub mod extrinsics {
         leaf_count: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
-        let sigs: Vec<subxt::dynamic::Value> = signatures
-            .into_iter()
-            .map(|(account, sig)| {
-                subxt::dynamic::Value::unnamed_composite(vec![
-                    subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),
-                    subxt::dynamic::Value::unnamed_variant(
-                        "Sr25519",
-                        vec![subxt::dynamic::Value::from_bytes(&sig)],
-                    ),
-                ])
-            })
-            .collect();
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "checkpoint",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_count as u128),
-                subxt::dynamic::Value::unnamed_composite(sigs),
-            ],
+        runtime::tx().storage_provider().checkpoint(
+            bucket_id,
+            rc::to_h256(&mmr_root),
+            start_seq,
+            leaf_count,
+            rc::to_signatures(signatures),
         )
     }
 
-    /// Create a challenge_checkpoint extrinsic payload.
     pub fn challenge_checkpoint(
         bucket_id: u64,
         provider: AccountId32,
         leaf_index: u64,
         chunk_index: u64,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "challenge_checkpoint",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
-            ],
+        runtime::tx().storage_provider().challenge_checkpoint(
+            bucket_id,
+            rc::to_account(&provider),
+            leaf_index,
+            chunk_index,
         )
     }
 
-    /// Create a challenge_offchain extrinsic payload.
-    ///
-    /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
@@ -344,532 +200,256 @@ pub mod extrinsics {
         chunk_index: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
-        // MultiSignature::Sr25519 variant index is 0
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "challenge_offchain",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
-                // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
-                subxt::dynamic::Value::unnamed_variant(
-                    "Sr25519",
-                    vec![subxt::dynamic::Value::from_bytes(&provider_signature)],
-                ),
-            ],
+        runtime::tx().storage_provider().challenge_offchain(
+            bucket_id,
+            rc::to_account(&provider),
+            rc::to_h256(&mmr_root),
+            start_seq,
+            leaf_index,
+            chunk_index,
+            rc::raw_sr25519_to_multi_sig(provider_signature),
         )
     }
 
-    /// Create an add_stake extrinsic payload.
     pub fn add_stake(amount: u128) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "add_stake",
-            vec![subxt::dynamic::Value::u128(amount)],
-        )
+        runtime::tx().storage_provider().add_stake(amount)
     }
 
-    /// Create a deregister_provider extrinsic payload.
     pub fn deregister_provider() -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "deregister_provider",
-            Vec::<subxt::dynamic::Value>::new(),
-        )
+        runtime::tx().storage_provider().deregister_provider()
     }
 
-    /// Create a confirm_replica_sync extrinsic payload.
     pub fn confirm_replica_sync(
         bucket_id: u64,
         roots: [Option<H256>; 7],
         signature: Vec<u8>,
     ) -> impl Payload {
-        let roots_value = subxt::dynamic::Value::unnamed_composite(
-            roots
-                .iter()
-                .map(|r| match r {
-                    Some(h) => subxt::dynamic::Value::unnamed_variant(
-                        "Some",
-                        vec![subxt::dynamic::Value::from_bytes(h.as_bytes())],
-                    ),
-                    None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
-                })
-                .collect::<Vec<_>>(),
-        );
-
-        let sig_value = subxt::dynamic::Value::unnamed_variant(
-            "Sr25519",
-            vec![subxt::dynamic::Value::from_bytes(&signature)],
-        );
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "confirm_replica_sync",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                roots_value,
-                sig_value,
-            ],
+        let rt_roots = roots.map(|r| r.as_ref().map(rc::to_h256));
+        runtime::tx().storage_provider().confirm_replica_sync(
+            bucket_id,
+            rt_roots,
+            rc::raw_sr25519_to_multi_sig(signature),
         )
     }
 
-    /// Create a challenge_replica extrinsic payload.
     pub fn challenge_replica(
         bucket_id: u64,
         provider: AccountId32,
         leaf_index: u64,
         chunk_index: u64,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "challenge_replica",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
-            ],
+        runtime::tx().storage_provider().challenge_replica(
+            bucket_id,
+            rc::to_account(&provider),
+            leaf_index,
+            chunk_index,
         )
     }
 
-    /// Create a set_member extrinsic payload (add or update a bucket member's role).
     pub fn set_member(
         bucket_id: u64,
         member: AccountId32,
         role: storage_primitives::Role,
     ) -> impl Payload {
-        let role_value = match role {
-            storage_primitives::Role::Admin => {
-                subxt::dynamic::Value::unnamed_variant("Admin", vec![])
-            }
-            storage_primitives::Role::Writer => {
-                subxt::dynamic::Value::unnamed_variant("Writer", vec![])
-            }
-            storage_primitives::Role::Reader => {
-                subxt::dynamic::Value::unnamed_variant("Reader", vec![])
-            }
-        };
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "set_member",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(member.as_ref() as &[u8]),
-                role_value,
-            ],
+        runtime::tx().storage_provider().set_member(
+            bucket_id,
+            rc::to_account(&member),
+            rc::to_role(role),
         )
     }
 
-    /// Create a remove_member extrinsic payload.
     pub fn remove_bucket_member(bucket_id: u64, member: AccountId32) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "remove_member",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(member.as_ref() as &[u8]),
-            ],
-        )
+        runtime::tx()
+            .storage_provider()
+            .remove_member(bucket_id, rc::to_account(&member))
     }
 
-    /// Create a freeze_bucket extrinsic payload.
-    ///
-    /// The chain uses the current snapshot's start_seq to set the freeze point.
     pub fn freeze_bucket(bucket_id: u64) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "freeze_bucket",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        )
+        runtime::tx().storage_provider().freeze_bucket(bucket_id)
     }
 
-    /// Create an extend_agreement extrinsic payload.
     pub fn extend_agreement(
         bucket_id: u64,
         provider: AccountId32,
         additional_duration: u32,
         max_payment: u128,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "extend_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(additional_duration as u128),
-                subxt::dynamic::Value::u128(max_payment),
-            ],
+        runtime::tx().storage_provider().extend_agreement(
+            bucket_id,
+            rc::to_account(&provider),
+            additional_duration,
+            max_payment,
         )
     }
 
-    /// Create a top_up_agreement extrinsic payload.
     pub fn top_up_agreement(
         bucket_id: u64,
         provider: AccountId32,
         additional_bytes: u64,
         max_payment: u128,
     ) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "top_up_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(additional_bytes as u128),
-                subxt::dynamic::Value::u128(max_payment),
-            ],
+        runtime::tx().storage_provider().top_up_agreement(
+            bucket_id,
+            rc::to_account(&provider),
+            additional_bytes,
+            max_payment,
         )
     }
 
-    /// Create an end_agreement extrinsic payload.
     pub fn end_agreement(
         bucket_id: u64,
         provider: AccountId32,
         action: storage_primitives::EndAction,
     ) -> impl Payload {
-        let action_value = match action {
-            storage_primitives::EndAction::Pay => {
-                subxt::dynamic::Value::unnamed_variant("Pay", vec![])
-            }
-            storage_primitives::EndAction::Burn { burn_percent } => {
-                subxt::dynamic::Value::named_variant(
-                    "Burn",
-                    [(
-                        "burn_percent",
-                        subxt::dynamic::Value::u128(burn_percent as u128),
-                    )],
-                )
-            }
-        };
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "end_agreement",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                action_value,
-            ],
+        runtime::tx().storage_provider().end_agreement(
+            bucket_id,
+            rc::to_account(&provider),
+            rc::to_end_action(action),
         )
     }
 
-    /// Create a set_extensions_blocked extrinsic payload (provider-side call).
     pub fn set_extensions_blocked(bucket_id: u64, blocked: bool) -> impl Payload {
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "set_extensions_blocked",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::bool(blocked),
-            ],
-        )
+        runtime::tx()
+            .storage_provider()
+            .set_extensions_blocked(bucket_id, blocked)
     }
 
-    /// Create a respond_to_challenge extrinsic payload with a Proof response.
-    ///
-    /// Builds the `ChallengeResponse::Proof` variant with proper nested types
-    /// matching the pallet's expected format.
     pub fn respond_to_challenge_proof(
         challenge_id: (u32, u16),
         chunk_data: &[u8],
         mmr_proof: &storage_primitives::MmrProof,
         chunk_proof: &storage_primitives::MerkleProof,
     ) -> impl Payload {
-        // Build ChallengeId named composite
-        let challenge_id_value = subxt::dynamic::Value::named_composite([
-            (
-                "deadline",
-                subxt::dynamic::Value::u128(challenge_id.0 as u128),
-            ),
-            ("index", subxt::dynamic::Value::u128(challenge_id.1 as u128)),
-        ]);
-
-        // Build MerkleProof for leaf_proof (MMR leaf to peak)
-        let leaf_proof_value = subxt::dynamic::Value::named_composite([
-            (
-                "siblings",
-                subxt::dynamic::Value::unnamed_composite(
-                    mmr_proof
-                        .leaf_proof
-                        .siblings
-                        .iter()
-                        .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "path",
-                subxt::dynamic::Value::unnamed_composite(
-                    mmr_proof
-                        .leaf_proof
-                        .path
-                        .iter()
-                        .map(|b| subxt::dynamic::Value::bool(*b))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        ]);
-
-        // Build MmrLeaf
-        let leaf_value = subxt::dynamic::Value::named_composite([
-            (
-                "data_root",
-                subxt::dynamic::Value::from_bytes(mmr_proof.leaf.data_root.as_bytes()),
-            ),
-            (
-                "data_size",
-                subxt::dynamic::Value::u128(mmr_proof.leaf.data_size as u128),
-            ),
-            (
-                "total_size",
-                subxt::dynamic::Value::u128(mmr_proof.leaf.total_size as u128),
-            ),
-        ]);
-
-        // Build MmrProof
-        let mmr_proof_value = subxt::dynamic::Value::named_composite([
-            (
-                "peaks",
-                subxt::dynamic::Value::unnamed_composite(
-                    mmr_proof
-                        .peaks
-                        .iter()
-                        .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            ("leaf", leaf_value),
-            ("leaf_proof", leaf_proof_value),
-        ]);
-
-        // Build MerkleProof for chunk proof (chunk to data_root)
-        let chunk_proof_value = subxt::dynamic::Value::named_composite([
-            (
-                "siblings",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .siblings
-                        .iter()
-                        .map(|h| subxt::dynamic::Value::from_bytes(h.as_bytes()))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-            (
-                "path",
-                subxt::dynamic::Value::unnamed_composite(
-                    chunk_proof
-                        .path
-                        .iter()
-                        .map(|b| subxt::dynamic::Value::bool(*b))
-                        .collect::<Vec<_>>(),
-                ),
-            ),
-        ]);
-
-        // Build ChallengeResponse::Proof variant
-        let response = subxt::dynamic::Value::named_variant(
-            "Proof",
-            [
-                ("chunk_data", subxt::dynamic::Value::from_bytes(chunk_data)),
-                ("mmr_proof", mmr_proof_value),
-                ("chunk_proof", chunk_proof_value),
-            ],
-        );
-
-        subxt::dynamic::tx(
-            PALLET_NAME,
-            "respond_to_challenge",
-            vec![challenge_id_value, response],
+        runtime::tx().storage_provider().respond_to_challenge(
+            rc::to_challenge_id(challenge_id.0, challenge_id.1),
+            rc::to_challenge_response_proof(chunk_data, mmr_proof, chunk_proof),
         )
     }
 }
 
 /// Runtime constant addresses for reading on-chain config.
 pub mod constants {
-    use super::*;
+    use storage_subxt::storage_runtime::api as runtime;
+    use storage_subxt::subxt_core::constants::address::StaticAddress;
 
-    /// Dynamic constant address for `StorageProvider::RequestTimeout`,
-    /// the validity window (in blocks) the chain enforces on provider-signed
-    /// agreement terms.
-    pub fn request_timeout() -> subxt::constants::DynamicAddress {
-        subxt::dynamic::constant(PALLET_NAME, "RequestTimeout")
+    /// Typed constant address for `StorageProvider::RequestTimeout`.
+    pub fn request_timeout() -> StaticAddress<u32> {
+        runtime::constants().storage_provider().request_timeout()
     }
 }
 
 /// Storage queries for reading chain state.
 pub mod storage {
-    use super::*;
+    use crate::runtime_convert as rc;
+    use sp_runtime::AccountId32;
+    use storage_subxt::storage_runtime::api as runtime;
+    use storage_subxt::storage_runtime::api::runtime_types as rt;
+    use storage_subxt::subxt;
 
-    /// Query provider info.
     pub fn provider_info(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::ProviderInfo,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Providers",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
-        )
+        runtime::storage()
+            .storage_provider()
+            .providers(rc::to_account(account))
     }
 
-    /// Query bucket info.
     pub fn bucket_info(
         bucket_id: u64,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::Bucket,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        )
+        runtime::storage().storage_provider().buckets(bucket_id)
     }
 
-    /// Query agreement info.
     pub fn agreement_info(
         bucket_id: u64,
         provider: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::StorageAgreement,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "StorageAgreements",
-            vec![
-                subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-            ],
-        )
+        runtime::storage()
+            .storage_provider()
+            .storage_agreements(bucket_id, rc::to_account(provider))
     }
 
-    /// Query all storage agreements for a specific bucket (prefix iteration).
-    ///
-    /// Key layout after prefix: [blake2_128(provider)=16][provider=32]; provider at offset 72 in full key.
     pub fn agreements_for_bucket(
         bucket_id: u64,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsIterable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::StorageAgreement,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "StorageAgreements",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
-        )
+        runtime::storage()
+            .storage_provider()
+            .storage_agreements_iter1(bucket_id)
     }
 
-    /// Query the list of bucket IDs that an account is a member of.
     pub fn member_buckets(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::bounded_collections::bounded_vec::BoundedVec<u64>,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "MemberBuckets",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
-        )
+        runtime::storage()
+            .storage_provider()
+            .member_buckets(rc::to_account(account))
     }
 
-    /// Iterate all registered providers.
-    ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32];
-    /// account at [48..80].
-    pub fn all_providers() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    pub fn all_providers() -> impl subxt::storage::Address<
+        IsIterable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::ProviderInfo,
     > {
-        subxt::dynamic::storage(PALLET_NAME, "Providers", vec![])
+        runtime::storage().storage_provider().providers_iter()
     }
 
-    /// Iterate all storage agreements (bucket_id × provider DoubleMap).
-    ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]
-    ///             [blake2_128(provider)=16][provider=32]; bucket_id at [48..56], provider at [72..104].
-    pub fn all_storage_agreements() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    pub fn all_storage_agreements() -> impl subxt::storage::Address<
+        IsIterable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::StorageAgreement,
     > {
-        subxt::dynamic::storage(PALLET_NAME, "StorageAgreements", vec![])
+        runtime::storage()
+            .storage_provider()
+            .storage_agreements_iter()
     }
 
-    /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
-    ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4];
-    /// deadline block at [48..52].
-    pub fn all_challenges() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    pub fn all_challenges() -> impl subxt::storage::Address<
+        IsIterable = subxt::utils::Yes,
+        Target = Vec<rt::pallet_storage_provider::pallet::Challenge>,
     > {
-        subxt::dynamic::storage(PALLET_NAME, "Challenges", vec![])
+        runtime::storage().storage_provider().challenges_iter()
     }
 
-    /// Query challenges at a deadline block.
     pub fn challenges(
         deadline_block: u32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = Vec<rt::pallet_storage_provider::pallet::Challenge>,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Challenges",
-            vec![subxt::dynamic::Value::u128(deadline_block as u128)],
-        )
+        runtime::storage()
+            .storage_provider()
+            .challenges(deadline_block)
     }
 
-    /// Query the provider's replay-window state.
     pub fn provider_replay_state(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::storage_primitives::provider_replay_state::ReplayWindow,
     > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "ProviderReplayStates",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
-        )
+        runtime::storage()
+            .storage_provider()
+            .provider_replay_states(rc::to_account(account))
+    }
+
+    pub fn iter_providers_typed() -> impl subxt::storage::Address<
+        IsIterable = subxt::utils::Yes,
+        Target = rt::pallet_storage_provider::pallet::ProviderInfo,
+    > {
+        runtime::storage().storage_provider().providers_iter()
     }
 }
 

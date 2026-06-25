@@ -58,7 +58,7 @@ pub fn dev_ss58(name: &str) -> String {
 /// storage queries / parser APIs that take `&AccountId32` directly.
 #[allow(dead_code)]
 pub fn dev_account(name: &str) -> AccountId32 {
-    use subxt_signer::sr25519::dev;
+    use storage_subxt::subxt_signer::sr25519::dev;
 
     let keypair = match name {
         "alice" => dev::alice(),
@@ -123,7 +123,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         Ok(Some(_))
     );
 
-    let alice_keypair = subxt_signer::sr25519::dev::alice();
+    let alice_keypair = storage_subxt::subxt_signer::sr25519::dev::alice();
     let alice_pubkey = alice_keypair.public_key().0.to_vec();
 
     if !already_registered {

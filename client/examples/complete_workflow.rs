@@ -27,7 +27,7 @@ use storage_client::{
     AdminClient, ChunkingStrategy, ClientConfig, NegotiateRequest, ProviderClient, SignedTerms,
     StorageUserClient,
 };
-use subxt_signer::{sr25519::Keypair, SecretUri};
+use storage_subxt::subxt_signer::{sr25519::Keypair, SecretUri};
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
 const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";

@@ -13,10 +13,9 @@ use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use subxt::blocks::ExtrinsicEvents;
-use subxt::dynamic::At;
-use subxt::ext::scale_value::{Composite, ValueDef};
-use subxt::PolkadotConfig;
+use storage_subxt::storage_runtime::api::storage_provider::events::ChallengeCreated as EvChallengeCreated;
+use storage_subxt::subxt::blocks::ExtrinsicEvents;
+use storage_subxt::subxt::PolkadotConfig;
 
 /// Client for challengers (third parties who verify data integrity).
 pub struct ChallengerClient {
@@ -281,51 +280,22 @@ impl ChallengerClient {
             }
             let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenges at block {deadline}: {e}");
-                    continue;
-                }
-            };
-
-            // Value is Vec<Challenge<T>> encoded as unnamed composite
-            let challenge_list = match &value.value {
-                ValueDef::Composite(Composite::Unnamed(items)) => items.clone(),
-                _ => continue,
-            };
-
-            for (idx, challenge_val) in challenge_list.iter().enumerate() {
-                let ch_bytes = named_field(challenge_val, "challenger")
-                    .and_then(decode_account_bytes)
-                    .unwrap_or_default();
-
-                if ch_bytes != challenger_bytes {
+            for (idx, challenge) in kv.value.iter().enumerate() {
+                if &challenge.challenger.0[..] != challenger_bytes {
                     continue;
                 }
 
-                let bucket_id = named_field(challenge_val, "bucket_id")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as BucketId;
-
-                let provider_bytes = named_field(challenge_val, "provider")
-                    .and_then(decode_account_bytes)
-                    .unwrap_or_default();
-                let provider = format!("0x{}", hex::encode(&provider_bytes));
-
-                let deposit = named_field(challenge_val, "deposit")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0);
+                let provider = format!("0x{}", hex::encode(challenge.provider.0));
 
                 challenges.push(ChallengeInfo {
                     challenge_id: ChallengeId {
                         deadline,
                         index: idx as u16,
                     },
-                    bucket_id,
+                    bucket_id: challenge.bucket_id,
                     provider,
                     deadline,
-                    deposit,
+                    deposit: challenge.deposit,
                     status: ChallengeStatus::Pending,
                 });
             }
@@ -359,21 +329,8 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let (challenges_received, challenges_failed) = if let Some(thunk) = provider_thunk {
-            let value = thunk
-                .to_value()
-                .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-            let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            (received, failed)
+        let (challenges_received, challenges_failed) = if let Some(p) = provider_thunk {
+            (p.stats.challenges_received, p.stats.challenges_failed)
         } else {
             return Err(ClientError::Chain(format!("Provider {provider} not found")));
         };
@@ -393,23 +350,12 @@ impl ChallengerClient {
                 .await
                 .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
 
-            if let Some(thunk) = bucket_thunk {
-                let value = thunk
-                    .to_value()
-                    .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
-
-                let checkpoint_block = named_field(&value, "snapshot")
-                    .and_then(|snap| match &snap.value {
-                        ValueDef::Variant(v) if v.name == "Some" => match &v.values {
-                            Composite::Unnamed(items) => items.first(),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
-                    .and_then(|s| named_field(s, "checkpoint_block"))
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u32;
-
+            if let Some(bucket) = bucket_thunk {
+                let checkpoint_block = bucket
+                    .snapshot
+                    .as_ref()
+                    .map(|s| s.checkpoint_block)
+                    .unwrap_or(0);
                 current_block.saturating_sub(checkpoint_block)
             } else {
                 0
@@ -514,23 +460,12 @@ impl ChallengerClient {
             };
             let account = AccountId32::from(arr);
 
-            let Ok(Some(thunk)) = storage.fetch(&storage::provider_info(&account)).await else {
+            let Ok(Some(p)) = storage.fetch(&storage::provider_info(&account)).await else {
                 continue;
             };
 
-            let Ok(value) = thunk.to_value() else {
-                continue;
-            };
-
-            let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
+            let received = p.stats.challenges_received;
+            let failed = p.stats.challenges_failed;
 
             let rep = reputation_score(received, failed);
             if rep < min_reputation_threshold {
@@ -613,16 +548,7 @@ impl ChallengerClient {
             return Ok(None);
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode challenges: {e}")))?;
-
-        let still_exists = match &value.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                (challenge_id.index as usize) < items.len()
-            }
-            _ => false,
-        };
+        let still_exists = (challenge_id.index as usize) < thunk.len();
 
         if still_exists {
             tracing::info!(
@@ -730,27 +656,13 @@ impl ChallengerClient {
             };
             let account = AccountId32::from(arr);
 
-            let Ok(Some(thunk)) = storage.fetch(&storage::provider_info(&account)).await else {
+            let Ok(Some(p)) = storage.fetch(&storage::provider_info(&account)).await else {
                 continue;
             };
 
-            let Ok(value) = thunk.to_value() else {
-                continue;
-            };
-
-            let stake = named_field(&value, "stake")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0);
-
-            let stats = named_field(&value, "stats");
-            let received = stats
-                .and_then(|s| named_field(s, "challenges_received"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-            let failed = stats
-                .and_then(|s| named_field(s, "challenges_failed"))
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
+            let stake = p.stake;
+            let received = p.stats.challenges_received;
+            let failed = p.stats.challenges_failed;
 
             let rep = reputation_score(received, failed);
 
@@ -798,37 +710,11 @@ impl ChallengerClient {
         for event in events.iter() {
             let event =
                 event.map_err(|e| ClientError::Chain(format!("Failed to decode event: {e}")))?;
-
-            if event.pallet_name() == "StorageProvider"
-                && event.variant_name() == "ChallengeCreated"
-            {
-                let fields = event.field_values().map_err(|e| {
-                    ClientError::Chain(format!("Failed to decode event fields: {e}"))
-                })?;
-
-                // fields is a scale_value::Value — navigate the composite
-                // ChallengeCreated { challenge_id: { deadline, index }, ... }
-                let challenge_id_val = fields.at("challenge_id").ok_or_else(|| {
-                    ClientError::Chain(
-                        "ChallengeCreated event missing challenge_id field".to_string(),
-                    )
-                })?;
-
-                let deadline = challenge_id_val
-                    .at("deadline")
-                    .and_then(|v| v.as_u128())
-                    .ok_or_else(|| {
-                        ClientError::Chain("ChallengeCreated: cannot parse deadline".to_string())
-                    })? as u32;
-
-                let index = challenge_id_val
-                    .at("index")
-                    .and_then(|v| v.as_u128())
-                    .ok_or_else(|| {
-                        ClientError::Chain("ChallengeCreated: cannot parse index".to_string())
-                    })? as u16;
-
-                return Ok(ChallengeId { deadline, index });
+            if let Some(e) = event.as_event::<EvChallengeCreated>().ok().flatten() {
+                return Ok(ChallengeId {
+                    deadline: e.challenge_id.deadline,
+                    index: e.challenge_id.index,
+                });
             }
         }
 
@@ -841,27 +727,6 @@ impl ChallengerClient {
 // ─────────────────────────────────────────────────────────────────────────────
 // Private helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
-            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
-        }
-        _ => None,
-    }
-}
 
 /// Compute a 0–100 reputation score from on-chain challenge stats.
 /// Providers with no recorded challenges score 100 (benefit of the doubt).

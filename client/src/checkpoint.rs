@@ -41,8 +41,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
-use subxt::dynamic::Value;
 use tokio::sync::{mpsc, RwLock};
+use storage_subxt::subxt_signer;
 
 // ============================================================================
 // Configuration
@@ -1434,37 +1434,12 @@ impl CheckpointManager {
         let api = self.chain_client.api();
         let signer = self.chain_client.signer()?;
 
-        // Build signatures array for the extrinsic
-        // Format: Vec<(AccountId, MultiSignature)>
-        let signatures_value: Vec<Value> = collection
-            .signatures
-            .iter()
-            .map(|(account_id, sig_bytes)| {
-                // Create tuple (AccountId, MultiSignature)
-                Value::unnamed_composite(vec![
-                    Value::from_bytes(account_id.as_ref() as &[u8]),
-                    // MultiSignature::Sr25519(Signature)
-                    Value::unnamed_variant("Sr25519", vec![Value::from_bytes(sig_bytes)]),
-                ])
-            })
-            .collect();
-
-        // Build the extrinsic
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "submit_commitment",
-            vec![
-                // bucket_id: u64
-                Value::u128(collection.bucket_id as u128),
-                // mmr_root: H256
-                Value::from_bytes(collection.mmr_root.as_bytes()),
-                // start_seq: u64
-                Value::u128(collection.start_seq as u128),
-                // leaf_count: u64
-                Value::u128(collection.leaf_count as u128),
-                // signatures: Vec<(AccountId, MultiSignature)>
-                Value::unnamed_composite(signatures_value),
-            ],
+        let tx = crate::substrate::extrinsics::checkpoint(
+            collection.bucket_id,
+            collection.mmr_root,
+            collection.start_seq,
+            collection.leaf_count,
+            collection.signatures.clone(),
         );
 
         // Submit and wait for finalization

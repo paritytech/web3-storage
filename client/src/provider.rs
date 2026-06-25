@@ -15,7 +15,8 @@ use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use subxt::ext::scale_value::{Composite, ValueDef, Variant};
+use storage_subxt::storage_runtime::api::runtime_types as rt;
+use storage_subxt::subxt_signer;
 
 /// Client for storage providers.
 pub struct ProviderClient {
@@ -136,87 +137,24 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(p) = thunk else {
             return Ok(None);
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        // Decode top-level fields.
-        let multiaddr = named_field(&value, "multiaddr")
-            .map(|v| String::from_utf8_lossy(&decode_byte_vec(v)).into_owned())
-            .unwrap_or_default();
-
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| ClientError::Chain("Missing 'stake'".to_string()))?;
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .ok_or_else(|| ClientError::Chain("Missing 'committed_bytes'".to_string()))?
-            as u64;
-
-        // Decode settings sub-composite.
-        let settings = named_field(&value, "settings")
-            .ok_or_else(|| ClientError::Chain("Missing 'settings' in ProviderInfo".to_string()))?;
-
-        let replica_sync_price =
-            named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, values }) if name == "Some" => {
-                    values.values().next().and_then(|v| v.as_u128())
-                }
-                _ => None,
-            });
-
-        // Decode stats sub-composite.
-        let stats = named_field(&value, "stats");
-        let agreements_total = stats
-            .and_then(|s| named_field(s, "agreements_total"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-        let challenges_failed = stats
-            .and_then(|s| named_field(s, "challenges_failed"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
         Ok(Some(ProviderInfo {
-            multiaddr,
-            stake,
-            committed_bytes,
-            max_capacity: named_field(settings, "max_capacity")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'max_capacity'".to_string()))?
-                as u64,
-            min_duration: named_field(settings, "min_duration")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'min_duration'".to_string()))?
-                as u32,
-            max_duration: named_field(settings, "max_duration")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'max_duration'".to_string()))?
-                as u32,
-            price_per_byte: named_field(settings, "price_per_byte")
-                .and_then(|v| v.as_u128())
-                .ok_or_else(|| ClientError::Chain("Missing 'price_per_byte'".to_string()))?,
-            accepting_primary: named_field(settings, "accepting_primary")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| ClientError::Chain("Missing 'accepting_primary'".to_string()))?,
-            replica_sync_price,
-            accepting_extensions: named_field(settings, "accepting_extensions")
-                .and_then(|v| v.as_bool())
-                .ok_or_else(|| ClientError::Chain("Missing 'accepting_extensions'".to_string()))?,
-            agreements_total,
-            challenges_failed,
-            deregister_at: named_field(&value, "deregister_at").and_then(|v| match &v.value {
-                ValueDef::Variant(Variant { name, values }) if name == "Some" => values
-                    .values()
-                    .next()
-                    .and_then(|v| v.as_u128())
-                    .map(|n| n as u32),
-                _ => None,
-            }),
+            multiaddr: String::from_utf8_lossy(&p.multiaddr.0).into_owned(),
+            stake: p.stake,
+            committed_bytes: p.committed_bytes,
+            max_capacity: p.settings.max_capacity,
+            min_duration: p.settings.min_duration,
+            max_duration: p.settings.max_duration,
+            price_per_byte: p.settings.price_per_byte,
+            accepting_primary: p.settings.accepting_primary,
+            replica_sync_price: p.settings.replica_sync_price,
+            accepting_extensions: p.settings.accepting_extensions,
+            agreements_total: p.stats.agreements_total,
+            challenges_failed: p.stats.challenges_failed,
+            deregister_at: p.deregister_at,
         }))
     }
 
@@ -329,15 +267,10 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(replay) = thunk else {
             return Ok(None);
         };
-        let decoded = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
-        Ok(named_field(&decoded, "hsn")
-            .and_then(|v| v.as_u128())
-            .map(|h| h as u64))
+        Ok(Some(replay.hsn))
     }
 
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
@@ -350,11 +283,9 @@ impl ProviderClient {
             .api()
             .constants()
             .at(&constants::request_timeout())
-            .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?;
 
-        Ok(value.as_u128().map(|v| v as u32))
+        Ok(Some(value))
     }
 
     /// Negotiate provider-signed agreement terms over HTTP.
@@ -457,38 +388,18 @@ impl ProviderClient {
             let bucket_id =
                 u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode agreement: {e}");
-                    continue;
-                }
-            };
-
-            let owner = named_field(&value, "owner")
-                .and_then(decode_account_bytes)
-                .map(|b| format!("0x{}", hex::encode(b)))
-                .unwrap_or_default();
-
-            let max_bytes = named_field(&value, "max_bytes")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u64;
-
-            let expires_at = named_field(&value, "expires_at")
-                .and_then(|v| v.as_u128())
-                .unwrap_or(0) as u32;
-
-            let is_primary = named_field(&value, "role")
-                .map(|r| {
-                    matches!(&r.value, ValueDef::Variant(Variant { name, .. }) if name == "Primary")
-                })
-                .unwrap_or(false);
+            let agreement = kv.value;
+            let owner = format!("0x{}", hex::encode(agreement.owner.0));
+            let is_primary = matches!(
+                agreement.role,
+                rt::storage_primitives::ProviderRole::Primary
+            );
 
             agreements.push(ActiveAgreement {
                 bucket_id,
                 owner,
-                max_bytes,
-                expires_at,
+                max_bytes: agreement.max_bytes,
+                expires_at: agreement.expires_at,
                 is_primary,
             });
         }
@@ -614,49 +525,17 @@ impl ProviderClient {
             }
             let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenges at block {deadline}: {e}");
+            for (index, challenge) in kv.value.iter().enumerate() {
+                if &challenge.provider.0[..] != provider_bytes.as_slice() {
                     continue;
                 }
-            };
-
-            // Value is Vec<Challenge>, decoded as an unnamed Composite
-            let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
-                continue;
-            };
-            let items: Vec<_> = items.iter().collect();
-
-            for (index, item) in items.iter().enumerate() {
-                let Some(pv) = named_field(item, "provider") else {
-                    continue;
-                };
-                let Some(pv_bytes) = decode_account_bytes(pv) else {
-                    continue;
-                };
-                if pv_bytes != provider_bytes {
-                    continue;
-                }
-
-                let bucket_id = named_field(item, "bucket_id")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as BucketId;
-
-                let leaf_index = named_field(item, "leaf_index")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
-
-                let chunk_index = named_field(item, "chunk_index")
-                    .and_then(|v| v.as_u128())
-                    .unwrap_or(0) as u64;
 
                 challenges.push(ChallengeInfo {
                     challenge_id: (deadline, index as u16),
-                    bucket_id,
+                    bucket_id: challenge.bucket_id,
                     deadline,
-                    leaf_index,
-                    chunk_index,
+                    leaf_index: challenge.leaf_index,
+                    chunk_index: challenge.chunk_index,
                 });
             }
         }
@@ -684,58 +563,24 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(p) = thunk else {
             return Ok(ProviderStats::default());
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0);
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let stats = named_field(&value, "stats");
-
-        let agreements_total = stats
-            .and_then(|s| named_field(s, "agreements_total"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let agreements_extended = stats
-            .and_then(|s| named_field(s, "agreements_extended"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let challenges_received = stats
-            .and_then(|s| named_field(s, "challenges_received"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let challenges_failed = stats
-            .and_then(|s| named_field(s, "challenges_failed"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u32;
-
-        let reputation = if agreements_total > 0 {
-            let failure_rate = challenges_failed as f64 / agreements_total as f64;
+        let reputation = if p.stats.agreements_total > 0 {
+            let failure_rate = p.stats.challenges_failed as f64 / p.stats.agreements_total as f64;
             ((1.0 - failure_rate) * 100.0).clamp(0.0, 100.0) as u8
         } else {
             100
         };
 
         Ok(ProviderStats {
-            stake,
-            committed_bytes,
-            agreements_total,
-            agreements_extended,
-            challenges_received,
-            challenges_failed,
+            stake: p.stake,
+            committed_bytes: p.committed_bytes,
+            agreements_total: p.stats.agreements_total,
+            agreements_extended: p.stats.agreements_extended,
+            challenges_received: p.stats.challenges_received,
+            challenges_failed: p.stats.challenges_failed,
             reputation,
         })
     }
@@ -763,7 +608,7 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(p) = thunk else {
             return Ok(CapacityInfo {
                 committed_bytes: 0,
                 available_bytes: 0,
@@ -772,31 +617,12 @@ impl ProviderClient {
             });
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let stake = named_field(&value, "stake")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0);
-
-        let committed_bytes = named_field(&value, "committed_bytes")
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let settings = named_field(&value, "settings");
-
-        let max_capacity = settings
-            .and_then(|s| named_field(s, "max_capacity"))
-            .and_then(|v| v.as_u128())
-            .unwrap_or(0) as u64;
-
-        let available_bytes = max_capacity.saturating_sub(committed_bytes);
+        let available_bytes = p.settings.max_capacity.saturating_sub(p.committed_bytes);
 
         Ok(CapacityInfo {
-            committed_bytes,
+            committed_bytes: p.committed_bytes,
             available_bytes,
-            stake,
+            stake: p.stake,
             required_stake: 0,
         })
     }
@@ -806,53 +632,6 @@ impl ProviderClient {
         let stats = self.get_stats().await?;
         Ok(stats.reputation)
     }
-}
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-/// Decode an AccountId32 from a scale_value unnamed composite of 32 u8 items.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
-            items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
-        }
-        _ => None,
-    }
-}
-
-/// Decode a `Vec<u8>` / `BoundedVec<u8, _>` from a scale_value composite.
-///
-/// `BoundedVec<T, N>` serializes its `TypeInfo` as a 1-field unnamed composite
-/// wrapping the inner `Vec<T>`, so scale_value surfaces it as
-/// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
-/// if present, then collects the bytes.
-fn decode_byte_vec(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
-    let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
-        return Vec::new();
-    };
-    // Direct sequence of byte primitives.
-    let bytes: Vec<u8> = items
-        .iter()
-        .filter_map(|b| b.as_u128().map(|n| n as u8))
-        .collect();
-    if !items.is_empty() && bytes.len() == items.len() {
-        return bytes;
-    }
-    // BoundedVec wrapper: single inner field holds the actual sequence.
-    if items.len() == 1 {
-        return decode_byte_vec(&items[0]);
-    }
-    Vec::new()
 }
 
 // Types

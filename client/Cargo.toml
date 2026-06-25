@@ -25,9 +25,11 @@ rand = { workspace = true }
 chacha20poly1305 = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 async-trait = { workspace = true }
-subxt = { workspace = true }
-subxt-signer = { workspace = true }
+storage-subxt = { workspace = true }
 futures = { workspace = true }
+
+[features]
+mainnet = ["storage-subxt/mainnet"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

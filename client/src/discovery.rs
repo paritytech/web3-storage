@@ -11,7 +11,7 @@ use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{storage, SubstrateClient};
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
-use subxt::ext::scale_value::{Composite, Primitive, ValueDef, Variant};
+use storage_subxt::storage_runtime::api::runtime_types as rt;
 
 /// Storage requirements for provider matching.
 #[derive(Debug, Clone)]
@@ -203,21 +203,7 @@ impl DiscoveryClient {
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode provider {account_str}: {e}");
-                    continue;
-                }
-            };
-
-            let info = match parse_provider_info(&value) {
-                Some(i) => i,
-                None => {
-                    tracing::warn!("Failed to parse provider fields for {account_str}");
-                    continue;
-                }
-            };
+            let info = parse_rt_provider_info(kv.value);
 
             // Hard filter: enforce the caller's price ceiling. Other partial-match
             // conditions (capacity, duration) still surface via score_provider.
@@ -298,15 +284,7 @@ impl DiscoveryClient {
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let info = match parse_provider_info(&value) {
-                Some(i) => i,
-                None => continue,
-            };
+            let info = parse_rt_provider_info(kv.value);
 
             // Must be accepting some kind of agreement
             if !info.accepting_primary && info.replica_sync_price.is_none() {
@@ -432,11 +410,7 @@ impl DiscoveryClient {
             return Ok(None);
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        Ok(parse_provider_info(&value))
+        Ok(Some(parse_rt_provider_info(thunk)))
     }
 
     /// Check if a provider can accept additional bytes.
@@ -473,13 +447,7 @@ impl DiscoveryClient {
             return Ok(false);
         };
 
-        let value = thunk
-            .to_value()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let Some(info) = parse_provider_info(&value) else {
-            return Ok(false);
-        };
+        let info = parse_rt_provider_info(thunk);
 
         if !info.accepting_primary && info.replica_sync_price.is_none() {
             return Ok(false);
@@ -526,14 +494,7 @@ impl DiscoveryClient {
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            if let Some(info) = parse_provider_info(&value) {
-                all.push((account_str, info));
-            }
+            all.push((account_str, parse_rt_provider_info(kv.value)));
         }
 
         let page: Vec<(String, ProviderInfo)> = all
@@ -565,123 +526,22 @@ fn account_ss58_from_key(key: &[u8]) -> Option<String> {
     Some(AccountId32::from(bytes).to_ss58check())
 }
 
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
+fn parse_rt_provider_info(p: rt::pallet_storage_provider::pallet::ProviderInfo) -> ProviderInfo {
+    ProviderInfo {
+        multiaddr: String::from_utf8_lossy(&p.multiaddr.0).into_owned(),
+        stake: p.stake,
+        committed_bytes: p.committed_bytes,
+        max_capacity: p.settings.max_capacity,
+        min_duration: p.settings.min_duration,
+        max_duration: p.settings.max_duration,
+        price_per_byte: p.settings.price_per_byte,
+        accepting_primary: p.settings.accepting_primary,
+        replica_sync_price: p.settings.replica_sync_price,
+        accepting_extensions: p.settings.accepting_extensions,
+        agreements_total: p.stats.agreements_total,
+        challenges_failed: p.stats.challenges_failed,
+        deregister_at: p.deregister_at,
     }
-}
-
-fn as_bool(value: &subxt::ext::scale_value::Value<u32>) -> bool {
-    match &value.value {
-        ValueDef::Primitive(Primitive::Bool(b)) => *b,
-        // Fallback: some decoders emit booleans as u128 0/1 without type info
-        _ => value.as_u128().map(|n| n != 0).unwrap_or(false),
-    }
-}
-
-fn decode_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(items)) => items
-            .iter()
-            .filter_map(|b| b.as_u128().map(|n| n as u8))
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// Parse a `ProviderInfo<T>` dynamic value into the client-side [`ProviderInfo`].
-fn parse_provider_info(value: &subxt::ext::scale_value::Value<u32>) -> Option<ProviderInfo> {
-    let multiaddr_bytes = named_field(value, "multiaddr")
-        .map(decode_bytes)
-        .unwrap_or_default();
-    let multiaddr = String::from_utf8_lossy(&multiaddr_bytes).into_owned();
-
-    let stake = named_field(value, "stake")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0);
-
-    let committed_bytes = named_field(value, "committed_bytes")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u64;
-
-    let settings = named_field(value, "settings")?;
-
-    let min_duration = named_field(settings, "min_duration")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let max_duration = named_field(settings, "max_duration")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let price_per_byte = named_field(settings, "price_per_byte")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0);
-
-    let accepting_primary = named_field(settings, "accepting_primary")
-        .map(as_bool)
-        .unwrap_or(false);
-
-    let replica_sync_price =
-        named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-            ValueDef::Variant(Variant {
-                name,
-                values: Composite::Unnamed(items),
-            }) if name == "Some" => items.first().and_then(|v| v.as_u128()),
-            _ => None,
-        });
-
-    let accepting_extensions = named_field(settings, "accepting_extensions")
-        .map(as_bool)
-        .unwrap_or(false);
-
-    let max_capacity = named_field(settings, "max_capacity")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u64;
-
-    let stats = named_field(value, "stats");
-
-    let agreements_total = stats
-        .and_then(|s| named_field(s, "agreements_total"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let challenges_failed = stats
-        .and_then(|s| named_field(s, "challenges_failed"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let deregister_at = named_field(value, "deregister_at").and_then(|v| match &v.value {
-        ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-        ValueDef::Variant(Variant {
-            name,
-            values: Composite::Unnamed(items),
-        }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u32),
-        _ => None,
-    });
-
-    Some(ProviderInfo {
-        multiaddr,
-        stake,
-        committed_bytes,
-        max_capacity,
-        min_duration,
-        max_duration,
-        price_per_byte,
-        accepting_primary,
-        replica_sync_price,
-        accepting_extensions,
-        agreements_total,
-        challenges_failed,
-        deregister_at,
-    })
 }
 
 /// Score a provider against requirements, mirroring the pallet's `query_find_matching_providers`.
