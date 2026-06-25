@@ -337,7 +337,7 @@ export class DriveClient {
   /**
    * Redeem provider-signed agreement terms on chain to open a Layer-0 bucket
    * + primary agreement and register the drive on top — atomically in one
-   * extrinsic (via the SDK's `createDrive`).
+   * extrinsic (via the layer-0 `createDrive` wrapper, submitted finalized).
    *
    * **Step 2 of drive creation.** Step 1 is the HTTP `negotiateTerms` call
    * against the chosen provider; splitting the two lets a failed on-chain
@@ -360,12 +360,17 @@ export class DriveClient {
       publicKey,
     };
 
+    // Finalize: the state layer reads the drive list back at the finalized
+    // head right after this resolves, so an in-block ("best") submit would
+    // race a reorg and the just-created drive could be missing from the
+    // refreshed list. `retryStale: 0` — a user retry is the right UX for a UI.
     const { driveId, bucketId } = await createDriveTx(
       api,
       owner,
       name ?? "",
       { address: providerAccount },
       signed,
+      { mode: "finalized", retryStale: 0 },
     );
 
     return {

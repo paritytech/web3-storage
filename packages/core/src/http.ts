@@ -86,7 +86,10 @@ export function signProviderRequest(
   bucketId: bigint | number,
 ): Record<string, string> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const message = `web3storage:${method}:${Number(bucketId)}:${timestamp}`;
+  // Interpolate the id directly (bigint/number both render as the decimal
+  // string auth.rs reconstructs); `Number(bigint)` would lose precision above
+  // 2^53 and break signature verification for large bucket ids.
+  const message = `web3storage:${method}:${bucketId}:${timestamp}`;
   const sig = keypair.sign(new TextEncoder().encode(message));
   const pubHex = toHex(keypair.publicKey);
   const sigHex = toHex(sig);

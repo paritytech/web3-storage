@@ -14,7 +14,13 @@ import { READ_OPTS } from "./tx.js";
 
 export interface ProviderFetchOpts {
   method?: string;
-  params?: Record<string, string | number>;
+  /**
+   * Query params. `bigint` is accepted so u64 ids (bucket/leaf/chunk) reach
+   * the URL via `String(bigint)` — exact at any size, unlike `Number(bigint)`
+   * which would round above 2^53. serde_urlencoded parses the decimal string
+   * straight back into u64 provider-side.
+   */
+  params?: Record<string, string | number | bigint>;
   body?: unknown;
 }
 
@@ -142,7 +148,7 @@ export async function fetchCheckpointSignature(
   bucketId: bigint | number,
 ): Promise<any> {
   return providerFetch(providerUrl, "/checkpoint-signature", {
-    params: { bucket_id: Number(bucketId) },
+    params: { bucket_id: bucketId },
   });
 }
 
@@ -151,7 +157,7 @@ export async function fetchCheckpointDuty(
   bucketId: bigint | number,
 ): Promise<any> {
   return providerFetch(providerUrl, "/checkpoint/duty", {
-    params: { bucket_id: Number(bucketId) },
+    params: { bucket_id: bucketId },
   });
 }
 
@@ -195,14 +201,14 @@ export async function fetchChallengeProof(
 
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
-      bucket_id: Number(challenge.bucket_id),
-      leaf_index: Number(challenge.leaf_index),
+      bucket_id: challenge.bucket_id,
+      leaf_index: challenge.leaf_index,
     },
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
-      chunk_index: Number(challenge.chunk_index),
+      chunk_index: challenge.chunk_index,
     },
   });
 

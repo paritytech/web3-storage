@@ -326,7 +326,7 @@ export class S3Client {
       headers[`x-amz-meta-${k}`] = v;
     }
     const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucket.layer0BucketId)}/object?key=${encodeURIComponent(key)}`,
+      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
       { method: "PUT", headers, body: data as BodyInit, signal: options.signal },
       this.fetchOpts,
     );
@@ -344,7 +344,7 @@ export class S3Client {
   ): Promise<GetObjectResponse> {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucket.layer0BucketId)}/object?key=${encodeURIComponent(key)}`,
+      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
       { signal: opts.signal, headers: this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );
@@ -374,7 +374,7 @@ export class S3Client {
   async deleteObject(bucket: BucketRef, key: string): Promise<void> {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucket.layer0BucketId)}/object?key=${encodeURIComponent(key)}`,
+      `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
       { method: "DELETE", headers: this.authHeaders("DELETE", bucket.layer0BucketId) },
       this.fetchOpts,
     );
@@ -388,7 +388,7 @@ export class S3Client {
     const params = new URLSearchParams();
     if (prefix) params.set("prefix", prefix);
     const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucket.layer0BucketId)}/objects?${params.toString()}`,
+      `${providerUrl}/s3/${bucket.layer0BucketId}/objects?${params.toString()}`,
       { headers: this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );

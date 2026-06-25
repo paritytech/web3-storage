@@ -289,7 +289,7 @@ export class FileSystemClient {
     const providerUrl = await this.getProviderUrl(bucketId);
     const params = new URLSearchParams({ path });
     const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/ls?${params.toString()}`,
+      `${providerUrl}/fs/${bucketId}/ls?${params.toString()}`,
       { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
@@ -313,7 +313,7 @@ export class FileSystemClient {
   ): Promise<UploadResult> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
+      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
       {
         method: "PUT",
         headers: {
@@ -343,7 +343,7 @@ export class FileSystemClient {
   ): Promise<Uint8Array> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
+      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
       { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
@@ -359,7 +359,7 @@ export class FileSystemClient {
   async deleteFile(bucketId: bigint, path: string): Promise<void> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
+      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
       { method: "DELETE", headers: this.authHeaders("DELETE", bucketId) },
       this.fetchOpts,
     );
@@ -371,7 +371,7 @@ export class FileSystemClient {
   async createDirectory(bucketId: bigint, path: string): Promise<void> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/mkdir?path=${encodeURIComponent(path)}`,
+      `${providerUrl}/fs/${bucketId}/mkdir?path=${encodeURIComponent(path)}`,
       { method: "POST", headers: this.authHeaders("POST", bucketId) },
       this.fetchOpts,
     );
@@ -385,7 +385,7 @@ export class FileSystemClient {
   async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${Number(bucketId)}`,
+      `${providerUrl}/checkpoint/duty?bucket_id=${bucketId}`,
       { headers: this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
@@ -399,7 +399,7 @@ export class FileSystemClient {
   async triggerCheckpoint(bucketId: bigint): Promise<void> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
+      `${providerUrl}/checkpoint/trigger?bucket_id=${bucketId}`,
       { method: "POST", headers: this.authHeaders("POST", bucketId) },
       this.fetchOpts,
     );
