@@ -8,7 +8,7 @@
  * - Extension: browser extension (Polkadot.js, Talisman, SubWallet) for testnets.
  */
 
-import { BehaviorSubject, combineLatest, map, shareReplay } from 'rxjs'
+import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import {
   connectInjectedExtension,
@@ -70,14 +70,23 @@ const STORAGE_KEY_ACCOUNT = 'photos-wallet-account'
 /**
  * Update the SS58 prefix from the runtime and re-encode dev accounts so their
  * displayed addresses match the chain's prefix. Called from chain.state after
- * getChainProperties() resolves.
+ * getChainProperties() resolves. Re-encodes the cached accounts' public keys
+ * rather than re-deriving them — the keys are unchanged, only the SS58 string is.
  */
-export async function updateSs58Prefix(prefix: number): Promise<void> {
+export function updateSs58Prefix(prefix: number): void {
   if (prefix === getSs58Prefix()) return
   setSs58Prefix(prefix)
 
-  if (modeSubject.getValue() === 'dev' && accountsSubject.getValue().length > 0) {
-    await connectDevAccounts()
+  const accounts = accountsSubject.getValue()
+  if (modeSubject.getValue() !== 'dev' || accounts.length === 0) return
+
+  const reencoded = accounts.map((a) => ({ ...a, address: toSs58(a.polkadotSigner.publicKey) }))
+  accountsSubject.next(reencoded)
+
+  const selected = selectedAccountSubject.getValue()
+  if (selected) {
+    const match = reencoded.find((a) => isSameAddress(a.address, selected.address))
+    if (match) selectedAccountSubject.next(match)
   }
 }
 
@@ -177,7 +186,9 @@ export async function connectExtension(extensionName: string): Promise<void> {
     extension.subscribe((newAccounts) => {
       accountsSubject.next(newAccounts)
       const selected = selectedAccountSubject.getValue()
-      if (selected && !newAccounts.find((a) => a.address === selected.address)) {
+      // Byte-level match: an extension may re-emit the account under a different
+      // SS58 prefix (string equality would spuriously treat it as removed).
+      if (selected && !newAccounts.find((a) => isSameAddress(a.address, selected.address))) {
         if (newAccounts[0]) {
           selectAccount(newAccounts[0].address)
         } else {
@@ -257,66 +268,11 @@ export async function restoreWalletConnection(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Derived state + hooks
+// Hooks
 // ─────────────────────────────────────────────────────────────────────────────
-
-const walletState$ = combineLatest([
-  modeSubject,
-  statusSubject,
-  errorSubject,
-  extensionsSubject,
-  connectedExtensionSubject,
-  accountsSubject,
-  selectedAccountSubject,
-]).pipe(
-  map(([mode, status, error, extensions, connectedExtension, accounts, selectedAccount]) => ({
-    mode,
-    status,
-    error,
-    extensions,
-    connectedExtension,
-    accounts,
-    selectedAccount,
-  })),
-  shareReplay(1)
-)
-
-export const [useWalletState] = bind(walletState$, {
-  mode: 'dev' as const,
-  status: 'disconnected' as const,
-  error: undefined,
-  extensions: [],
-  connectedExtension: undefined,
-  accounts: [],
-  selectedAccount: undefined,
-})
 
 export const [useWalletMode] = bind(modeSubject, 'dev')
 export const [useWalletStatus] = bind(statusSubject, 'disconnected')
-export const [useWalletError] = bind(errorSubject, undefined)
 export const [useAvailableExtensions] = bind(extensionsSubject, [])
 export const [useAccounts] = bind(accountsSubject, [])
 export const [useSelectedAccount] = bind(selectedAccountSubject, undefined)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function getSelectedAddress(): string | null {
-  return selectedAccountSubject.getValue()?.address ?? null
-}
-
-export function getSelectedAccount(): InjectedPolkadotAccount | undefined {
-  return selectedAccountSubject.getValue()
-}
-
-export function isWalletConnected(): boolean {
-  return statusSubject.getValue() === 'connected'
-}
-
-export function isDevMode(): boolean {
-  return modeSubject.getValue() === 'dev'
-}
-
-export const selectedAccount$ = selectedAccountSubject.asObservable()
-export const accounts$ = accountsSubject.asObservable()
