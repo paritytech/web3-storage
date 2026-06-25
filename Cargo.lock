@@ -11393,6 +11393,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "web3-storage-subxt"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "subxt",
+ "subxt-core",
+ "subxt-signer",
+]
+
+[[package]]
 name = "webpki-root-certs"
 version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

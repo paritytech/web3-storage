@@ -1,0 +1,26 @@
+[package]
+name = "web3-storage-subxt"
+description = "Rust bindings and interface to interact with Web3 Storage using subxt"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+exclude = ["./metadata"]
+readme = "README.md"
+
+
+[dependencies]
+codec = { workspace = true }
+scale-info = { workspace = true }
+subxt = { workspace = true, features = ["jsonrpsee"], optional = true }
+subxt-signer = { workspace = true, features = ["subxt", "sr25519", "ecdsa"] }
+serde = { workspace = true, features = ["derive"] }
+subxt-core = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["dep:subxt", "subxt/native", "subxt/jsonrpsee", "subxt-core/std", "subxt-signer/std"]
+# Select the network runtime bindings exposed as `storage_runtime`.
+# Off (default): testnet (`storage_paseo_runtime`). On: mainnet (`storage_mainnet_runtime`).
+mainnet = []

@@ -8,6 +8,7 @@ members = [
 	"provider-node",
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
+	"web3-storage-subxt",
 
 	# Smart-contract precompiles (pallet_revive integration)
 	"precompiles/drive-registry-precompile",
@@ -165,6 +166,7 @@ rand = "0.8"
 # Subxt (chain interaction for off-chain clients)
 subxt = { version = "0.44.3" }
 subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+subxt-core = { version = "0.44.3", default-features = false }
 
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }
