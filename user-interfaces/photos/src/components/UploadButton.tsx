@@ -21,7 +21,10 @@ export function UploadButton() {
   const anchor = useAnchorStatus()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const busy = uploads !== null || anchor.stage === 'recomputing' || anchor.stage === 'anchoring'
+  // Only the in-progress upload blocks the button; the background re-anchor is
+  // shown as a status indicator but never disables further uploads.
+  const uploading = uploads !== null
+  const anchoring = anchor.stage === 'recomputing' || anchor.stage === 'anchoring'
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
@@ -43,13 +46,13 @@ export function UploadButton() {
       <Button
         size="sm"
         onClick={() => inputRef.current?.click()}
-        disabled={!selectedAlbum || busy}
+        disabled={!selectedAlbum || uploading}
         data-testid="upload-button"
       >
         <Upload className="mr-1.5 h-4 w-4" /> Upload
       </Button>
 
-      {busy && (
+      {(uploading || anchoring) && (
         <span className="flex items-center gap-2 text-xs text-gray-400" data-testid="upload-status">
           <Spinner size="sm" />
           {uploads

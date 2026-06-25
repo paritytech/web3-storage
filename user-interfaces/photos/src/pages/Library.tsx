@@ -4,7 +4,7 @@
 // the selected account (unsigned) and renders State A ("no library") vs State B
 // ("drive #N"). No writes: creating a library is M5, albums/upload/grid are M6.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Image, Anchor, AlertTriangle, Settings2, X } from 'lucide-react'
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork } from '@/state/network.state'
@@ -53,6 +53,10 @@ export function Library() {
   const anchor = useAnchorStatus()
   const [state, setState] = useState<ReadState>({ kind: 'idle' })
   const [refresh, setRefresh] = useState(0)
+  // Identifies the currently-loaded library; a `refresh` bump that keeps the same
+  // key (e.g. a background re-anchor finishing) re-reads silently instead of
+  // flashing the whole view back to a loading spinner.
+  const loadKeyRef = useRef('')
 
   const contract = resolveContractAddress(network)
 
@@ -70,8 +74,15 @@ export function Library() {
       return
     }
 
+    // Only show the full-screen loading state on a genuine (re)load — switching
+    // account/network/contract. A pure `refresh` bump (same key) re-reads in place
+    // so background-anchor completions don't blank out the library the user is using.
+    const loadKey = `${account.address}|${network.id}|${contract.address}`
+    const isReload = loadKey !== loadKeyRef.current
+    loadKeyRef.current = loadKey
+
     let cancelled = false
-    setState({ kind: 'loading' })
+    if (isReload) setState({ kind: 'loading' })
     ;(async () => {
       try {
         const userH160 = substrateToH160(account.polkadotSigner.publicKey)
@@ -255,7 +266,7 @@ export function Library() {
 
           {/* ── Albums + upload + grid ── */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <AlbumBar busy={anchoring} />
+            <AlbumBar />
             <UploadButton />
           </div>
           <PhotoGrid />
