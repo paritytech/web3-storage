@@ -3,6 +3,7 @@
 //! Command-line argument parsing for the storage CLI.
 
 use crate::commands::stress_test::StressTest;
+use crate::metrics::OutputFormat;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -48,6 +49,10 @@ pub struct GlobalArgs {
     /// Mutually exclusive with `--suri`.
     #[arg(long, value_name = "FILE", conflicts_with = "suri")]
     pub keyfile: Option<PathBuf>,
+
+    /// Format for the final metrics summary printed to stdout.
+    #[arg(long, value_enum, value_name = "FORMAT", default_value_t = OutputFormat::Text)]
+    pub output: OutputFormat,
 }
 
 #[derive(Debug, Subcommand)]

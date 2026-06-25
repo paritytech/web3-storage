@@ -34,6 +34,7 @@ mod tests {
             provider_url: "http://127.0.0.1:3333".to_string(),
             suri,
             keyfile,
+            output: crate::metrics::OutputFormat::Text,
         }
     }
 

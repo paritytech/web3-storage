@@ -2,6 +2,9 @@
 
 //! `stress-test` subcommands.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Subcommand};
 use sp_core::crypto::Ss58Codec;
@@ -9,20 +12,28 @@ use sp_runtime::AccountId32;
 use storage_client::substrate::SubstrateClient;
 use storage_client::{AdminClient, ChunkingStrategy, ClientConfig, StorageUserClient};
 use subxt_signer::{sr25519::Keypair, SecretUri};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::cli::GlobalArgs;
 use crate::common::resolve_suri;
+use crate::metrics::{summarize, OpOutcome, OpSummary, Operation};
+
+/// Bucket identifier on chain (alias of `storage_primitives::BucketId`, a `u64`).
+type BucketId = u64;
 
 // === Stress test subcommands ===
 #[derive(Debug, Subcommand)]
 pub enum StressTest {
-    /// Upload generated data to every bucket the account already has an
+    /// Drive configurable upload load against a provider: `users` simulated
+    /// clients each performing `uploads-per-user` uploads, with either axis run
+    /// sequentially or in parallel. Targets buckets the account already has an
     /// agreement with the given provider for.
     #[command(name = "upload")]
     ProviderUpload(UploadArgs),
 }
 
-// === `stress-test provider-upload` subcommand ===
+// === `stress-test upload` subcommand ===
 #[derive(Debug, Args)]
 pub struct UploadArgs {
     /// Provider account (SS58 or 0x-hex) whose agreements select the target
@@ -34,18 +45,135 @@ pub struct UploadArgs {
     #[arg(long, value_name = "N")]
     pub max_buckets_to_write: Option<usize>,
 
-    /// Bytes of generated data to upload per bucket.
-    #[arg(long, value_name = "BYTES", default_value_t = 1024 * 1024)]
-    pub size: usize,
+    /// Number of concurrent simulated users, each with its own client (1..N).
+    #[arg(long, value_name = "N", default_value_t = 1)]
+    pub users: usize,
+
+    /// Number of uploads each user performs (1..X).
+    #[arg(long, value_name = "X", default_value_t = 1)]
+    pub uploads_per_user: usize,
+
+    /// Exact size in bytes of each randomly-generated payload (default 0.5 MiB).
+    #[arg(long, value_name = "BYTES", default_value_t = 512 * 1024)]
+    pub max_payload_size: usize,
+
+    /// Run users in parallel (default: sequential).
+    #[arg(long, default_value_t = false)]
+    pub parallel_users: bool,
+
+    /// Run each user's uploads in parallel (default: sequential).
+    #[arg(long, default_value_t = false)]
+    pub parallel_uploads: bool,
+
+    /// Cap total in-flight uploads across all users (0 = unbounded).
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub max_concurrency: usize,
 }
 
-/// Upload generated data to every bucket the account already has an agreement
-/// with `--provider` for.
+/// Pick the target bucket for the `global_idx`-th upload of the whole run,
+/// round-robin so load spreads evenly across the selected buckets.
+fn bucket_for(global_idx: usize, buckets: &[BucketId]) -> BucketId {
+    buckets[global_idx % buckets.len()]
+}
+
+/// Generate a payload of exactly `size` random bytes.
+fn random_payload(size: usize) -> Vec<u8> {
+    use rand::RngCore;
+    let mut buf = vec![0u8; size];
+    rand::thread_rng().fill_bytes(&mut buf);
+    buf
+}
+
+/// Perform one upload, holding a concurrency permit (if any) for its duration.
+async fn do_upload(
+    client: Arc<StorageUserClient>,
+    bucket: BucketId,
+    size: usize,
+    sem: Option<Arc<Semaphore>>,
+) -> OpOutcome {
+    // Hold the permit until the upload completes; `acquire` only fails if the
+    // semaphore is closed, which never happens here.
+    let _permit = match &sem {
+        Some(s) => s.acquire().await.ok(),
+        None => None,
+    };
+    let payload = random_payload(size);
+    let started = Instant::now();
+    match client
+        .upload(bucket, &payload, ChunkingStrategy::default())
+        .await
+    {
+        Ok(_root) => OpOutcome::success(size, started.elapsed()),
+        Err(e) => OpOutcome::failure(size, started.elapsed(), e.to_string()),
+    }
+}
+
+/// Run a single user's `uploads` uploads, either sequentially or in parallel.
+async fn run_user(
+    user_idx: usize,
+    client: Arc<StorageUserClient>,
+    buckets: Arc<Vec<BucketId>>,
+    uploads: usize,
+    size: usize,
+    parallel: bool,
+    sem: Option<Arc<Semaphore>>,
+) -> Vec<OpOutcome> {
+    // Each user's uploads occupy a contiguous slice of the global index space so
+    // the round-robin bucket assignment stays even across all users.
+    let base = user_idx * uploads;
+    if parallel {
+        let mut set = JoinSet::new();
+        for i in 0..uploads {
+            let bucket = bucket_for(base + i, &buckets);
+            let client = client.clone();
+            let sem = sem.clone();
+            set.spawn(async move { do_upload(client, bucket, size, sem).await });
+        }
+        let mut out = Vec::with_capacity(uploads);
+        while let Some(res) = set.join_next().await {
+            match res {
+                Ok(outcome) => out.push(outcome),
+                Err(join_err) => out.push(OpOutcome::failure(
+                    size,
+                    Duration::ZERO,
+                    format!("upload task panicked: {join_err}"),
+                )),
+            }
+        }
+        out
+    } else {
+        let mut out = Vec::with_capacity(uploads);
+        for i in 0..uploads {
+            let bucket = bucket_for(base + i, &buckets);
+            out.push(do_upload(client.clone(), bucket, size, sem.clone()).await);
+        }
+        out
+    }
+}
+
+/// Drive configurable upload load against `--provider`.
 ///
-/// This resolves targets from chain (`MemberBuckets[account]` ∩ buckets with a
-/// `StorageAgreements[bucket][provider]` entry) and never creates buckets or
-/// agreements — if nothing matches, it errors out.
-pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<()> {
+/// Targets are resolved from chain (`MemberBuckets[account]` ∩ buckets with a
+/// `StorageAgreements[bucket][provider]` entry); buckets and agreements are
+/// never created — if nothing matches, it errors out. `--users` clients each
+/// perform `--uploads-per-user` uploads of `--max-payload-size` random bytes,
+/// with users and per-user uploads run sequentially or in parallel per the
+/// `--parallel-*` flags, optionally capped by `--max-concurrency`.
+///
+/// Returns the aggregated [`OpSummary`] for the run; the caller (`main`) views
+/// them. Per-upload failures are folded into the metrics, so this only returns
+/// `Err` for setup failures (bad args, chain connection, no matching buckets).
+pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<OpSummary> {
+    if args.users < 1 {
+        bail!("--users must be at least 1");
+    }
+    if args.uploads_per_user < 1 {
+        bail!("--uploads-per-user must be at least 1");
+    }
+    if args.max_payload_size < 1 {
+        bail!("--max-payload-size must be at least 1 byte");
+    }
+
     // Identity: derive the account whose buckets we look up from the SURI.
     let suri = resolve_suri(global)?;
     let keypair = Keypair::from_uri(&suri.parse::<SecretUri>().context("failed to parse SURI")?)
@@ -108,29 +236,114 @@ pub async fn upload(global: &GlobalArgs, args: &UploadArgs) -> Result<()> {
         selected_buckets_id.truncate(max);
     }
 
-    println!(
-        "Uploading {} bytes to {} bucket(s) via {}",
-        args.size,
+    let total_uploads = args.users.saturating_mul(args.uploads_per_user);
+    // Progress goes to stderr so stdout carries only the final metrics view
+    // (keeping `--output json` parseable).
+    eprintln!(
+        "Stress test: {} user(s){}, {} upload(s)/user{}, {} bytes each, {} bucket(s) via {}{}",
+        args.users,
+        if args.parallel_users {
+            " [parallel]"
+        } else {
+            " [sequential]"
+        },
+        args.uploads_per_user,
+        if args.parallel_uploads {
+            " [parallel]"
+        } else {
+            " [sequential]"
+        },
+        args.max_payload_size,
         selected_buckets_id.len(),
         global.provider_url,
+        if args.max_concurrency > 0 {
+            format!(", max in-flight {}", args.max_concurrency)
+        } else {
+            String::new()
+        },
     );
+    eprintln!("Running {total_uploads} upload(s)...");
 
-    // Off-chain HTTP uploads (no chain, no signer). Constant-fill payload,.
-    let user = StorageUserClient::new(config).context("failed to construct provider client")?;
-    let payload = vec![0x42; args.size];
-
-    for bucket in &selected_buckets_id {
-        let data_root = user
-            .upload(*bucket, &payload, ChunkingStrategy::default())
-            .await
-            .with_context(|| format!("upload to bucket {bucket} failed"))?;
-        println!(
-            "  bucket {bucket}: uploaded {} bytes, data_root 0x{}",
-            payload.len(),
-            hex::encode(data_root.as_bytes()),
-        );
+    // Off-chain HTTP uploads (no chain, no signer). One client per user gives
+    // each simulated user its own connection pool.
+    let mut clients = Vec::with_capacity(args.users);
+    for _ in 0..args.users {
+        clients.push(Arc::new(
+            StorageUserClient::new(config.clone())
+                .context("failed to construct provider client")?,
+        ));
     }
 
-    println!("Done: {} bucket(s) written.", selected_buckets_id.len());
-    Ok(())
+    let buckets = Arc::new(selected_buckets_id);
+    let sem = (args.max_concurrency > 0).then(|| Arc::new(Semaphore::new(args.max_concurrency)));
+
+    let started = Instant::now();
+    let mut outcomes = Vec::with_capacity(total_uploads);
+    if args.parallel_users {
+        let mut users_set = JoinSet::new();
+        for (user_idx, client) in clients.into_iter().enumerate() {
+            let buckets = buckets.clone();
+            let sem = sem.clone();
+            let uploads = args.uploads_per_user;
+            let size = args.max_payload_size;
+            let parallel_uploads = args.parallel_uploads;
+            users_set.spawn(async move {
+                run_user(
+                    user_idx,
+                    client,
+                    buckets,
+                    uploads,
+                    size,
+                    parallel_uploads,
+                    sem,
+                )
+                .await
+            });
+        }
+        while let Some(res) = users_set.join_next().await {
+            match res {
+                Ok(user_outcomes) => outcomes.extend(user_outcomes),
+                Err(join_err) => bail!("user task panicked: {join_err}"),
+            }
+        }
+    } else {
+        for (user_idx, client) in clients.into_iter().enumerate() {
+            let user_outcomes = run_user(
+                user_idx,
+                client,
+                buckets.clone(),
+                args.uploads_per_user,
+                args.max_payload_size,
+                args.parallel_uploads,
+                sem.clone(),
+            )
+            .await;
+            outcomes.extend(user_outcomes);
+        }
+    }
+    let elapsed = started.elapsed();
+
+    // Return the aggregated metrics; `main` views them and sets the exit code.
+    // Individual upload failures live in the metrics, not in this `Result` —
+    // only setup errors (chain, args, no buckets) above are propagated as `Err`.
+    Ok(summarize(Operation::Upload, &outcomes, elapsed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_payload_has_exact_size() {
+        for size in [1usize, 7, 1024, 512 * 1024] {
+            assert_eq!(random_payload(size).len(), size);
+        }
+    }
+
+    #[test]
+    fn bucket_for_round_robins() {
+        let buckets = [10u64, 20, 30];
+        let picked: Vec<u64> = (0..7).map(|i| bucket_for(i, &buckets)).collect();
+        assert_eq!(picked, vec![10, 20, 30, 10, 20, 30, 10]);
+    }
 }

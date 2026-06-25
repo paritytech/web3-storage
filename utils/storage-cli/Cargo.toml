@@ -17,6 +17,9 @@ tokio = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 anyhow = { workspace = true }
 hex = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

@@ -711,7 +711,10 @@ jobs:
             --suri //Bob \
             stress-test upload \
             --provider 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY \
-            --size 1048576
+            --users 2 \
+            --uploads-per-user 5 \
+            --max-payload-size 1048576 \
+            --parallel-uploads
 
       - name: Stop services
         if: always()
