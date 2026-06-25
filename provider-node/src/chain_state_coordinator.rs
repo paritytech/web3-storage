@@ -29,7 +29,8 @@ use storage_client::{
     BlockSubscriberStream, ClientConfig, ClientError, EventParser, ProviderClient, StorageEvent,
     StorageProviderEventParser,
 };
-use subxt::ext::futures::StreamExt;
+use storage_subxt::subxt;
+use storage_subxt::subxt::ext::futures::StreamExt;
 use tokio::task::JoinHandle;
 
 // ── ChainState ────────────────────────────────────────────────────────────────

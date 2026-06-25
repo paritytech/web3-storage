@@ -12,8 +12,9 @@ use crate::ProviderState;
 use dashmap::DashMap;
 use sp_core::{crypto::AccountId32, sr25519, Pair};
 use std::time::{Duration, Instant};
+use storage_client::substrate::storage;
+use storage_client::substrate::SubstrateClient;
 use storage_primitives::Role;
-use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::OnceCell;
 
 /// Caller identity extracted from a signed request.
@@ -107,33 +108,31 @@ fn find_role(members: &[(AccountId32, Role)], account: &AccountId32) -> Option<R
     members.iter().find(|(a, _)| a == account).map(|(_, r)| *r)
 }
 
-/// Chain-backed membership resolver using subxt dynamic queries.
+/// Chain-backed membership resolver using typed storage_client bindings.
 pub struct ChainMembershipResolver {
     chain_rpc: String,
     /// Lazily-established chain connection, reused across lookups.
     ///
-    /// `OnlineClient` is an `Arc`-backed handle over a single WebSocket
-    /// connection and a metadata cache, so connecting is the expensive part
-    /// (network handshake + metadata download). We connect on the first
-    /// lookup and reuse the same client for every subsequent one instead of
-    /// reconnecting per request. If the first attempt fails the cell stays
-    /// empty, so the next lookup retries.
-    api: OnceCell<OnlineClient<PolkadotConfig>>,
+    /// `SubstrateClient` is `Arc`-backed so connecting once and cloning is cheap.
+    /// We store it in a `OnceCell` so we connect on the first lookup and reuse
+    /// the connection for every subsequent one. If the first attempt fails the
+    /// cell stays empty, so the next lookup retries.
+    client: OnceCell<SubstrateClient>,
 }
 
 impl ChainMembershipResolver {
     pub fn new(chain_rpc: String) -> Self {
         Self {
             chain_rpc,
-            api: OnceCell::new(),
+            client: OnceCell::new(),
         }
     }
 
     /// Return the shared chain client, connecting on first use.
-    async fn api(&self) -> Result<&OnlineClient<PolkadotConfig>, String> {
-        self.api
+    async fn client(&self) -> Result<&SubstrateClient, String> {
+        self.client
             .get_or_try_init(|| async {
-                OnlineClient::<PolkadotConfig>::from_url(&self.chain_rpc)
+                SubstrateClient::connect(&self.chain_rpc)
                     .await
                     .map_err(|e| format!("Failed to connect to chain: {e}"))
             })
@@ -144,97 +143,41 @@ impl ChainMembershipResolver {
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        use subxt::dynamic::{At, Value};
+        let client = self.client().await?;
 
-        let api = self.api().await?;
-
-        let storage_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
-
-        let result = api
+        let storage_api = client
+            .api()
             .storage()
             .at_latest()
             .await
-            .map_err(|e| format!("Failed to get storage: {e}"))?
-            .fetch(&storage_query)
+            .map_err(|e| format!("Failed to get storage: {e}"))?;
+
+        let bucket = match storage_api
+            .fetch(&storage::bucket_info(bucket_id))
             .await
-            .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
-
-        let bucket_value = match result {
-            Some(v) => v,
-            None => return Ok(vec![]),
-        };
-
-        let decoded = bucket_value
-            .to_value()
-            .map_err(|e| format!("Failed to decode bucket: {e}"))?;
-
-        let members_val = match decoded.at("members") {
-            Some(v) => v,
-            None => return Ok(vec![]),
-        };
-
-        let mut members = Vec::new();
-        if let subxt::ext::scale_value::ValueDef::Composite(
-            subxt::ext::scale_value::Composite::Unnamed(items),
-        ) = &members_val.value
+            .map_err(|e| format!("Failed to fetch bucket: {e}"))?
         {
-            for item in items {
-                let account_val = item.at("account");
-                let role_val = item.at("role");
+            Some(b) => b,
+            None => return Ok(vec![]),
+        };
 
-                if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
-                    let account_bytes = extract_account_bytes(account_v);
-                    if let Some(bytes) = account_bytes {
-                        let account = AccountId32::from(bytes);
-                        let role = extract_role(role_v);
-                        members.push((account, role));
-                    }
-                }
-            }
-        }
+        let members = bucket
+            .members
+            .0
+            .into_iter()
+            .map(|m| {
+                let account = AccountId32::from(m.account.0);
+                use storage_subxt::storage_runtime::api::runtime_types as rt;
+                let role = match m.role {
+                    rt::storage_primitives::Role::Admin => Role::Admin,
+                    rt::storage_primitives::Role::Writer => Role::Writer,
+                    rt::storage_primitives::Role::Reader => Role::Reader,
+                };
+                (account, role)
+            })
+            .collect();
 
         Ok(members)
-    }
-}
-
-fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
-    use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
-    match &val.value {
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            let bytes: Vec<u8> = items
-                .iter()
-                .filter_map(|item| match &item.value {
-                    ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                    _ => None,
-                })
-                .collect();
-            if bytes.len() == 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Some(arr)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
-    use subxt::ext::scale_value::ValueDef;
-    if let ValueDef::Variant(variant) = &val.value {
-        match variant.name.as_str() {
-            "Admin" => Role::Admin,
-            "Writer" => Role::Writer,
-            "Reader" => Role::Reader,
-            _ => Role::Reader, // default to least privilege
-        }
-    } else {
-        Role::Reader
     }
 }
 

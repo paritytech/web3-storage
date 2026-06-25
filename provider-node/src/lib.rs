@@ -62,7 +62,8 @@ pub use types::*;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use subxt_signer::sr25519;
+use storage_subxt::subxt_signer;
+use storage_subxt::subxt_signer::sr25519;
 use tokio::sync::mpsc;
 
 /// Provider node state shared across handlers.

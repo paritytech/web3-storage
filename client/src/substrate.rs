@@ -325,6 +325,30 @@ pub mod extrinsics {
             rc::to_challenge_response_proof(chunk_data, mmr_proof, chunk_proof),
         )
     }
+
+    pub fn update_provider_multiaddr(multiaddr: Vec<u8>) -> impl Payload {
+        runtime::tx()
+            .storage_provider()
+            .update_provider_multiaddr(rc::to_bounded_bytes(multiaddr))
+    }
+
+    pub fn provider_checkpoint(
+        bucket_id: u64,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        window: u64,
+        signatures: Vec<(AccountId32, Vec<u8>)>,
+    ) -> impl Payload {
+        runtime::tx().storage_provider().provider_checkpoint(
+            bucket_id,
+            rc::to_h256(&mmr_root),
+            start_seq,
+            leaf_count,
+            window,
+            rc::to_signatures(signatures),
+        )
+    }
 }
 
 /// Runtime constant addresses for reading on-chain config.
@@ -450,6 +474,17 @@ pub mod storage {
         Target = rt::pallet_storage_provider::pallet::ProviderInfo,
     > {
         runtime::storage().storage_provider().providers_iter()
+    }
+
+    pub fn checkpoint_config(
+        bucket_id: u64,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        Target = rt::storage_primitives::CheckpointWindowConfig<u32>,
+    > {
+        runtime::storage()
+            .storage_provider()
+            .checkpoint_configs(bucket_id)
     }
 }
 

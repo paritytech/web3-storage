@@ -41,8 +41,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
-use tokio::sync::{mpsc, RwLock};
 use storage_subxt::subxt_signer;
+use tokio::sync::{mpsc, RwLock};
 
 // ============================================================================
 // Configuration

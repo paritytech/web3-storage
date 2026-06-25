@@ -9,9 +9,9 @@ use crate::ClientError;
 use futures::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::sync::mpsc;
 use storage_subxt::subxt::blocks::Block;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::mpsc;
 
 /// A finalized block as delivered by the subscription.
 type FinalizedBlock = Block<PolkadotConfig, OnlineClient<PolkadotConfig>>;

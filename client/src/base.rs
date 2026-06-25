@@ -12,8 +12,8 @@ use crate::substrate::SubstrateClient;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use thiserror::Error;
 use storage_subxt::subxt_signer::sr25519::Keypair;
+use thiserror::Error;
 
 /// Client errors.
 #[derive(Error, Debug)]

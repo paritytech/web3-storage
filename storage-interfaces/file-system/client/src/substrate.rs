@@ -230,7 +230,9 @@ pub mod storage {
         storage_subxt::subxt::dynamic::storage(
             "DriveRegistry",
             "UserDrives",
-            vec![storage_subxt::subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
+            vec![storage_subxt::subxt::dynamic::Value::from_bytes(
+                account.as_ref() as &[u8],
+            )],
         )
     }
 
