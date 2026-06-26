@@ -1,20 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Byte-exact TypeScript port of the provider's drive metadata Merkle root and
-// per-file data root, so the client can compute the on-chain integrity anchor
-// itself and verify a library without trusting the provider.
+// per-file data root, so a client can compute the on-chain integrity anchor
+// itself and verify a drive without trusting the provider.
 //
 // Mirrors, byte for byte:
 //   - `provider-node/src/fs_index.rs`     → `metadata_merkle_root`
 //   - `provider-node/src/storage/mod.rs`  → `build_padded_merkle_tree`
 //   - `primitives/src/lib.rs`             → `blake2_256`, `hash_children`, `DEFAULT_CHUNK_SIZE`
 //
-// Pure functions, no I/O — reused unchanged by the headless flow and (M6) the browser.
+// This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the
+// missing "Rust-client parity" piece. Pure functions, no I/O — browser-safe.
 
-import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
-
-/** Provider default chunk size — `storage_primitives::DEFAULT_CHUNK_SIZE`. */
-export const CHUNK_SIZE = 256 * 1024;
+import { computeCid, DEFAULT_CHUNK_SIZE } from "./verify.js";
 
 /** One drive entry as it contributes to the metadata Merkle tree. */
 export interface MerkleEntry {
@@ -26,14 +24,9 @@ export interface MerkleEntry {
   size: bigint;
 }
 
-/** blake2b-256 over `data` → 32 bytes. Matches `sp_core::hashing::blake2_256`. */
-export function blake2_256(data: Uint8Array): Uint8Array {
-  return blake2b256(data);
-}
-
 /** Hash an internal node: `blake2_256(left[32] ++ right[32])`. */
 export function hashChildren(left: Uint8Array, right: Uint8Array): Uint8Array {
-  return blake2_256(concatBytes(left, right));
+  return computeCid(concatBytes(left, right));
 }
 
 /**
@@ -61,17 +54,17 @@ export function paddedMerkleRoot(leaves: Uint8Array[]): Uint8Array {
 }
 
 /**
- * A file's `data_root`: chunk the bytes at `CHUNK_SIZE`, blake2-256 each chunk,
- * then `paddedMerkleRoot` over the chunk hashes. An empty file hashes a single
- * empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
+ * A file's `data_root`: chunk the bytes at `DEFAULT_CHUNK_SIZE`, blake2-256 each
+ * chunk, then `paddedMerkleRoot` over the chunk hashes. An empty file hashes a
+ * single empty chunk; a single chunk yields its own hash. Mirrors `fs_put_file`.
  */
 export function computeDataRoot(bytes: Uint8Array): Uint8Array {
   const chunkHashes: Uint8Array[] = [];
   if (bytes.length === 0) {
-    chunkHashes.push(blake2_256(new Uint8Array(0)));
+    chunkHashes.push(computeCid(new Uint8Array(0)));
   } else {
-    for (let off = 0; off < bytes.length; off += CHUNK_SIZE) {
-      chunkHashes.push(blake2_256(bytes.subarray(off, Math.min(off + CHUNK_SIZE, bytes.length))));
+    for (let off = 0; off < bytes.length; off += DEFAULT_CHUNK_SIZE) {
+      chunkHashes.push(computeCid(bytes.subarray(off, Math.min(off + DEFAULT_CHUNK_SIZE, bytes.length))));
     }
   }
   return paddedMerkleRoot(chunkHashes);
@@ -89,7 +82,7 @@ export function metadataMerkleRoot(entries: MerkleEntry[]): Uint8Array {
     .map((e) => ({ pathBytes: encoder.encode(e.path), dataRoot: e.dataRoot, size: e.size }))
     .sort((a, b) => compareBytes(a.pathBytes, b.pathBytes));
 
-  const leaves = prepared.map((e) => blake2_256(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
+  const leaves = prepared.map((e) => computeCid(concatBytes(e.pathBytes, e.dataRoot, u64le(e.size))));
   return paddedMerkleRoot(leaves);
 }
 
