@@ -108,7 +108,7 @@ export async function ensureProviderRegistered(
     const priceSynced =
       readiness.provider_info_loaded &&
       provider_registration_info != null &&
-      BigInt(provider_registration_info.price_per_byte) === pricePerByte;
+      BigInt(provider_registration_info.settings.price_per_byte) === pricePerByte;
     if (readiness.signing_configured && readiness.nonce_counter_ready && priceSynced) return;
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }

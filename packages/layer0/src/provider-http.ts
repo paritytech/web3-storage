@@ -60,7 +60,7 @@ export interface ProviderNodeInfo {
    * The provider's on-chain registration as the node currently sees it; `null`
    * until `readiness.provider_info_loaded`.
    */
-  provider_registration_info: { price_per_byte: string | number | bigint } | null;
+  provider_registration_info: any | null;
 }
 
 /**
