@@ -645,16 +645,6 @@ impl ChallengerClient {
     // Analytics
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Get cumulative challenge earnings for this account.
-    ///
-    /// Reads the on-chain `ChallengerStats` aggregate. Returns 0 for accounts
-    /// that have never been credited (the pallet uses `ValueQuery` so empty
-    /// reads decode to the default record).
-    pub async fn get_total_challenge_earnings(&self) -> ClientResult<u128> {
-        let stats = self.fetch_challenger_stats().await?;
-        Ok(stats.total_earnings)
-    }
-
     /// Get aggregated stats for this account's challenge activity.
     ///
     /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
@@ -666,7 +656,6 @@ impl ChallengerClient {
             total_challenges: stats.total_challenges,
             successful_challenges: stats.successful_challenges,
             failed_challenges: stats.failed_challenges,
-            total_earnings: stats.total_earnings,
             // The pallet doesn't yet track an average response time per
             // challenger; leave at 0 until that aggregate is added.
             avg_response_time: 0,
@@ -718,7 +707,6 @@ impl ChallengerClient {
             total_challenges: read_u128(&decoded, "total_challenges").unwrap_or(0) as u32,
             successful_challenges: read_u128(&decoded, "successful_challenges").unwrap_or(0) as u32,
             failed_challenges: read_u128(&decoded, "failed_challenges").unwrap_or(0) as u32,
-            total_earnings: read_u128(&decoded, "total_earnings").unwrap_or(0),
         })
     }
 
@@ -977,7 +965,6 @@ pub struct ChallengeStats {
     pub total_challenges: u32,
     pub successful_challenges: u32,
     pub failed_challenges: u32,
-    pub total_earnings: u128,
     pub avg_response_time: u32,
 }
 
@@ -989,7 +976,6 @@ struct FetchedChallengerStats {
     total_challenges: u32,
     successful_challenges: u32,
     failed_challenges: u32,
-    total_earnings: u128,
 }
 
 #[derive(Debug, Clone)]

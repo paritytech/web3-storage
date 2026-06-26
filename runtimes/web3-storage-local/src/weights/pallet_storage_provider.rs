@@ -603,4 +603,14 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(2))
 	}
+	/// Placeholder: DB-weight upper bound for the per-deadline slash sweep
+	/// (`on_finalize`). Regenerate measured values with `/cmd bench`.
+	/// The range of component `c` is `[0, 100]`.
+	fn on_initialize_slash_challenges(c: u32, ) -> Weight {
+		Weight::from_parts(0, 0)
+			.saturating_add(T::DbWeight::get().reads(1))
+			.saturating_add(T::DbWeight::get().writes(1))
+			.saturating_add(T::DbWeight::get().reads((10_u64).saturating_mul(c.into())))
+			.saturating_add(T::DbWeight::get().writes((10_u64).saturating_mul(c.into())))
+	}
 }

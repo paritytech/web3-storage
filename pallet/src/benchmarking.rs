@@ -5,7 +5,10 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::Currency};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{Currency, Hooks, ReservableCurrency},
+};
 use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -1190,6 +1193,48 @@ mod benchmarks {
             replica_provider,
             top_up_amount,
         );
+    }
+
+    /// `on_finalize` slash sweep: drains and slashes every challenge expiring
+    /// at a deadline. Linear in the challenge count `c` (bounded at runtime by
+    /// `MaxChallengesPerDeadline`); each entry is drained, its pending counters
+    /// decremented, and its provider slashed. The cost is charged up front in
+    /// `on_initialize` via `WeightInfo::on_initialize_slash_challenges(c)`. The
+    /// work is independent per challenge, so the linear fit extrapolates to the
+    /// runtime cap.
+    #[benchmark]
+    fn on_initialize_slash_challenges(c: Linear<0, 100>) {
+        let deadline: BlockNumberFor<T> = 200u32.into();
+        let deposit: BalanceOf<T> = 100u32.into();
+        for i in 0..c {
+            // Distinct slashable provider (stake reserved) + challenger per
+            // challenge — the worst case (each touches a distinct `Providers`,
+            // `ChallengerStats`, and pending-counter entry).
+            let provider = create_provider::<T>(i);
+            let challenger = funded_account::<T>("challenger", i);
+            // The slash unreserves the challenger's deposit, so reserve it.
+            let _ = T::Currency::reserve(&challenger, deposit);
+            let bucket_id: BucketId = i as u64;
+            let challenge = pallet::Challenge::<T> {
+                bucket_id,
+                provider: provider.clone(),
+                challenger,
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_index: 0,
+                chunk_index: 0,
+                deposit,
+            };
+            Challenges::<T>::insert(deadline, i as u16, challenge);
+            PendingChallenges::<T>::insert(&provider, 1u32);
+            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        }
+        NextChallengeIndex::<T>::insert(deadline, c as u16);
+
+        #[block]
+        {
+            StorageProvider::<T>::on_finalize(deadline);
+        }
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

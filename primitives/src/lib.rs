@@ -191,17 +191,16 @@ pub enum RemovalReason {
     Debug,
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ChallengerStatRecord<Balance> {
+pub struct ChallengerStatRecord {
     /// Total challenges the challenger has ever opened.
     pub total_challenges: u32,
-    /// Challenges where the provider was slashed (either invalid response
-    /// or timeout). These pay the challenger.
+    /// Challenges where the provider was slashed (either invalid response or
+    /// timeout). The challenger is only made whole (deposit refunded) and earns
+    /// no reward — the slashed stake goes entirely to the Treasury, per the
+    /// design's challenge model.
     pub successful_challenges: u32,
     /// Challenges where the provider successfully defended.
     pub failed_challenges: u32,
-    /// Cumulative rewards earned from successful challenges (provider stake
-    /// slash share). Refunded deposits are NOT counted here.
-    pub total_earnings: Balance,
 }
 
 /// Why a provider was slashed via the challenge mechanism.

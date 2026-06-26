@@ -1861,7 +1861,6 @@ mod challenge_tests {
             assert_eq!(stats.total_challenges, 1);
             assert_eq!(stats.failed_challenges, 1);
             assert_eq!(stats.successful_challenges, 0);
-            assert_eq!(stats.total_earnings, 0);
         });
     }
 
@@ -1883,8 +1882,6 @@ mod challenge_tests {
             assert_eq!(stats.total_challenges, 1);
             assert_eq!(stats.successful_challenges, 1);
             assert_eq!(stats.failed_challenges, 0);
-            // Challengers earn no reward (design: refund only), so earnings stay 0.
-            assert_eq!(stats.total_earnings, 0);
         });
     }
 
@@ -1920,7 +1917,6 @@ mod challenge_tests {
             ));
             let stats = ChallengerStats::<Test>::get(3);
             assert_eq!(stats.successful_challenges, 1);
-            assert_eq!(stats.total_earnings, 0);
         });
     }
 

@@ -68,38 +68,14 @@ async fn test_get_challenge_stats() {
         .expect("get_challenge_stats should not error");
 
     println!(
-        "Challenge stats: total={} successful={} failed={} earnings={}",
-        stats.total_challenges,
-        stats.successful_challenges,
-        stats.failed_challenges,
-        stats.total_earnings
+        "Challenge stats: total={} successful={} failed={}",
+        stats.total_challenges, stats.successful_challenges, stats.failed_challenges
     );
 
     assert!(
         stats.total_challenges >= stats.successful_challenges + stats.failed_challenges,
         "total >= successful + failed must hold (in-flight challenges fill the gap)"
     );
-}
-
-/// `get_total_challenge_earnings` reads `ChallengerStats.total_earnings`
-/// directly from chain. On a fresh local chain Alice has zero earnings; the
-/// shape of the call (Ok, not Err) is what we assert.
-#[tokio::test]
-async fn test_get_total_challenge_earnings() {
-    let _guard = chain_guard().await;
-
-    let challenger = match alice_challenger().await {
-        Some(c) => c,
-        None => {
-            eprintln!("Chain not reachable — skipping test_get_total_challenge_earnings");
-            return;
-        }
-    };
-
-    let _earnings = challenger
-        .get_total_challenge_earnings()
-        .await
-        .expect("get_total_challenge_earnings reads ChallengerStats — must not error");
 }
 
 /// `find_challenge_targets` scores all active agreements; on an empty chain

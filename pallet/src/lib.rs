@@ -88,24 +88,13 @@ pub mod pallet {
         /// account for it up front instead of doing unbounded work in
         /// `on_finalize` without a weight charge.
         fn on_initialize(n: BlockNumberFor<T>) -> Weight {
-            let count = NextChallengeIndex::<T>::get(n) as u64;
-            // Per slashed challenge the `on_finalize` sweep touches, as an
-            // upper bound:
-            //   reads  (10): `drain_prefix` next entry (1); `decrement_pending`
-            //     reads `PendingChallenges` + `PendingChallengesByBucket` (2);
-            //     `slash_provider_for_failed_challenge` reads `Providers` (1),
-            //     the slash + unreserve + two `resolve_creating` currency ops
-            //     (4), and `ChallengerStats` (1), plus 1 slack.
-            //   writes (10): `drain_prefix` removes the entry (1);
-            //     `decrement_pending` writes both pending counters (2); the
-            //     currency slash/unreserve/two reward settlements (4);
-            //     `Providers::insert` (1); `ChallengerStats` (1), plus 1 slack.
-            let per_challenge = T::DbWeight::get().reads_writes(10, 10);
-            // 1 read for `NextChallengeIndex(n)` above, plus its later removal
-            // in `on_finalize` (1 write), plus the per-challenge cost.
-            T::DbWeight::get()
-                .reads_writes(1, 1)
-                .saturating_add(per_challenge.saturating_mul(count))
+            // `NextChallengeIndex(n)` is the final count of challenges expiring
+            // at `n` (every such challenge was created strictly before `n` and
+            // is capped at `MaxChallengesPerDeadline`). Charge the benchmarked
+            // cost of the `on_finalize` slash sweep up front, since
+            // `on_finalize` cannot return weight.
+            let count = NextChallengeIndex::<T>::get(n);
+            T::WeightInfo::on_initialize_slash_challenges(count as u32)
         }
 
         /// Process expired challenges at the end of each block.
@@ -348,17 +337,12 @@ pub mod pallet {
     >;
 
     /// Per-challenger aggregates so the SDK doesn't have to scan historical
-    /// events to answer `get_challenge_stats` / `get_total_challenge_earnings`.
-    /// Updated by `create_challenge`, the defended path of
-    /// `respond_to_challenge`, and `slash_provider_for_failed_challenge`.
+    /// events to answer `get_challenge_stats`. Updated by `create_challenge`,
+    /// the defended path of `respond_to_challenge`, and
+    /// `slash_provider_for_failed_challenge`.
     #[pallet::storage]
-    pub type ChallengerStats<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat,
-        T::AccountId,
-        ChallengerStatRecord<BalanceOf<T>>,
-        ValueQuery,
-    >;
+    pub type ChallengerStats<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -3781,7 +3765,8 @@ pub mod pallet {
                 Providers::<T>::insert(&challenge.provider, provider_info);
 
                 // Bump the challenger's successful-challenge count. Challengers
-                // earn nothing (no reward), so `total_earnings` stays zero.
+                // earn no reward (the slashed stake goes entirely to the
+                // Treasury), so only the counter moves here.
                 ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
                     stats.successful_challenges = stats.successful_challenges.saturating_add(1);
                 });
