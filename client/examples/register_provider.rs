@@ -17,8 +17,8 @@
 use sp_core::crypto::Ss58Codec;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient};
-use storage_subxt::subxt_signer::{sr25519::Keypair, SecretUri};
 use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::subxt_signer::{sr25519::Keypair, SecretUri};
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";
 const DEFAULT_PROVIDER_URL: &str = "http://127.0.0.1:3333";

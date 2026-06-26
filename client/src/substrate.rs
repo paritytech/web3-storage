@@ -11,9 +11,9 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 pub const PALLET_NAME: &str = "StorageProvider";
 

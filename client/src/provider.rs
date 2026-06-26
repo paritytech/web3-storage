@@ -11,13 +11,13 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
+use rt::pallet_storage_provider::pallet::ProviderInfo;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::subxt_signer;
-use rt::pallet_storage_provider::pallet::ProviderInfo;
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 /// Client for storage providers.
 pub struct ProviderClient {

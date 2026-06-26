@@ -10,7 +10,6 @@
 
 use crate::substrate::SubstrateClient;
 use reqwest::Client as HttpClient;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use storage_subxt::subxt_signer::sr25519::Keypair;
 use thiserror::Error;
@@ -171,43 +170,6 @@ impl BaseClient {
     pub(crate) fn hex_encode(data: &[u8]) -> String {
         format!("0x{}", hex::encode(data))
     }
-}
-
-// Common API types used across clients
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfo {
-    pub multiaddr: String,
-    pub stake: u128,
-    pub committed_bytes: u64,
-    pub price_per_byte: u128,
-    pub accepting_primary: bool,
-    pub reputation: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketInfo {
-    pub bucket_id: u64,
-    pub min_providers: u32,
-    pub frozen: bool,
-    pub snapshot: Option<SnapshotInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotInfo {
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-    pub checkpoint_block: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgreementInfo {
-    pub provider: String,
-    pub max_bytes: u64,
-    pub payment_locked: u128,
-    pub expires_at: u32,
-    pub is_primary: bool,
 }
 
 /// Chunking strategy for data upload.

@@ -90,7 +90,11 @@ async fn test_bucket_lifecycle() {
         .await
         .expect("get_bucket_info after add_member");
 
-    assert_eq!(info.members.0.len(), 2, "should have 2 members (Alice + Bob)");
+    assert_eq!(
+        info.members.0.len(),
+        2,
+        "should have 2 members (Alice + Bob)"
+    );
     let bob_info = info
         .members
         .0

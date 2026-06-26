@@ -121,7 +121,11 @@ async fn test_list_active_agreements() {
         assert!(a.bucket_id > 0, "bucket_id should be non-zero");
         println!(
             "  bucket={} owner={} max_bytes={} expires_at={} primary={}",
-            a.bucket_id, a.agreement.owner.to_string(), a.agreement.max_bytes, a.agreement.expires_at, a.is_primary()
+            a.bucket_id,
+            a.agreement.owner,
+            a.agreement.max_bytes,
+            a.agreement.expires_at,
+            a.is_primary()
         );
     }
 }

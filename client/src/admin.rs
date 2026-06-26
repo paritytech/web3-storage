@@ -13,12 +13,12 @@ use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
+use rt::pallet_storage_provider::pallet::Bucket;
 use sp_core::H256;
 use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
-use storage_subxt::subxt_signer;
 use storage_subxt::storage_runtime::api::runtime_types as rt;
-use rt::pallet_storage_provider::pallet::Bucket;
+use storage_subxt::subxt_signer;
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -544,7 +544,6 @@ impl AdminClient {
                 String::new()
             };
 
-            
             agreements.push(AgreementInfo {
                 provider,
                 agreement: kv.value,

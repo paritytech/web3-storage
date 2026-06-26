@@ -9,9 +9,9 @@ use storage_client::{
     sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
     ProviderClient, StorageUserClient,
 };
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use storage_primitives::AgreementTerms;
 use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
 

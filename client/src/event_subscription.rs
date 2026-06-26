@@ -45,13 +45,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use storage_primitives::BucketId;
+use storage_subxt::storage_paseo_runtime::api::storage_provider::events::provider_settings_updated;
 use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::storage_runtime::api::storage_provider::events as ev;
 use storage_subxt::subxt;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
-use storage_subxt::storage_paseo_runtime::api::storage_provider::events::provider_settings_updated;
- 
+
 // ============================================================================
 // Event Types
 // ============================================================================
