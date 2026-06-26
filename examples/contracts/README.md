@@ -30,3 +30,7 @@ The exact pinned versions live in `.github/env` and are installed identically in
 | `IWeb3Storage.sol`      | Vendored ABI of the precompile (kept in sync with `precompiles/storage-provider-precompile/src/IWeb3Storage.sol`). |
 | `StorageMarketplace.sol`| Marketplace contract: `buyStorage` / `endMyAgreement`.    |
 | `build.sh`              | One-shot compile script.                                 |
+
+## License
+
+[Apache-2.0](../../LICENSE-APACHE2)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the provider node HTTP API.
 //!
 //! These tests spin up a real HTTP server and test the full request/response cycle.
@@ -29,9 +31,13 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
+        // These tests exercise endpoint behavior, not auth, so run with auth
+        // disabled (auth is enforced by default). Auth is covered end-to-end in
+        // `auth_integration.rs`.
         Self::with_state(Arc::new(
             ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-                .expect("//Alice is a valid SURI"),
+                .expect("//Alice is a valid SURI")
+                .with_auth_disabled(),
         ))
         .await
     }
@@ -41,10 +47,13 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
-        Self::with_state(Arc::new(ProviderState::new(
-            Arc::new(Storage::new()),
-            "0xtest_provider".to_string(),
-        )))
+        Self::with_state(Arc::new(
+            ProviderState::with_provider_id(
+                Arc::new(Storage::new()),
+                "0xtest_provider".to_string(),
+            )
+            .with_auth_disabled(),
+        ))
         .await
     }
 
@@ -107,6 +116,13 @@ async fn test_info_endpoint() {
 
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["provider_id"], expect_provider_id);
+
+    // `TestServer::new` seeds a signing key but wires up neither the nonce
+    // counter nor on-chain provider info (those need a live chain at startup),
+    // so the readiness flags must reflect "can sign, not yet ready to negotiate".
+    assert_eq!(body["readiness"]["signing_configured"], true);
+    assert_eq!(body["readiness"]["nonce_counter_ready"], false);
+    assert_eq!(body["readiness"]["provider_info_loaded"], false);
 }
 
 #[tokio::test]

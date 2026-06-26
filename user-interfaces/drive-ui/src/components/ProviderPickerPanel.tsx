@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,9 +19,8 @@ interface ProviderPickerPanelProps {
  * embedded inside the Create New Drive dialog so the user picks a
  * provider as part of the same form — no separate modal.
  *
- * Mirrors console-ui's ProviderPickerDialog table — same `data-testid`s
- * (`provider-picker`, `provider-picker-select`) so shared e2e patterns
- * address both UIs.
+ * Uses the shared provider-picker `data-testid`s (`provider-picker`,
+ * `provider-picker-select`) so e2e patterns are reusable across UIs.
  */
 export default function ProviderPickerPanel({
   onSelect,

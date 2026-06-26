@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import {
@@ -18,12 +20,8 @@ import {
   useCreations,
   type CreationStatus,
 } from "@/state";
-import {
-  negotiateTerms,
-  parseMultiaddrToHttp,
-  type AvailableProvider,
-  type SignedTerms,
-} from "@/lib/drive-client";
+import { type AvailableProvider } from "@/lib/drive-client";
+import { negotiateProviderTerms } from "@web3-storage/sdk";
 import { formatBytes } from "@/lib/utils";
 import ProviderPickerPanel from "./ProviderPickerPanel";
 
@@ -65,7 +63,7 @@ function CreationStatusCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{item.name}</p>
+          <p className="text-sm font-medium truncate">{item.name || "Untitled Drive"}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {item.stage === "submitting" && "Submitting on-chain..."}
             {item.stage === "ready" && "Drive is ready to use"}
@@ -118,14 +116,6 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
     setSubmitting(true);
     setNegotiateError(null);
     try {
-      const url = parseMultiaddrToHttp(provider.multiaddr);
-      if (!url) {
-        setNegotiateError(
-          `Provider ${provider.account} has an unparseable multiaddr: ${provider.multiaddr}`,
-        );
-        return;
-      }
-
       const owner = getSignerAddress();
       if (!owner) {
         setNegotiateError("Signer not set");
@@ -133,28 +123,24 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
       }
 
       // Failure here means re-negotiate from scratch on retry.
-      let signed: SignedTerms;
-      try {
-        signed = await negotiateTerms(url, {
-          owner,
-          max_bytes: BigInt(capacity),
-          duration: parseInt(duration, 10),
-          price_per_byte: BigInt(pricePerByte || "0"),
-          replica_params: null,
-          bucket_id: null,
-        });
-      } catch (err) {
-        setNegotiateError(
-          err instanceof Error ? err.message : "Failed to negotiate with provider",
-        );
+      const result = await negotiateProviderTerms(provider, {
+        owner,
+        max_bytes: BigInt(capacity),
+        duration: parseInt(duration, 10),
+        price_per_byte: BigInt(pricePerByte || "0"),
+        replica_params: null,
+        bucket_id: null,
+      });
+      if (!result.ok) {
+        setNegotiateError(result.error);
         return;
       }
 
       const drive = await createDrive({
         name: name || undefined,
         provider,
-        url,
-        signed,
+        url: result.url,
+        signed: result.signed,
       });
       if (drive) {
         setName("");
@@ -250,9 +236,9 @@ export default function NewDriveDialog({ open, onOpenChange }: NewDriveDialogPro
                     item={item}
                     onDismiss={dismissCreation}
                     onRetry={
-                      canRetryCreation(item.id)
+                      canRetryCreation(item.id) && name.trim()
                         ? (id) => {
-                            void retryCreation(id);
+                            void retryCreation(id, name.trim());
                           }
                         : undefined
                     }

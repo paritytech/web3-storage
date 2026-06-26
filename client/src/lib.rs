@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! # Storage Client SDK
 //!
 //! Comprehensive off-chain SDK for interacting with the scalable Web3 storage system.
@@ -102,6 +104,7 @@
 pub mod admin;
 pub mod agreement;
 pub mod base;
+pub mod block_subscription;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
@@ -118,6 +121,7 @@ pub mod verification;
 pub use admin::AdminClient;
 pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
+pub use block_subscription::BlockSubscriberStream;
 pub use challenger::ChallengerClient;
 pub use checkpoint::{
     AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,

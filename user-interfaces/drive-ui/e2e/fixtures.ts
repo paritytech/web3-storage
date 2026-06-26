@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive-ui Playwright fixtures.
  *
@@ -9,7 +11,7 @@
  * the provider's auto-coordinator on Alice's nonce. Using Bob keeps the
  * test signer and the provider signer cleanly separated.
  */
-import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers";
+import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers/playwright";
 
 export const test = makeLocalPageFixture({
   localStorage: {

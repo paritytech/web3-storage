@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Dev-server config for the landing page. Reproduces what
 // `user-interfaces/landing/inject-config.mjs` does at build time, but as an
 // in-memory Vite `transformIndexHtml` plugin so the dev server can serve a

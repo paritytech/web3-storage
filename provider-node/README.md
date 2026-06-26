@@ -1,0 +1,52 @@
+# Storage Provider Node
+
+Off-chain HTTP server that handles data upload and download, builds MMR
+commitments over stored chunks, and responds to on-chain challenges with
+inclusion proofs.
+
+## Build & Run
+
+```bash
+cargo build -p storage-provider-node --release
+just start-provider   # requires a running chain (just start-chain)
+just health           # check provider is up
+```
+
+## Authentication
+
+Authentication is enforced by default. Mutating and bucket-scoped endpoints
+require a signed `Authorization` header; the only way to turn enforcement off is
+the `--disable-auth-i-know-what-i-am-doing` flag, which opens every endpoint to
+the public and is meant strictly for throwaway local experiments.
+
+The client signs an sr25519 message binding the request to a bucket and a
+timestamp:
+
+```text
+signed message:  web3storage:<METHOD>:<bucket_id>:<timestamp>
+header:          Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+```
+
+| Field          | Meaning                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| `METHOD`       | Upper-case HTTP verb of the request (`GET`, `PUT`, `POST`, `DELETE`).   |
+| `bucket_id`    | Decimal id of the bucket the request targets.                           |
+| `timestamp`    | Client Unix time in **seconds**; identical in the message and header.   |
+| `pubkey_hex`   | 32-byte sr25519 public key, hex (optional `0x` prefix).                 |
+| `signature_hex`| 64-byte signature over the message, hex (optional `0x` prefix).         |
+
+The recovered public key is mapped to the bucket's on-chain role
+(`Reader` / `Writer` / `Admin`); reads need `Reader`, writes and deletes need
+`Writer`, and pruning (`POST /delete`) needs `Admin`. The `timestamp` must be
+within the configured skew window of the provider's clock or the request is
+rejected as expired.
+
+## Test
+
+```bash
+cargo test -p storage-provider-node
+```
+
+## License
+
+Licensed under [GPL-3.0-only](../LICENSE-GPL3).

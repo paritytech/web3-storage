@@ -45,7 +45,7 @@ docs/
 
 - **[Storage Client SDK](../client/README.md)** — Layer-0 Rust client.
 - **[S3 Interface](../storage-interfaces/s3/README.md)** — Layer-1 S3-compatible Rust client.
-- **TypeScript SDKs** under `user-interfaces/sdk/typescript/{file-system,s3}/`.
+- **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (umbrella over `packages/{core,layer0,layer1}`; `./fs`, `./s3`, and `./revive` subpaths).
 
 ## Scripts
 
@@ -58,3 +58,7 @@ docs/
 - [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) — FRAME, Cumulus, networking.
 - [Substrate Docs](https://docs.substrate.io/).
 - [Polkadot.js Apps](https://polkadot.js.org/apps/).
+
+## License
+
+See the repository root [README](../README.md#license) for license details.

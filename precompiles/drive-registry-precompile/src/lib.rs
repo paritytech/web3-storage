@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! `pallet_revive` precompile exposing `pallet_drive_registry` to Solidity
 //! contracts.
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! S3-compatible storage interface primitives.
 //!
 //! This crate provides the core types used by the S3 storage interface.

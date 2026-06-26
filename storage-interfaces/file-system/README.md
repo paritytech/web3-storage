@@ -141,3 +141,7 @@ just fs-test-all   # primitives + pallet-registry + client (unit tests)
 - [Layer 0 Design](../../docs/design/scalable-web3-storage.md)
 - [Layer 0 Implementation](../../docs/design/scalable-web3-storage-implementation.md)
 - [Protobuf schemas](./primitives/proto/filesystem.proto)
+
+## License
+
+[Apache-2.0](../../LICENSE-APACHE2)

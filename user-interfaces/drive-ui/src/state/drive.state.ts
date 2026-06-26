@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Drive State - file system orchestration over a DriveClient.
  *
@@ -310,7 +312,6 @@ export function dismissCreation(id: string): void {
 }
 
 interface RetryCtx {
-  name: string | undefined;
   provider: AvailableProvider;
   url: string;
   signed: SignedTerms;
@@ -324,7 +325,10 @@ export function canRetryCreation(id: string): boolean {
 async function runChainSubmit(id: string, ctx: RetryCtx): Promise<DriveInfo | null> {
   updateCreation(id, { stage: "submitting", error: undefined });
   try {
-    const drive = await client.submitCreateDrive(ctx.name, ctx.provider.account, ctx.url, ctx.signed);
+    // Name lives on the creation record (keyed by id), not the retry context.
+    // Empty string is treated as "no name" by submitCreateDrive.
+    const name = creations$.getValue().find((c) => c.id === id)?.name || undefined;
+    const drive = await client.submitCreateDrive(name, ctx.provider.account, ctx.url, ctx.signed);
     updateCreation(id, { stage: "ready", bucketId: drive.bucketId });
     retryCtx.delete(id);
     await refreshDrives();
@@ -345,16 +349,16 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
   if (!client.hasApi() || !client.hasSigner()) return null;
 
   const id = crypto.randomUUID();
-  const displayName = input.name || "Untitled Drive";
   creations$.next([
     ...creations$.getValue(),
-    { id, name: displayName, stage: "submitting", elapsedMs: 0 },
+    // Store the raw name; the "Untitled Drive" fallback is applied at render.
+    { id, name: input.name ?? "", stage: "submitting", elapsedMs: 0 },
   ]);
 
   // Terms are negotiated by the caller; this only does the chain submit.
   // Stash retry context first so a failure leaves a retry handle attached
   // to the CreationStatus.
-  const ctx: RetryCtx = { name: input.name, provider: input.provider, url: input.url, signed: input.signed };
+  const ctx: RetryCtx = { provider: input.provider, url: input.url, signed: input.signed };
   retryCtx.set(id, ctx);
   return runChainSubmit(id, ctx);
 }
@@ -363,9 +367,15 @@ export async function createDrive(input: CreateDriveInput): Promise<DriveInfo | 
  * Retry a failed on-chain submit using the cached signed terms. No-op if
  * the creation expired or never negotiated successfully.
  */
-export async function retryCreation(id: string): Promise<DriveInfo | null> {
+export async function retryCreation(
+  id: string,
+  name?: string,
+): Promise<DriveInfo | null> {
   const ctx = retryCtx.get(id);
   if (!ctx) return null;
+  // Let the caller override the name on retry (e.g. from the current input).
+  // runChainSubmit reads the name back off the creation record.
+  if (name !== undefined) updateCreation(id, { name });
   return runChainSubmit(id, ctx);
 }
 

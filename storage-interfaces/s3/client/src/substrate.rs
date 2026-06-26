@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Substrate/chain integration for S3 client.
 
 use crate::{BucketInfo, S3ClientError};

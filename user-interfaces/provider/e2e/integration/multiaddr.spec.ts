@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Provider multiaddr update spec.
  *
  * Requires Eve to be registered. Updates the multiaddr field, submits, and
  * asserts on-chain `Providers.multiaddr` matches.
  */
+import { firstMatch, READ_OPTS } from "@web3-storage/sdk";
 import { test, expect } from "../fixtures";
 import { Eve, getApi } from "@web3-storage/test-helpers";
 
@@ -20,12 +23,9 @@ test("update multiaddr → on-chain matches", async ({ localPage }) => {
   await localPage.getByTestId("settings-multiaddr-input").fill(newAddr);
   await localPage.getByTestId("settings-multiaddr-update").click();
 
-  await expect.poll(
-    async () => {
-      const p = await getApi().query.StorageProvider.Providers.getValue(Eve.address);
-      if (!p) return null;
-      return new TextDecoder().decode(p.multiaddr);
-    },
-    { timeout: 60_000 },
-  ).toBe(newAddr);
+  await firstMatch(
+    getApi().query.StorageProvider.Providers.watchValue(Eve.address, READ_OPTS),
+    ({ value }) => !!value && new TextDecoder().decode(value.multiaddr) === newAddr,
+    { timeoutMs: 60_000, description: `Eve's multiaddr to become ${newAddr}` },
+  );
 });

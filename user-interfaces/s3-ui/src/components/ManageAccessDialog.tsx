@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Trash2, Plus } from "lucide-react";
 import {
@@ -13,7 +15,7 @@ import { fetchMembers, addMember, removeMember, useSignerAddress } from "@/state
 import type { BucketMember, MemberRole } from "@/lib/s3-client";
 import { truncateHash } from "@/lib/utils";
 import { toast } from "@/components/ui/toaster";
-import { isValidSs58 } from "@/lib/crypto";
+import { isValidSs58 } from "@/lib/s3-client";
 
 interface ManageAccessDialogProps {
   open: boolean;

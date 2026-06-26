@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Substrate client integration using subxt.
 //!
 //! This module provides a wrapper around subxt for interacting with
@@ -684,6 +686,18 @@ pub mod extrinsics {
             "respond_to_challenge",
             vec![challenge_id_value, response],
         )
+    }
+}
+
+/// Runtime constant addresses for reading on-chain config.
+pub mod constants {
+    use super::*;
+
+    /// Dynamic constant address for `StorageProvider::RequestTimeout`,
+    /// the validity window (in blocks) the chain enforces on provider-signed
+    /// agreement terms.
+    pub fn request_timeout() -> subxt::constants::DynamicAddress {
+        subxt::dynamic::constant(PALLET_NAME, "RequestTimeout")
     }
 }
 

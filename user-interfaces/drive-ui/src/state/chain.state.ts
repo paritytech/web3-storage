@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 /**
  * Chain State - Blockchain connection and block tracking.
  *
@@ -10,7 +12,7 @@ import { bind } from "@react-rxjs/core";
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import { parachain } from "@polkadot-api/descriptors";
-import { setSs58Prefix } from "@web3-storage/papi";
+import { setSs58Prefix } from "@web3-storage/sdk";
 import { loadSelectedNetwork } from "@web3-storage/network-config";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";

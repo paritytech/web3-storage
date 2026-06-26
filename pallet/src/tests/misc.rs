@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 
 #[test]
@@ -13,11 +15,13 @@ fn update_provider_multiaddr_works() {
         ));
 
         let provider = Providers::<Test>::get(1).unwrap();
-        assert_eq!(provider.multiaddr.to_vec(), new_multiaddr);
+        assert_eq!(provider.multiaddr.to_vec(), new_multiaddr.clone());
 
         // Verify event emitted
-        let expected =
-            RuntimeEvent::StorageProvider(crate::Event::ProviderMultiaddrUpdated { provider: 1 });
+        let expected = RuntimeEvent::StorageProvider(crate::Event::ProviderMultiaddrUpdated {
+            provider: 1,
+            multiaddr: new_multiaddr.try_into().unwrap(),
+        });
         assert!(frame_system::Pallet::<Test>::events()
             .iter()
             .any(|r| r.event == expected));

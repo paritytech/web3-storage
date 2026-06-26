@@ -1,6 +1,8 @@
 # Generated files
 /target/
 **/*.rs.bk
+coverage
+provider-data
 
 # IDE
 .idea/
@@ -12,6 +14,7 @@
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Test artifacts
 *.log
@@ -32,11 +35,11 @@ package-lock.json
 # Python
 __pycache__
 
-# Single source of truth lives in shared/papi/.papi/. Track its config +
+# Single source of truth lives in packages/papi/.papi/. Track its config +
 # metadata so CI can build without a running chain; descriptor dist/ is
 # regenerated, never tracked.
-!user-interfaces/shared/papi/.papi/
-user-interfaces/shared/papi/.papi/descriptors/dist/
+!packages/papi/.papi/
+packages/papi/.papi/descriptors/dist/
 .vite/
 *.tsbuildinfo
 
@@ -54,8 +57,8 @@ user-interfaces/**/test-results/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 
-# Lockfiles are per-project, not committed
-# (each UI project has its own package manager)
+# The repo-root pnpm-lock.yaml is committed; npm lockfiles are not (no npm
+# islands — everything JS lives in the pnpm workspace).
 
 # Binary/generated docs
 *.docx
@@ -63,5 +66,5 @@ user-interfaces/**/test-results/
 # Screenshots
 Screenshot.png
 
-# Python
-__pycache__
+# c8 output from `just e2e`
+examples/papi/coverage/

@@ -1,18 +1,22 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Node startup and runtime orchestration.
 
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
+    chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointCoordinatorHandle, DiskStorage,
-    NonceCounter, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, StateNonceCounter, StateProviderInfo, Storage, StorageBackend,
+    ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -28,47 +32,32 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
 
-    // Create storage backend
-    let storage: Arc<dyn StorageBackend> = match cli.storage.storage_mode {
-        StorageMode::Inmemory => {
-            tracing::info!("Using in-memory storage (data will be lost on restart)");
-            Arc::new(Storage::new())
-        }
-        StorageMode::Disk => {
-            tracing::info!(
-                "Using persistent disk storage at: {}",
-                cli.storage.storage_path.display()
-            );
-            Arc::new(DiskStorage::new(&cli.storage.storage_path)?)
-        }
-    };
+    // Create storage backend and the associated nonce store (which follows the
+    // same persistence mode so the nonce counter survives disk restarts).
+    let (storage, nonce_store): (Arc<dyn StorageBackend>, Arc<dyn NonceStore>) =
+        match cli.storage.storage_mode {
+            StorageMode::Inmemory => {
+                tracing::info!("Using in-memory storage (data will be lost on restart)");
+                (Arc::new(Storage::new()), Arc::new(NullNonceStore))
+            }
+            StorageMode::Disk => {
+                tracing::info!(
+                    "Using persistent disk storage at: {}",
+                    cli.storage.storage_path.display()
+                );
+                let disk = DiskStorage::new(&cli.storage.storage_path)?;
+                let store = disk.nonce_store();
+                (Arc::new(disk), store)
+            }
+        };
 
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let state = match &seed {
+    let mut state = match &seed {
         Some(seed) => {
-            let mut state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-
-            // Wire up auth if enabled
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            state.nonce_counter = setup_nonce_counter(&cli, &state.provider_id).await;
-            state.provider_info = setup_provider_info(&cli, &state.provider_id).await;
-
-            Arc::new(state)
+            configure_state(state, &cli)
         }
         None => {
             let provider_id = cli
@@ -81,25 +70,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            let mut state = ProviderState::new(storage, provider_id);
-
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            Arc::new(state)
+            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
         }
     };
+
+    // Install the nonce store before sharing `state` across coordinators: while
+    // it is still solely owned here, `chain_state`'s Arc has a single owner, so
+    // the in-place install succeeds.
+    state.set_nonce_store(nonce_store);
+
+    let state = Arc::new(state);
 
     // Connect a single chain client shared by every coordinator. One
     // WebSocket connection and one signer (the provider's own account) back
@@ -117,6 +97,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start optional background services (failures are non-fatal)
+    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
     let checkpoint_handle =
         start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     if let Some(ref handle) = checkpoint_handle {
@@ -152,6 +133,68 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Apply CLI-derived CORS and auth settings to a freshly constructed state.
+///
+/// Authentication is enforced by default: unless the operator explicitly passed
+/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
+/// resolver so every bucket-scoped request is checked against the caller's role.
+fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
+    let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
+
+    if cli.auth.disable_auth_i_know_what_i_am_doing {
+        state = state.with_auth_disabled();
+        tracing::warn!(
+            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
+             every endpoint is publicly readable and writable by anyone. \
+             Never do this outside a throwaway local environment."
+        );
+    } else {
+        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+        let cache = MembershipCache::new(Box::new(resolver), ttl);
+        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
+        tracing::info!(
+            "Auth enforced (cache_ttl={}s, max_skew={}s)",
+            cli.auth.auth_cache_ttl,
+            cli.auth.auth_max_skew
+        );
+    }
+
+    state
+}
+
+/// Start the chain-state coordinator, which keeps `chain_state.current_block`
+/// and `chain_state.provider_info` in sync with the chain.
+///
+/// Returns `None` only when the provider id isn't a valid account. The
+/// coordinator itself never fails to start: it connects in the background and
+/// retries with a backoff if the chain is unreachable, so `current_block` is
+/// populated as soon as the chain comes up.
+fn start_chain_state_coordinator(
+    cli: &Cli,
+    state: Arc<ProviderState>,
+) -> Option<ChainStateCoordinatorHandle> {
+    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
+                state.provider_id
+            );
+            return None;
+        }
+    };
+
+    let coordinator = ChainStateCoordinator::new(
+        cli.rpc.chain_rpc.clone(),
+        provider_account,
+        state.chain_state.clone(),
+    );
+
+    tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
+    Some(coordinator.start())
+}
+
 async fn start_checkpoint_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
@@ -165,7 +208,7 @@ async fn start_checkpoint_coordinator(
         Some(c) => c.clone(),
         None => {
             tracing::error!(
-                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Skipping."
+                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Disabled."
             );
             return None;
         }
@@ -222,102 +265,6 @@ async fn start_replica_sync_coordinator(
         }
         Err(e) => {
             tracing::error!("Failed to start replica sync coordinator: {}", e);
-            None
-        }
-    }
-}
-
-/// Fetch the provider's on-chain registration info once and store it.
-///
-/// Returns `None` (and logs a warning) if anything goes wrong, so a transient
-/// chain hiccup or an unregistered provider doesn't take the whole node down.
-async fn setup_provider_info(cli: &Cli, provider_id: &str) -> StateProviderInfo {
-    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
-        Ok(account) => account,
-        Err(e) => {
-            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
-            return None;
-        }
-    };
-
-    let client = storage_client::ProviderClient::new(
-        storage_client::ClientConfig {
-            chain_ws_url: cli.rpc.chain_rpc.clone(),
-            ..Default::default()
-        },
-        provider_id.to_string(),
-    );
-    let mut client = match client {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::warn!("failed to build provider client: {e:?}");
-            return None;
-        }
-    };
-    if let Err(e) = client.connect().await {
-        tracing::warn!("failed to connect to chain: {e:?}");
-        return None;
-    }
-
-    let info = match client.get_provider_info(&provider_account).await {
-        Ok(Some(info)) => info,
-        Ok(None) => {
-            tracing::warn!(
-                "provider {provider_id} is not registered on chain; \
-                 register it before starting the node"
-            );
-            return None;
-        }
-        Err(e) => {
-            tracing::warn!("failed to fetch provider info: {e:?}");
-            return None;
-        }
-    };
-
-    tracing::info!(
-        "Loaded on-chain provider info: price_per_byte={}, duration=[{}, {}], max_capacity={}, accepting_primary={}",
-        info.price_per_byte,
-        info.min_duration,
-        info.max_duration,
-        info.max_capacity,
-        info.accepting_primary,
-    );
-
-    Some(Arc::new(RwLock::new(info)))
-}
-
-/// Create the in-memory nonce counter and bootstrap it from the chain's
-/// `ProviderReplayState.hsn`. The chain is the source of truth, so there
-/// is nothing to persist locally.
-async fn setup_nonce_counter(cli: &Cli, provider_id: &str) -> StateNonceCounter {
-    // Bootstrap from on-chain hsn. Best-effort: if the chain isn't
-    // reachable yet, set to None
-    let provider_account = match sp_runtime::AccountId32::from_str(provider_id) {
-        Ok(account) => account,
-        Err(e) => {
-            tracing::warn!("invalid provider SS58 {provider_id}: {e:?}");
-            return None;
-        }
-    };
-    match storage_client::ProviderClient::fetch_replay_hsn(&cli.rpc.chain_rpc, &provider_account)
-        .await
-    {
-        Ok(Some(hsn)) => {
-            tracing::info!(
-                "Bootstrapping nonce counter from on-chain hsn {} for provider {}",
-                hsn,
-                provider_id,
-            );
-            let counter = NonceCounter::new(1);
-            counter.bootstrap_from_hsn(hsn);
-            Some(Arc::new(counter))
-        }
-        Ok(None) => {
-            tracing::warn!("No on-chain replay state for provider {} yet.", provider_id,);
-            None
-        }
-        Err(e) => {
-            tracing::warn!("Failed to bootstrap nonce counter from chain: {}.", e,);
             None
         }
     }

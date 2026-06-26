@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Storage User Client - For end users storing and retrieving data.
 //!
 //! This client provides high-level operations for:

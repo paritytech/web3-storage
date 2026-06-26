@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Chain-derived configuration — initialized with defaults, updated from chain
 // metadata at connection time via configureFromChain().
 let tokenDecimals = 12

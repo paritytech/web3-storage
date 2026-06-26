@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
@@ -154,7 +156,7 @@ async fn test_already_synced() {
     let _ = storage.store_node(1, data_root, data, None);
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
-    let state = Arc::new(ProviderState::new(storage, "test".to_string()));
+    let state = Arc::new(ProviderState::with_provider_id(storage, "test".to_string()));
 
     let duty = SyncDuty {
         bucket_id: 1,
@@ -362,7 +364,10 @@ async fn test_duties_filter_already_synced() {
     storage.store_node(1, data_root, data, None).unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
-    let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
+    let state = Arc::new(ProviderState::with_provider_id(
+        storage,
+        ALICE_SS58.to_string(),
+    ));
 
     let agreement = ReplicaAgreementInfo {
         bucket_id: 1,

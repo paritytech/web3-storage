@@ -1,4 +1,7 @@
-import { Eve, makeLocalPageFixture, expect } from "@web3-storage/test-helpers";
+// SPDX-License-Identifier: GPL-3.0-only
+
+import { Eve } from "@web3-storage/test-helpers";
+import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers/playwright";
 
 export const test = makeLocalPageFixture({
   localStorage: {

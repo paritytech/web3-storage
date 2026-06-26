@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! S3 Registry Pallet
 //!
 //! This pallet provides on-chain storage for S3-compatible bucket and object metadata.

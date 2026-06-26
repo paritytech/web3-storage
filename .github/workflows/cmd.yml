@@ -62,6 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
     steps:
       - name: Add reaction to triggered comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -79,6 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
     steps:
       - name: Clean previous comments
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -127,11 +129,15 @@ jobs:
       repo: ${{ steps.get-pr.outputs.repo }}
     steps:
       - name: Get command
-        uses: actions-ecosystem/action-regex-match@9e6c4fb3d5e898f505be7a1fb6e7b0a278f6665b # v2.0.2
         id: get-comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
         with:
-          text: ${{ github.event.comment.body }}
-          regex: "^(\\/cmd )([-\\/\\s\\w.=:]+)$" # see explanation in docs/contributor/commands-readme.md#examples
+          script: |
+            // see explanation in docs/contributor/commands-readme.md#examples
+            const match = process.env.COMMENT_BODY.match(/^(\/cmd )([-\/\s\w.=:]+)$/);
+            core.setOutput('group2', match ? match[2] : '');
 
       # Get PR branch name, because the issue_comment event does not contain the PR branch name
       - name: Check if the issue is a PR
@@ -180,9 +186,10 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -307,7 +314,7 @@ jobs:
       IS_QUIET: ${{ contains(github.event.comment.body, '--quiet') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 

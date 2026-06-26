@@ -7,6 +7,13 @@
 - NEVER use git rebase
 - NEVER use git push --force or git push -f
 
+**Pull request rules:**
+- ALWAYS open pull requests against the repository's default branch (`dev`)
+
+**Cargo dependency rules:**
+- ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
+- On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).
+
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code
 - ALWAYS run `/format` before creating any git commit
@@ -141,19 +148,21 @@ They duplicate functionality PAPI already provides, drag in 20+ transitive deps,
 
 | Need                                 | Use                                                                                                |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Chain client + typed API             | `polkadot-api` (`createClient`, `getWsProvider` from `polkadot-api/ws-provider`)                   |
+| Chain client + typed API             | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`)                   |
 | Signer wrapper                       | `getPolkadotSigner` from `polkadot-api/signer`                                                     |
-| SCALE / `Binary` / `Enum`            | `@polkadot-api/substrate-bindings`                                                                 |
+| SCALE / `Binary` / `Enum`            | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
 | Sr25519 key derivation (`//Alice`)   | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
 | SS58 encode / decode                 | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers`                                    |
 | blake2-256 hashing                   | `blake2b256` from `@polkadot-labs/hdkd-helpers`                                                    |
 | `cryptoWaitReady()`                  | Not needed — hdkd is synchronous; delete the import and the await                                  |
 
-Canonical signer/derive pattern — set up the derive function once at module load, then call `makeSigner("//Alice")` etc.:
+In-repo code should not hand-roll these: the workspace package `@web3-storage/sdk` (`packages/sdk`) already provides `connect`, `makeSigner`, `seedToKeypair`, the `Alice..Ferdie` dev signers, `submitTx` (in-block by default, per the suite's finalization semantics), `watchValue`-based waits, and typed wrappers for every pallet extrinsic. Import from it instead of duplicating the patterns below.
+
+Canonical signer/derive pattern (what `makeSigner` does under the hood) — set up the derive function once at module load, then call `makeSigner("//Alice")` etc.:
 
 ```js
 import { createClient } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider";
+import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
@@ -206,9 +215,11 @@ web3-storage/
 ├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
 │   ├── src/lib.rs             # Core pallet implementation
 │   └── Cargo.toml             # Pallet dependencies
-├── runtime/                    # Parachain runtime
-│   ├── src/lib.rs             # Runtime configuration
-│   └── Cargo.toml             # Runtime dependencies
+├── runtimes/                   # Parachain runtimes
+│   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
+│   │   ├── src/lib.rs         # Runtime configuration
+│   │   └── Cargo.toml         # Runtime dependencies
+│   └── web3-storage-paseo/     # Paseo testnet runtime (storage-paseo-runtime)
 ├── provider-node/              # Off-chain HTTP storage server
 │   ├── src/                   # Provider implementation
 │   │   ├── main.rs           # Server entry point
@@ -266,7 +277,7 @@ web3-storage/
 
 **Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
-**Runtime (`runtime/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
+**Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
 **Provider Node (`provider-node/`)**: Off-chain HTTP server that:
 - Stores data chunks locally
@@ -374,7 +385,7 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtime/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
 
 ```rust
 // Token decimals
