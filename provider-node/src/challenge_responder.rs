@@ -54,8 +54,6 @@ pub struct DetectedChallenge {
     pub chunk_index: u64,
     /// Challenger's account.
     pub challenger: String,
-    /// Block number when challenge was created.
-    pub created_at_block: u32,
 }
 
 /// Result of responding to a challenge.

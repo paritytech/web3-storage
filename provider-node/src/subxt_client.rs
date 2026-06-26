@@ -876,7 +876,6 @@ impl ChallengeChainClient for SubxtChainClient {
                 leaf_index: challenge.leaf_index,
                 chunk_index: challenge.chunk_index,
                 challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
-                created_at_block: deadline,
             });
         }
         Ok(detected)
