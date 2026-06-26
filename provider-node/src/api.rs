@@ -21,7 +21,6 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_client::provider_node_request_scheme::*;
@@ -30,6 +29,7 @@ use storage_client::provider_node_request_scheme::{
 };
 use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use storage_subxt::subxt::utils::H256;
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;

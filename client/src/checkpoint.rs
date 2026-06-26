@@ -34,13 +34,13 @@ use crate::checkpoint_persistence::{
 };
 use crate::substrate::SubstrateClient;
 use crate::{ClientError, CommitmentResponse};
-use sp_core::H256;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 use tokio::sync::{mpsc, RwLock};
 

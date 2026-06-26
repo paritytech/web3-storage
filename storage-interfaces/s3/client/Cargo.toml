@@ -12,9 +12,6 @@ description = "S3-compatible client SDK for web3-storage"
 s3-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 
-# Substrate primitives
-sp-core = { workspace = true, features = ["std"] }
-
 # Async/HTTP
 reqwest = { workspace = true }
 tokio = { workspace = true }

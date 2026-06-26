@@ -20,7 +20,6 @@
 //!    shut down cleanly when stopped.
 
 use async_trait::async_trait;
-use sp_core::H256;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +33,7 @@ use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
     ProviderInfo, ProviderSettings,
 };
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
 /// every connect attempt fails fast and the coordinator loops on the error arm.

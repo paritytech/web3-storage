@@ -8,9 +8,9 @@
 //! - Make informed provider selection decisions
 
 use crate::ClientError as Error;
-use sp_core::H256;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use storage_subxt::subxt::utils::H256;
 
 /// Provider performance statistics.
 #[derive(Debug, Clone, Default)]

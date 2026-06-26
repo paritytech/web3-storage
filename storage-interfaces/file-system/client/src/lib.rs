@@ -42,7 +42,6 @@ mod substrate;
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
-use sp_core::H256;
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,6 +50,7 @@ use storage_client::{
     CheckpointManager, ClientConfig, EventParser, StorageUserClient,
 };
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use substrate::{FileSystemEvent, FileSystemEventParser};
 use thiserror::Error;
 use tokio::sync::Mutex;

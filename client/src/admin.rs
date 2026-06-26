@@ -14,11 +14,11 @@ use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventP
 use crate::provider_node_request_scheme::AgreementTermsOf;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::Bucket;
-use sp_core::H256;
 use storage_primitives::{BucketId, EndAction, Role};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 
 /// Client for bucket administrators.

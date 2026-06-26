@@ -13,8 +13,8 @@ use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, Clien
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
+use storage_subxt::subxt::utils::H256;
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -155,7 +155,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use sp_core::H256;
+    /// # use storage_subxt::subxt::utils::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let data = client.download(&data_root, 0, 1024).await?;
@@ -238,7 +238,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use sp_core::H256;
+    /// # use storage_subxt::subxt::utils::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let (data, children) = client.read_node(&hash).await?;
@@ -317,7 +317,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use sp_core::H256;
+    /// # use storage_subxt::subxt::utils::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let commitment = client.commit(1, vec![data_root]).await?;

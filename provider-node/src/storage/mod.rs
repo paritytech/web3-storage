@@ -52,9 +52,9 @@ impl NonceStore for NullNonceStore {
 }
 
 use crate::error::Error;
-use sp_core::H256;
 use storage_client::provider_node_request_scheme::*;
 use storage_primitives::{hash_children, BucketId};
+use storage_subxt::subxt::utils::H256;
 
 /// A stored node (chunk or internal node).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

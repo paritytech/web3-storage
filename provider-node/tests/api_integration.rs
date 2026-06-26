@@ -10,11 +10,12 @@ use codec::Encode;
 use reqwest::Client;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
-use sp_core::{sr25519, ByteArray, Pair, H256};
+use sp_core::{sr25519, ByteArray, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::CommitmentPayload;
 use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_subxt::subxt::utils::H256;
 use tokio::net::TcpListener;
 
 /// Test server helper that starts the provider node on a random port.

@@ -7834,7 +7834,6 @@ dependencies = [
  "hex",
  "reqwest",
  "s3-primitives",
- "sp-core",
  "storage-client",
  "storage-subxt",
  "thiserror 2.0.18",

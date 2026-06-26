@@ -11,9 +11,9 @@ use crate::error::Error;
 use crate::StorageBackend;
 use base64::Engine;
 use reqwest::Client;
-use sp_core::H256;
 use std::sync::Arc;
 use storage_primitives::BucketId;
+use storage_subxt::subxt::utils::H256;
 
 /// Replica synchronization manager.
 pub struct ReplicaSync {

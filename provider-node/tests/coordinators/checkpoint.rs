@@ -3,7 +3,6 @@
 //! Integration tests for the checkpoint coordinator.
 
 use super::{test_state_with_seed, wait_for};
-use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
@@ -12,6 +11,7 @@ use storage_provider_node::{
     CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointDuty,
     CheckpointResult, Error, ProviderState, Storage,
 };
+use storage_subxt::subxt::utils::H256;
 
 struct MockCheckpointChainClient {
     block_number: Mutex<u64>,

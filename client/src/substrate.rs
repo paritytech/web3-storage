@@ -8,12 +8,12 @@
 use crate::base::ClientError;
 use crate::provider_node_request_scheme::AgreementTermsOf;
 use futures::StreamExt;
-use sp_core::H256;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
 
@@ -150,7 +150,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().checkpoint(
             bucket_id,
-            rc::to_h256(&mmr_root),
+            mmr_root,
             start_seq,
             leaf_count,
             rc::to_signatures(signatures),
@@ -183,7 +183,7 @@ pub mod extrinsics {
         runtime::tx().storage_provider().challenge_offchain(
             bucket_id,
             provider,
-            rc::to_h256(&mmr_root),
+            mmr_root,
             start_seq,
             leaf_index,
             chunk_index,
@@ -204,10 +204,9 @@ pub mod extrinsics {
         roots: [Option<H256>; 7],
         signature: Vec<u8>,
     ) -> impl Payload {
-        let rt_roots = roots.map(|r| r.as_ref().map(rc::to_h256));
         runtime::tx().storage_provider().confirm_replica_sync(
             bucket_id,
-            rt_roots,
+            roots,
             rc::raw_sr25519_to_multi_sig(signature),
         )
     }
@@ -320,7 +319,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().provider_checkpoint(
             bucket_id,
-            rc::to_h256(&mmr_root),
+            mmr_root,
             start_seq,
             leaf_count,
             window,

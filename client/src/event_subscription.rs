@@ -33,12 +33,10 @@
 //! # }
 //! ```
 
-use crate::runtime_convert as rc;
 use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
-use sp_core::H256;
 use std::collections::{BTreeSet, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +47,7 @@ use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::storage_provider::events as ev;
 use storage_subxt::subxt;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
@@ -926,7 +925,7 @@ pub trait EventParser<EventType> {
 /// # Example — parse a finalized extrinsic's events
 ///
 /// ```no_run
-/// # use sp_core::H256;
+/// # use storage_subxt::subxt::utils::H256;
 /// # use storage_client::event_subscription::{EventParser, StorageProviderEventParser};
 /// # use storage_subxt::subxt::blocks::ExtrinsicEvents;
 /// # use storage_subxt::subxt::PolkadotConfig;
@@ -962,7 +961,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::BucketCheckpointed>().ok()??;
                 Some(StorageEvent::BucketCheckpointed {
                     bucket_id: e.bucket_id,
-                    mmr_root: rc::from_h256(e.mmr_root),
+                    mmr_root: e.mmr_root,
                     start_seq: e.start_seq,
                     leaf_count: e.leaf_count,
                     providers: e.providers.into_iter().collect(),
@@ -1173,7 +1172,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 Some(StorageEvent::ReplicaSynced {
                     bucket_id: e.bucket_id,
                     provider: e.provider,
-                    mmr_root: rc::from_h256(e.mmr_root),
+                    mmr_root: e.mmr_root,
                     sync_payment: e.sync_payment,
                     block_hash,
                     block_number,

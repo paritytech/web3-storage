@@ -3,7 +3,6 @@
 //! Integration tests for the challenge responder.
 
 use super::{test_state, wait_for, ALICE_SS58};
-use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
@@ -11,6 +10,7 @@ use storage_provider_node::{
     build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponseResult, DetectedChallenge, Error, ProviderState, Storage,
 };
+use storage_subxt::subxt::utils::H256;
 
 struct MockChallengeChainClient {
     challenges: Mutex<Vec<DetectedChallenge>>,

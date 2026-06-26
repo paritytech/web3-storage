@@ -7,11 +7,9 @@
 //! rather than going through string formatting or re-encoding.
 
 use crate::provider_node_request_scheme::AgreementTermsOf;
-use sp_core::H256;
 use storage_primitives::{EndAction, MerkleProof, MmrProof, Role};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
-use storage_subxt::subxt_core::utils::H256 as RtH256;
 
 // Convenient type aliases (for return types only, not constructors)
 pub type RtMultiSig = rt::sp_runtime::MultiSignature;
@@ -26,10 +24,6 @@ pub type RtMerkleProof = rt::storage_primitives::MerkleProof;
 pub type BoundedVec<T> = rt::bounded_collections::bounded_vec::BoundedVec<T>;
 
 // ── Client domain → generated runtime_types ────────────────────────────────
-
-pub fn to_h256(h: &H256) -> RtH256 {
-    RtH256(h.0)
-}
 
 /// Convert raw Sr25519 bytes (64 bytes) into `MultiSignature::Sr25519`.
 ///
@@ -97,7 +91,7 @@ pub fn to_challenge_id(deadline: u32, index: u16) -> RtChallengeId {
 
 fn to_merkle_proof_inner(proof: &MerkleProof) -> RtMerkleProof {
     rt::storage_primitives::MerkleProof {
-        siblings: proof.siblings.iter().map(to_h256).collect(),
+        siblings: proof.siblings.to_vec(),
         path: proof.path.clone(),
     }
 }
@@ -108,9 +102,9 @@ pub fn to_challenge_response_proof(
     chunk_proof: &MerkleProof,
 ) -> RtChallengeResponse {
     let rt_mmr_proof = rt::storage_primitives::MmrProof {
-        peaks: mmr_proof.peaks.iter().map(to_h256).collect(),
+        peaks: mmr_proof.peaks.to_vec(),
         leaf: rt::storage_primitives::MmrLeaf {
-            data_root: to_h256(&mmr_proof.leaf.data_root),
+            data_root: mmr_proof.leaf.data_root,
             data_size: mmr_proof.leaf.data_size,
             total_size: mmr_proof.leaf.total_size,
         },
@@ -120,26 +114,5 @@ pub fn to_challenge_response_proof(
         chunk_data: rt::bounded_collections::bounded_vec::BoundedVec(chunk_data.to_vec()),
         mmr_proof: rt_mmr_proof,
         chunk_proof: to_merkle_proof_inner(chunk_proof),
-    }
-}
-
-// ── Generated runtime_types → client domain ────────────────────────────────
-
-pub fn from_h256(h: RtH256) -> H256 {
-    H256::from_slice(&h.0)
-}
-
-// ── Tests ───────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn h256_round_trip() {
-        let original = H256::from([99u8; 32]);
-        let rt = to_h256(&original);
-        let back = from_h256(rt);
-        assert_eq!(original, back);
     }
 }

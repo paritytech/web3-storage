@@ -4,13 +4,13 @@
 
 use crate::{BucketInfo, S3ClientError};
 use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
-use sp_core::H256;
 use std::sync::Arc;
 use storage_client::runtime_convert as rc;
 use storage_client::EventParser;
 use storage_subxt::api as runtime;
 use storage_subxt::subxt;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
@@ -211,7 +211,7 @@ impl SubstrateClient {
         let tx = runtime::tx().s3_registry().put_object_metadata(
             bucket_id,
             key.as_bytes().to_vec(),
-            rc::to_h256(&cid),
+            cid,
             size,
             content_type.as_bytes().to_vec(),
             user_metadata,
@@ -334,7 +334,7 @@ impl SubstrateClient {
             .map_err(|e| e.to_string())?;
 
         Ok(result.map(|meta| ChainObjectMetadata {
-            cid: rc::from_h256(meta.cid),
+            cid: meta.cid,
             size: meta.size,
             last_modified: meta.last_modified,
             content_type: meta.content_type.0,
@@ -513,7 +513,7 @@ impl EventParser<S3Event> for S3EventParser {
             return Some(S3Event::ObjectPut {
                 s3_bucket_id: e.s3_bucket_id,
                 key: e.key,
-                cid: rc::from_h256(e.cid),
+                cid: e.cid,
                 size: e.size,
                 block_hash,
                 block_number,

@@ -7,8 +7,8 @@
 //! After inserting n leaves, the number of parent merges equals
 //! `n.trailing_zeros()`.
 
-use sp_core::H256;
 use storage_primitives::hash_children;
+use storage_subxt::subxt::utils::H256;
 
 /// A Merkle Mountain Range for storing bucket data.
 #[derive(Debug, Clone)]

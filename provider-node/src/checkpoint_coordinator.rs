@@ -8,11 +8,11 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, CheckpointProposal};
+use storage_subxt::subxt::utils::H256;
 use tokio::sync::mpsc;
 
 /// Configuration for the checkpoint coordinator.

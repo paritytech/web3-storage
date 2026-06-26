@@ -3,7 +3,6 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
-use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,6 +12,7 @@ use storage_provider_node::{
     Error, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
     ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
+use storage_subxt::subxt::utils::H256;
 
 struct MockReplicaSyncChainClient {
     block: Mutex<u64>,

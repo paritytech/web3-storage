@@ -7,11 +7,11 @@
 //! the required proof data.
 
 use crate::{Error, ProviderState};
-use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_subxt::subxt::utils::H256;
 use tokio::sync::mpsc;
 
 /// Configuration for the challenge responder.

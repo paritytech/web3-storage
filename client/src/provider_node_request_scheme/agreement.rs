@@ -20,7 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, PickFirst};
-use storage_primitives::{AgreementTerms, BucketId};
+use storage_primitives::{AgreementTerms, BucketId, ReplicaTerms};
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
@@ -33,7 +33,7 @@ pub type AgreementTermsOf = AgreementTerms<AccountId32, u128, u32>;
 
 /// Concrete `ReplicaTerms` matching the parachain's
 /// `(Balance, BlockNumber) = (u128, u32)`.
-pub type ReplicaTermsOf = storage_primitives::ReplicaTerms<u128, u32>;
+pub type ReplicaTermsOf = ReplicaTerms<u128, u32>;
 
 /// The owner proposes the agreement shape they want; the provider node
 /// allocates a fresh nonce and a validity window from its own state,

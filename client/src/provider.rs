@@ -14,10 +14,10 @@ use crate::provider_node_request_scheme::{NegotiateRequest, SignedTerms};
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
-use sp_core::H256;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 
 /// Client for storage providers.

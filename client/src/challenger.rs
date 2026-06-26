@@ -10,11 +10,11 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
-use sp_core::H256;
 use storage_primitives::BucketId;
 use storage_subxt::api::storage_provider::events::ChallengeCreated as EvChallengeCreated;
 use storage_subxt::subxt::blocks::ExtrinsicEvents;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt::PolkadotConfig;
 
 /// Client for challengers (third parties who verify data integrity).

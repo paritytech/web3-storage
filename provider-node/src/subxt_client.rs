@@ -16,11 +16,11 @@ use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
-use sp_core::H256;
 use storage_client::substrate::{extrinsics, storage, SubstrateClient};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 
 /// Production implementation that talks to the chain via typed storage_client bindings.

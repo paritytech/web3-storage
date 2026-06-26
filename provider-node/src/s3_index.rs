@@ -9,10 +9,10 @@ use codec::Encode;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use storage_primitives::{blake2_256, hash_children, BucketId};
+use storage_subxt::subxt::utils::H256;
 
 /// Per-object metadata stored in the index.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,7 +6,6 @@
 
 use crate::FsClientError;
 use file_system_primitives::DriveId;
-use sp_core::H256;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_client::runtime_convert as rc;
@@ -15,6 +14,7 @@ use storage_primitives::Role;
 use storage_subxt::api as runtime;
 use storage_subxt::subxt;
 use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;

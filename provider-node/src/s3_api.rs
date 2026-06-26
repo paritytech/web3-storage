@@ -22,10 +22,10 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use storage_primitives::{blake2_256, BucketId};
+use storage_subxt::subxt::utils::H256;
 
 /// Query parameter for object key.
 #[derive(Debug, Deserialize)]

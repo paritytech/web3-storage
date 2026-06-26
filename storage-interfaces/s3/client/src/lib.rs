@@ -11,8 +11,8 @@ pub use substrate::SubstrateClient;
 use s3_primitives::{
     validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse, S3BucketId,
 };
-use sp_core::H256;
 use std::collections::HashMap;
+use storage_subxt::subxt::utils::H256;
 use thiserror::Error;
 use tracing::{debug, info};
 

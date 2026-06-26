@@ -9,8 +9,8 @@
 mod common;
 
 use common::{make_client, start_test_provider};
-use sp_core::H256;
 use storage_client::{ChunkingStrategy, EncryptionKey, ENCRYPTION_OVERHEAD};
+use storage_subxt::subxt::utils::H256;
 
 // ============================================================================
 // Health
