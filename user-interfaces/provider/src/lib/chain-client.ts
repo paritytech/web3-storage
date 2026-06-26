@@ -14,7 +14,7 @@ import { getWsProvider } from 'polkadot-api/ws'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress } from '@web3-storage/papi'
+import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
 
 export type { PolkadotClient }
 type ParachainApi = TypedApi<typeof parachain>
@@ -153,8 +153,13 @@ export type TxStatus =
 export type TxProgressCallback = (status: TxStatus) => void
 
 /**
- * Sign + submit a transaction, wait for finalization, throw on chain-side
- * failure or signing error. Streams progress through the optional callback.
+ * Sign + submit a transaction via the sdk, wait for FINALIZATION, throw on
+ * chain-side failure or signing error. Streams progress through the optional
+ * callback.
+ *
+ * Finalized (not in-block) on purpose: this UI's state refreshers read at the
+ * default finalized head, so resolving earlier would refresh into stale state.
+ * No stale-nonce auto-retry — a user-visible retry is the right UX here.
  */
 async function submit(
   tx: Transaction,
@@ -162,54 +167,35 @@ async function submit(
   description: string,
   onProgress?: TxProgressCallback,
 ): Promise<TxFinalizedPayload> {
-  return new Promise((resolve, reject) => {
-    let resolved = false
-    const sub = tx.signSubmitAndWatch(signer.polkadotSigner).subscribe({
-      next: (event) => {
-        if (event.type === 'signed') {
+  try {
+    const result = await submitTx(tx, signer.polkadotSigner, {
+      mode: 'finalized',
+      retryStale: 0,
+      label: description,
+      onStatus: (u) => {
+        if (u.phase === 'signed') {
           onProgress?.({ type: 'broadcast', message: 'Transaction broadcast to network…' })
-        } else if (event.type === 'txBestBlocksState' && event.found) {
+        } else if (u.phase === 'best') {
           onProgress?.({
             type: 'inBlock',
             message: `${description} included in block`,
-            blockHash: event.block.hash,
+            blockHash: u.blockHash ?? '',
           })
-        } else if (event.type === 'finalized') {
+        } else if (u.phase === 'finalized') {
           onProgress?.({
             type: 'finalized',
             message: `${description} finalized`,
-            blockHash: event.block.hash,
+            blockHash: u.blockHash ?? '',
           })
-          if (event.ok) {
-            if (!resolved) {
-              resolved = true
-              sub.unsubscribe()
-              resolve(event)
-            }
-          } else {
-            const err = JSON.stringify(event.dispatchError, (_, v) =>
-              typeof v === 'bigint' ? v.toString() : v,
-            )
-            const message = `${description} failed on-chain: ${err}`
-            onProgress?.({ type: 'error', message })
-            if (!resolved) {
-              resolved = true
-              sub.unsubscribe()
-              reject(new Error(message))
-            }
-          }
-        }
-      },
-      error: (err) => {
-        const message = err instanceof Error ? err.message : String(err)
-        onProgress?.({ type: 'error', message })
-        if (!resolved) {
-          resolved = true
-          reject(err instanceof Error ? err : new Error(message))
         }
       },
     })
-  })
+    return result as TxFinalizedPayload
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    onProgress?.({ type: 'error', message })
+    throw err instanceof Error ? err : new Error(message)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

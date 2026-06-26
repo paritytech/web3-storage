@@ -27,7 +27,7 @@ jobs:
     outputs:
       src: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.src == 'true' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
@@ -57,7 +57,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -112,7 +112,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -149,8 +149,8 @@ jobs:
         if: steps.zombienet-cache.outputs.cache-hit != 'true'
         run: just zombienet_version="$ZOMBIENET_VERSION" download-zombienet
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -216,7 +216,6 @@ jobs:
           name: zombienet-smoke-test-logs
           path: |
             /tmp/zombienet.log
-            /tmp/provider-inmemory.log
             /tmp/provider.log
             /tmp/zombie-*/*.log
             /tmp/zombie-*/**/*.log
@@ -240,7 +239,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -290,8 +289,8 @@ jobs:
           .bin/polkadot-omni-node --version
           .bin/chain-spec-builder --version 2>/dev/null || true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -326,17 +325,54 @@ jobs:
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
 
+      # The tracked metadata snapshot in packages/papi is the single descriptor
+      # source for the whole workspace (UIs, sdk, examples). Re-fetch metadata
+      # from the live chain and fail loudly when the committed snapshot has
+      # drifted from the runtime — descriptors would otherwise silently
+      # disagree with what the chain actually exposes.
+      # Hash-compare instead of `git diff`: git refuses to discover the
+      # host-owned checkout from inside the CI container ("Not a git
+      # repository" via the dubious-ownership guard), and a content hash of
+      # the one tracked snapshot is the precise signal anyway.
+      - name: SDK descriptors match the runtime (regen from live chain + typecheck)
+        run: |
+          # SCALE metadata is NOT byte-reproducible across runtime builds — the
+          # same runtime source emits different bytes run-to-run — so a byte
+          # compare of the committed snapshot can never pass. What actually
+          # matters is the API surface the SDK is built against: regenerate
+          # descriptors straight from the live chain and typecheck the SDK +
+          # examples against them. A failure here is a real runtime-API change
+          # the SDK doesn't handle (e.g. a new/renamed extrinsic field) — not
+          # byte noise.
+          pnpm --filter @web3-storage/papi run papi:generate
+          pnpm run typecheck:packages || {
+            echo "::error::SDK no longer typechecks against the live runtime metadata — a runtime API changed."
+            echo "::error::Fix the SDK wrappers for the new API, then refresh the committed snapshot (any current bytes; the API is what matters):"
+            echo "::error::  (with a local chain running) pnpm --filter @web3-storage/papi run papi:generate"
+            echo "::error::  git add packages/papi/.papi && git commit -m 'chore(papi): refresh metadata for runtime change'"
+            exit 1
+          }
+          echo "SDK typechecks against the live runtime descriptors."
+
       - name: Run E2E test suite
         run: just e2e "http://127.0.0.1:3333"
 
       - name: Print JS coverage
         if: always()
         run: |
+          # No data when an earlier step failed before the suite ran — skip
+          # instead of crashing this always() step on a missing directory.
+          if [ ! -d examples/papi/coverage/tmp ]; then
+            echo "No coverage data (E2E suite did not run)."
+            exit 0
+          fi
           echo ""
           echo "═══════════════════════════════════════════════════════════"
-          echo "  JS Coverage (E2E test helpers)"
+          echo "  JS Coverage (E2E suite + @web3-storage/sdk)"
           echo "═══════════════════════════════════════════════════════════"
-          cd examples/papi && npx c8 report --reporter=text
+          npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+            --include="examples/papi/**" --include="packages/sdk/src/**" \
+            --temp-directory=examples/papi/coverage/tmp
           echo ""
 
       - name: Extract JS coverage summary
@@ -345,7 +381,9 @@ jobs:
           mkdir -p /tmp/coverage/report
           JS_COV="0"
           if [ -f examples/papi/coverage/coverage-final.json ]; then
-            JS_COV=$(cd examples/papi && npx c8 report --reporter=text 2>/dev/null \
+            JS_COV=$(npx c8 report --reporter=text --report-dir=examples/papi/coverage \
+              --include="examples/papi/**" --include="packages/sdk/src/**" \
+              --temp-directory=examples/papi/coverage/tmp 2>/dev/null \
               | grep 'All files' | awk '{print $10}' | tr -d '%' || echo "0")
           fi
           echo "{\"js\": ${JS_COV:-0}}" > /tmp/coverage/report/coverage-summary.json
@@ -409,7 +447,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -446,8 +484,8 @@ jobs:
           echo "Using chain-spec script: $SCRIPT"
           echo "CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -565,7 +603,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -623,33 +661,12 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
 
-      # The CI container ships an older Node (~14) that pnpm/action-setup@v6
-      # rejects (`import.meta.resolve` requires ≥20.6). Install Node 22 first,
-      # then pnpm against that Node, then re-run setup-node to wire the
-      # pnpm-store cache (which needs `pnpm store path` available).
-      - name: Setup Node.js (for pnpm install)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
-        with:
-          version: 10
-
-      - name: Setup Node.js (with pnpm cache)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
-
-      - name: Install workspace deps
-        working-directory: user-interfaces
-        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        working-directory: user-interfaces
         run: pnpm --filter @web3-storage/drive-ui exec playwright install --with-deps chromium
 
       - name: Start chain (dev mode, 2s blocks)
@@ -673,13 +690,11 @@ jobs:
         uses: ./.github/actions/wait-for-provider-health
 
       - name: drive-ui e2e
-        working-directory: user-interfaces
         env:
           CI: "true"
         run: pnpm run test:e2e:drive-ui
 
       - name: provider e2e
-        working-directory: user-interfaces
         env:
           CI: "true"
         run: pnpm run test:e2e:provider
@@ -742,7 +757,7 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
 
           if [ ! -f /tmp/coverage/report/coverage-summary.json ]; then
-            echo "No baseline found (first run?) — skipping comparison."
+            echo "::warning::No JS coverage baseline found (first run or evicted cache) — regression check skipped, not enforced this run."
             cat /tmp/pr-coverage/coverage-summary.json 2>/dev/null || true
             exit 0
           fi
