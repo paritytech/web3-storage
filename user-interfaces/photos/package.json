@@ -5,7 +5,7 @@
   "description": "Photos — decentralized photo storage dApp (Layer 1 drive registry + custom Photos contract)",
   "type": "module",
   "scripts": {
-    "build:contract": "bash contracts/build.sh",
+    "build:contract": "bash scripts/build.sh",
     "deploy-contract": "tsx scripts/deploy-contract.ts",
     "photos-flow": "tsx scripts/photos-flow.ts"
   },

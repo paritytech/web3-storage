@@ -12,7 +12,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"          # .gitignored intermediate (combined.json)
+CONTRACTS_DIR="$APP_DIR/contracts"      # .sol sources live here
+BUILD_DIR="$CONTRACTS_DIR/build"        # .gitignored intermediate (combined.json)
 OUT="$APP_DIR/src/contract/Photos.json" # tracked artifact the app imports
 
 for bin in solc resolc; do
@@ -23,7 +24,7 @@ for bin in solc resolc; do
 done
 
 mkdir -p "$BUILD_DIR" "$APP_DIR/src/contract"
-cd "$SCRIPT_DIR"
+cd "$CONTRACTS_DIR"
 
 # Pass the interface explicitly so its ABI is available too; `Photos.sol:Photos`
 # is the entry the extractor pulls out.
