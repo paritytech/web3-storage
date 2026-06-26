@@ -255,7 +255,7 @@ demo PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi
 # `num_cores` in zombienet's genesis only sets the budget; assignment to a
 # specific para still needs a `Coretime::assign_core` extrinsic.
 assign-cores PARA_ID="4000" NUM_CORES="3" SEED="//Alice": papi-setup
-    node examples/papi/assign-cores.js "{{ RELAY_WS }}" "{{ PARA_ID }}" "{{ NUM_CORES }}" "{{ SEED }}"
+    node --import tsx examples/papi/assign-cores.ts "{{ RELAY_WS }}" "{{ PARA_ID }}" "{{ NUM_CORES }}" "{{ SEED }}"
 
 # Compile the example marketplace contract to PolkaVM bytecode + ABI.
 # Requires: solc and resolc on PATH (see examples/contracts/README.md).

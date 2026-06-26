@@ -1,7 +1,7 @@
 // Assign N coretime cores to a parachain on the relay chain via sudo.
 //
 // Usage:
-//   node assign-cores.js <relay_ws> <para_id> <num_cores> [seed]
+//   node --import tsx assign-cores.ts <relay_ws> <para_id> <num_cores> [seed]
 //
 // Defaults: ws://127.0.0.1:9900, 4000, 3, //Alice.
 //
@@ -26,7 +26,7 @@ import {
   ss58Address,
 } from "@polkadot-labs/hdkd-helpers";
 
-function parseArgs(argv) {
+function parseArgs(argv: string[]) {
   return {
     relayWs: argv[2] || "ws://127.0.0.1:9900",
     paraId: Number(argv[3] || 4000),
@@ -35,7 +35,7 @@ function parseArgs(argv) {
   };
 }
 
-function makeSigner(seed) {
+function makeSigner(seed: string) {
   const devMiniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
   const deriveSr25519 = sr25519CreateDerive(devMiniSecret);
   const keyPair = deriveSr25519(seed);
@@ -57,16 +57,16 @@ async function main() {
   // Compose the inner calls as their decoded RuntimeCall form so PAPI can
   // re-encode them inside Utility.batch_all / Sudo.sudo without a typed
   // descriptor for the relay chain.
-  const innerCalls = [];
-  for (let core = 0; core < numCores; core++) {
-    const call = api.tx.Coretime.assign_core({
-      core,
-      begin: 0,
-      assignment: [[{ type: "Task", value: paraId }, 57600]],
-      end_hint: undefined,
-    }).decodedCall;
-    innerCalls.push(call);
-  }
+  const innerCalls = Array.from(
+    { length: numCores },
+    (_, core) =>
+      api.tx.Coretime.assign_core({
+        core,
+        begin: 0,
+        assignment: [[{ type: "Task", value: paraId }, 57600]],
+        end_hint: undefined,
+      }).decodedCall
+  );
 
   const batchAll = api.tx.Utility.batch_all({ calls: innerCalls }).decodedCall;
   const sudoTx = api.tx.Sudo.sudo({ call: batchAll });
