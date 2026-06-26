@@ -8,6 +8,7 @@ packages:
   - "user-interfaces/provider"
   - "user-interfaces/drive-ui"
   - "user-interfaces/s3-ui"
+  - "user-interfaces/photos"
   - "packages/*"
   - "examples/papi"
 
