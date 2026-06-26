@@ -4,13 +4,14 @@ Layer 1 (drive-registry) dApp. A custom `Photos.sol` contract creates and owns a
 the drive-registry precompile (`0x…0902`), grants the user a Writer role, and anchors the album-tree root
 CID on-chain. Design: [`DESIGN.md`](./DESIGN.md).
 
-> Status: **M6** — contract + headless flow through `createLibrary`, albums, blobs, and the
+> Status: **M7** — contract + headless flow through `createLibrary`, albums, blobs, and the
 > client-computed metadata-root anchor (`setRoot`), **plus a fully interactive UI** (React 19 +
 > Vite + Tailwind + PAPI, port 5178). State A creates a library (pick a provider → negotiate →
 > `createLibrary`, M5); State B browses and manages it: create albums, upload photos with
 > client-generated thumbnails, render a thumbnail grid, and open a photo full-res in a lightbox,
-> recomputing + `setRoot`-anchoring the metadata root after each mutation (M6). Next: in-browser
-> editing (M7), then tests + polish (M8).
+> recomputing + `setRoot`-anchoring the metadata root after each mutation (M6). The lightbox now has
+> an in-browser **crop/rotate editor** that re-PUTs the edited photo to the same path (copy-on-write),
+> regenerates its thumbnail, and re-anchors the root (M7). Next: tests + polish (M8).
 
 ## Layout
 

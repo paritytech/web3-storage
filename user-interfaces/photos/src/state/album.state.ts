@@ -4,8 +4,10 @@
 // drives the provider's `/fs` API (the browser port of the M2/M3 headless flow):
 // list/create albums (directories), upload photos with a client-generated
 // thumbnail, render a grid from those thumbnails, and open a photo full-res. Every
-// mutation ends by recomputing the drive's metadata Merkle root locally and
-// anchoring it on-chain via `setRoot` (copy-on-write; the root moves each time).
+// mutation refreshes its listing immediately and then schedules a background
+// re-anchor (`scheduleReanchor`): a single-flight, coalescing worker recomputes the
+// drive's metadata Merkle root locally and anchors it on-chain via `setRoot`
+// (copy-on-write; the root moves each time) without blocking further interaction.
 //
 // Mirrors `library.state.ts` conventions: raw `BehaviorSubject`s, `bind` hooks,
 // and action functions that `.next(...)` them. Path layout matches
@@ -19,7 +21,9 @@ import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { getApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
+  deleteFile,
   downloadFile,
+  downloadFileWithType,
   listDir,
   mkdir,
   putFile,
@@ -66,6 +70,8 @@ export interface AnchorStatus {
 export interface LightboxState {
   name: string
   url: string
+  /** The grid item it was opened from — carries the path/thumbPath the editor needs. */
+  item: GridItem
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +88,7 @@ const uploads$ = new BehaviorSubject<UploadProgress | null>(null)
 const anchorStatus$ = new BehaviorSubject<AnchorStatus>({ stage: 'idle' })
 const lightbox$ = new BehaviorSubject<LightboxState | null>(null)
 const lightboxLoading$ = new BehaviorSubject<boolean>(false)
+const editorOpen$ = new BehaviorSubject<boolean>(false)
 
 export const [useFsContext] = bind(fsContext$, null)
 export const [useLibraryError] = bind(libraryError$, undefined)
@@ -93,6 +100,7 @@ export const [useUploads] = bind(uploads$, null)
 export const [useAnchorStatus] = bind(anchorStatus$, { stage: 'idle' })
 export const [useLightbox] = bind(lightbox$, null)
 export const [useLightboxLoading] = bind(lightboxLoading$, false)
+export const [useEditorOpen] = bind(editorOpen$, false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Non-reactive session state (current library + caches)
@@ -109,6 +117,10 @@ let dataRootCache = new Map<string, CachedDataRoot>()
 let gridUrls: string[] = []
 /** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
 let anchoredCallback: (() => void) | null = null
+/** Set by `scheduleReanchor` when the tree changed; drained by the background anchor worker. */
+let anchorDirty = false
+/** True while the single-flight background anchor worker is running. */
+let anchorRunning = false
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Actions
@@ -218,7 +230,7 @@ export async function loadGrid(): Promise<void> {
 
 /**
  * Create a new album: make `/<name>` plus its parallel `/.thumbs/<name>` subtree,
- * then recompute + anchor the metadata root. Rejects an empty/slashed/dot name.
+ * then schedule a background re-anchor. Rejects an empty/slashed/dot name.
  */
 export async function createAlbum(rawName: string): Promise<void> {
   const ctx = fsContext$.getValue()
@@ -238,9 +250,9 @@ export async function createAlbum(rawName: string): Promise<void> {
     await ensureDir(ctx, `/${name}`)
     await ensureDir(ctx, THUMBS_ROOT)
     await ensureDir(ctx, `${THUMBS_ROOT}/${name}`)
-    await reanchor()
     await loadAlbums()
     await selectAlbum(name)
+    scheduleReanchor()
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not create the album.')
   }
@@ -249,7 +261,7 @@ export async function createAlbum(rawName: string): Promise<void> {
 /**
  * Upload `files` into the selected album: for each, generate a thumbnail, PUT the
  * full photo and the thumbnail (verifying each against its local `data_root`),
- * then recompute + anchor the metadata root once for the whole batch.
+ * refresh the grid, then schedule a background re-anchor for the whole batch.
  */
 export async function uploadPhotos(files: File[]): Promise<void> {
   const ctx = fsContext$.getValue()
@@ -281,8 +293,8 @@ export async function uploadPhotos(files: File[]): Promise<void> {
     }
     uploads$.next({ total: files.length, done: files.length })
 
-    await reanchor()
     await loadGrid()
+    scheduleReanchor()
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Upload failed.')
   } finally {
@@ -299,7 +311,7 @@ export async function openPhoto(item: GridItem): Promise<void> {
     const bytes = await downloadFile(ctx, item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
-    lightbox$.next({ name: item.name, url })
+    lightbox$.next({ name: item.name, url, item })
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not open the photo.')
   } finally {
@@ -307,10 +319,127 @@ export async function openPhoto(item: GridItem): Promise<void> {
   }
 }
 
-/** Close the lightbox and release its object URL. */
+/** Close the lightbox and release its object URL (also closes the editor). */
 export function closePhoto(): void {
+  editorOpen$.next(false)
   revokeLightbox()
   lightbox$.next(null)
+}
+
+/** Open the crop/rotate editor for the photo currently in the lightbox. */
+export function openEditor(): void {
+  if (lightbox$.getValue()) editorOpen$.next(true)
+}
+
+/** Close the editor, returning to the lightbox. */
+export function closeEditor(): void {
+  editorOpen$.next(false)
+}
+
+/**
+ * Save an edited photo (M7). Re-PUT `editedBytes` to the open photo's *same* path
+ * (copy-on-write: a new content-addressed blob is written and the path repointed;
+ * the original blob lingers), regenerate its thumbnail, refresh the grid, then
+ * schedule a background re-anchor. Mirrors `uploadPhotos`: a thumbnail failure
+ * doesn't abort the edit, and on a PUT error the editor stays open for retry.
+ */
+export async function saveEdit(editedBytes: Uint8Array, contentType: string): Promise<void> {
+  const ctx = fsContext$.getValue()
+  const photo = lightbox$.getValue()
+  if (!ctx || !photo) return
+
+  const { path, thumbPath } = photo.item
+  libraryError$.next(undefined)
+  try {
+    await putVerified(ctx, path, editedBytes, contentType)
+
+    try {
+      const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
+      await putVerified(ctx, thumbPath, thumb.bytes, thumb.contentType)
+    } catch {
+      // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
+    }
+
+    closeEditor()
+    closePhoto()
+    await loadGrid()
+    scheduleReanchor()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not save the edit.')
+    throw err
+  }
+}
+
+/**
+ * Rename a photo within its album, keeping it content-addressed. The provider has
+ * no move op, so this copies the bytes to the new path (photo + thumbnail) and
+ * deletes the old one — re-PUTting identical bytes yields the same `data_root`, so
+ * no content is duplicated. Refreshes the grid and schedules a background re-anchor.
+ * `rawName` is the full new filename (the caller preserves the extension).
+ */
+export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
+  const ctx = fsContext$.getValue()
+  const album = selectedAlbum$.getValue()
+  if (!ctx || !album) return
+
+  const name = rawName.trim()
+  if (!name || name.includes('/') || name.startsWith('.')) {
+    libraryError$.next('Name cannot be empty, contain "/", or start with ".".')
+    return
+  }
+  if (name === item.name) return
+  if (entries$.getValue().some((e) => e.name === name)) {
+    libraryError$.next(`A photo named "${name}" already exists in this album.`)
+    return
+  }
+
+  const newPath = `/${album}/${name}`
+  const newThumbPath = `${THUMBS_ROOT}/${album}/${name}`
+  libraryError$.next(undefined)
+  try {
+    // Copy first; only delete the old path once the new one is safely in place.
+    const photo = await downloadFileWithType(ctx, item.path)
+    await putVerified(ctx, newPath, photo.bytes, photo.contentType)
+    try {
+      const thumb = await downloadFileWithType(ctx, item.thumbPath)
+      await putVerified(ctx, newThumbPath, thumb.bytes, thumb.contentType)
+    } catch {
+      // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
+    }
+
+    await deleteFile(ctx, item.path)
+    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    dataRootCache.delete(item.path)
+    dataRootCache.delete(item.thumbPath)
+
+    await loadGrid()
+    scheduleReanchor()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
+  }
+}
+
+/**
+ * Delete a photo (and its thumbnail) from the album. Removes the FS index entries;
+ * the underlying blobs linger in the MMR (no GC), matching the app's copy-on-write
+ * model. Refreshes the grid and schedules a background re-anchor.
+ */
+export async function deletePhoto(item: GridItem): Promise<void> {
+  const ctx = fsContext$.getValue()
+  if (!ctx) return
+
+  libraryError$.next(undefined)
+  try {
+    await deleteFile(ctx, item.path)
+    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    dataRootCache.delete(item.path)
+    dataRootCache.delete(item.thumbPath)
+
+    await loadGrid()
+    scheduleReanchor()
+  } catch (err) {
+    libraryError$.next(err instanceof Error ? err.message : 'Could not delete the photo.')
+  }
 }
 
 /** Tear down the album layer (on wallet/network/drive change). */
@@ -329,15 +458,54 @@ export function clearLibraryError(): void {
 // Internals
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Mark the metadata root dirty and ensure the background anchor worker is running.
+ * Mutations call this instead of awaiting the anchor, so the user can keep working
+ * while the (slow) recompute + `setRoot` tx happen in the background.
+ */
+function scheduleReanchor(): void {
+  anchorDirty = true
+  void runAnchorWorker()
+}
+
+/**
+ * Single-flight background worker that anchors the latest tree state. Coalesces
+ * concurrent mutations: each `scheduleReanchor` sets `anchorDirty`, and the worker
+ * keeps re-running until nothing is pending, so only one `setRoot` tx is ever in
+ * flight and the on-chain anchor converges to the live tree. On failure it stops
+ * (rather than hot-looping); since the next mutation reschedules and `recomputeRoot`
+ * always covers the whole tree, no change is lost once anchoring succeeds again.
+ */
+async function runAnchorWorker(): Promise<void> {
+  if (anchorRunning) return
+  anchorRunning = true
+  try {
+    while (anchorDirty) {
+      anchorDirty = false
+      await runReanchor()
+    }
+  } catch {
+    // `runReanchor` already surfaced the failure via `anchorStatus$`.
+  } finally {
+    anchorRunning = false
+  }
+}
+
 /** Recompute the metadata root from the live tree and anchor it via `setRoot`. */
-async function reanchor(): Promise<void> {
+async function runReanchor(): Promise<void> {
+  // Snapshot the session up front: a background anchor can outlive a library/account
+  // switch that reassigns these module-level vars, and it must sign for the drive it
+  // started on (not whatever is selected by the time the slow recompute finishes).
   const ctx = fsContext$.getValue()
-  if (!ctx || !api || !signer || !contractBytes) return
+  const sessionApi = api
+  const sessionSigner = signer
+  const sessionContract = contractBytes
+  if (!ctx || !sessionApi || !sessionSigner || !sessionContract) return
   try {
     anchorStatus$.next({ stage: 'recomputing' })
     const root = await recomputeRoot(ctx, dataRootCache)
     anchorStatus$.next({ stage: 'anchoring' })
-    await submitSetRoot(api, signer, contractBytes, rootToBytes32(root))
+    await submitSetRoot(sessionApi, sessionSigner, sessionContract, rootToBytes32(root))
     anchorStatus$.next({ stage: 'done' })
     anchoredCallback?.()
   } catch (err) {
@@ -387,8 +555,11 @@ function resetSession(): void {
   replaceGrid([])
   revokeLightbox()
   lightbox$.next(null)
+  editorOpen$.next(false)
   albums$.next([])
   selectedAlbum$.next(null)
   uploads$.next(null)
   anchorStatus$.next({ stage: 'idle' })
+  // Stop the background anchor worker from coalescing across a library/account switch.
+  anchorDirty = false
 }

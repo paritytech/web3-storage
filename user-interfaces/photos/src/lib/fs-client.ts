@@ -94,6 +94,25 @@ export async function downloadFile(ctx: FsContext, path: string): Promise<Uint8A
   return new Uint8Array(await res.arrayBuffer())
 }
 
+/** `GET …/file?path=` — read a blob's bytes *and* its stored content type (for re-PUT on rename). */
+export async function downloadFileWithType(
+  ctx: FsContext,
+  path: string,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const res = await httpFetch(`${fsBase(ctx)}/file?path=${encodeURIComponent(path)}`)
+  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`)
+  const contentType = res.headers.get('content-type') || 'application/octet-stream'
+  return { bytes: new Uint8Array(await res.arrayBuffer()), contentType }
+}
+
+/** `DELETE …/file?path=` — remove a path from the FS index (the blob lingers in the MMR). */
+export async function deleteFile(ctx: FsContext, path: string): Promise<void> {
+  const res = await httpFetch(`${fsBase(ctx)}/file?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`DELETE ${path} failed: ${res.status} ${await res.text().catch(() => '')}`)
+}
+
 /** `GET …/ls?path=&recursive=` — list entries (optionally the full subtree). */
 export async function listDir(ctx: FsContext, path: string, recursive = false): Promise<LsEntry[]> {
   const params = new URLSearchParams({ path, recursive: String(recursive) })
