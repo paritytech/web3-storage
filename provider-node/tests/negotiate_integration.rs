@@ -11,9 +11,8 @@
 use axum::http::StatusCode;
 use reqwest::Client;
 use serde_json::Value;
-use sp_core::{sr25519, Pair};
-use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use storage_primitives::ReplicaTerms;
 use storage_provider_node::{
@@ -21,6 +20,9 @@ use storage_provider_node::{
     PalletConstants, ProviderState, SignedTerms, Storage,
 };
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
+use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt_signer;
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -137,7 +139,7 @@ fn provider_info() -> ProviderInfo {
 
 fn primary_request() -> NegotiateRequest {
     NegotiateRequest {
-        owner: AccountId32::new([7u8; 32]),
+        owner: AccountId32([7u8; 32]),
         max_bytes: 1024,
         duration: 50,
         price_per_byte: 5,
@@ -146,12 +148,11 @@ fn primary_request() -> NegotiateRequest {
     }
 }
 
-/// `//Alice`'s sr25519 public key — the negotiate handler signs with the same
-/// keypair, so signatures must verify under this.
-fn alice_public() -> sr25519::Public {
-    sr25519::Pair::from_string(PROVIDER_SEED, None)
-        .expect("//Alice is a valid SURI")
-        .public()
+fn provider_public() -> subxt_signer::sr25519::PublicKey {
+    let uri = subxt_signer::SecretUri::from_str(PROVIDER_SEED).unwrap();
+    subxt_signer::sr25519::Keypair::from_uri(&uri)
+        .expect("PROVIDER_SEED is a valid SURI")
+        .public_key()
 }
 
 #[tokio::test]
@@ -173,14 +174,15 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
 
     // The signature must verify under //Alice over blake2_256(signing_payload).
     let hash = sp_core::hashing::blake2_256(&signed.terms.signing_payload());
-    let sig = match signed.signature {
-        MultiSignature::Sr25519(s) => s,
+    match signed.signature {
+        MultiSignature::Sr25519(s) => {
+            assert!(
+                subxt_signer::sr25519::verify(&subxt_signer::sr25519::Signature(s), hash, &provider_public()),
+                "negotiated terms signature did not verify under PROVIDER_SEED using subxt_signer::sr25519::Pair"
+            );
+        }
         other => panic!("expected an sr25519 signature, got {other:?}"),
     };
-    assert!(
-        sr25519::Pair::verify(&sig, hash, &alice_public()),
-        "negotiated terms signature did not verify under //Alice"
-    );
 }
 
 #[tokio::test]

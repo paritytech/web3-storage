@@ -5,12 +5,12 @@
 use crate::{BucketInfo, S3ClientError};
 use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::sync::Arc;
 use storage_client::runtime_convert as rc;
 use storage_client::EventParser;
 use storage_subxt::api as runtime;
 use storage_subxt::subxt;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
@@ -158,15 +158,15 @@ impl SubstrateClient {
         name: &str,
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
-        sig: &sp_runtime::MultiSignature,
+        sig: storage_subxt::api::runtime_types::sp_runtime::MultiSignature,
     ) -> std::result::Result<S3BucketId, String> {
         debug!("Creating S3 bucket: {}", name);
 
         let tx = runtime::tx().s3_registry().create_s3_bucket(
             name.as_bytes().to_vec(),
-            rc::to_account(&provider),
+            provider,
             rc::to_agreement_terms(terms),
-            rc::to_multi_sig(sig),
+            sig,
         );
 
         let events = self.submit_and_finalize(tx).await?;
@@ -355,7 +355,7 @@ impl SubstrateClient {
     pub async fn list_user_buckets(&self) -> std::result::Result<Vec<BucketInfo>, String> {
         let addr = runtime::storage()
             .s3_registry()
-            .user_buckets(rc::to_account(&AccountId32::from(self.account_id)));
+            .user_buckets(AccountId32::from(self.account_id));
 
         let result = self
             .client
@@ -497,7 +497,7 @@ impl EventParser<S3Event> for S3EventParser {
                 s3_bucket_id: e.s3_bucket_id,
                 name: e.name,
                 layer0_bucket_id: e.layer0_bucket_id,
-                owner: rc::from_account(&e.owner),
+                owner: e.owner,
                 block_hash,
                 block_number,
             });

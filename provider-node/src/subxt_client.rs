@@ -16,12 +16,11 @@ use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
-use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use storage_client::substrate::{extrinsics, storage, SubstrateClient};
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 
 /// Production implementation that talks to the chain via typed storage_client bindings.
@@ -46,7 +45,7 @@ impl SubxtChainClient {
         tracing::info!(
             "Chain client connected to {} as {}",
             chain_ws_url,
-            sp_core::crypto::AccountId32::from(keypair.public_key().0).to_ss58check()
+            AccountId32::from(keypair.public_key().0).to_string()
         );
 
         let client = SubstrateClient::connect(chain_ws_url)

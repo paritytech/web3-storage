@@ -10,13 +10,14 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
+use crate::provider_node_request_scheme::{NegotiateRequest, SignedTerms};
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 
 /// Client for storage providers.
@@ -266,12 +267,12 @@ impl ProviderClient {
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
     /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
+    /// its own state, signs, returns a [`SignedTerms`](crate::provider_node_request_scheme::SignedTerms) ready for
     /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
     pub async fn negotiate_terms(
         provider_url: &str,
-        req: &crate::agreement::NegotiateRequest,
-    ) -> ClientResult<crate::agreement::SignedTerms> {
+        req: &NegotiateRequest,
+    ) -> ClientResult<SignedTerms> {
         let url = format!("{}/negotiate", provider_url.trim_end_matches('/'));
         let response = reqwest::Client::new()
             .post(&url)
@@ -288,7 +289,7 @@ impl ProviderClient {
         }
 
         response
-            .json::<crate::agreement::SignedTerms>()
+            .json::<SignedTerms>()
             .await
             .map_err(ClientError::Http)
     }

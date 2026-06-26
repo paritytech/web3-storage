@@ -10,11 +10,12 @@
 use crate::error::Error;
 use crate::ProviderState;
 use dashmap::DashMap;
-use sp_core::{crypto::AccountId32, sr25519, Pair};
+use sp_core::{sr25519, Pair};
 use std::time::{Duration, Instant};
 use storage_client::substrate::storage;
 use storage_client::substrate::SubstrateClient;
 use storage_primitives::Role;
+use storage_subxt::subxt::utils::AccountId32;
 use tokio::sync::OnceCell;
 
 /// Caller identity extracted from a signed request.
@@ -268,7 +269,7 @@ pub fn verify_signature(
         return Err(Error::AuthRequired);
     }
 
-    Ok(AccountId32::new(pubkey.0))
+    Ok(AccountId32(pubkey.0))
 }
 
 /// Check that the caller has sufficient permissions.
@@ -352,7 +353,7 @@ mod tests {
 
         let result = verify_signature(&header, "PUT", 1, Duration::from_secs(300));
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), AccountId32::new(keypair.public().0));
+        assert_eq!(result.unwrap(), AccountId32(keypair.public().0));
     }
 
     #[test]
@@ -417,9 +418,9 @@ mod tests {
 
     #[test]
     fn test_find_role() {
-        let alice = AccountId32::new([1u8; 32]);
-        let bob = AccountId32::new([2u8; 32]);
-        let charlie = AccountId32::new([3u8; 32]);
+        let alice = AccountId32([1u8; 32]);
+        let bob = AccountId32([2u8; 32]);
+        let charlie = AccountId32([3u8; 32]);
 
         let members = vec![
             (alice.clone(), Role::Admin),
@@ -431,7 +432,7 @@ mod tests {
         assert_eq!(find_role(&members, &bob), Some(Role::Writer));
         assert_eq!(find_role(&members, &charlie), Some(Role::Reader));
 
-        let unknown = AccountId32::new([4u8; 32]);
+        let unknown = AccountId32([4u8; 32]);
         assert_eq!(find_role(&members, &unknown), None);
     }
 }

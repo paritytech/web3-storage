@@ -20,12 +20,10 @@
 //!   provider_url  - HTTP URL for the provider node   (default: http://127.0.0.1:3333)
 //!   user_seed     - Seed of the paying user          (default: //Bob)
 
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use std::env;
 use storage_client::{
-    AdminClient, ChunkingStrategy, ClientConfig, NegotiateRequest, ProviderClient, SignedTerms,
-    StorageUserClient,
+    provider_node_request_scheme::{NegotiateRequest, SignedTerms},
+    AdminClient, ChunkingStrategy, ClientConfig, ProviderClient, StorageUserClient,
 };
 use storage_subxt::subxt_signer::{sr25519::Keypair, SecretUri};
 
@@ -46,12 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_seed = args.get(3).map(String::as_str).unwrap_or(DEFAULT_USER_SEED);
 
     let user_keypair = Keypair::from_uri(&user_seed.parse::<SecretUri>()?)?;
-    let user_account = AccountId32::from(user_keypair.public_key().0);
-    let user_ss58 = user_account.to_ss58check();
+    let user_account = user_keypair.public_key().to_account_id();
+    let user_ss58 = user_account.to_string();
 
     let provider_ss58 = ProviderClient::fetch_provider_id(provider_url)
         .await?
-        .to_ss58check();
+        .to_string();
 
     println!("=== Complete Storage Workflow ===");
     println!("Chain WebSocket: {chain_ws}");

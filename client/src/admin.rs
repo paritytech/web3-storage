@@ -9,15 +9,16 @@
 //! - Freezing buckets
 //! - Deleting old data
 
-use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
+use crate::provider_node_request_scheme::AgreementTermsOf;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::Bucket;
 use sp_core::H256;
-use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
 use storage_subxt::api::runtime_types as rt;
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 
 /// Client for bucket administrators.
@@ -111,7 +112,7 @@ impl AdminClient {
             terms.nonce,
         );
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &sig);
+        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, sig);
 
         let tx_progress = chain
             .api()
@@ -458,7 +459,7 @@ impl AdminClient {
         let signer = chain.signer()?;
 
         // Parse provider accounts
-        let parsed_sigs: Vec<(sp_runtime::AccountId32, Vec<u8>)> = signatures
+        let parsed_sigs: Vec<(AccountId32, Vec<u8>)> = signatures
             .into_iter()
             .map(|(account_str, sig)| {
                 let account = SubstrateClient::parse_account(&account_str)?;

@@ -166,9 +166,9 @@ impl S3Client {
     pub async fn create_bucket(
         &self,
         name: &str,
-        provider: sp_runtime::AccountId32,
+        provider: storage_subxt::subxt::utils::AccountId32,
         terms: storage_client::AgreementTermsOf,
-        sig: sp_runtime::MultiSignature,
+        sig: storage_subxt::api::runtime_types::sp_runtime::MultiSignature,
     ) -> Result<BucketInfo> {
         info!("Creating bucket: {}", name);
 
@@ -180,7 +180,7 @@ impl S3Client {
         // The pallet validates name uniqueness, so no need to pre-check.
         let s3_bucket_id = self
             .substrate_client
-            .create_s3_bucket(name, provider, &terms, &sig)
+            .create_s3_bucket(name, provider, &terms, sig)
             .await
             .map_err(S3ClientError::ChainError)?;
 

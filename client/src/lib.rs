@@ -102,7 +102,6 @@
 
 // Re-export main types
 pub mod admin;
-pub mod agreement;
 pub mod base;
 pub mod block_subscription;
 pub mod challenger;
@@ -112,6 +111,7 @@ pub mod discovery;
 pub mod encryption;
 pub mod event_subscription;
 pub mod provider;
+pub mod provider_node_request_scheme;
 pub mod runtime_convert;
 pub mod storage_user;
 pub mod substrate;
@@ -119,7 +119,6 @@ pub mod verification;
 
 // Re-export commonly used types
 pub use admin::AdminClient;
-pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 pub use block_subscription::BlockSubscriberStream;
 pub use challenger::ChallengerClient;
@@ -142,6 +141,9 @@ pub use event_subscription::{
     StorageProviderEventParser, SubscriptionHandle,
 };
 pub use provider::ProviderClient;
+pub use provider_node_request_scheme::{
+    AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms,
+};
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,

@@ -18,10 +18,10 @@
 //! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
 
 use s3_client::{PutObjectOptions, S3Client};
-use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::env;
 use storage_client::{NegotiateRequest, ProviderClient};
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer::sr25519::dev as dev_signer;
 
 const DEFAULT_CHAIN_WS: &str = "ws://127.0.0.1:2222";

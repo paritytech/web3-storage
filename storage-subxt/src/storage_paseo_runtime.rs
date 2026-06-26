@@ -30274,6 +30274,8 @@ pub mod api {
                 Debug,
                 Eq,
                 PartialEq,
+                codec :: Decode,
+                codec :: Encode,
             )]
             #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]

@@ -2,16 +2,16 @@
 
 //! Shared test helpers for integration tests.
 
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
 use storage_client::{
-    sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
-    ProviderClient, StorageUserClient,
+    provider_node_request_scheme::{sign_terms, AgreementTermsOf},
+    AdminClient, ChallengerClient, ClientConfig, DiscoveryClient, ProviderClient,
+    StorageUserClient,
 };
 use storage_primitives::AgreementTerms;
 use storage_provider_node::{create_router, ProviderState, Storage};
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::subxt;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -50,7 +50,7 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 /// `set_dev_signer` uses internally, so the account and signer always match.
 #[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
-    dev_account(name).to_ss58check()
+    dev_account(name).to_string()
 }
 
 /// Derive the typed `AccountId32` for a dev account by name ("alice", "bob", …).
@@ -58,7 +58,7 @@ pub fn dev_ss58(name: &str) -> String {
 /// Same derivation as [`dev_ss58`], just without the SS58 round-trip — useful for
 /// storage queries / parser APIs that take `&AccountId32` directly.
 #[allow(dead_code)]
-pub fn dev_account(name: &str) -> AccountId32 {
+pub fn dev_account(name: &str) -> subxt::utils::AccountId32 {
     use storage_subxt::subxt_signer::sr25519::dev;
 
     let keypair = match name {
@@ -70,7 +70,7 @@ pub fn dev_account(name: &str) -> AccountId32 {
         "ferdie" => dev::ferdie(),
         other => panic!("unknown dev account: {other}"),
     };
-    AccountId32::from(keypair.public_key().0)
+    keypair.public_key().to_account_id()
 }
 
 // ─── Chain client config ──────────────────────────────────────────────────────

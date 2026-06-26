@@ -20,7 +20,6 @@ use crate::storage::{NonceStore, NullNonceStore};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +30,7 @@ use storage_client::{
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 use storage_subxt::subxt;
 use storage_subxt::subxt::ext::futures::StreamExt;
+use storage_subxt::subxt::utils::AccountId32;
 use tokio::task::JoinHandle;
 
 // ── ChainState ────────────────────────────────────────────────────────────────

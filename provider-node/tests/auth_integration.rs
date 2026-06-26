@@ -20,7 +20,7 @@ use storage_provider_node::auth::{MembershipCache, MembershipResolver};
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
 
-type AccountId32 = sp_core::crypto::AccountId32;
+use storage_subxt::subxt::utils::AccountId32;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock resolver (returns configurable roles, no chain needed)
@@ -85,7 +85,7 @@ impl AuthTestServer {
     /// Start a server with auth enabled and Alice as the given role.
     async fn with_role(alice_role: Role) -> Self {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
-        let alice_account = AccountId32::new(alice_kp.public().0);
+        let alice_account = AccountId32(alice_kp.public().0);
 
         let resolver = MockResolver::new(vec![(alice_account, alice_role)]);
         let cache = Arc::new(MembershipCache::new(

@@ -35,12 +35,12 @@ use crate::checkpoint_persistence::{
 use crate::substrate::SubstrateClient;
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
-use sp_runtime::AccountId32;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage_primitives::BucketId;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 use tokio::sync::{mpsc, RwLock};
 
@@ -701,11 +701,11 @@ pub struct CheckpointManager {
     /// Cached provider info per bucket.
     provider_cache: Arc<RwLock<HashMap<BucketId, CachedProviders>>>,
     /// Provider health history tracking.
-    health_history: Arc<RwLock<HashMap<AccountId32, ProviderHealthHistory>>>,
+    health_history: Arc<RwLock<BTreeMap<AccountId32, ProviderHealthHistory>>>,
     /// Metrics tracking.
     metrics: Arc<RwLock<CheckpointMetrics>>,
     /// Conflict history for auto-challenge analysis.
-    conflict_history: Arc<RwLock<HashMap<(BucketId, AccountId32), Vec<ProviderConflict>>>>,
+    conflict_history: Arc<RwLock<BTreeMap<(BucketId, AccountId32), Vec<ProviderConflict>>>>,
     /// Auto-challenge configuration.
     auto_challenge_config: AutoChallengeConfig,
 }
@@ -731,9 +731,9 @@ impl CheckpointManager {
             http_client: reqwest::Client::new(),
             provider_endpoints: Vec::new(),
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
-            health_history: Arc::new(RwLock::new(HashMap::new())),
+            health_history: Arc::new(RwLock::new(BTreeMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(HashMap::new())),
+            conflict_history: Arc::new(RwLock::new(BTreeMap::new())),
             auto_challenge_config: AutoChallengeConfig::default(),
         })
     }
@@ -746,9 +746,9 @@ impl CheckpointManager {
             http_client: reqwest::Client::new(),
             provider_endpoints: Vec::new(),
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
-            health_history: Arc::new(RwLock::new(HashMap::new())),
+            health_history: Arc::new(RwLock::new(BTreeMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(HashMap::new())),
+            conflict_history: Arc::new(RwLock::new(BTreeMap::new())),
             auto_challenge_config: AutoChallengeConfig::default(),
         }
     }
@@ -811,7 +811,7 @@ impl CheckpointManager {
                 .iter()
                 .enumerate()
                 .map(|(i, endpoint)| ProviderInfo {
-                    account_id: AccountId32::new([i as u8; 32]), // Placeholder
+                    account_id: AccountId32([i as u8; 32]), // Placeholder
                     endpoint: endpoint.clone(),
                     public_key: Vec::new(),
                     last_seen: None,
@@ -2413,7 +2413,7 @@ impl CheckpointManager {
     /// Get a copy of all provider health histories.
     ///
     /// Useful for monitoring and diagnostics.
-    pub async fn get_health_histories(&self) -> HashMap<AccountId32, ProviderHealthHistory> {
+    pub async fn get_health_histories(&self) -> BTreeMap<AccountId32, ProviderHealthHistory> {
         self.health_history.read().await.clone()
     }
 
@@ -2538,7 +2538,7 @@ mod tests {
 
     #[test]
     fn test_health_history_new() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let history = ProviderHealthHistory::new(account.clone());
 
         assert_eq!(history.account_id, account);
@@ -2554,7 +2554,7 @@ mod tests {
 
     #[test]
     fn test_health_history_record_success() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         history.record_success(100);
@@ -2573,7 +2573,7 @@ mod tests {
 
     #[test]
     fn test_health_history_record_failure() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         history.record_failure("Connection refused".to_string());
@@ -2589,7 +2589,7 @@ mod tests {
 
     #[test]
     fn test_health_history_success_resets_consecutive_failures() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         history.record_failure("Error 1".to_string());
@@ -2602,7 +2602,7 @@ mod tests {
 
     #[test]
     fn test_health_history_success_rate() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         // No requests = 100% success rate (optimistic default)
@@ -2628,7 +2628,7 @@ mod tests {
 
     #[test]
     fn test_health_history_is_healthy() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         // New provider with no history is considered healthy
@@ -2651,7 +2651,7 @@ mod tests {
 
     #[test]
     fn test_health_history_current_status() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         // Unknown status when no requests
@@ -2680,7 +2680,7 @@ mod tests {
 
     #[test]
     fn test_health_history_recent_statuses_limit() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account);
 
         // Add 15 entries
@@ -2767,7 +2767,7 @@ mod tests {
             }
         );
 
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         assert_eq!(
             ConflictResolution::ConsiderChallenge {
                 provider: account.clone()
@@ -2804,7 +2804,7 @@ mod tests {
 
     #[test]
     fn test_provider_info_clone() {
-        let account = AccountId32::new([1u8; 32]);
+        let account = AccountId32([1u8; 32]);
         let info = ProviderInfo {
             account_id: account.clone(),
             endpoint: "http://localhost:3333".to_string(),
@@ -2949,7 +2949,7 @@ mod tests {
 
         let result = CheckpointResult::Submitted {
             block_hash: H256::zero(),
-            signers: vec![AccountId32::new([1u8; 32]), AccountId32::new([2u8; 32])],
+            signers: vec![AccountId32([1u8; 32]), AccountId32([2u8; 32])],
         };
 
         metrics.record_attempt(&result, 100);
@@ -2975,7 +2975,7 @@ mod tests {
 
         // Record unreachable
         let result2 = CheckpointResult::ProvidersUnreachable {
-            providers: vec![AccountId32::new([1u8; 32])],
+            providers: vec![AccountId32([1u8; 32])],
         };
         metrics.record_attempt(&result2, 30);
         assert_eq!(metrics.unreachable_failures, 1);
@@ -3002,14 +3002,14 @@ mod tests {
             majority_root: H256::zero(),
             majority_count: 2,
             conflicts: vec![ConflictingProvider {
-                account_id: AccountId32::new([1u8; 32]),
+                account_id: AccountId32([1u8; 32]),
                 mmr_root: H256::repeat_byte(0x11),
                 leaf_count: 10,
                 conflict_type: ConflictType::DataDivergence,
             }],
             detected_at: Instant::now(),
             resolution: ConflictResolution::ConsiderChallenge {
-                provider: AccountId32::new([1u8; 32]),
+                provider: AccountId32([1u8; 32]),
             },
         };
 
@@ -3108,7 +3108,7 @@ mod tests {
     #[test]
     fn test_submitted_challenge() {
         let challenge = SubmittedChallenge {
-            provider: AccountId32::new([1u8; 32]),
+            provider: AccountId32([1u8; 32]),
             challenge_id: ChallengeId {
                 deadline: 1000,
                 index: 1,
@@ -3129,7 +3129,7 @@ mod tests {
     #[test]
     fn test_failed_challenge() {
         let failed = FailedChallenge {
-            provider: AccountId32::new([2u8; 32]),
+            provider: AccountId32([2u8; 32]),
             reason: ChallengeReason::PersistentlySyncing {
                 behind_by: 10,
                 duration: Duration::from_secs(60),
@@ -3152,7 +3152,7 @@ mod tests {
             providers_analyzed: 10,
             challenges_submitted: vec![
                 SubmittedChallenge {
-                    provider: AccountId32::new([1u8; 32]),
+                    provider: AccountId32([1u8; 32]),
                     challenge_id: ChallengeId {
                         deadline: 1000,
                         index: 0,
@@ -3165,7 +3165,7 @@ mod tests {
                     confidence: 0.95,
                 },
                 SubmittedChallenge {
-                    provider: AccountId32::new([2u8; 32]),
+                    provider: AccountId32([2u8; 32]),
                     challenge_id: ChallengeId {
                         deadline: 1000,
                         index: 1,
@@ -3179,7 +3179,7 @@ mod tests {
                 },
             ],
             challenges_failed: vec![FailedChallenge {
-                provider: AccountId32::new([3u8; 32]),
+                provider: AccountId32([3u8; 32]),
                 reason: ChallengeReason::PersistentlySyncing {
                     behind_by: 5,
                     duration: Duration::from_secs(120),
@@ -3210,7 +3210,7 @@ mod tests {
         let mut metrics = CheckpointMetrics::default();
         let result = CheckpointResult::Submitted {
             block_hash: H256::zero(),
-            signers: vec![AccountId32::new([1u8; 32])],
+            signers: vec![AccountId32([1u8; 32])],
         };
 
         metrics.record_attempt(&result, 200);
@@ -3224,7 +3224,7 @@ mod tests {
         let mut metrics = CheckpointMetrics::default();
         let result = CheckpointResult::Submitted {
             block_hash: H256::zero(),
-            signers: vec![AccountId32::new([1u8; 32])],
+            signers: vec![AccountId32([1u8; 32])],
         };
 
         metrics.record_attempt(&result, 100);
@@ -3242,7 +3242,7 @@ mod tests {
         let mut metrics = CheckpointMetrics::default();
         let success = CheckpointResult::Submitted {
             block_hash: H256::zero(),
-            signers: vec![AccountId32::new([1u8; 32])],
+            signers: vec![AccountId32([1u8; 32])],
         };
         let failure = CheckpointResult::TransactionFailed {
             error: "timeout".to_string(),

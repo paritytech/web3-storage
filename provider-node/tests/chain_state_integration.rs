@@ -21,7 +21,6 @@
 
 use async_trait::async_trait;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +33,7 @@ use storage_provider_node::{
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
     ProviderInfo, ProviderSettings,
 };
+use storage_subxt::subxt::utils::AccountId32;
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
 /// every connect attempt fails fast and the coordinator loops on the error arm.
@@ -41,8 +41,8 @@ const UNREACHABLE_CHAIN: &str = "ws://127.0.0.1:1";
 
 /// `[1u8; 32]` provider account — the coordinator only uses it to identify
 /// relevant events, which never fire here since the chain is unreachable.
-fn provider_account() -> sp_runtime::AccountId32 {
-    sp_runtime::AccountId32::new([1u8; 32])
+fn provider_account() -> AccountId32 {
+    AccountId32([1u8; 32])
 }
 
 fn sample_provider_info() -> ProviderInfo {
@@ -233,7 +233,7 @@ impl ChainStateChainClient for MockChainClient {
 }
 
 fn provider_account_2() -> AccountId32 {
-    AccountId32::new([2u8; 32])
+    AccountId32([2u8; 32])
 }
 
 // ── sync_constants ────────────────────────────────────────────────────────────

@@ -17,8 +17,8 @@ tower-http = { workspace = true }
 tokio-rate-limit = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
+serde_with = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
-sp-runtime = { workspace = true, features = ["std"] }
 base64 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
@@ -39,4 +39,4 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-mainnet = ["storage-subxt/mainnet", "storage-client/mainnet"]
+mainnet = ["storage-client/mainnet", "storage-subxt/mainnet"]

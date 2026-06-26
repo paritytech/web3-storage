@@ -8,12 +8,12 @@
 use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::mmr::Mmr;
-use crate::types::*;
 use codec::Encode;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use sp_core::H256;
 use std::collections::HashMap;
+use storage_client::provider_node_request_scheme::*;
 use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 
 /// Bucket state managed by this provider.

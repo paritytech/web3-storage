@@ -17,9 +17,9 @@
 
 use file_system_client::FileSystemClient;
 use file_system_primitives::DirectoryEntry;
-use sp_runtime::AccountId32;
 use std::env;
 use storage_client::{NegotiateRequest, ProviderClient};
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer::sr25519::dev as dev_signer;
 
 async fn list_and_verify(

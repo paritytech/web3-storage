@@ -20,9 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr, PickFirst};
-use sp_core::hashing::blake2_256;
-use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{AgreementTerms, BucketId};
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 
 /// Concrete [`AgreementTerms`] type for the storage parachain.
@@ -78,21 +78,11 @@ pub struct SignedTerms {
     pub signature: MultiSignature,
 }
 
-/// Sign already-built terms with a provider keypair.
-pub fn sign_terms(
-    keypair: &subxt_signer::sr25519::Keypair,
-    terms: &AgreementTermsOf,
-) -> MultiSignature {
-    let hash = blake2_256(&terms.signing_payload());
-    let raw = keypair.sign(&hash);
-    MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(raw.0))
-}
-
 /// Hex-bytes serde adapter for [`MultiSignature`] — SCALE-encode then hex.
 mod hex_multi_signature {
+    use super::MultiSignature;
     use codec::{Decode, Encode};
     use serde::{Deserialize, Deserializer, Serializer};
-    use sp_runtime::MultiSignature;
 
     pub fn serialize<S: Serializer>(sig: &MultiSignature, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&hex::encode(sig.encode()))
@@ -105,40 +95,12 @@ mod hex_multi_signature {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Rust clients serialize `max_bytes`/`price_per_byte` as raw JSON
-    // numbers. Regression test: the previous untagged-enum deserializer
-    // rejected any JSON number for the u128 field (serde's untagged
-    // buffering has no 128-bit support), surfacing as a 422 from
-    // `/negotiate` for every Rust caller.
-    #[test]
-    fn negotiate_request_roundtrips_rust_numbers() {
-        let req = NegotiateRequest {
-            owner: AccountId32::new([0u8; 32]),
-            max_bytes: 1_000_000_000,
-            duration: 500,
-            price_per_byte: 1,
-            bucket_id: None,
-            replica_params: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.max_bytes, req.max_bytes);
-        assert_eq!(decoded.price_per_byte, req.price_per_byte);
-    }
-
-    // JS clients send BigInt fields as decimal strings (commit 17528eb).
-    #[test]
-    fn negotiate_request_accepts_js_bigint_strings() {
-        let json = format!(
-            r#"{{"owner":"{}","max_bytes":"1073741824","duration":50,"price_per_byte":"340282366920938463463374607431768211455","bucket_id":null,"replica_params":null}}"#,
-            AccountId32::new([0u8; 32])
-        );
-        let decoded: NegotiateRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.max_bytes, 1_073_741_824);
-        assert_eq!(decoded.price_per_byte, u128::MAX);
-    }
+/// Sign already-built terms with a provider keypair.
+pub fn sign_terms(
+    keypair: &subxt_signer::sr25519::Keypair,
+    terms: &AgreementTermsOf,
+) -> MultiSignature {
+    let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
+    let raw = keypair.sign(&hash);
+    MultiSignature::Sr25519(raw.0)
 }

@@ -174,16 +174,17 @@ fn start_chain_state_coordinator(
     cli: &Cli,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
-    let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::warn!(
-                "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
-                state.provider_id
-            );
-            return None;
-        }
-    };
+    let provider_account =
+        match storage_subxt::subxt::utils::AccountId32::from_str(&state.provider_id) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(
+                    "chain-state coordinator: invalid provider SS58 '{}': {e:?}",
+                    state.provider_id
+                );
+                return None;
+            }
+        };
 
     let coordinator = ChainStateCoordinator::new(
         cli.rpc.chain_rpc.clone(),

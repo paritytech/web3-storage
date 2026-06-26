@@ -17,12 +17,12 @@
 mod common;
 
 use common::{chain_guard, chain_setup, dev_discovery};
-use sp_core::crypto::Ss58Codec;
 use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::StorageRequirements;
+use storage_subxt::subxt::utils::AccountId32;
 
 fn account_bytes_to_ss58(bytes: &[u8]) -> String {
     let arr: [u8; 32] = bytes.try_into().unwrap_or_default();
-    sp_runtime::AccountId32::from(arr).to_ss58check()
+    AccountId32::from(arr).to_string()
 }
 
 // ─── list_providers ───────────────────────────────────────────────────────────

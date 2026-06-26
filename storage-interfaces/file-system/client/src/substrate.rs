@@ -7,7 +7,6 @@
 use crate::FsClientError;
 use file_system_primitives::DriveId;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_client::runtime_convert as rc;
@@ -15,6 +14,7 @@ use storage_client::EventParser;
 use storage_primitives::Role;
 use storage_subxt::api as runtime;
 use storage_subxt::subxt;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
@@ -123,13 +123,13 @@ pub mod extrinsics {
         name: Option<Vec<u8>>,
         provider: AccountId32,
         terms: &AgreementTermsOf,
-        sig: &sp_runtime::MultiSignature,
+        sig: storage_subxt::api::runtime_types::sp_runtime::MultiSignature,
     ) -> impl Payload {
         runtime::tx().drive_registry().create_drive(
             name,
-            rc::to_account(&provider),
+            provider,
             rc::to_agreement_terms(terms),
-            rc::to_multi_sig(sig),
+            sig,
         )
     }
 
@@ -155,7 +155,7 @@ pub mod storage {
     pub fn user_drives(account: &AccountId32) -> impl Address {
         runtime::storage()
             .drive_registry()
-            .user_drives(rc::to_account(account))
+            .user_drives(account.clone())
     }
 
     /// Query bucket to drive mapping.
@@ -252,7 +252,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
         if let Ok(Some(e)) = event.as_event::<ev::DriveCreated>() {
             return Some(FileSystemEvent::DriveCreated {
                 drive_id: e.drive_id,
-                owner: rc::from_account(&e.owner),
+                owner: e.owner,
                 bucket_id: e.bucket_id,
                 block_hash,
                 block_number,
@@ -261,7 +261,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
         if let Ok(Some(e)) = event.as_event::<ev::DriveDeleted>() {
             return Some(FileSystemEvent::DriveDeleted {
                 drive_id: e.drive_id,
-                owner: rc::from_account(&e.owner),
+                owner: e.owner,
                 bucket_id: e.bucket_id,
                 refunded: e.refunded,
                 block_hash,
@@ -276,7 +276,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
             };
             return Some(FileSystemEvent::DriveShared {
                 drive_id: e.drive_id,
-                member: rc::from_account(&e.member),
+                member: e.member,
                 role,
                 block_hash,
                 block_number,
@@ -285,7 +285,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
         if let Ok(Some(e)) = event.as_event::<ev::DriveUnshared>() {
             return Some(FileSystemEvent::DriveUnshared {
                 drive_id: e.drive_id,
-                member: rc::from_account(&e.member),
+                member: e.member,
                 block_hash,
                 block_number,
             });

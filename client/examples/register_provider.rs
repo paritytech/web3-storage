@@ -14,7 +14,6 @@
 //!   multiaddr     - Provider multiaddr            (default: /ip4/127.0.0.1/tcp/3333)
 //!   keyfile       - Path to file containing seed  (default: dev seed //Alice)
 
-use sp_core::crypto::Ss58Codec;
 use std::env;
 use storage_client::{ClientConfig, ProviderClient};
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
@@ -53,8 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Derive SS58 address from the keypair for display and ProviderClient identity.
     let public_key_bytes = keypair.public_key().0;
-    let account = sp_runtime::AccountId32::from(public_key_bytes);
-    let ss58_address = account.to_ss58check();
+    let account = storage_subxt::subxt::utils::AccountId32::from(public_key_bytes);
+    let ss58_address = account.to_string();
 
     println!("=== Provider Registration ===");
     println!("Chain WebSocket: {chain_ws}");

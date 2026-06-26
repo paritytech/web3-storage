@@ -37,5 +37,7 @@ subxt codegen --file ./metadata/storage_paseo_runtime.scale \
     --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
     --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
     --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
+    --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
+    --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
     | rustfmt --edition=2021 --emit=stdout > ./src/storage_paseo_runtime.rs
 ```

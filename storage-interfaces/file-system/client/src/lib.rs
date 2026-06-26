@@ -43,13 +43,14 @@ use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
 use sp_core::H256;
-use sp_runtime::{AccountId32, BoundedVec};
+use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
     CheckpointManager, ClientConfig, EventParser, StorageUserClient,
 };
+use storage_subxt::subxt::utils::AccountId32;
 use substrate::{FileSystemEvent, FileSystemEventParser};
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -210,10 +211,10 @@ impl FileSystemClient {
         name: Option<&str>,
         provider: AccountId32,
         terms: storage_client::AgreementTermsOf,
-        sig: sp_runtime::MultiSignature,
+        sig: storage_subxt::api::runtime_types::sp_runtime::MultiSignature,
     ) -> Result<DriveId> {
         let drive_id = self
-            .create_drive_on_chain(name, provider, &terms, &sig)
+            .create_drive_on_chain(name, provider, &terms, sig)
             .await?;
 
         // Get the bucket_id for this drive
@@ -882,7 +883,7 @@ impl FileSystemClient {
         name: Option<&str>,
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
-        sig: &sp_runtime::MultiSignature,
+        sig: storage_subxt::api::runtime_types::sp_runtime::MultiSignature,
     ) -> Result<DriveId> {
         let name_bytes = name.map(|n| n.as_bytes().to_vec());
 

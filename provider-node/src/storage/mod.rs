@@ -52,8 +52,8 @@ impl NonceStore for NullNonceStore {
 }
 
 use crate::error::Error;
-use crate::types::*;
 use sp_core::H256;
+use storage_client::provider_node_request_scheme::*;
 use storage_primitives::{hash_children, BucketId};
 
 /// A stored node (chunk or internal node).

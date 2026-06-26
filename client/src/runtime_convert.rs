@@ -6,20 +6,19 @@
 //! All conversions are byte-exact — they extract inner bytes directly
 //! rather than going through string formatting or re-encoding.
 
+use crate::provider_node_request_scheme::AgreementTermsOf;
 use sp_core::H256;
-use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{EndAction, MerkleProof, MmrProof, Role};
 use storage_subxt::api::runtime_types as rt;
-use storage_subxt::subxt_core::utils::{AccountId32 as RtAccountId32, H256 as RtH256};
-
-use crate::agreement::AgreementTermsOf;
+use storage_subxt::subxt::utils::AccountId32;
+use storage_subxt::subxt_core::utils::H256 as RtH256;
 
 // Convenient type aliases (for return types only, not constructors)
 pub type RtMultiSig = rt::sp_runtime::MultiSignature;
 pub type RtRole = rt::storage_primitives::Role;
 pub type RtEndAction = rt::storage_primitives::EndAction;
 pub type RtAgreementTerms =
-    rt::storage_primitives::agreement_term::AgreementTerms<RtAccountId32, u128, u32>;
+    rt::storage_primitives::agreement_term::AgreementTerms<AccountId32, u128, u32>;
 pub type RtChallengeId = rt::storage_primitives::ChallengeId<u32>;
 pub type RtChallengeResponse = rt::pallet_storage_provider::pallet::ChallengeResponse;
 pub type RtMmrProof = rt::storage_primitives::MmrProof;
@@ -28,24 +27,8 @@ pub type BoundedVec<T> = rt::bounded_collections::bounded_vec::BoundedVec<T>;
 
 // ── Client domain → generated runtime_types ────────────────────────────────
 
-pub fn to_account(account: &AccountId32) -> RtAccountId32 {
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(account.as_ref());
-    RtAccountId32(arr)
-}
-
 pub fn to_h256(h: &H256) -> RtH256 {
     RtH256(h.0)
-}
-
-/// Convert an `sp_runtime::MultiSignature` to the generated runtime variant.
-pub fn to_multi_sig(sig: &MultiSignature) -> RtMultiSig {
-    match sig {
-        MultiSignature::Sr25519(s) => rt::sp_runtime::MultiSignature::Sr25519(s.0),
-        MultiSignature::Ed25519(s) => rt::sp_runtime::MultiSignature::Ed25519(s.0),
-        MultiSignature::Ecdsa(s) => rt::sp_runtime::MultiSignature::Ecdsa(s.0),
-        MultiSignature::Eth(s) => rt::sp_runtime::MultiSignature::Eth(s.0),
-    }
 }
 
 /// Convert raw Sr25519 bytes (64 bytes) into `MultiSignature::Sr25519`.
@@ -63,10 +46,10 @@ pub fn to_bounded_bytes(v: Vec<u8>) -> BoundedVec<u8> {
     rt::bounded_collections::bounded_vec::BoundedVec(v)
 }
 
-pub fn to_signatures(sigs: Vec<(AccountId32, Vec<u8>)>) -> BoundedVec<(RtAccountId32, RtMultiSig)> {
+pub fn to_signatures(sigs: Vec<(AccountId32, Vec<u8>)>) -> BoundedVec<(AccountId32, RtMultiSig)> {
     let pairs = sigs
         .into_iter()
-        .map(|(account, raw_sig)| (to_account(&account), raw_sr25519_to_multi_sig(raw_sig)))
+        .map(|(account, raw_sig)| (account, raw_sr25519_to_multi_sig(raw_sig)))
         .collect();
     rt::bounded_collections::bounded_vec::BoundedVec(pairs)
 }
@@ -80,7 +63,7 @@ pub fn to_agreement_terms(terms: &AgreementTermsOf) -> RtAgreementTerms {
         }
     });
     rt::storage_primitives::agreement_term::AgreementTerms {
-        owner: to_account(&terms.owner),
+        owner: terms.owner.clone(),
         max_bytes: terms.max_bytes,
         duration: terms.duration,
         price_per_byte: terms.price_per_byte,
@@ -142,10 +125,6 @@ pub fn to_challenge_response_proof(
 
 // ── Generated runtime_types → client domain ────────────────────────────────
 
-pub fn from_account(account: &RtAccountId32) -> AccountId32 {
-    AccountId32::new(account.0)
-}
-
 pub fn from_h256(h: RtH256) -> H256 {
     H256::from_slice(&h.0)
 }
@@ -157,30 +136,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn account_round_trip() {
-        let original = AccountId32::new([42u8; 32]);
-        let rt = to_account(&original);
-        let back = from_account(&rt);
-        assert_eq!(original, back);
-    }
-
-    #[test]
     fn h256_round_trip() {
         let original = H256::from([99u8; 32]);
         let rt = to_h256(&original);
         let back = from_h256(rt);
         assert_eq!(original, back);
-    }
-
-    #[test]
-    fn multi_sig_sr25519_bytes_preserved() {
-        use sp_core::sr25519;
-        let raw = [7u8; 64];
-        let sig = MultiSignature::Sr25519(sr25519::Signature::from_raw(raw));
-        let rt_sig = to_multi_sig(&sig);
-        let RtMultiSig::Sr25519(got) = rt_sig else {
-            panic!("wrong variant");
-        };
-        assert_eq!(got, raw);
     }
 }

@@ -11,11 +11,10 @@ use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt_api::MatchedProvider;
-use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
 use storage_subxt::api as runtime;
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
+use storage_subxt::subxt::utils::AccountId32;
 
 /// Provider recommendation with additional context.
 #[derive(Debug, Clone)]
@@ -413,5 +412,5 @@ fn account_ss58_from_key(key: &[u8]) -> Option<String> {
     }
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&key[48..80]);
-    Some(AccountId32::from(bytes).to_ss58check())
+    Some(AccountId32::from(bytes).to_string())
 }

@@ -8,10 +8,9 @@ use crate::checkpoint_coordinator::{
 };
 use crate::error::Error;
 use crate::fs_api;
-use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
+use crate::negotiate;
 use crate::s3_api;
 use crate::storage::{hex_decode, hex_encode};
-use crate::types::*;
 use crate::ProviderState;
 use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
@@ -25,6 +24,10 @@ use codec::Encode;
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use storage_client::provider_node_request_scheme::*;
+use storage_client::provider_node_request_scheme::{
+    AgreementTermsOf, NegotiateRequest, SignedTerms,
+};
 use storage_primitives::AgreementTerms;
 use storage_primitives::{CheckpointProposal, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
@@ -932,7 +935,7 @@ async fn negotiate_terms(
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    let signature = storage_client::sign_terms(keypair, &terms);
+    let signature = storage_client::provider_node_request_scheme::sign_terms(keypair, &terms);
 
     Ok(Json(SignedTerms { terms, signature }))
 }

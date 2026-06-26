@@ -6,12 +6,14 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
+use crate::provider_node_request_scheme::AgreementTermsOf;
 use futures::StreamExt;
 use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
 
@@ -131,16 +133,12 @@ pub mod extrinsics {
 
     pub fn establish_storage_agreement(
         provider: AccountId32,
-        terms: &crate::agreement::AgreementTermsOf,
-        sig: &sp_runtime::MultiSignature,
+        terms: &AgreementTermsOf,
+        sig: MultiSignature,
     ) -> impl Payload {
         runtime::tx()
             .storage_provider()
-            .establish_storage_agreement(
-                rc::to_account(&provider),
-                rc::to_agreement_terms(terms),
-                rc::to_multi_sig(sig),
-            )
+            .establish_storage_agreement(provider, rc::to_agreement_terms(terms), sig)
     }
 
     pub fn checkpoint(
@@ -167,7 +165,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_checkpoint(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             leaf_index,
             chunk_index,
         )
@@ -184,7 +182,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_offchain(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             rc::to_h256(&mmr_root),
             start_seq,
             leaf_index,
@@ -222,7 +220,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_replica(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             leaf_index,
             chunk_index,
         )
@@ -233,17 +231,15 @@ pub mod extrinsics {
         member: AccountId32,
         role: storage_primitives::Role,
     ) -> impl Payload {
-        runtime::tx().storage_provider().set_member(
-            bucket_id,
-            rc::to_account(&member),
-            rc::to_role(role),
-        )
+        runtime::tx()
+            .storage_provider()
+            .set_member(bucket_id, member, rc::to_role(role))
     }
 
     pub fn remove_bucket_member(bucket_id: u64, member: AccountId32) -> impl Payload {
         runtime::tx()
             .storage_provider()
-            .remove_member(bucket_id, rc::to_account(&member))
+            .remove_member(bucket_id, member)
     }
 
     pub fn freeze_bucket(bucket_id: u64) -> impl Payload {
@@ -258,7 +254,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().extend_agreement(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             additional_duration,
             max_payment,
         )
@@ -272,7 +268,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().top_up_agreement(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             additional_bytes,
             max_payment,
         )
@@ -285,7 +281,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         runtime::tx().storage_provider().end_agreement(
             bucket_id,
-            rc::to_account(&provider),
+            provider,
             rc::to_end_action(action),
         )
     }
@@ -346,11 +342,10 @@ pub mod constants {
 
 /// Storage queries for reading chain state.
 pub mod storage {
-    use crate::runtime_convert as rc;
-    use sp_runtime::AccountId32;
     use storage_subxt::api as runtime;
     use storage_subxt::api::runtime_types as rt;
     use storage_subxt::subxt;
+    use storage_subxt::subxt::utils::AccountId32;
 
     pub fn provider_info(
         account: &AccountId32,
@@ -360,7 +355,7 @@ pub mod storage {
     > {
         runtime::storage()
             .storage_provider()
-            .providers(rc::to_account(account))
+            .providers(account.clone())
     }
 
     pub fn bucket_info(
@@ -381,7 +376,7 @@ pub mod storage {
     > {
         runtime::storage()
             .storage_provider()
-            .storage_agreements(bucket_id, rc::to_account(provider))
+            .storage_agreements(bucket_id, provider.clone())
     }
 
     pub fn agreements_for_bucket(
@@ -403,7 +398,7 @@ pub mod storage {
     > {
         runtime::storage()
             .storage_provider()
-            .member_buckets(rc::to_account(account))
+            .member_buckets(account.clone())
     }
 
     pub fn all_providers() -> impl subxt::storage::Address<
@@ -448,7 +443,7 @@ pub mod storage {
     > {
         runtime::storage()
             .storage_provider()
-            .provider_replay_states(rc::to_account(account))
+            .provider_replay_states(account.clone())
     }
 
     pub fn iter_providers_typed() -> impl subxt::storage::Address<

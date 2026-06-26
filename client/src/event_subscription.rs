@@ -39,8 +39,7 @@ use crate::ClientError;
 use futures::Stream;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
 use sp_core::H256;
-use sp_runtime::AccountId32;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -49,6 +48,7 @@ use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::storage_provider::events as ev;
 use storage_subxt::subxt;
+use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
@@ -412,7 +412,7 @@ pub struct EventFilter {
     /// Only include events for these bucket IDs (empty = all buckets).
     pub bucket_ids: HashSet<BucketId>,
     /// Only include events for these providers (empty = all providers).
-    pub providers: HashSet<AccountId32>,
+    pub providers: BTreeSet<AccountId32>,
     /// Include checkpoint events.
     pub include_checkpoints: bool,
     /// Include challenge events.
@@ -434,7 +434,7 @@ impl EventFilter {
     pub fn all() -> Self {
         Self {
             bucket_ids: HashSet::new(),
-            providers: HashSet::new(),
+            providers: BTreeSet::new(),
             include_checkpoints: true,
             include_challenges: true,
             include_agreements: true,
@@ -965,7 +965,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                     mmr_root: rc::from_h256(e.mmr_root),
                     start_seq: e.start_seq,
                     leaf_count: e.leaf_count,
-                    providers: e.providers.iter().map(rc::from_account).collect(),
+                    providers: e.providers.into_iter().collect(),
                     block_hash,
                     block_number,
                 })
@@ -977,8 +977,8 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 Some(StorageEvent::ChallengeCreated {
                     challenge_id: (e.challenge_id.deadline, e.challenge_id.index),
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
-                    challenger: rc::from_account(&e.challenger),
+                    provider: e.provider,
+                    challenger: e.challenger,
                     respond_by: e.respond_by,
                     block_hash,
                     block_number,
@@ -988,7 +988,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ChallengeDefended>().ok()??;
                 Some(StorageEvent::ChallengeDefended {
                     challenge_id: (e.challenge_id.deadline, e.challenge_id.index),
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     response_time_blocks: e.response_time_blocks,
                     challenger_cost: e.challenger_cost,
                     provider_cost: e.provider_cost,
@@ -1000,7 +1000,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ChallengeSlashed>().ok()??;
                 Some(StorageEvent::ChallengeSlashed {
                     challenge_id: (e.challenge_id.deadline, e.challenge_id.index),
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     slashed_amount: e.slashed_amount,
                     challenger_reward: e.challenger_reward,
                     block_hash,
@@ -1012,7 +1012,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "ProviderRegistered" => {
                 let e = event.as_event::<ev::ProviderRegistered>().ok()??;
                 Some(StorageEvent::ProviderRegistered {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     stake: e.stake,
                     block_hash,
                     block_number,
@@ -1022,7 +1022,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ProviderAddedToBucket>().ok()??;
                 Some(StorageEvent::ProviderAddedToBucket {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     block_hash,
                     block_number,
                 })
@@ -1037,7 +1037,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 .to_string();
                 Some(StorageEvent::PrimaryProviderRemoved {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     reason,
                     block_hash,
                     block_number,
@@ -1046,7 +1046,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "ProviderSettingsUpdated" => {
                 let e = event.as_event::<ev::ProviderSettingsUpdated>().ok()??;
                 Some(StorageEvent::ProviderSettingsUpdated {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     provider_settings: e.settings,
                     block_hash,
                     block_number,
@@ -1055,7 +1055,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "ProviderMultiaddrUpdated" => {
                 let e = event.as_event::<ev::ProviderMultiaddrUpdated>().ok()??;
                 Some(StorageEvent::ProviderMultiaddrUpdated {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     multiaddr: String::from_utf8_lossy(&e.multiaddr.0).into_owned(),
                     block_hash,
                     block_number,
@@ -1064,7 +1064,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "DeregisterAnnounced" => {
                 let e = event.as_event::<ev::DeregisterAnnounced>().ok()??;
                 Some(StorageEvent::DeregisterAnnounced {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     complete_after: e.complete_after,
                     block_hash,
                     block_number,
@@ -1073,7 +1073,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "ProviderDeregistered" => {
                 let e = event.as_event::<ev::ProviderDeregistered>().ok()??;
                 Some(StorageEvent::ProviderDeregistered {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     stake_returned: e.stake_returned,
                     block_hash,
                     block_number,
@@ -1082,7 +1082,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
             "DeregisterCancelled" => {
                 let e = event.as_event::<ev::DeregisterCancelled>().ok()??;
                 Some(StorageEvent::DeregisterCancelled {
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     block_hash,
                     block_number,
                 })
@@ -1093,8 +1093,8 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::StorageAgreementEstablished>().ok()??;
                 Some(StorageEvent::StorageAgreementEstablished {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
-                    owner: rc::from_account(&e.owner),
+                    provider: e.provider,
+                    owner: e.owner,
                     max_bytes: e.terms.max_bytes,
                     duration: e.terms.duration,
                     price_per_byte: e.terms.price_per_byte,
@@ -1107,8 +1107,8 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ReplicaAgreementEstablished>().ok()??;
                 Some(StorageEvent::ReplicaAgreementEstablished {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
-                    owner: rc::from_account(&e.owner),
+                    provider: e.provider,
+                    owner: e.owner,
                     max_bytes: e.terms.max_bytes,
                     duration: e.terms.duration,
                     price_per_byte: e.terms.price_per_byte,
@@ -1121,7 +1121,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::AgreementAccepted>().ok()??;
                 Some(StorageEvent::AgreementAccepted {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     expires_at: e.expires_at,
                     block_hash,
                     block_number,
@@ -1131,7 +1131,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::AgreementEnded>().ok()??;
                 Some(StorageEvent::AgreementEnded {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     payment_to_provider: e.payment_to_provider,
                     burned: e.burned,
                     block_hash,
@@ -1144,7 +1144,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::BucketCreated>().ok()??;
                 Some(StorageEvent::BucketCreated {
                     bucket_id: e.bucket_id,
-                    admin: rc::from_account(&e.admin),
+                    admin: e.admin,
                     block_hash,
                     block_number,
                 })
@@ -1172,7 +1172,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ReplicaSynced>().ok()??;
                 Some(StorageEvent::ReplicaSynced {
                     bucket_id: e.bucket_id,
-                    provider: rc::from_account(&e.provider),
+                    provider: e.provider,
                     mmr_root: rc::from_h256(e.mmr_root),
                     sync_payment: e.sync_payment,
                     block_hash,
@@ -1267,8 +1267,8 @@ mod tests {
         let challenge_event = StorageEvent::ChallengeCreated {
             challenge_id: (0, 0),
             bucket_id: 1,
-            provider: AccountId32::new([0u8; 32]),
-            challenger: AccountId32::new([0u8; 32]),
+            provider: AccountId32([0u8; 32]),
+            challenger: AccountId32([0u8; 32]),
             respond_by: 0,
             block_hash: H256::zero(),
             block_number: 0,
@@ -1285,7 +1285,7 @@ mod tests {
             mmr_root: H256::repeat_byte(0xAB),
             start_seq: 100,
             leaf_count: 50,
-            providers: vec![AccountId32::new([1u8; 32])],
+            providers: vec![AccountId32([1u8; 32])],
             block_hash: H256::repeat_byte(0xCD),
             block_number: 12345,
         };
@@ -1299,8 +1299,8 @@ mod tests {
 
     #[test]
     fn test_storage_agreement_established_helpers() {
-        let provider = AccountId32::new([2u8; 32]);
-        let owner = AccountId32::new([3u8; 32]);
+        let provider = AccountId32([2u8; 32]);
+        let owner = AccountId32([3u8; 32]);
         let event = StorageEvent::StorageAgreementEstablished {
             bucket_id: 7,
             provider: provider.clone(),
@@ -1321,8 +1321,8 @@ mod tests {
 
     #[test]
     fn test_replica_agreement_established_helpers() {
-        let provider = AccountId32::new([4u8; 32]);
-        let owner = AccountId32::new([5u8; 32]);
+        let provider = AccountId32([4u8; 32]);
+        let owner = AccountId32([5u8; 32]);
         let event = StorageEvent::ReplicaAgreementEstablished {
             bucket_id: 8,
             provider: provider.clone(),

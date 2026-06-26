@@ -33,11 +33,11 @@ use crate::checkpoint::{
 };
 use crate::ClientError;
 use serde::{Deserialize, Serialize};
-use sp_runtime::AccountId32;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use storage_primitives::BucketId;
+use storage_subxt::subxt::utils::AccountId32;
 use tokio::fs;
 use tokio::sync::RwLock;
 
@@ -534,7 +534,7 @@ impl StateBuilder {
     /// Add health histories.
     pub fn with_health_histories(
         mut self,
-        histories: &HashMap<AccountId32, ProviderHealthHistory>,
+        histories: &BTreeMap<AccountId32, ProviderHealthHistory>,
     ) -> Self {
         for (account_id, history) in histories {
             self.state.health_histories.insert(
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_health_history_conversion() {
-        let account_id = AccountId32::new([1u8; 32]);
+        let account_id = AccountId32([1u8; 32]);
         let mut history = ProviderHealthHistory::new(account_id.clone());
         history.record_success(100);
         history.record_success(150);
@@ -753,7 +753,7 @@ mod tests {
 
     #[test]
     fn test_account_id_conversion() {
-        let original = AccountId32::new([42u8; 32]);
+        let original = AccountId32([42u8; 32]);
         let string = account_id_to_string(&original);
         let restored = string_to_account_id(&string).unwrap();
         assert_eq!(original, restored);
@@ -761,8 +761,8 @@ mod tests {
 
     #[test]
     fn test_state_builder() {
-        let mut histories = HashMap::new();
-        let account_id = AccountId32::new([1u8; 32]);
+        let mut histories = BTreeMap::new();
+        let account_id = AccountId32([1u8; 32]);
         histories.insert(account_id.clone(), ProviderHealthHistory::new(account_id));
 
         let metrics = CheckpointMetrics {

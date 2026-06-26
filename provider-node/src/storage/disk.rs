@@ -8,12 +8,12 @@
 use super::NonceStore;
 use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::types::*;
 use codec::Encode;
 use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use storage_client::provider_node_request_scheme::*;
 use storage_primitives::{blake2_256, BucketId, MmrLeaf};
 
 /// Column families for organizing data
