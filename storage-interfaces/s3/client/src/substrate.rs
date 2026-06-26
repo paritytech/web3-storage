@@ -7,10 +7,11 @@ use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::Arc;
+use storage_client::runtime_convert as rc;
 use storage_client::EventParser;
+use storage_subxt::storage_runtime::api as runtime;
 use storage_subxt::subxt;
 use storage_subxt::subxt_signer;
-use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef};
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::Keypair;
 use tracing::{debug, info};
@@ -103,9 +104,9 @@ impl SubstrateClient {
     /// Retries on stale-nonce (error 1010) which can happen when submitting
     /// multiple transactions in quick succession — the RPC node's cached nonce
     /// may not yet reflect the previous tx's inclusion.
-    async fn submit_and_finalize(
+    async fn submit_and_finalize<P: subxt::tx::Payload>(
         &self,
-        tx: subxt::tx::DefaultPayload<Composite<()>>,
+        tx: P,
     ) -> std::result::Result<subxt::blocks::ExtrinsicEvents<PolkadotConfig>, String> {
         let signer = self.signer()?;
 
@@ -161,15 +162,11 @@ impl SubstrateClient {
     ) -> std::result::Result<S3BucketId, String> {
         debug!("Creating S3 bucket: {}", name);
 
-        let tx = subxt::dynamic::tx(
-            PALLET_NAME,
-            "create_s3_bucket",
-            vec![
-                Value::from_bytes(name.as_bytes()),
-                Value::from_bytes(provider.as_ref() as &[u8]),
-                dynamic_agreement_terms(terms),
-                dynamic_multi_signature(sig),
-            ],
+        let tx = runtime::tx().s3_registry().create_s3_bucket(
+            name.as_bytes().to_vec(),
+            rc::to_account(&provider),
+            rc::to_agreement_terms(terms),
+            rc::to_multi_sig(sig),
         );
 
         let events = self.submit_and_finalize(tx).await?;
@@ -194,12 +191,7 @@ impl SubstrateClient {
     pub async fn delete_s3_bucket(&self, bucket_id: S3BucketId) -> std::result::Result<(), String> {
         debug!("Deleting S3 bucket: {}", bucket_id);
 
-        let tx = subxt::dynamic::tx(
-            PALLET_NAME,
-            "delete_s3_bucket",
-            vec![Value::u128(bucket_id as u128)],
-        );
-
+        let tx = runtime::tx().s3_registry().delete_s3_bucket(bucket_id);
         self.submit_and_finalize(tx).await?;
         Ok(())
     }
@@ -216,23 +208,13 @@ impl SubstrateClient {
     ) -> std::result::Result<(), String> {
         debug!("Putting object metadata: bucket={}, key={}", bucket_id, key);
 
-        // Build metadata tuples
-        let metadata_values: Vec<Value> = user_metadata
-            .into_iter()
-            .map(|(k, v)| Value::unnamed_composite([Value::from_bytes(&k), Value::from_bytes(&v)]))
-            .collect();
-
-        let tx = subxt::dynamic::tx(
-            PALLET_NAME,
-            "put_object_metadata",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::from_bytes(key.as_bytes()),
-                Value::from_bytes(cid.as_bytes()),
-                Value::u128(size as u128),
-                Value::from_bytes(content_type.as_bytes()),
-                Value::unnamed_composite(metadata_values),
-            ],
+        let tx = runtime::tx().s3_registry().put_object_metadata(
+            bucket_id,
+            key.as_bytes().to_vec(),
+            rc::to_h256(&cid),
+            size,
+            content_type.as_bytes().to_vec(),
+            user_metadata,
         );
 
         self.submit_and_finalize(tx).await?;
@@ -250,14 +232,9 @@ impl SubstrateClient {
             bucket_id, key
         );
 
-        let tx = subxt::dynamic::tx(
-            PALLET_NAME,
-            "delete_object_metadata",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::from_bytes(key.as_bytes()),
-            ],
-        );
+        let tx = runtime::tx()
+            .s3_registry()
+            .delete_object_metadata(bucket_id, key.as_bytes().to_vec());
 
         self.submit_and_finalize(tx).await?;
         Ok(())
@@ -276,15 +253,11 @@ impl SubstrateClient {
             src_bucket_id, src_key, dst_bucket_id, dst_key
         );
 
-        let tx = subxt::dynamic::tx(
-            PALLET_NAME,
-            "copy_object_metadata",
-            vec![
-                Value::u128(src_bucket_id as u128),
-                Value::from_bytes(src_key.as_bytes()),
-                Value::u128(dst_bucket_id as u128),
-                Value::from_bytes(dst_key.as_bytes()),
-            ],
+        let tx = runtime::tx().s3_registry().copy_object_metadata(
+            src_bucket_id,
+            src_key.as_bytes().to_vec(),
+            dst_bucket_id,
+            dst_key.as_bytes().to_vec(),
         );
 
         self.submit_and_finalize(tx).await?;
@@ -296,11 +269,9 @@ impl SubstrateClient {
         &self,
         name: &str,
     ) -> std::result::Result<Option<S3BucketId>, S3ClientError> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "BucketNameToId",
-            vec![Value::from_bytes(name.as_bytes())],
-        );
+        let addr = runtime::storage()
+            .s3_registry()
+            .bucket_name_to_id(rc::to_bounded_bytes(name.as_bytes().to_vec()));
 
         let result = self
             .client
@@ -308,11 +279,11 @@ impl SubstrateClient {
             .at_latest()
             .await
             .map_err(|e| S3ClientError::InternalError(e.to_string()))?
-            .fetch(&storage_query)
+            .fetch(&addr)
             .await
             .map_err(|e| S3ClientError::InternalError(e.to_string()))?;
 
-        Ok(result.and_then(|v| v.as_type::<u64>().ok()))
+        Ok(result)
     }
 
     /// Get bucket info by ID.
@@ -320,11 +291,7 @@ impl SubstrateClient {
         &self,
         bucket_id: S3BucketId,
     ) -> std::result::Result<Option<BucketInfo>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "S3Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let addr = runtime::storage().s3_registry().s3_buckets(bucket_id);
 
         let result = self
             .client
@@ -332,31 +299,18 @@ impl SubstrateClient {
             .at_latest()
             .await
             .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .fetch(&addr)
             .await
             .map_err(|e| e.to_string())?;
 
-        match result {
-            Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
-
-                let name = extract_bytes_field(&decoded, "name").unwrap_or_default();
-                let layer0_bucket_id = extract_u64_field(&decoded, "layer0_bucket_id").unwrap_or(0);
-                let object_count = extract_u64_field(&decoded, "object_count").unwrap_or(0);
-                let total_size = extract_u64_field(&decoded, "total_size").unwrap_or(0);
-                let created_at = extract_u64_field(&decoded, "created_at").unwrap_or(0) as u32;
-
-                Ok(Some(BucketInfo {
-                    s3_bucket_id: bucket_id,
-                    name: String::from_utf8_lossy(&name).to_string(),
-                    layer0_bucket_id,
-                    object_count,
-                    total_size,
-                    created_at,
-                }))
-            }
-            None => Ok(None),
-        }
+        Ok(result.map(|info| BucketInfo {
+            s3_bucket_id: info.s3_bucket_id,
+            name: String::from_utf8_lossy(&info.name.0).to_string(),
+            layer0_bucket_id: info.layer0_bucket_id,
+            object_count: info.object_count,
+            total_size: info.total_size,
+            created_at: info.created_at,
+        }))
     }
 
     /// Get object metadata.
@@ -365,14 +319,9 @@ impl SubstrateClient {
         bucket_id: S3BucketId,
         key: &str,
     ) -> std::result::Result<Option<ChainObjectMetadata>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "Objects",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::from_bytes(key.as_bytes()),
-            ],
-        );
+        let addr = runtime::storage()
+            .s3_registry()
+            .objects(bucket_id, rc::to_bounded_bytes(key.as_bytes().to_vec()));
 
         let result = self
             .client
@@ -380,48 +329,33 @@ impl SubstrateClient {
             .at_latest()
             .await
             .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .fetch(&addr)
             .await
             .map_err(|e| e.to_string())?;
 
-        match result {
-            Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
-
-                let cid_bytes = extract_bytes_field(&decoded, "cid").unwrap_or_default();
-                let cid = if cid_bytes.len() == 32 {
-                    H256::from_slice(&cid_bytes)
-                } else {
-                    H256::zero()
-                };
-
-                let size = extract_u64_field(&decoded, "size").unwrap_or(0);
-                let last_modified = extract_u64_field(&decoded, "last_modified").unwrap_or(0);
-                let content_type =
-                    extract_bytes_field(&decoded, "content_type").unwrap_or_default();
-                let etag = extract_bytes_field(&decoded, "etag").unwrap_or_default();
-                let user_metadata = extract_metadata_entries(&decoded, "user_metadata");
-
-                Ok(Some(ChainObjectMetadata {
-                    cid,
-                    size,
-                    last_modified,
-                    content_type,
-                    etag,
-                    user_metadata,
-                }))
-            }
-            None => Ok(None),
-        }
+        Ok(result.map(|meta| ChainObjectMetadata {
+            cid: rc::from_h256(meta.cid),
+            size: meta.size,
+            last_modified: meta.last_modified,
+            content_type: meta.content_type.0,
+            etag: meta.etag.0,
+            user_metadata: meta
+                .user_metadata
+                .0
+                .into_iter()
+                .map(|e| MetadataEntry {
+                    key: e.key.0,
+                    value: e.value.0,
+                })
+                .collect(),
+        }))
     }
 
     /// List user's buckets.
     pub async fn list_user_buckets(&self) -> std::result::Result<Vec<BucketInfo>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "UserBuckets",
-            vec![Value::from_bytes(self.account_id)],
-        );
+        let addr = runtime::storage()
+            .s3_registry()
+            .user_buckets(rc::to_account(&AccountId32::from(self.account_id)));
 
         let result = self
             .client
@@ -429,17 +363,11 @@ impl SubstrateClient {
             .at_latest()
             .await
             .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .fetch(&addr)
             .await
             .map_err(|e| e.to_string())?;
 
-        let bucket_ids: Vec<u64> = match result {
-            Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
-                extract_u64_vec(&decoded)
-            }
-            None => vec![],
-        };
+        let bucket_ids: Vec<u64> = result.map(|bvec| bvec.0).unwrap_or_default();
 
         let mut buckets = Vec::new();
         for id in bucket_ids {
@@ -476,124 +404,6 @@ impl SubstrateClient {
             key_count: 0,
         })
     }
-}
-
-// Helper functions for extracting values from scale_value::Value
-// Using pattern matching on ValueDef for composite access
-
-/// Extract bytes from a named field.
-fn extract_bytes_field<T: Clone>(value: &Value<T>, field: &str) -> Option<Vec<u8>> {
-    let field_value = value.at(field)?;
-    extract_bytes_from_value(field_value)
-}
-
-/// Extract u64 from a named field.
-fn extract_u64_field<T: Clone>(value: &Value<T>, field: &str) -> Option<u64> {
-    let field_value = value.at(field)?;
-    field_value.as_u128().map(|v| v as u64)
-}
-
-/// Extract a vec of u64 values from a sequence/composite.
-fn extract_u64_vec<T: Clone>(value: &Value<T>) -> Vec<u64> {
-    let mut result = Vec::new();
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(values)) => {
-            for item in values {
-                if let Some(v) = item.as_u128() {
-                    result.push(v as u64);
-                }
-            }
-        }
-        ValueDef::Composite(Composite::Named(values)) => {
-            for (_name, item) in values {
-                if let Some(v) = item.as_u128() {
-                    result.push(v as u64);
-                }
-            }
-        }
-        _ => {}
-    }
-    result
-}
-
-/// Extract bytes from a Value (handles BoundedVec and H256 encoding).
-///
-/// Subxt decodes wrapper types like H256 and BoundedVec<u8> as nested composites:
-/// e.g. H256 becomes Composite::Unnamed([Composite::Unnamed([b0..b31])]).
-/// This function handles both flat byte sequences and single-element wrapper composites.
-fn extract_bytes_from_value<T: Clone>(value: &Value<T>) -> Option<Vec<u8>> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(values)) => {
-            // Try direct byte extraction (each element is a u8 encoded as u128)
-            let bytes: Vec<u8> = values
-                .iter()
-                .filter_map(|v| v.as_u128().map(|n| n as u8))
-                .collect();
-            if bytes.len() == values.len() && !bytes.is_empty() {
-                return Some(bytes);
-            }
-            // Single-element wrapper (e.g., H256 wrapping [u8; 32], BoundedVec wrapping Vec<u8>)
-            if values.len() == 1 {
-                return extract_bytes_from_value(&values[0]);
-            }
-            None
-        }
-        ValueDef::Composite(Composite::Named(values)) => {
-            let bytes: Vec<u8> = values
-                .iter()
-                .filter_map(|(_, v)| v.as_u128().map(|n| n as u8))
-                .collect();
-            if bytes.len() == values.len() && !bytes.is_empty() {
-                return Some(bytes);
-            }
-            if values.len() == 1 {
-                return extract_bytes_from_value(&values[0].1);
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Extract metadata entries from user_metadata field.
-fn extract_metadata_entries<T: Clone>(value: &Value<T>, field: &str) -> Vec<MetadataEntry> {
-    let mut entries = Vec::new();
-    if let Some(field_value) = value.at(field) {
-        match &field_value.value {
-            ValueDef::Composite(Composite::Unnamed(items)) => {
-                for entry_value in items {
-                    let key = entry_value
-                        .at("key")
-                        .and_then(extract_bytes_from_value)
-                        .unwrap_or_default();
-                    let val = entry_value
-                        .at("value")
-                        .and_then(extract_bytes_from_value)
-                        .unwrap_or_default();
-                    if !key.is_empty() {
-                        entries.push(MetadataEntry { key, value: val });
-                    }
-                }
-            }
-            ValueDef::Composite(Composite::Named(items)) => {
-                for (_name, entry_value) in items {
-                    let key = entry_value
-                        .at("key")
-                        .and_then(extract_bytes_from_value)
-                        .unwrap_or_default();
-                    let val = entry_value
-                        .at("value")
-                        .and_then(extract_bytes_from_value)
-                        .unwrap_or_default();
-                    if !key.is_empty() {
-                        entries.push(MetadataEntry { key, value: val });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    entries
 }
 
 // ============================================================================
@@ -676,173 +486,62 @@ impl EventParser<S3Event> for S3EventParser {
         block_hash: H256,
         block_number: u32,
     ) -> Option<S3Event> {
+        use runtime::s3_registry::events as ev;
+
         if event.pallet_name() != PALLET_NAME {
             return None;
         }
 
-        let fields = match event.field_values() {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.variant_name());
-                return None;
-            }
-        };
-
-        match event.variant_name() {
-            "S3BucketCreated" => Some(S3Event::S3BucketCreated {
-                s3_bucket_id: field_u64(&fields, "s3_bucket_id")?,
-                name: field_bytes(&fields, "name")?,
-                layer0_bucket_id: field_u64(&fields, "layer0_bucket_id")?,
-                owner: field_account(&fields, "owner")?,
+        if let Ok(Some(e)) = event.as_event::<ev::S3BucketCreated>() {
+            return Some(S3Event::S3BucketCreated {
+                s3_bucket_id: e.s3_bucket_id,
+                name: e.name,
+                layer0_bucket_id: e.layer0_bucket_id,
+                owner: rc::from_account(&e.owner),
                 block_hash,
                 block_number,
-            }),
-            "S3BucketDeleted" => Some(S3Event::S3BucketDeleted {
-                s3_bucket_id: field_u64(&fields, "s3_bucket_id")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectPut" => Some(S3Event::ObjectPut {
-                s3_bucket_id: field_u64(&fields, "s3_bucket_id")?,
-                key: field_bytes(&fields, "key")?,
-                cid: field_h256(&fields, "cid")?,
-                size: field_u64(&fields, "size")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectDeleted" => Some(S3Event::ObjectDeleted {
-                s3_bucket_id: field_u64(&fields, "s3_bucket_id")?,
-                key: field_bytes(&fields, "key")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectCopied" => Some(S3Event::ObjectCopied {
-                src_bucket_id: field_u64(&fields, "src_bucket_id")?,
-                src_key: field_bytes(&fields, "src_key")?,
-                dst_bucket_id: field_u64(&fields, "dst_bucket_id")?,
-                dst_key: field_bytes(&fields, "dst_key")?,
-                block_hash,
-                block_number,
-            }),
-            other => Some(S3Event::Unknown {
-                variant: other.to_string(),
-                block_hash,
-                block_number,
-            }),
+            });
         }
-    }
-}
-
-// ── Local scale_decode helpers ────────────────────────────────────────────────
-
-fn field_u64(fields: &Composite<u32>, name: &str) -> Option<u64> {
-    fields.at(name)?.as_u128().map(|v| v as u64)
-}
-
-fn field_bytes(fields: &Composite<u32>, name: &str) -> Option<Vec<u8>> {
-    decode_bytes(fields.at(name)?)
-}
-
-fn decode_bytes(v: &Value<u32>) -> Option<Vec<u8>> {
-    match &v.value {
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            if items.is_empty() {
-                return Some(Vec::new());
-            }
-            let bytes: Vec<u8> = items
-                .iter()
-                .filter_map(|child| child.as_u128().map(|n| n as u8))
-                .collect();
-            if bytes.len() == items.len() {
-                return Some(bytes);
-            }
-            if items.len() == 1 {
-                return decode_bytes(&items[0]);
-            }
-            None
+        if let Ok(Some(e)) = event.as_event::<ev::S3BucketDeleted>() {
+            return Some(S3Event::S3BucketDeleted {
+                s3_bucket_id: e.s3_bucket_id,
+                block_hash,
+                block_number,
+            });
         }
-        ValueDef::Composite(Composite::Named(items)) if items.len() == 1 => {
-            decode_bytes(&items[0].1)
+        if let Ok(Some(e)) = event.as_event::<ev::ObjectPut>() {
+            return Some(S3Event::ObjectPut {
+                s3_bucket_id: e.s3_bucket_id,
+                key: e.key,
+                cid: rc::from_h256(e.cid),
+                size: e.size,
+                block_hash,
+                block_number,
+            });
         }
-        _ => None,
-    }
-}
-
-fn field_account(fields: &Composite<u32>, name: &str) -> Option<AccountId32> {
-    let mut bytes = [0u8; 32];
-    if collect_le_bytes(fields.at(name)?, &mut bytes, 0) == 32 {
-        Some(AccountId32::from(bytes))
-    } else {
-        None
-    }
-}
-
-fn field_h256(fields: &Composite<u32>, name: &str) -> Option<H256> {
-    let mut bytes = [0u8; 32];
-    if collect_le_bytes(fields.at(name)?, &mut bytes, 0) == 32 {
-        Some(H256::from(bytes))
-    } else {
-        None
-    }
-}
-
-fn collect_le_bytes(v: &Value<u32>, out: &mut [u8; 32], pos: usize) -> usize {
-    match &v.value {
-        ValueDef::Primitive(Primitive::U128(n)) => {
-            if pos < 32 {
-                out[pos] = *n as u8;
-                pos + 1
-            } else {
-                pos
-            }
+        if let Ok(Some(e)) = event.as_event::<ev::ObjectDeleted>() {
+            return Some(S3Event::ObjectDeleted {
+                s3_bucket_id: e.s3_bucket_id,
+                key: e.key,
+                block_hash,
+                block_number,
+            });
         }
-        ValueDef::Composite(Composite::Unnamed(children)) => {
-            let mut p = pos;
-            for child in children {
-                p = collect_le_bytes(child, out, p);
-            }
-            p
+        if let Ok(Some(e)) = event.as_event::<ev::ObjectCopied>() {
+            return Some(S3Event::ObjectCopied {
+                src_bucket_id: e.src_bucket_id,
+                src_key: e.src_key,
+                dst_bucket_id: e.dst_bucket_id,
+                dst_key: e.dst_key,
+                block_hash,
+                block_number,
+            });
         }
-        _ => pos,
+
+        Some(S3Event::Unknown {
+            variant: event.variant_name().to_string(),
+            block_hash,
+            block_number,
+        })
     }
-}
-
-fn dynamic_agreement_terms(terms: &storage_client::AgreementTermsOf) -> Value<()> {
-    let replica_params_value = match &terms.replica_params {
-        None => Value::unnamed_variant("None", vec![]),
-        Some(rp) => Value::unnamed_variant(
-            "Some",
-            vec![Value::named_composite([
-                ("sync_balance", Value::u128(rp.sync_balance)),
-                (
-                    "min_sync_interval",
-                    Value::u128(rp.min_sync_interval as u128),
-                ),
-            ])],
-        ),
-    };
-    let bucket_id_value = match terms.bucket_id {
-        None => Value::unnamed_variant("None", vec![]),
-        Some(id) => Value::unnamed_variant("Some", vec![Value::u128(id as u128)]),
-    };
-    Value::named_composite([
-        ("owner", Value::from_bytes(terms.owner.as_ref() as &[u8])),
-        ("max_bytes", Value::u128(terms.max_bytes as u128)),
-        ("duration", Value::u128(terms.duration as u128)),
-        ("price_per_byte", Value::u128(terms.price_per_byte)),
-        ("valid_until", Value::u128(terms.valid_until as u128)),
-        ("nonce", Value::u128(terms.nonce as u128)),
-        ("bucket_id", bucket_id_value),
-        ("replica_params", replica_params_value),
-    ])
-}
-
-fn dynamic_multi_signature(sig: &sp_runtime::MultiSignature) -> Value<()> {
-    let (variant, bytes) = match sig {
-        sp_runtime::MultiSignature::Sr25519(s) => ("Sr25519", s.0.to_vec()),
-        sp_runtime::MultiSignature::Ed25519(s) => ("Ed25519", s.0.to_vec()),
-        sp_runtime::MultiSignature::Ecdsa(s) => ("Ecdsa", s.0.to_vec()),
-        sp_runtime::MultiSignature::Eth(s) => ("Eth", s.0.to_vec()),
-    };
-    Value::unnamed_variant(variant, vec![Value::from_bytes(bytes)])
 }
