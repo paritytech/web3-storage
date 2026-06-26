@@ -188,64 +188,108 @@ impl MembershipResolver for ChainMembershipResolver {
             None => return Ok(vec![]),
         };
 
+        // `members` is a `BoundedVec<Member>`. Depending on how the runtime's
+        // scale-info nests it, scale_value may wrap the sequence (and each
+        // `AccountId32`) in extra single-field composites, so walk the value
+        // tree and pull out every `{ account, role }` struct rather than
+        // assuming a fixed shape.
         let mut members = Vec::new();
-        if let subxt::ext::scale_value::ValueDef::Composite(
-            subxt::ext::scale_value::Composite::Unnamed(items),
-        ) = &members_val.value
-        {
-            for item in items {
-                let account_val = item.at("account");
-                let role_val = item.at("role");
+        collect_members(members_val, &mut members);
 
-                if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
-                    let account_bytes = extract_account_bytes(account_v);
-                    if let Some(bytes) = account_bytes {
-                        let account = AccountId32::from(bytes);
-                        let role = extract_role(role_v);
-                        members.push((account, role));
-                    }
-                }
-            }
+        if members.is_empty() {
+            tracing::warn!(bucket_id, value = ?members_val, "auth: decoded zero members");
+        } else {
+            tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
         Ok(members)
     }
 }
 
-fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
-    use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
+/// Recursively pull `(account, role)` pairs out of a decoded `members` value,
+/// tolerating any wrapper composites that `BoundedVec` / `AccountId32` type
+/// info introduces. A `Member` is the composite that carries both an
+/// `account` and a `role` field.
+fn collect_members<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<(AccountId32, Role)>) {
+    use subxt::dynamic::At;
+    use subxt::ext::scale_value::{Composite, ValueDef};
+
+    if let (Some(account_v), Some(role_v)) = (val.at("account"), val.at("role")) {
+        if let Some(bytes) = extract_account_bytes(account_v) {
+            out.push((AccountId32::from(bytes), extract_role(role_v)));
+            return;
+        }
+    }
+
     match &val.value {
-        ValueDef::Composite(Composite::Unnamed(items)) => {
-            let bytes: Vec<u8> = items
-                .iter()
-                .filter_map(|item| match &item.value {
-                    ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                    _ => None,
-                })
-                .collect();
-            if bytes.len() == 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Some(arr)
-            } else {
-                None
+        ValueDef::Composite(Composite::Named(fields)) => {
+            for field in fields {
+                collect_members(&field.1, out);
             }
         }
-        _ => None,
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            for item in items {
+                collect_members(item, out);
+            }
+        }
+        _ => {}
     }
 }
 
-fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
-    use subxt::ext::scale_value::ValueDef;
-    if let ValueDef::Variant(variant) = &val.value {
-        match variant.name.as_str() {
-            "Admin" => Role::Admin,
-            "Writer" => Role::Writer,
-            "Reader" => Role::Reader,
-            _ => Role::Reader, // default to least privilege
-        }
+/// Extract a 32-byte account id, descending through any wrapper composites
+/// (`AccountId32` -> `[u8; 32]` can be one or more composite layers) and
+/// collecting the `u8` leaves.
+fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
+    let mut bytes = Vec::with_capacity(32);
+    collect_u8_leaves(val, &mut bytes);
+    if bytes.len() == 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Some(arr)
     } else {
-        Role::Reader
+        None
+    }
+}
+
+fn collect_u8_leaves<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<u8>) {
+    use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
+    match &val.value {
+        ValueDef::Primitive(Primitive::U128(n)) => out.push(*n as u8),
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            for item in items {
+                collect_u8_leaves(item, out);
+            }
+        }
+        ValueDef::Composite(Composite::Named(fields)) => {
+            for field in fields {
+                collect_u8_leaves(&field.1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Decode a `Role`, descending through wrapper composites to the enum variant.
+fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
+    find_role_variant(val).unwrap_or(Role::Reader)
+}
+
+fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role> {
+    use subxt::ext::scale_value::{Composite, ValueDef};
+    match &val.value {
+        ValueDef::Variant(variant) => match variant.name.as_str() {
+            "Admin" => Some(Role::Admin),
+            "Writer" => Some(Role::Writer),
+            "Reader" => Some(Role::Reader),
+            _ => None,
+        },
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            items.iter().find_map(|v| find_role_variant(v))
+        }
+        ValueDef::Composite(Composite::Named(fields)) => {
+            fields.iter().find_map(|f| find_role_variant(&f.1))
+        }
+        _ => None,
     }
 }
 
@@ -405,6 +449,36 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
+    }
+
+    /// Regression test for the dynamic decoding of `StorageProvider.Buckets`.
+    #[test]
+    fn collect_members_handles_chain_value_nesting() {
+        use subxt::ext::scale_value::Value;
+
+        let acct = [9u8; 32];
+        // AccountId32 -> [u8; 32]: two composite layers around the byte leaves.
+        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
+            acct.iter().map(|b| Value::u128(*b as u128)),
+        )]);
+        let member = Value::named_composite(vec![
+            ("account".to_string(), account),
+            ("role".to_string(), Value::unnamed_variant("Writer", vec![])),
+        ]);
+        let sequence = Value::unnamed_composite(vec![member]);
+        // BoundedVec wrapper around the member sequence.
+        let members_val = Value::unnamed_composite(vec![sequence]);
+
+        let mut out = Vec::new();
+        collect_members(&members_val, &mut out);
+
+        assert_eq!(
+            out.len(),
+            1,
+            "member must be recovered through both wrappers"
+        );
+        assert_eq!(out[0].0, AccountId32::from(acct));
+        assert!(matches!(out[0].1, Role::Writer));
     }
 
     #[test]
