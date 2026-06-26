@@ -23,7 +23,7 @@ use crate::error::Error;
 use crate::storage::{NonceStore, NullNonceStore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use storage_client::discovery::ProviderInfo;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
 pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
@@ -38,23 +38,25 @@ pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTe
 /// bind the provider to it.
 pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(), Error> {
     match &req.replica_params {
-        None if !info.accepting_primary => return Err(Error::NotAcceptingPrimary),
-        Some(_) if info.replica_sync_price.is_none() => return Err(Error::NotAcceptingReplicas),
+        None if !info.settings.accepting_primary => return Err(Error::NotAcceptingPrimary),
+        Some(_) if info.settings.replica_sync_price.is_none() => {
+            return Err(Error::NotAcceptingReplicas)
+        }
         _ => {}
     }
 
-    if req.price_per_byte < info.price_per_byte {
+    if req.price_per_byte < info.settings.price_per_byte {
         return Err(Error::PriceBelowListed {
             proposed: req.price_per_byte,
-            listed: info.price_per_byte,
+            listed: info.settings.price_per_byte,
         });
     }
 
-    if req.duration < info.min_duration || req.duration > info.max_duration {
+    if req.duration < info.settings.min_duration || req.duration > info.settings.max_duration {
         return Err(Error::DurationOutOfBounds {
             duration: req.duration,
-            min: info.min_duration,
-            max: info.max_duration,
+            min: info.settings.min_duration,
+            max: info.settings.max_duration,
         });
     }
 
@@ -62,18 +64,18 @@ pub fn validate_request(req: &NegotiateRequest, info: &ProviderInfo) -> Result<(
         return Err(Error::CapacityExceeded {
             requested: req.max_bytes,
             committed: info.committed_bytes,
-            max_capacity: info.max_capacity,
+            max_capacity: info.settings.max_capacity,
         });
     }
 
     // `max_capacity == 0` means unlimited.
-    if info.max_capacity > 0
-        && info.committed_bytes.saturating_add(req.max_bytes) > info.max_capacity
+    if info.settings.max_capacity > 0
+        && info.committed_bytes.saturating_add(req.max_bytes) > info.settings.max_capacity
     {
         return Err(Error::CapacityExceeded {
             requested: req.max_bytes,
             committed: info.committed_bytes,
-            max_capacity: info.max_capacity,
+            max_capacity: info.settings.max_capacity,
         });
     }
 

@@ -22480,6 +22480,8 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    serde :: Deserialize,
+                    serde :: Serialize,
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
@@ -27591,6 +27593,8 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    serde :: Deserialize,
+                    serde :: Serialize,
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
@@ -27614,6 +27618,8 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    serde :: Deserialize,
+                    serde :: Serialize,
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
@@ -27633,6 +27639,8 @@ pub mod api {
                     Debug,
                     Eq,
                     PartialEq,
+                    serde :: Deserialize,
+                    serde :: Serialize,
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]

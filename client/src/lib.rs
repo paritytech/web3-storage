@@ -135,15 +135,13 @@ pub use checkpoint_persistence::{
     CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
     PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
 };
-pub use discovery::{
-    DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
-};
+pub use discovery::{DiscoveryClient, StorageRequirements};
 pub use event_subscription::{
     subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
     EventCallback, EventFilter, EventParser, EventStream, EventSubscriber, StorageEvent,
     StorageProviderEventParser, SubscriptionHandle,
 };
-pub use provider::{ProviderClient, ProviderSettings};
+pub use provider::ProviderClient;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,

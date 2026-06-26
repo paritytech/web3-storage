@@ -10,13 +10,14 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::discovery::ProviderInfo;
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
 use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::subxt_signer;
+use rt::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 /// Client for storage providers.
 pub struct ProviderClient {
@@ -137,25 +138,7 @@ impl ProviderClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(p) = thunk else {
-            return Ok(None);
-        };
-
-        Ok(Some(ProviderInfo {
-            multiaddr: String::from_utf8_lossy(&p.multiaddr.0).into_owned(),
-            stake: p.stake,
-            committed_bytes: p.committed_bytes,
-            max_capacity: p.settings.max_capacity,
-            min_duration: p.settings.min_duration,
-            max_duration: p.settings.max_duration,
-            price_per_byte: p.settings.price_per_byte,
-            accepting_primary: p.settings.accepting_primary,
-            replica_sync_price: p.settings.replica_sync_price,
-            accepting_extensions: p.settings.accepting_extensions,
-            agreements_total: p.stats.agreements_total,
-            challenges_failed: p.stats.challenges_failed,
-            deregister_at: p.deregister_at,
-        }))
+        Ok(thunk)
     }
 
     /// Update provider settings.
@@ -171,15 +154,7 @@ impl ProviderClient {
             settings.price_per_byte
         );
 
-        let tx = extrinsics::update_provider_settings(
-            settings.min_duration,
-            settings.max_duration,
-            settings.price_per_byte,
-            settings.accepting_primary,
-            settings.replica_sync_price,
-            settings.accepting_extensions,
-            settings.max_capacity,
-        );
+        let tx = extrinsics::update_provider_settings(settings);
 
         chain
             .api()
@@ -388,19 +363,9 @@ impl ProviderClient {
             let bucket_id =
                 u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
 
-            let agreement = kv.value;
-            let owner = format!("0x{}", hex::encode(agreement.owner.0));
-            let is_primary = matches!(
-                agreement.role,
-                rt::storage_primitives::ProviderRole::Primary
-            );
-
             agreements.push(ActiveAgreement {
                 bucket_id,
-                owner,
-                max_bytes: agreement.max_bytes,
-                expires_at: agreement.expires_at,
-                is_primary,
+                agreement: kv.value,
             });
         }
 
@@ -532,10 +497,8 @@ impl ProviderClient {
 
                 challenges.push(ChallengeInfo {
                     challenge_id: (deadline, index as u16),
-                    bucket_id: challenge.bucket_id,
                     deadline,
-                    leaf_index: challenge.leaf_index,
-                    chunk_index: challenge.chunk_index,
+                    challenge: challenge.clone(),
                 });
             }
         }
@@ -637,43 +600,25 @@ impl ProviderClient {
 // Types
 
 #[derive(Debug, Clone)]
-pub struct ProviderSettings {
-    pub price_per_byte: u128,
-    pub min_duration: u32,
-    pub max_duration: u32,
-    pub accepting_primary: bool,
-    pub replica_sync_price: Option<u128>,
-    pub accepting_extensions: bool,
-    /// Maximum storage capacity in bytes. 0 = unlimited.
-    pub max_capacity: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AgreementRequest {
-    pub bucket_id: BucketId,
-    pub requester: String,
-    pub max_bytes: u64,
-    pub payment_locked: u128,
-    pub duration: u32,
-    pub expires_at: u32,
-}
-
-#[derive(Debug, Clone)]
 pub struct ActiveAgreement {
     pub bucket_id: BucketId,
-    pub owner: String,
-    pub max_bytes: u64,
-    pub expires_at: u32,
-    pub is_primary: bool,
+    pub agreement: rt::pallet_storage_provider::pallet::StorageAgreement,
+}
+
+impl ActiveAgreement {
+    pub fn is_primary(&self) -> bool {
+        matches!(
+            self.agreement.role,
+            rt::storage_primitives::ProviderRole::Primary
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ChallengeInfo {
     pub challenge_id: (u32, u16),
-    pub bucket_id: BucketId,
     pub deadline: u32,
-    pub leaf_index: u64,
-    pub chunk_index: u64,
+    pub challenge: rt::pallet_storage_provider::pallet::Challenge,
 }
 
 #[derive(Debug, Clone, Default)]

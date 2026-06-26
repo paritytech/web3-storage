@@ -926,7 +926,7 @@ async fn negotiate_terms(
         owner: req.owner,
         max_bytes: req.max_bytes,
         duration: req.duration,
-        price_per_byte: info.price_per_byte,
+        price_per_byte: info.settings.price_per_byte,
         valid_until: current_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,

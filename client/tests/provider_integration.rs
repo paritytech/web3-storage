@@ -14,7 +14,7 @@
 mod common;
 
 use common::{alice_provider, chain_guard, chain_setup, dev_account};
-use storage_client::ProviderSettings;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
 /// returns `Some(info)` with the settings established by setup.
@@ -39,12 +39,12 @@ async fn test_get_provider_info_alice_registered() {
 
     println!(
         "Alice ProviderInfo: multiaddr={} stake={} committed={} max_capacity={} price={} accepting_primary={}",
-        info.multiaddr,
+        String::from_utf8_lossy(&info.multiaddr.0),
         info.stake,
         info.committed_bytes,
-        info.max_capacity,
-        info.price_per_byte,
-        info.accepting_primary,
+        info.settings.max_capacity,
+        info.settings.price_per_byte,
+        info.settings.accepting_primary,
     );
 
     assert!(
@@ -52,22 +52,22 @@ async fn test_get_provider_info_alice_registered() {
         "stake should be positive after registration"
     );
     assert!(
-        info.accepting_primary,
+        info.settings.accepting_primary,
         "chain_setup configures accepting_primary=true"
     );
     assert_eq!(
-        info.replica_sync_price, None,
+        info.settings.replica_sync_price, None,
         "chain_setup configures replica_sync_price=None"
     );
     assert!(
-        info.max_capacity > 0,
+        info.settings.max_capacity > 0,
         "chain_setup configures a non-zero max_capacity"
     );
     assert!(
-        info.committed_bytes <= info.max_capacity,
+        info.committed_bytes <= info.settings.max_capacity,
         "committed_bytes ({}) should never exceed max_capacity ({})",
         info.committed_bytes,
-        info.max_capacity
+        info.settings.max_capacity
     );
 }
 
@@ -117,11 +117,11 @@ async fn test_list_active_agreements() {
     println!("Alice has {} active agreement(s)", agreements.len());
 
     for a in &agreements {
-        assert!(!a.owner.is_empty(), "owner should not be empty");
+        assert!(!a.agreement.owner.0.is_empty(), "owner should not be empty");
         assert!(a.bucket_id > 0, "bucket_id should be non-zero");
         println!(
             "  bucket={} owner={} max_bytes={} expires_at={} primary={}",
-            a.bucket_id, a.owner, a.max_bytes, a.expires_at, a.is_primary
+            a.bucket_id, a.agreement.owner.to_string(), a.agreement.max_bytes, a.agreement.expires_at, a.is_primary()
         );
     }
 }
@@ -148,15 +148,15 @@ async fn test_list_active_challenges() {
     println!("Alice has {} active challenge(s)", challenges.len());
 
     for c in &challenges {
-        assert!(c.bucket_id > 0, "bucket_id should be non-zero");
+        assert!(c.challenge.bucket_id > 0, "bucket_id should be non-zero");
         println!(
             "  challenge=({},{}) bucket={} deadline={} leaf={} chunk={}",
             c.challenge_id.0,
             c.challenge_id.1,
-            c.bucket_id,
+            c.challenge.bucket_id,
             c.deadline,
-            c.leaf_index,
-            c.chunk_index
+            c.challenge.leaf_index,
+            c.challenge.chunk_index
         );
     }
 }
@@ -271,7 +271,7 @@ async fn test_get_capacity_info() {
     );
     assert_eq!(
         info.available_bytes,
-        pi.max_capacity.saturating_sub(pi.committed_bytes),
+        pi.settings.max_capacity.saturating_sub(pi.committed_bytes),
         "available_bytes should equal max_capacity − committed_bytes"
     );
 }
@@ -333,16 +333,20 @@ async fn test_update_settings_round_trip() {
 
     // Pick a price clearly different from the current one to make the assertion
     // meaningful regardless of what previous tests left behind.
-    let new_price = before.price_per_byte.saturating_add(500_000).max(1_500_000);
+    let new_price = before
+        .settings
+        .price_per_byte
+        .saturating_add(500_000)
+        .max(1_500_000);
 
     let new_settings = ProviderSettings {
         price_per_byte: new_price,
-        min_duration: before.min_duration,
-        max_duration: before.max_duration,
-        accepting_primary: before.accepting_primary,
-        replica_sync_price: before.replica_sync_price,
-        accepting_extensions: before.accepting_extensions,
-        max_capacity: before.max_capacity,
+        min_duration: before.settings.min_duration,
+        max_duration: before.settings.max_duration,
+        accepting_primary: before.settings.accepting_primary,
+        replica_sync_price: before.settings.replica_sync_price,
+        accepting_extensions: before.settings.accepting_extensions,
+        max_capacity: before.settings.max_capacity,
     };
 
     provider
@@ -357,19 +361,19 @@ async fn test_update_settings_round_trip() {
         .expect("Alice should still be registered");
 
     assert_eq!(
-        after.price_per_byte, new_price,
+        after.settings.price_per_byte, new_price,
         "price_per_byte should reflect the update"
     );
 
     // Restore prior settings so subsequent tests see Alice in her chain_setup state.
     let restored = ProviderSettings {
-        price_per_byte: before.price_per_byte,
-        min_duration: before.min_duration,
-        max_duration: before.max_duration,
-        accepting_primary: before.accepting_primary,
-        replica_sync_price: before.replica_sync_price,
-        accepting_extensions: before.accepting_extensions,
-        max_capacity: before.max_capacity,
+        price_per_byte: before.settings.price_per_byte,
+        min_duration: before.settings.min_duration,
+        max_duration: before.settings.max_duration,
+        accepting_primary: before.settings.accepting_primary,
+        replica_sync_price: before.settings.replica_sync_price,
+        accepting_extensions: before.settings.accepting_extensions,
+        max_capacity: before.settings.max_capacity,
     };
     provider
         .update_settings(restored)

@@ -3,8 +3,8 @@
 //! API types for the provider node.
 
 use serde::{Deserialize, Serialize};
-use storage_client::discovery::ProviderInfo;
 use storage_primitives::BucketId;
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types

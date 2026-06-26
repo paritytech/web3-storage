@@ -17,7 +17,13 @@
 mod common;
 
 use common::{chain_guard, chain_setup, dev_discovery};
+use sp_core::crypto::Ss58Codec;
 use storage_client::StorageRequirements;
+
+fn account_bytes_to_ss58(bytes: &[u8]) -> String {
+    let arr: [u8; 32] = bytes.try_into().unwrap_or_default();
+    sp_runtime::AccountId32::from(arr).to_ss58check()
+}
 
 // ─── list_providers ───────────────────────────────────────────────────────────
 
@@ -60,7 +66,11 @@ async fn test_list_providers() {
         assert!(!account.is_empty(), "account should not be empty");
         println!(
             "  provider={} stake={} capacity={} price={} accepting={}",
-            account, info.stake, info.max_capacity, info.price_per_byte, info.accepting_primary
+            account,
+            info.stake,
+            info.settings.max_capacity,
+            info.settings.price_per_byte,
+            info.settings.accepting_primary
         );
     }
 }
@@ -129,12 +139,15 @@ async fn test_get_provider_info() {
         .expect("get_provider_info should not error")
         .expect("Alice should be found after chain_setup");
 
-    assert!(info.accepting_primary, "Alice should be accepting primary");
+    assert!(
+        info.settings.accepting_primary,
+        "Alice should be accepting primary"
+    );
     assert!(info.stake > 0, "Alice's stake should be > 0");
 
     println!(
         "get_provider_info OK: account={} stake={} accepting={}",
-        setup.alice_ss58, info.stake, info.accepting_primary
+        setup.alice_ss58, info.stake, info.settings.accepting_primary
     );
 
     // Zero account — must return None.
@@ -227,7 +240,7 @@ async fn test_providers_with_capacity() {
 
     for (account, info) in &all_accepting {
         assert!(
-            info.accepting_primary || info.replica_sync_price.is_some(),
+            info.settings.accepting_primary || info.settings.replica_sync_price.is_some(),
             "provider {account} is not accepting any agreement kind"
         );
     }
@@ -280,9 +293,12 @@ async fn test_find_providers_sorted_by_score() {
         .await
         .expect("find_providers should not error");
 
-    let accounts: Vec<&str> = matched.iter().map(|m| m.account.as_str()).collect();
+    let accounts: Vec<String> = matched
+        .iter()
+        .map(|m| account_bytes_to_ss58(&m.account))
+        .collect();
     assert!(
-        accounts.contains(&setup.alice_ss58.as_str()),
+        accounts.iter().any(|a| a == &setup.alice_ss58),
         "Alice should be in find_providers results"
     );
 
@@ -298,7 +314,9 @@ async fn test_find_providers_sorted_by_score() {
     for m in &matched {
         println!(
             "  account={} score={} price={}",
-            m.account, m.match_score, m.info.price_per_byte
+            account_bytes_to_ss58(&m.account),
+            m.match_score,
+            m.info.price_per_byte
         );
     }
 }
@@ -335,9 +353,12 @@ async fn test_find_providers_price_filter_excludes_alice() {
         .await
         .expect("find_providers with price=0 should not error");
 
-    let accounts: Vec<&str> = matched.iter().map(|m| m.account.as_str()).collect();
+    let accounts: Vec<String> = matched
+        .iter()
+        .map(|m| account_bytes_to_ss58(&m.account))
+        .collect();
     assert!(
-        !accounts.contains(&setup.alice_ss58.as_str()),
+        !accounts.iter().any(|a| a == &setup.alice_ss58),
         "Alice (price=1_000_000) should not match max_price_per_byte=0"
     );
 

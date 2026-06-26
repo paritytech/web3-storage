@@ -25,12 +25,14 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
-use storage_client::{ClientError, ProviderSettings, StorageEvent};
+use storage_client::{ClientError, StorageEvent};
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
     PalletConstants,
+};
+use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::pallet::{
+    ProviderInfo, ProviderSettings,
 };
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
@@ -44,19 +46,34 @@ fn provider_account() -> sp_runtime::AccountId32 {
 }
 
 fn sample_provider_info() -> ProviderInfo {
+    use storage_subxt::storage_runtime::api::runtime_types::{
+        bounded_collections::bounded_vec::BoundedVec,
+        pallet_storage_provider::pallet::{ProviderSettings, ProviderStats},
+    };
     ProviderInfo {
-        multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+        multiaddr: BoundedVec(b"/ip4/1.2.3.4/tcp/3333".to_vec()),
+        public_key: BoundedVec(vec![]),
         stake: 1_000,
         committed_bytes: 500,
-        max_capacity: 10_000,
-        min_duration: 10,
-        max_duration: 100,
-        price_per_byte: 5,
-        accepting_primary: true,
-        replica_sync_price: None,
-        accepting_extensions: true,
-        agreements_total: 3,
-        challenges_failed: 1,
+        settings: ProviderSettings {
+            min_duration: 10,
+            max_duration: 100,
+            price_per_byte: 5,
+            accepting_primary: true,
+            replica_sync_price: None,
+            accepting_extensions: true,
+            max_capacity: 10_000,
+        },
+        stats: ProviderStats {
+            registered_at: 0,
+            agreements_total: 3,
+            agreements_extended: 0,
+            agreements_not_extended: 0,
+            agreements_burned: 0,
+            total_bytes_committed: 0,
+            challenges_received: 0,
+            challenges_failed: 1,
+        },
         deregister_at: None,
     }
 }

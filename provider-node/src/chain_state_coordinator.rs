@@ -24,11 +24,11 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
 use storage_client::{
     BlockSubscriberStream, ClientConfig, ClientError, EventParser, ProviderClient, StorageEvent,
     StorageProviderEventParser,
 };
+use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 use storage_subxt::subxt;
 use storage_subxt::subxt::ext::futures::StreamExt;
 use tokio::task::JoinHandle;
@@ -458,19 +458,34 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     fn sample_provider_info() -> ProviderInfo {
+        use storage_subxt::storage_runtime::api::runtime_types::{
+            bounded_collections::bounded_vec::BoundedVec,
+            pallet_storage_provider::pallet::{ProviderSettings, ProviderStats},
+        };
         ProviderInfo {
-            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
+            multiaddr: BoundedVec(b"/ip4/1.2.3.4/tcp/3333".to_vec()),
+            public_key: BoundedVec(vec![]),
             stake: 1_000,
             committed_bytes: 500,
-            max_capacity: 10_000,
-            min_duration: 10,
-            max_duration: 100,
-            price_per_byte: 5,
-            accepting_primary: true,
-            replica_sync_price: None,
-            accepting_extensions: true,
-            agreements_total: 3,
-            challenges_failed: 1,
+            settings: ProviderSettings {
+                min_duration: 10,
+                max_duration: 100,
+                price_per_byte: 5,
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 10_000,
+            },
+            stats: ProviderStats {
+                registered_at: 0,
+                agreements_total: 3,
+                agreements_extended: 0,
+                agreements_not_extended: 0,
+                agreements_burned: 0,
+                total_bytes_committed: 0,
+                challenges_received: 0,
+                challenges_failed: 1,
+            },
             deregister_at: None,
         }
     }
@@ -497,9 +512,12 @@ mod tests {
         *cs.provider_info.write() = Some(sample_provider_info());
         let guard = cs.provider_info.read();
         let info = guard.as_ref().unwrap();
-        assert_eq!(info.price_per_byte, 5);
+        assert_eq!(info.settings.price_per_byte, 5);
         assert_eq!(info.committed_bytes, 500);
-        assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
+        assert_eq!(
+            String::from_utf8_lossy(&info.multiaddr.0),
+            "/ip4/1.2.3.4/tcp/3333"
+        );
     }
 
     #[test]

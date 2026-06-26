@@ -13,6 +13,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
+use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 pub const PALLET_NAME: &str = "StorageProvider";
 
@@ -122,29 +123,10 @@ pub mod extrinsics {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_provider_settings(
-        min_duration: u32,
-        max_duration: u32,
-        price_per_byte: u128,
-        accepting_primary: bool,
-        replica_sync_price: Option<u128>,
-        accepting_extensions: bool,
-        max_capacity: u64,
-    ) -> impl Payload {
-        use crate::provider::ProviderSettings;
-        let settings = ProviderSettings {
-            min_duration,
-            max_duration,
-            price_per_byte,
-            accepting_primary,
-            replica_sync_price,
-            accepting_extensions,
-            max_capacity,
-        };
+    pub fn update_provider_settings(settings: ProviderSettings) -> impl Payload {
         runtime::tx()
             .storage_provider()
-            .update_provider_settings(rc::to_provider_settings(&settings))
+            .update_provider_settings(settings)
     }
 
     pub fn establish_storage_agreement(

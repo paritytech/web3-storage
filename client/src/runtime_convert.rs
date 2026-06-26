@@ -13,10 +13,8 @@ use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::subxt_core::utils::{AccountId32 as RtAccountId32, H256 as RtH256};
 
 use crate::agreement::AgreementTermsOf;
-use crate::provider::ProviderSettings;
 
 // Convenient type aliases (for return types only, not constructors)
-pub type RtProviderSettings = rt::pallet_storage_provider::pallet::ProviderSettings;
 pub type RtMultiSig = rt::sp_runtime::MultiSignature;
 pub type RtRole = rt::storage_primitives::Role;
 pub type RtEndAction = rt::storage_primitives::EndAction;
@@ -90,18 +88,6 @@ pub fn to_agreement_terms(terms: &AgreementTermsOf) -> RtAgreementTerms {
         nonce: terms.nonce,
         bucket_id: terms.bucket_id,
         replica_params,
-    }
-}
-
-pub fn to_provider_settings(s: &ProviderSettings) -> RtProviderSettings {
-    rt::pallet_storage_provider::pallet::ProviderSettings {
-        min_duration: s.min_duration,
-        max_duration: s.max_duration,
-        price_per_byte: s.price_per_byte,
-        accepting_primary: s.accepting_primary,
-        replica_sync_price: s.replica_sync_price,
-        accepting_extensions: s.accepting_extensions,
-        max_capacity: s.max_capacity,
     }
 }
 

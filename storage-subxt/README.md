@@ -29,5 +29,13 @@ subxt codegen --file ./metadata/storage_paseo_runtime.scale \
     --derive Clone \
     --derive Eq \
     --derive PartialEq \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
+    --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+    --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
+    --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
     | rustfmt --edition=2021 --emit=stdout > ./src/storage_paseo_runtime.rs
 ```

@@ -50,7 +50,8 @@ use storage_subxt::storage_runtime::api::storage_provider::events as ev;
 use storage_subxt::subxt;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
-
+use storage_subxt::storage_paseo_runtime::api::storage_provider::events::provider_settings_updated;
+ 
 // ============================================================================
 // Event Types
 // ============================================================================
@@ -143,7 +144,7 @@ pub enum StorageEvent {
         provider: AccountId32,
         block_hash: H256,
         block_number: u32,
-        provider_settings: crate::ProviderSettings,
+        provider_settings: provider_settings_updated::Settings,
     },
 
     /// A provider updated its on-chain multiaddr.
@@ -1046,15 +1047,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::ProviderSettingsUpdated>().ok()??;
                 Some(StorageEvent::ProviderSettingsUpdated {
                     provider: rc::from_account(&e.provider),
-                    provider_settings: crate::ProviderSettings {
-                        min_duration: e.settings.min_duration,
-                        max_duration: e.settings.max_duration,
-                        price_per_byte: e.settings.price_per_byte,
-                        accepting_primary: e.settings.accepting_primary,
-                        replica_sync_price: e.settings.replica_sync_price,
-                        accepting_extensions: e.settings.accepting_extensions,
-                        max_capacity: e.settings.max_capacity,
-                    },
+                    provider_settings: e.settings,
                     block_hash,
                     block_number,
                 })
