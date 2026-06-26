@@ -48,7 +48,9 @@ async function createS3BucketWithStorage(
     maxBytes,
     duration,
   });
-  return createS3Bucket(api, client, name, provider, signed);
+  // Finalize: putChunk to this bucket reads membership from the provider's
+  // finalized view, so an in-block create would race it.
+  return createS3Bucket(api, client, name, provider, signed, { mode: "finalized" });
 }
 
 async function main() {

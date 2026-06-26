@@ -171,7 +171,9 @@ async function main() {
       bucketId,
       toHex(client.publicKey),
     ]);
-    await callContract(api, client, deployed.addressBytes, grantData);
+    // Finalize: the upload below reads the just-granted Writer membership from
+    // the provider's finalized view, so an in-block grant would race it.
+    await callContract(api, client, deployed.addressBytes, grantData, { finalized: true });
     const payload = `Hello via SC! ${new Date().toISOString()}`;
     const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);

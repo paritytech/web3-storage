@@ -126,10 +126,14 @@ async function main() {
   tests.push({
     name: "10.5 Freeze is irreversible",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       // freeze_bucket requires a snapshot (checkpoint) to exist.
       await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", bob);
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
@@ -147,10 +151,14 @@ async function main() {
   tests.push({
     name: "10.6 Checkpoint after freeze",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       // Upload some data.
       await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", bob);
       // Checkpoint before freeze.
@@ -203,10 +211,14 @@ async function main() {
   tests.push({
     name: "10.8 Upload verify blake2-256",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       const data = "integrity check data for blake2-256";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
@@ -218,10 +230,14 @@ async function main() {
   tests.push({
     name: "10.9 Identical content → same hash, different MMR leaves",
     fn: async () => {
-      const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, bob, provider, {
-        maxBytes,
-        duration: 100,
-      });
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: immediate upload reads finalized membership
+      );
       const data = "identical content for dedup test";
       const r1 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
       const r2 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);

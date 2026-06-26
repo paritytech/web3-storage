@@ -85,7 +85,11 @@ async function setupAgreement(
     signed.terms.valid_until
   );
   console.log("  Redeeming on-chain via establish_storage_agreement...");
-  const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+  // Finalize: the immediate upload reads bucket membership from the provider's
+  // finalized view, so an in-block establish would race it.
+  const { bucketId } = await establishStorageAgreement(api, client, provider, signed, {
+    mode: "finalized",
+  });
   console.log("  Bucket %s opened with primary agreement", bucketId);
   return bucketId;
 }

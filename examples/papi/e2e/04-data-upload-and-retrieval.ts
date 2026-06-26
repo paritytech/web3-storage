@@ -42,10 +42,14 @@ async function main() {
   // Create a bucket for upload tests by redeeming provider-signed terms.
   const maxCapacity = 10_485_760n; // 10 MiB
   const duration = 100;
-  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
-    maxBytes: maxCapacity,
-    duration,
-  });
+  const { bucketId } = await negotiateAndEstablish(
+    api,
+    PROVIDER_URL,
+    client,
+    provider,
+    { maxBytes: maxCapacity, duration },
+    true, // finalize: an immediate provider upload reads finalized membership
+  );
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
 
