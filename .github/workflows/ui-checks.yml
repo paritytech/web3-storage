@@ -25,7 +25,7 @@ jobs:
     outputs:
       ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
@@ -36,6 +36,12 @@ jobs:
           filters: |
             ui:
               - 'user-interfaces/**'
+              - 'packages/**'
+              - 'examples/papi/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'package.json'
+              - '.github/actions/setup-pnpm/**'
               - '.github/workflows/ui-checks.yml'
 
   unit-tests:
@@ -44,29 +50,22 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
-        with:
-          version: 10
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
 
-      - name: Install workspace deps
-        working-directory: user-interfaces
-        run: pnpm install --frozen-lockfile
+      - name: Typecheck sdk packages + examples
+        run: pnpm run typecheck:packages
 
       - name: Run unit tests
-        working-directory: user-interfaces
         run: pnpm run test:unit
 
   build:
@@ -85,29 +84,19 @@ jobs:
           - ui: provider
             filter: provider-dashboard
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
-        with:
-          version: 10
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup pnpm workspace
+        uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: user-interfaces/pnpm-lock.yaml
-
-      - name: Install workspace deps
-        working-directory: user-interfaces
-        run: pnpm install --frozen-lockfile
 
       - name: Build
-        working-directory: user-interfaces
         run: pnpm --filter ${{ matrix.filter }} run build
 
   # The landing page is a static HTML file (not a workspace package), so the
@@ -120,7 +109,7 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
