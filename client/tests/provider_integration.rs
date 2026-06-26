@@ -14,7 +14,7 @@
 mod common;
 
 use common::{alice_provider, chain_guard, chain_setup, dev_account};
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
 /// returns `Some(info)` with the settings established by setup.

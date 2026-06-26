@@ -37,6 +37,7 @@ use crate::runtime_convert as rc;
 use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
+use rt::pallet_storage_provider::pallet::ProviderSettings;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashSet;
@@ -45,9 +46,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use storage_primitives::BucketId;
-use storage_subxt::storage_paseo_runtime::api::storage_provider::events::provider_settings_updated;
-use storage_subxt::storage_runtime::api::runtime_types as rt;
-use storage_subxt::storage_runtime::api::storage_provider::events as ev;
+use storage_subxt::api::runtime_types as rt;
+use storage_subxt::api::storage_provider::events as ev;
 use storage_subxt::subxt;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
@@ -144,7 +144,7 @@ pub enum StorageEvent {
         provider: AccountId32,
         block_hash: H256,
         block_number: u32,
-        provider_settings: provider_settings_updated::Settings,
+        provider_settings: ProviderSettings,
     },
 
     /// A provider updated its on-chain multiaddr.

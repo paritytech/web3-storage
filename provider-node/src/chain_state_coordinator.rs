@@ -28,7 +28,7 @@ use storage_client::{
     BlockSubscriberStream, ClientConfig, ClientError, EventParser, ProviderClient, StorageEvent,
     StorageProviderEventParser,
 };
-use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 use storage_subxt::subxt;
 use storage_subxt::subxt::ext::futures::StreamExt;
 use tokio::task::JoinHandle;
@@ -458,7 +458,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     fn sample_provider_info() -> ProviderInfo {
-        use storage_subxt::storage_runtime::api::runtime_types::{
+        use storage_subxt::api::runtime_types::{
             bounded_collections::bounded_vec::BoundedVec,
             pallet_storage_provider::pallet::{ProviderSettings, ProviderStats},
         };

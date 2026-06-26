@@ -13,9 +13,9 @@ use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt_api::MatchedProvider;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
-use storage_subxt::storage_runtime::api as runtime;
-use storage_subxt::storage_runtime::api::runtime_types as rt;
-use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
+use storage_subxt::api as runtime;
+use storage_subxt::api::runtime_types as rt;
+use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 
 /// Provider recommendation with additional context.
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ impl DiscoveryClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::discovery::DiscoveryClient;
-    /// # use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::runtime_api::StorageRequirements;
+    /// # use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api::StorageRequirements;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut client = DiscoveryClient::with_defaults()?;
     /// client.connect().await?;

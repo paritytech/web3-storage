@@ -28,11 +28,11 @@ async-trait = { workspace = true }
 storage-subxt = { workspace = true }
 futures = { workspace = true }
 
-[features]
-mainnet = ["storage-subxt/mainnet"]
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }
+
+[features]
+mainnet = ["storage-subxt/mainnet"]

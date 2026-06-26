@@ -9,7 +9,7 @@ use sp_runtime::AccountId32;
 use std::sync::Arc;
 use storage_client::runtime_convert as rc;
 use storage_client::EventParser;
-use storage_subxt::storage_runtime::api as runtime;
+use storage_subxt::api as runtime;
 use storage_subxt::subxt;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};

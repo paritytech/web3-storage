@@ -31,7 +31,7 @@ use storage_provider_node::{
     ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
     PalletConstants,
 };
-use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::pallet::{
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::{
     ProviderInfo, ProviderSettings,
 };
 
@@ -46,7 +46,7 @@ fn provider_account() -> sp_runtime::AccountId32 {
 }
 
 fn sample_provider_info() -> ProviderInfo {
-    use storage_subxt::storage_runtime::api::runtime_types::{
+    use storage_subxt::api::runtime_types::{
         bounded_collections::bounded_vec::BoundedVec,
         pallet_storage_provider::pallet::{ProviderSettings, ProviderStats},
     };

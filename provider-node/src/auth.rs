@@ -167,7 +167,7 @@ impl MembershipResolver for ChainMembershipResolver {
             .into_iter()
             .map(|m| {
                 let account = AccountId32::from(m.account.0);
-                use storage_subxt::storage_runtime::api::runtime_types as rt;
+                use storage_subxt::api::runtime_types as rt;
                 let role = match m.role {
                     rt::storage_primitives::Role::Admin => Role::Admin,
                     rt::storage_primitives::Role::Writer => Role::Writer,

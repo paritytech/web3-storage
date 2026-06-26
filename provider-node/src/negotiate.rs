@@ -23,7 +23,7 @@ use crate::error::Error;
 use crate::storage::{NonceStore, NullNonceStore};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
 pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};

@@ -11,7 +11,7 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
 
@@ -112,7 +112,7 @@ impl SubstrateClient {
 pub mod extrinsics {
     use super::*;
     use crate::runtime_convert as rc;
-    use storage_subxt::storage_runtime::api as runtime;
+    use storage_subxt::api as runtime;
     use storage_subxt::subxt::tx::Payload;
 
     pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
@@ -335,7 +335,7 @@ pub mod extrinsics {
 
 /// Runtime constant addresses for reading on-chain config.
 pub mod constants {
-    use storage_subxt::storage_runtime::api as runtime;
+    use storage_subxt::api as runtime;
     use storage_subxt::subxt_core::constants::address::StaticAddress;
 
     /// Typed constant address for `StorageProvider::RequestTimeout`.
@@ -348,8 +348,8 @@ pub mod constants {
 pub mod storage {
     use crate::runtime_convert as rc;
     use sp_runtime::AccountId32;
-    use storage_subxt::storage_runtime::api as runtime;
-    use storage_subxt::storage_runtime::api::runtime_types as rt;
+    use storage_subxt::api as runtime;
+    use storage_subxt::api::runtime_types as rt;
     use storage_subxt::subxt;
 
     pub fn provider_info(

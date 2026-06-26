@@ -20,7 +20,7 @@ use storage_provider_node::{
     create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
     PalletConstants, ProviderState, SignedTerms, Storage,
 };
-use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 use tokio::net::TcpListener;
 
 const PROVIDER_SEED: &str = "//Alice";
@@ -103,7 +103,7 @@ impl TestServer {
 /// primary agreements, listed price 5, duration window [10, 100_000],
 /// unlimited capacity.
 fn provider_info() -> ProviderInfo {
-    use storage_subxt::storage_runtime::api::runtime_types::{
+    use storage_subxt::api::runtime_types::{
         bounded_collections::bounded_vec::BoundedVec,
         pallet_storage_provider::pallet::{ProviderSettings, ProviderStats},
     };

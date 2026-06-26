@@ -17,7 +17,7 @@ use rt::pallet_storage_provider::pallet::Bucket;
 use sp_core::H256;
 use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
-use storage_subxt::storage_runtime::api::runtime_types as rt;
+use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt_signer;
 
 /// Client for bucket administrators.

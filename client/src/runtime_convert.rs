@@ -9,7 +9,7 @@
 use sp_core::H256;
 use sp_runtime::{AccountId32, MultiSignature};
 use storage_primitives::{EndAction, MerkleProof, MmrProof, Role};
-use storage_subxt::storage_runtime::api::runtime_types as rt;
+use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt_core::utils::{AccountId32 as RtAccountId32, H256 as RtH256};
 
 use crate::agreement::AgreementTermsOf;

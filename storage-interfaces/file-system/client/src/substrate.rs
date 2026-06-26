@@ -13,7 +13,7 @@ use std::sync::Arc;
 use storage_client::runtime_convert as rc;
 use storage_client::EventParser;
 use storage_primitives::Role;
-use storage_subxt::storage_runtime::api as runtime;
+use storage_subxt::api as runtime;
 use storage_subxt::subxt;
 use storage_subxt::subxt_signer;
 use subxt::{OnlineClient, PolkadotConfig};
@@ -243,7 +243,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
         block_number: u32,
     ) -> Option<FileSystemEvent> {
         use runtime::drive_registry::events as ev;
-        use storage_subxt::storage_runtime::api::runtime_types as rt;
+        use storage_subxt::api::runtime_types as rt;
 
         if event.pallet_name() != PALLET_NAME {
             return None;

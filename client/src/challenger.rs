@@ -13,7 +13,7 @@ use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use storage_subxt::storage_runtime::api::storage_provider::events::ChallengeCreated as EvChallengeCreated;
+use storage_subxt::api::storage_provider::events::ChallengeCreated as EvChallengeCreated;
 use storage_subxt::subxt::blocks::ExtrinsicEvents;
 use storage_subxt::subxt::PolkadotConfig;
 

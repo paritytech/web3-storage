@@ -21,7 +21,7 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_client::substrate::{extrinsics, storage, SubstrateClient};
 use storage_primitives::BucketId;
-use storage_subxt::storage_runtime::api::runtime_types as rt;
+use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt_signer;
 
 /// Production implementation that talks to the chain via typed storage_client bindings.

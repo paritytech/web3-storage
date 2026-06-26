@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
-use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderInfo;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Upload/Download Types
