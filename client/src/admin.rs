@@ -12,13 +12,13 @@
 use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
-use crate::runtime_convert as rc;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, EndAction, Role};
-use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::subxt_signer;
+use storage_subxt::storage_runtime::api::runtime_types as rt;
+use rt::pallet_storage_provider::pallet::Bucket;
 
 /// Client for bucket administrators.
 pub struct AdminClient {
@@ -493,7 +493,7 @@ impl AdminClient {
     // ═════════════════════════════════════════════════════════════════════════
 
     /// Get bucket information.
-    pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<BucketInfo> {
+    pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<Bucket> {
         let chain = self.base.chain()?;
 
         let thunk = chain
@@ -507,37 +507,7 @@ impl AdminClient {
             .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
             .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
-        let bucket = thunk;
-
-        let members = bucket
-            .members
-            .0
-            .iter()
-            .map(|m| {
-                let account = format!("0x{}", hex::encode(m.account.0));
-                let role = match m.role {
-                    rt::storage_primitives::Role::Admin => Role::Admin,
-                    rt::storage_primitives::Role::Writer => Role::Writer,
-                    rt::storage_primitives::Role::Reader => Role::Reader,
-                };
-                MemberInfo { account, role }
-            })
-            .collect();
-
-        let snapshot = bucket.snapshot.map(|snap| SnapshotInfo {
-            mmr_root: rc::from_h256(snap.mmr_root),
-            start_seq: snap.start_seq,
-            leaf_count: snap.leaf_count,
-            checkpoint_block: snap.checkpoint_block,
-        });
-
-        Ok(BucketInfo {
-            bucket_id,
-            members,
-            frozen_start_seq: bucket.frozen_start_seq,
-            min_providers: bucket.min_providers,
-            snapshot,
-        })
+        Ok(thunk)
     }
 
     /// List all agreements for a bucket.
@@ -574,18 +544,10 @@ impl AdminClient {
                 String::new()
             };
 
-            let agreement = kv.value;
-            let is_primary = matches!(
-                agreement.role,
-                rt::storage_primitives::ProviderRole::Primary
-            );
-
+            
             agreements.push(AgreementInfo {
                 provider,
-                max_bytes: agreement.max_bytes,
-                payment_locked: agreement.payment_locked,
-                expires_at: agreement.expires_at,
-                is_primary,
+                agreement: kv.value,
             });
         }
 
@@ -616,35 +578,17 @@ impl AdminClient {
 }
 
 // Types
-
-#[derive(Debug, Clone)]
-pub struct BucketInfo {
-    pub bucket_id: BucketId,
-    pub members: Vec<MemberInfo>,
-    pub frozen_start_seq: Option<u64>,
-    pub min_providers: u32,
-    pub snapshot: Option<SnapshotInfo>,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemberInfo {
-    pub account: String,
-    pub role: Role,
-}
-
-#[derive(Debug, Clone)]
-pub struct SnapshotInfo {
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-    pub checkpoint_block: u32,
-}
-
 #[derive(Debug, Clone)]
 pub struct AgreementInfo {
     pub provider: String,
-    pub max_bytes: u64,
-    pub payment_locked: u128,
-    pub expires_at: u32,
-    pub is_primary: bool,
+    pub agreement: rt::pallet_storage_provider::pallet::StorageAgreement,
+}
+
+impl AgreementInfo {
+    pub fn is_primary(&self) -> bool {
+        matches!(
+            self.agreement.role,
+            rt::storage_primitives::ProviderRole::Primary
+        )
+    }
 }

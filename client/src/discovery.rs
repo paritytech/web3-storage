@@ -17,33 +17,6 @@ use storage_subxt::storage_runtime::api as runtime;
 use storage_subxt::storage_runtime::api::runtime_types as rt;
 use storage_subxt::storage_runtime::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 
-/// Storage requirements for provider matching.
-#[derive(Debug, Clone)]
-pub struct StorageRequirements {
-    /// Bytes needed for storage.
-    pub bytes_needed: u64,
-    /// Minimum agreement duration in blocks.
-    pub min_duration: u32,
-    /// Maximum acceptable price per byte.
-    pub max_price_per_byte: u128,
-    /// If true, only match providers accepting primary agreements.
-    pub primary_only: bool,
-}
-
-impl Default for StorageRequirements {
-    fn default() -> Self {
-        Self {
-            bytes_needed: 0,
-            min_duration: 0,
-            max_price_per_byte: u128::MAX,
-            primary_only: true,
-        }
-    }
-}
-
-/// Reason for partial match when provider doesn't fully meet requirements.
-pub type PartialMatchReason = rt_api::PartialMatchReason;
-
 /// Provider recommendation with additional context.
 #[derive(Debug, Clone)]
 pub struct ProviderRecommendation {
@@ -95,7 +68,8 @@ impl DiscoveryClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::discovery::{DiscoveryClient, StorageRequirements};
+    /// # use storage_client::discovery::DiscoveryClient;
+    /// # use storage_subxt::storage_paseo_runtime::api::runtime_types::pallet_storage_provider::runtime_api::StorageRequirements;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut client = DiscoveryClient::with_defaults()?;
     /// client.connect().await?;
@@ -116,7 +90,7 @@ impl DiscoveryClient {
     /// ```
     pub async fn find_providers(
         &self,
-        requirements: StorageRequirements,
+        requirements: rt_api::StorageRequirements,
         limit: u32,
     ) -> ClientResult<Vec<MatchedProvider>> {
         let chain = self.base.chain()?;
@@ -128,13 +102,6 @@ impl DiscoveryClient {
             requirements.max_price_per_byte
         );
 
-        let rt_req = rt_api::StorageRequirements {
-            bytes_needed: requirements.bytes_needed,
-            min_duration: requirements.min_duration,
-            max_price_per_byte: requirements.max_price_per_byte,
-            primary_only: requirements.primary_only,
-        };
-
         let raw = chain
             .api()
             .runtime_api()
@@ -144,7 +111,7 @@ impl DiscoveryClient {
             .call(
                 runtime::apis()
                     .storage_provider_api()
-                    .find_matching_providers(rt_req, limit),
+                    .find_matching_providers(requirements, limit),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("find_matching_providers: {e}")))?;
@@ -157,7 +124,7 @@ impl DiscoveryClient {
     /// Returns the highest-scoring provider, or None if no providers match.
     pub async fn find_best_provider(
         &self,
-        requirements: StorageRequirements,
+        requirements: rt_api::StorageRequirements,
     ) -> ClientResult<Option<MatchedProvider>> {
         let providers = self.find_providers(requirements, 1).await?;
         Ok(providers.into_iter().next())
@@ -264,7 +231,7 @@ impl DiscoveryClient {
             u128::MAX
         };
 
-        let requirements = StorageRequirements {
+        let requirements = rt_api::StorageRequirements {
             bytes_needed: bytes,
             min_duration: duration,
             max_price_per_byte,

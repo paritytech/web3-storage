@@ -64,16 +64,15 @@ async fn test_bucket_lifecycle() {
         .await
         .expect("get_bucket_info should succeed");
 
-    assert_eq!(info.bucket_id, bucket_id);
     assert_eq!(info.min_providers, 1);
     // The pallet auto-adds the creator (Alice) as an Admin member.
     assert_eq!(
-        info.members.len(),
+        info.members.0.len(),
         1,
         "creator should be auto-added as Admin"
     );
     assert_eq!(
-        info.members[0].role as u8,
+        info.members.0[0].role.clone() as u8,
         Role::Admin as u8,
         "creator's initial role should be Admin"
     );
@@ -91,14 +90,15 @@ async fn test_bucket_lifecycle() {
         .await
         .expect("get_bucket_info after add_member");
 
-    assert_eq!(info.members.len(), 2, "should have 2 members (Alice + Bob)");
+    assert_eq!(info.members.0.len(), 2, "should have 2 members (Alice + Bob)");
     let bob_info = info
         .members
+        .0
         .iter()
-        .find(|m| m.role as u8 == Role::Reader as u8)
+        .find(|m| m.role.clone() as u8 == Role::Reader as u8)
         .expect("Bob should be in members with Reader role");
     assert_eq!(
-        bob_info.role as u8,
+        bob_info.role.clone() as u8,
         Role::Reader as u8,
         "Bob's role should be Reader"
     );
@@ -115,16 +115,17 @@ async fn test_bucket_lifecycle() {
         .expect("get_bucket_info after update_member_role");
 
     assert_eq!(
-        info.members.len(),
+        info.members.0.len(),
         2,
         "should still have 2 members after role update"
     );
     let bob_info = info
         .members
+        .0
         .iter()
-        .find(|m| m.role as u8 == Role::Writer as u8)
+        .find(|m| m.role.clone() as u8 == Role::Writer as u8)
         .expect("Bob should have Writer role after update");
-    assert_eq!(bob_info.role as u8, Role::Writer as u8);
+    assert_eq!(bob_info.role.clone() as u8, Role::Writer as u8);
 
     // ── remove Bob ────────────────────────────────────────────────────────────
     admin
@@ -138,7 +139,7 @@ async fn test_bucket_lifecycle() {
         .expect("get_bucket_info after remove_member");
 
     assert_eq!(
-        info.members.len(),
+        info.members.0.len(),
         1,
         "only Alice should remain after removing Bob"
     );
@@ -207,7 +208,7 @@ async fn test_list_bucket_agreements_empty() {
 
     for a in &agreements {
         assert!(!a.provider.is_empty(), "provider field should not be empty");
-        assert!(a.max_bytes > 0, "max_bytes should be positive");
+        assert!(a.agreement.max_bytes > 0, "max_bytes should be positive");
     }
 }
 

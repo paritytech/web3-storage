@@ -135,7 +135,7 @@ pub use checkpoint_persistence::{
     CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
     PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
 };
-pub use discovery::{DiscoveryClient, StorageRequirements};
+pub use discovery::DiscoveryClient;
 pub use event_subscription::{
     subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
     EventCallback, EventFilter, EventParser, EventStream, EventSubscriber, StorageEvent,
