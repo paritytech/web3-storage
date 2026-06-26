@@ -1,0 +1,12 @@
+{
+  "version": 0,
+  "descriptorPath": ".papi/descriptors",
+  "entries": {
+    "parachain": {
+      "wsUrl": "ws://127.0.0.1:2222",
+      "metadata": ".papi/metadata/parachain.scale",
+      "genesis": "0x4545454545454545454545454545454545454545454545454545454545454545",
+      "codeHash": "0xdaedc1a62b5f24de80f3f511d2b42905a5338d609baa4af50bd6b5bbad7167b3"
+    }
+  }
+}
