@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Establishing storage agreement on-chain...");
     let mut admin = AdminClient::new(chain_config.clone(), user_ss58.clone())?;
     admin.connect().await?;
-    admin.set_signer(user_keypair)?;
+    admin.set_signer(user_keypair.clone())?;
     let bucket_id = admin
         .establish_storage_agreement(provider_ss58, signed.terms, signed.signature)
         .await?;
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         provider_urls: vec![provider_url.to_string()],
         ..Default::default()
     };
-    let user = StorageUserClient::new(user_config)?;
+    let user = StorageUserClient::new(user_config)?.with_auth_signer(user_keypair);
     let data = b"hello e2e".to_vec();
     let data_root = user
         .upload(bucket_id, &data, ChunkingStrategy::default())

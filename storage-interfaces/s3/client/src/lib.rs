@@ -145,12 +145,17 @@ impl S3Client {
             provider_urls: vec![provider_url.to_string()],
             ..Default::default()
         };
-        let storage_client = storage_client::StorageUserClient::new(config)
+        let mut storage_client = storage_client::StorageUserClient::new(config)
             .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
         let substrate_client = SubstrateClient::new(chain_url, seed_phrase)
             .await
             .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+
+        // Reuse the same key to authenticate bucket-scoped provider requests.
+        if let Ok(keypair) = substrate_client.signer_keypair() {
+            storage_client.set_auth_signer(keypair);
+        }
 
         Ok(Self {
             storage_client,

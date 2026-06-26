@@ -14,13 +14,16 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{blake2_256, build_auth_header, BucketId};
+use subxt_signer::sr25519::Keypair;
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
     base: BaseClient,
     verifier: ClientVerifier,
     cipher: Option<Box<dyn Cipher>>,
+    /// Keypair used to sign bucket-scoped provider requests.
+    auth_signer: Option<Keypair>,
 }
 
 impl StorageUserClient {
@@ -30,12 +33,49 @@ impl StorageUserClient {
             base: BaseClient::new(config)?,
             verifier: ClientVerifier::new(),
             cipher: None,
+            auth_signer: None,
         })
     }
 
     /// Create with default configuration.
     pub fn with_defaults() -> ClientResult<Self> {
         Self::new(ClientConfig::default())
+    }
+
+    /// Set the keypair that signs bucket-scoped provider requests.
+    pub fn with_auth_signer(mut self, signer: Keypair) -> Self {
+        self.auth_signer = Some(signer);
+        self
+    }
+
+    /// [`with_auth_signer`](Self::with_auth_signer) by mutable reference.
+    pub fn set_auth_signer(&mut self, signer: Keypair) {
+        self.auth_signer = Some(signer);
+    }
+
+    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb)
+    /// when an auth signer is configured; otherwise leave the request unchanged.
+    fn sign(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        bucket_id: BucketId,
+    ) -> reqwest::RequestBuilder {
+        let Some(signer) = self.auth_signer.as_ref() else {
+            return req;
+        };
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let header = build_auth_header(
+            &signer.public_key().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| signer.sign(msg).0,
+        );
+        req.header("Authorization", header)
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -340,13 +380,12 @@ impl StorageUserClient {
                 .collect(),
         };
 
-        let response = self
+        let req = self
             .base
             .http
             .post(format!("{provider_url}/commit"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -495,13 +534,12 @@ impl StorageUserClient {
             }),
         };
 
-        let response = self
+        let req = self
             .base
             .http
             .put(format!("{provider_url}/node"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(

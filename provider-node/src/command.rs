@@ -134,31 +134,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Apply CLI-derived CORS and auth settings to a freshly constructed state.
-///
-/// Authentication is enforced by default: unless the operator explicitly passed
-/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
-/// resolver so every bucket-scoped request is checked against the caller's role.
 fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
     let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
 
-    if cli.auth.disable_auth_i_know_what_i_am_doing {
-        state = state.with_auth_disabled();
-        tracing::warn!(
-            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
-             every endpoint is publicly readable and writable by anyone. \
-             Never do this outside a throwaway local environment."
-        );
-    } else {
-        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-        let cache = MembershipCache::new(Box::new(resolver), ttl);
-        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
-        tracing::info!(
-            "Auth enforced (cache_ttl={}s, max_skew={}s)",
-            cli.auth.auth_cache_ttl,
-            cli.auth.auth_max_skew
-        );
-    }
+    let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+    let cache = MembershipCache::new(Box::new(resolver), ttl);
+    state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
+    tracing::info!(
+        "Auth enforced (cache_ttl={}s, max_skew={}s)",
+        cli.auth.auth_cache_ttl,
+        cli.auth.auth_max_skew
+    );
 
     state
 }

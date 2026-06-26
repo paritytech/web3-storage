@@ -6,7 +6,7 @@
  * wrappers (silent, no auto-retry, finalized submission + finalized reads by
  * default — UI-grade; tests/examples opt into in-block/best via
  * readOpts/submitMode); HTTP ops go through core's retrying fetch and are
- * signed when the signer has a raw keypair.
+ * signed with the signer's raw keypair, which the provider always requires.
  *
  * Bytes are opaque here: client-side encryption (when used) wraps/unwraps
  * app-side, so CID verification covers exactly what the provider stores.

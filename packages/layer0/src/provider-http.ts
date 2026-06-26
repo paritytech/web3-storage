@@ -7,9 +7,15 @@
  */
 
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
-import { base64ToBytes, bytesToBase64 } from "@web3-storage/core";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  signProviderRequest,
+  type SigningKeypair,
+} from "@web3-storage/core";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
+import type { ChainSigner } from "./signers.js";
 import { READ_OPTS } from "./tx.js";
 
 export interface ProviderFetchOpts {
@@ -22,6 +28,12 @@ export interface ProviderFetchOpts {
    */
   params?: Record<string, string | number | bigint>;
   body?: unknown;
+  /**
+   * When set, attach the signed `Authorization` header the provider verifies
+   * (`provider-node/src/auth.rs`) for a bucket-scoped, role-gated request
+   * (`PUT /node`, `POST /commit`, …). Omit for public/read endpoints.
+   */
+  sign?: { keypair: SigningKeypair; bucketId: bigint | number };
 }
 
 export async function providerFetch(
@@ -33,9 +45,16 @@ export async function providerFetch(
   if (opts.params) {
     for (const [k, v] of Object.entries(opts.params)) url.searchParams.set(k, String(v));
   }
+  const method = opts.method || "GET";
+  const headers: Record<string, string> = {};
+  if (opts.body) headers["Content-Type"] = "application/json";
+  // auth.rs reconstructs the message from the upper-case HTTP verb; signing with
+  // anything else would fail verification.
+  if (opts.sign)
+    Object.assign(headers, signProviderRequest(opts.sign.keypair, method.toUpperCase(), opts.sign.bucketId));
   const resp = await fetch(url, {
-    method: opts.method || "GET",
-    headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+    method,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!resp.ok) throw new Error(`${path}: ${resp.status} ${await resp.text()}`);
@@ -84,11 +103,17 @@ export interface PutChunkResult {
  * PUT a single chunk to the provider without requesting an MMR commitment.
  * Suitable for S3-style object uploads where the Layer 1 metadata records
  * the CID itself and no Layer 0 checkpoint follows immediately.
+ *
+ * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
+ * role on `bucketId` (the provider always enforces this). A signer without a
+ * raw keypair (e.g. a wallet-extension signer) cannot sign and the upload is
+ * rejected.
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
+  signer?: ChainSigner,
 ): Promise<PutChunkResult> {
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const cid = blake2b256(bytes);
@@ -101,6 +126,7 @@ export async function putChunk(
       data: bytesToBase64(bytes),
       children: null,
     },
+    sign: signer?.keypair ? { keypair: signer.keypair, bucketId } : undefined,
   });
   return { hash, cid, size: BigInt(bytes.length), data: bytes };
 }
@@ -109,14 +135,19 @@ export async function putChunk(
  * PUT a chunk to the provider and request an MMR commitment. Returns the
  * chunk hash, original bytes, and the /commit response (mmr_root,
  * leaf_indices, start_seq, provider_signature).
+ *
+ * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
+ * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
  */
 export async function uploadChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
+  signer?: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
+  const sign = signer?.keypair ? { keypair: signer.keypair, bucketId } : undefined;
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
     body: {
@@ -125,10 +156,12 @@ export async function uploadChunk(
       data: bytesToBase64(bytes),
       children: null,
     },
+    sign,
   });
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
     body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    sign,
   });
   return { hash, data: bytes, commit };
 }

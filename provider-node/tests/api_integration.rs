@@ -4,23 +4,25 @@
 //!
 //! These tests spin up a real HTTP server and test the full request/response cycle.
 
+mod common;
+
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
-use reqwest::Client;
+use common::SignedClient;
+use reqwest::Method;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::CommitmentPayload;
-use storage_provider_node::{create_router, ProviderState, Storage};
-use tokio::net::TcpListener;
+use storage_provider_node::{ProviderState, Storage};
 
 /// Test server helper that starts the provider node on a random port.
 struct TestServer {
     addr: SocketAddr,
-    client: Client,
+    client: SignedClient,
 }
 
 pub const PROVIDER_SEED: &str = "//Alice";
@@ -31,14 +33,10 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
-        // These tests exercise endpoint behavior, not auth, so run with auth
-        // disabled (auth is enforced by default). Auth is covered end-to-end in
-        // `auth_integration.rs`.
-        Self::with_state(Arc::new(
+        Self::with_state(
             ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-                .expect("//Alice is a valid SURI")
-                .with_auth_disabled(),
-        ))
+                .expect("//Alice is a valid SURI"),
+        )
         .await
     }
 
@@ -47,35 +45,16 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
-        Self::with_state(Arc::new(
-            ProviderState::with_provider_id(
-                Arc::new(Storage::new()),
-                "0xtest_provider".to_string(),
-            )
-            .with_auth_disabled(),
+        Self::with_state(ProviderState::with_provider_id(
+            Arc::new(Storage::new()),
+            "0xtest_provider".to_string(),
         ))
         .await
     }
 
-    async fn with_state(state: Arc<ProviderState>) -> Self {
-        let app = create_router(state);
-
-        // Bind to port 0 to get a random available port
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        // Spawn the server
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        // Give the server a moment to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        Self {
-            addr,
-            client: Client::new(),
-        }
+    async fn with_state(state: ProviderState) -> Self {
+        let (addr, client) = common::serve(state).await;
+        Self { addr, client }
     }
 
     fn url(&self, path: &str) -> String {
@@ -449,7 +428,7 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
 
     let resp = server
         .client
-        .put(server.url("/node"))
+        .request_bucket(Method::PUT, server.url("/node"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "hash": hash_hex,
@@ -463,7 +442,7 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
 
     let commit_resp = server
         .client
-        .post(server.url("/commit"))
+        .request_bucket(Method::POST, server.url("/commit"), bucket_id)
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],

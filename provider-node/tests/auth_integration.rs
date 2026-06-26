@@ -2,75 +2,27 @@
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
-//! These tests spin up a real HTTP server with `auth_enabled = true` and a
-//! `MockResolver` that returns configurable roles for test accounts.  All
-//! assertions go through real HTTP requests — the auth middleware, signature
-//! verification, membership cache lookup, and role check are exercised as a
-//! single end-to-end path.
+//! These tests spin up a real HTTP server with a
+//! `common::membership_cache` over a fixed member set with configurable roles
+//! for test accounts. All assertions go through real HTTP requests — the auth
+//! middleware, signature verification, membership cache lookup, and role check
+//! are exercised as a single end-to-end path.
+
+mod common;
 
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use common::{current_timestamp, make_auth_header, membership_cache};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, MembershipResolver};
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock resolver (returns configurable roles, no chain needed)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct MockResolver {
-    members: std::sync::Mutex<Vec<(AccountId32, Role)>>,
-}
-
-impl MockResolver {
-    fn new(members: Vec<(AccountId32, Role)>) -> Self {
-        Self {
-            members: std::sync::Mutex::new(members),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl MembershipResolver for MockResolver {
-    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        Ok(self.members.lock().unwrap().clone())
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth header helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn current_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn make_auth_header(
-    keypair: &sr25519::Pair,
-    method: &str,
-    bucket_id: u64,
-    timestamp: u64,
-) -> String {
-    let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
-    let signature = keypair.sign(message.as_bytes());
-    format!(
-        "Web3Storage 0x{}:0x{}:{}",
-        hex_encode(&keypair.public().0),
-        hex_encode(&signature.0),
-        timestamp
-    )
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test server
@@ -87,11 +39,7 @@ impl AuthTestServer {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
 
-        let resolver = MockResolver::new(vec![(alice_account, alice_role)]);
-        let cache = Arc::new(MembershipCache::new(
-            Box::new(resolver),
-            Duration::from_secs(60),
-        ));
+        let cache = membership_cache(vec![(alice_account, alice_role)]);
 
         let mut state = ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
             .expect("//Alice is valid");
@@ -532,7 +480,7 @@ fn node_body(bucket_id: u64, data: &[u8]) -> Value {
     let hash = storage_primitives::blake2_256(data);
     serde_json::json!({
         "bucket_id": bucket_id,
-        "hash": format!("0x{}", hex_encode(hash.as_bytes())),
+        "hash": format!("0x{}", hex::encode(hash.as_bytes())),
         "data": BASE64.encode(data),
     })
 }
@@ -599,7 +547,7 @@ async fn commit_writer_can_commit() {
     let data = b"committed chunk";
     let hash_hex = format!(
         "0x{}",
-        hex_encode(storage_primitives::blake2_256(data).as_bytes())
+        hex::encode(storage_primitives::blake2_256(data).as_bytes())
     );
     let ts = current_timestamp();
     let header = make_auth_header(&alice, "PUT", 1, ts);
@@ -645,12 +593,4 @@ async fn commit_reader_blocked() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

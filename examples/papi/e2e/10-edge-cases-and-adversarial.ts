@@ -131,7 +131,7 @@ async function main() {
         duration: 100,
       });
       // freeze_bucket requires a snapshot (checkpoint) to exist.
-      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot");
+      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", bob);
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
@@ -152,14 +152,14 @@ async function main() {
         duration: 100,
       });
       // Upload some data.
-      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data");
+      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", bob);
       // Checkpoint before freeze.
       const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck1);
       // Freeze.
       await freezeBucket(api, bob, bucketId);
       // Upload more data.
-      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data");
+      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", bob);
       // Checkpoint after freeze — should still work (captures frozen_start_seq).
       const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
       const result = await submitClientCheckpoint(api, bob, provider, bucketId, ck2);
@@ -210,7 +210,7 @@ async function main() {
       const data = "integrity check data for blake2-256";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
       assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
     },
   });
@@ -223,8 +223,8 @@ async function main() {
         duration: 100,
       });
       const data = "identical content for dedup test";
-      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data);
-      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
+      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data, bob);
       assert.strictEqual(r1.hash, r2.hash, "Hashes should match for identical content");
       assert.notStrictEqual(
         r1.commit.leaf_indices[0],

@@ -5,11 +5,13 @@
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use storage_client::{
     sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
     ProviderClient, ProviderSettings, StorageUserClient,
 };
-use storage_primitives::AgreementTerms;
+use storage_primitives::{AgreementTerms, Role};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
@@ -238,13 +240,18 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 ///
 /// Uses `//Alice` as the signing key so endpoints that sign commitments
 /// (`/commit`, `/commitment`, `/checkpoint/sign`, `/delete`) work end-to-end.
+/// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
     let storage = Arc::new(Storage::new());
-    let state = Arc::new(
-        ProviderState::with_seed(storage, "//Alice")
-            .expect("//Alice is a valid SURI")
-            .with_auth_disabled(),
-    );
+    let alice_account =
+        sp_core::crypto::AccountId32::new(subxt_signer::sr25519::dev::alice().public_key().0);
+    let mut state = ProviderState::with_seed(storage, "//Alice").expect("//Alice is a valid SURI");
+    let cache = Arc::new(MembershipCache::new(
+        Box::new(StaticMembershipResolver(vec![(alice_account, Role::Admin)])),
+        Duration::from_secs(60),
+    ));
+    state.set_auth_config(cache, Duration::from_secs(300));
+    let state = Arc::new(state);
     let app = create_router(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -270,6 +277,9 @@ pub async fn start_providers(n: usize) -> Vec<String> {
 
 /// Build a `StorageUserClient` pointed at the given provider URL.
 /// The chain WS URL is a placeholder — these integration tests never touch the chain.
+///
+/// Signs provider requests as `//Alice`, matching the `Admin` member granted by
+/// [`start_test_provider`], so uploads/commits are authorized.
 #[allow(dead_code)]
 pub fn make_client(provider_url: String) -> StorageUserClient {
     StorageUserClient::new(ClientConfig {
@@ -279,4 +289,5 @@ pub fn make_client(provider_url: String) -> StorageUserClient {
         enable_retries: false,
     })
     .expect("ClientConfig should be valid")
+    .with_auth_signer(subxt_signer::sr25519::dev::alice())
 }

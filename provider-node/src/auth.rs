@@ -44,6 +44,17 @@ pub trait MembershipResolver: Send + Sync {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String>;
 }
 
+/// A [`MembershipResolver`] that returns a fixed member set for every bucket.
+/// Used by integration tests across crates.
+pub struct StaticMembershipResolver(pub Vec<(AccountId32, Role)>);
+
+#[async_trait::async_trait]
+impl MembershipResolver for StaticMembershipResolver {
+    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        Ok(self.0.clone())
+    }
+}
+
 /// Membership cache backed by chain queries via subxt.
 pub struct MembershipCache {
     cache: DashMap<u64, CachedMembership>,
@@ -320,7 +331,7 @@ pub fn verify_signature(
     );
 
     // Verify signature
-    let message = format!("web3storage:{method}:{bucket_id}:{timestamp_str}");
+    let message = storage_primitives::auth_message(method, bucket_id, timestamp_str);
     if !sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey) {
         return Err(Error::AuthRequired);
     }
@@ -330,9 +341,9 @@ pub fn verify_signature(
 
 /// Check that the caller has sufficient permissions.
 ///
-/// Auth is enforced by default. This is a no-op (returns `Ok`) only when the
-/// operator started the node with `--disable-auth-i-know-what-i-am-doing`, which
-/// strips the membership config from the state.
+/// Auth is always enforced. The caller must present a valid signed
+/// `Authorization` header whose account holds the [`RequiredRole`] for the
+/// bucket; otherwise the request is rejected.
 pub async fn require_role(
     state: &ProviderState,
     auth_header: Option<&str>,
@@ -341,14 +352,10 @@ pub async fn require_role(
     required: RequiredRole,
     max_skew: Duration,
 ) -> Result<(), Error> {
-    if !state.auth_enabled {
-        return Ok(());
-    }
-
     let cache = state
         .membership_cache
         .as_ref()
-        .ok_or_else(|| Error::Internal("Auth enabled but no membership cache".to_string()))?;
+        .ok_or_else(|| Error::Internal("No membership cache".to_string()))?;
 
     let header = auth_header.ok_or(Error::AuthRequired)?;
     let account = verify_signature(header, method, bucket_id, max_skew)?;
@@ -384,13 +391,12 @@ mod tests {
         bucket_id: u64,
         timestamp: u64,
     ) -> String {
-        let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
-        let signature = keypair.sign(message.as_bytes());
-        format!(
-            "Web3Storage 0x{}:0x{}:{}",
-            hex::encode(keypair.public().0),
-            hex::encode(signature.0),
-            timestamp
+        storage_primitives::build_auth_header(
+            &keypair.public().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| keypair.sign(msg).0,
         )
     }
 

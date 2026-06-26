@@ -2,44 +2,28 @@
 
 //! Integration tests for the file system HTTP API endpoints.
 
+mod common;
+
 use axum::http::StatusCode;
-use reqwest::Client;
+use common::SignedClient;
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_provider_node::{create_router, ProviderState, Storage};
-use tokio::net::TcpListener;
+use storage_provider_node::{ProviderState, Storage};
 
 struct TestServer {
     addr: SocketAddr,
-    client: Client,
+    client: SignedClient,
 }
 
 impl TestServer {
     async fn new() -> Self {
-        let storage = Arc::new(Storage::new());
-        // Functional tests, not auth tests: run with auth disabled (auth is
-        // enforced by default; see auth_integration.rs for the auth coverage).
-        let state = Arc::new(
-            ProviderState::with_provider_id(storage, "0xtest_provider".to_string())
-                .with_auth_disabled(),
-        );
-
-        let app = create_router(state);
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        Self {
-            addr,
-            client: Client::new(),
-        }
+        let (addr, client) = common::serve(ProviderState::with_provider_id(
+            Arc::new(Storage::new()),
+            "0xtest_provider".to_string(),
+        ))
+        .await;
+        Self { addr, client }
     }
 
     fn url(&self, path: &str) -> String {

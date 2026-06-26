@@ -265,7 +265,7 @@ async function main() {
     console.log("  bucketC =", bucketC.toString());
 
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");
-    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test");
+    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", client);
     const ck = await fetchCheckpointSignature(providerUrl, bucketC);
     await submitClientCheckpoint(api, client, provider, bucketC, ck);
 

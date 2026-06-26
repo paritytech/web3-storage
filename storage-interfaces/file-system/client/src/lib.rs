@@ -151,11 +151,16 @@ impl FileSystemClient {
     /// Create a client with a development signer (for testing).
     pub async fn with_dev_signer(mut self, name: &str) -> Result<Self> {
         self.substrate_client = self.substrate_client.with_dev_signer(name)?;
+        // Reuse the same key to authenticate bucket-scoped provider requests.
+        if let Ok(keypair) = self.substrate_client.signer_keypair() {
+            self.storage_client.set_auth_signer(keypair);
+        }
         Ok(self)
     }
 
     /// Set a custom signer for blockchain transactions.
     pub fn with_signer(mut self, signer: subxt_signer::sr25519::Keypair) -> Self {
+        self.storage_client.set_auth_signer(signer.clone());
         self.substrate_client = self.substrate_client.with_signer(signer);
         self
     }

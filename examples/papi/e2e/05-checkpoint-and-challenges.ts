@@ -57,7 +57,7 @@ async function main() {
   });
 
   const payload = `checkpoint-test @ ${Date.now()}`;
-  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload);
+  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
   const uploadInfo = {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,

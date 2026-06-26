@@ -164,10 +164,16 @@ async function main() {
     assert(bought, "BucketBoughtFor not emitted by contract");
     console.log("  BucketBoughtFor user:", (bought.args as any).user);
 
-    // 5) Off-chain ops are unchanged — they bypass the contract entirely.
-    console.log("\n[5/6] Off-chain upload + challenge round-trip…");
+    // 5) The bucket admin is the contract's keyless account, so the contract
+    //    grants the client's key Writer access before it can sign uploads.
+    console.log("\n[5/6] grantWriter(client) + off-chain upload + challenge round-trip…");
+    const grantData = encodeCall(abi, "grantWriter", [
+      bucketId,
+      toHex(client.publicKey),
+    ]);
+    await callContract(api, client, deployed.addressBytes, grantData);
     const payload = `Hello via SC! ${new Date().toISOString()}`;
-    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload);
+    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(
       downloaded,

@@ -5,8 +5,8 @@
  * surface. Chain ops delegate to the layer-0 pallet wrappers (silent, no
  * auto-retry, finalized submission + finalized reads by default — UI-grade,
  * reorg-safe; tests/examples opt into in-block/best via readOpts/submitMode);
- * HTTP ops go through core's retrying fetch and are signed when the signer
- * has a raw keypair.
+ * HTTP ops go through core's retrying fetch and are signed with the signer's
+ * raw keypair, which the provider always requires.
  *
  * Verification: `downloadByCid` is verified (single chunk — its hash IS the
  * CID; the layer-0 downloadChunk throws CidMismatchError). Path-based

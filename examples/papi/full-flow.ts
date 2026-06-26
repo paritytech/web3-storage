@@ -90,9 +90,9 @@ async function setupAgreement(
   return bucketId;
 }
 
-async function uploadAndVerify(bucketId: bigint) {
+async function uploadAndVerify(bucketId: bigint, client: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload);
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -176,7 +176,7 @@ async function main() {
     const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(bucketId);
+    const upload = await uploadAndVerify(bucketId, client);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
