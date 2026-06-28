@@ -20,7 +20,7 @@ import {
   type SignedTerms,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
-import { signer$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
+import { signer$$, keypair$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -91,6 +91,14 @@ api$$.subscribe((api) => {
 // setSigner(), leaving client.signerAddress null when refreshDrives() runs.
 combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
   client.setSigner(signer, address);
+});
+
+// The raw keypair signs provider HTTP requests (/fs uploads, listing, delete).
+// Own subscription, mirroring setSigner above; rebuild() folds it into the
+// ChainSigner. A missing keypair means unsigned requests, which the provider
+// rejects with 401.
+keypair$$.subscribe((keypair) => {
+  client.setKeypair(keypair);
 });
 
 export function getDriveClient(): DriveClient {

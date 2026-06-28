@@ -19,6 +19,7 @@ import {
   parseMultiaddrToUrl,
   toSs58,
   type ChainSigner,
+  type Keypair,
   type NegotiateRequest,
   type SignedTerms,
 } from "@web3-storage/sdk";
@@ -111,6 +112,7 @@ export class DriveClient {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
+  private keypair: Keypair | null = null;
   private fsc: FileSystemClient | null = null;
 
   private rebuild(): void {
@@ -120,14 +122,15 @@ export class DriveClient {
     }
     let chainSigner: ChainSigner | null = null;
     if (this.signer && this.signerAddress) {
-      // Wallet flows hand us a PolkadotSigner + address; recover the public
-      // key from the address. No raw keypair here, so provider requests go
-      // unsigned (same as this app always behaved).
-      const [publicKey] = ss58Decode(this.signerAddress);
+      // drive-ui derives raw dev-account keypairs, so provider requests are
+      // signed (FileSystemClient reads `signer.keypair`). Fall back to the
+      // address-recovered public key if only a wallet signer is present.
+      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
         publicKey,
+        keypair: this.keypair ?? undefined,
       };
     }
     this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
@@ -143,6 +146,11 @@ export class DriveClient {
   setSigner(signer: Signer | null, address: string | null): void {
     this.signer = signer;
     this.signerAddress = address;
+    this.rebuild();
+  }
+
+  setKeypair(keypair: Keypair | null): void {
+    this.keypair = keypair;
     this.rebuild();
   }
 
