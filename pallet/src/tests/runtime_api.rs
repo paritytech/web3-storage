@@ -279,6 +279,190 @@ fn query_challenges_at_returns_data() {
         assert_eq!(challenges[0].provider, 2u64.encode());
         assert_eq!(challenges[0].challenger, 3u64.encode());
         assert_eq!(challenges[0].deadline, 101);
+        assert_eq!(challenges[0].index, 0);
         assert_eq!(challenges[0].deposit, 100);
+    });
+}
+
+#[test]
+fn agreement_response_includes_bucket_id() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+
+        let response = StorageProvider::query_agreement_info(bucket_id, &2).unwrap();
+        assert_eq!(response.bucket_id, bucket_id);
+
+        let bucket_agreements = StorageProvider::query_bucket_agreements(bucket_id);
+        assert_eq!(bucket_agreements.len(), 1);
+        assert_eq!(bucket_agreements[0].bucket_id, bucket_id);
+
+        let provider_agreements = StorageProvider::query_provider_agreements(&2);
+        assert_eq!(provider_agreements.len(), 1);
+        assert_eq!(provider_agreements[0].bucket_id, bucket_id);
+    });
+}
+
+#[test]
+fn challenge_response_includes_index() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id_a = setup_agreement(2, 1, 50, 200);
+        let bucket_id_b = setup_agreement(3, 1, 50, 200);
+
+        let snapshot = BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            primary_signers: vec![0x01],
+        };
+        Buckets::<Test>::mutate(bucket_id_a, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot.clone());
+            }
+        });
+        Buckets::<Test>::mutate(bucket_id_b, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot);
+            }
+        });
+
+        // Two challenges at the same deadline block
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_a,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_b,
+            3,
+            0,
+            0,
+        ));
+
+        let challenges = StorageProvider::query_challenges_at(101);
+        assert_eq!(challenges.len(), 2);
+        assert_eq!(challenges[0].index, 0);
+        assert_eq!(challenges[1].index, 1);
+    });
+}
+
+#[test]
+fn query_bucket_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id_a = setup_agreement(2, 1, 50, 200);
+        let bucket_id_b = setup_agreement(3, 1, 50, 200);
+
+        let snapshot = BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            primary_signers: vec![0x01],
+        };
+        Buckets::<Test>::mutate(bucket_id_a, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot.clone());
+            }
+        });
+        Buckets::<Test>::mutate(bucket_id_b, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot);
+            }
+        });
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_a,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_b,
+            3,
+            0,
+            0,
+        ));
+
+        let results = StorageProvider::query_bucket_challenges(bucket_id_a);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_a);
+        assert_eq!(results[0].deadline, 101);
+        assert_eq!(results[0].index, 0);
+
+        let results = StorageProvider::query_bucket_challenges(bucket_id_b);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_b);
+
+        let empty = StorageProvider::query_bucket_challenges(999);
+        assert!(empty.is_empty());
+    });
+}
+
+#[test]
+fn query_provider_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id_a = setup_agreement(2, 1, 50, 200);
+        let bucket_id_b = setup_agreement(3, 1, 50, 200);
+
+        let snapshot = BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            primary_signers: vec![0x01],
+        };
+        Buckets::<Test>::mutate(bucket_id_a, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot.clone());
+            }
+        });
+        Buckets::<Test>::mutate(bucket_id_b, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot);
+            }
+        });
+
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_a,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_b,
+            3,
+            0,
+            0,
+        ));
+
+        let results = StorageProvider::query_provider_challenges(&2);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_a);
+        assert_eq!(results[0].provider, 2u64.encode());
+        assert_eq!(results[0].index, 0);
+
+        let results = StorageProvider::query_provider_challenges(&3);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_b);
+
+        let empty = StorageProvider::query_provider_challenges(&99);
+        assert!(empty.is_empty());
     });
 }

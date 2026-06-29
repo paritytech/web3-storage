@@ -3579,6 +3579,7 @@ pub mod pallet {
         ) -> Option<crate::runtime_api::AgreementResponse> {
             StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
                 crate::runtime_api::AgreementResponse {
+                    bucket_id,
                     owner: agreement.owner.encode(),
                     provider: provider.encode(),
                     max_bytes: agreement.max_bytes,
@@ -3613,6 +3614,7 @@ pub mod pallet {
             StorageAgreements::<T>::iter_prefix(bucket_id)
                 .map(
                     |(provider, agreement)| crate::runtime_api::AgreementResponse {
+                        bucket_id,
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -3656,7 +3658,8 @@ pub mod pallet {
             StorageAgreements::<T>::iter()
                 .filter(|(_, p, _)| p == provider)
                 .map(
-                    |(_bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
+                    |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
+                        bucket_id,
                         owner: agreement.owner.encode(),
                         provider: provider.encode(),
                         max_bytes: agreement.max_bytes,
@@ -3691,8 +3694,9 @@ pub mod pallet {
         ) -> Vec<crate::runtime_api::ChallengeResponse> {
             Challenges::<T>::get(block)
                 .unwrap_or_default()
-                .iter()
-                .map(|challenge| crate::runtime_api::ChallengeResponse {
+                .into_iter()
+                .enumerate()
+                .map(|(idx, challenge)| crate::runtime_api::ChallengeResponse {
                     bucket_id: challenge.bucket_id,
                     provider: challenge.provider.encode(),
                     challenger: challenge.challenger.encode(),
@@ -3701,8 +3705,68 @@ pub mod pallet {
                     leaf_index: challenge.leaf_index,
                     chunk_index: challenge.chunk_index,
                     deadline: block.saturated_into::<u32>(),
+                    index: idx as u16,
                     deposit: challenge.deposit.saturated_into::<u128>(),
                 })
+                .collect()
+        }
+
+        /// Query all challenges for a specific bucket.
+        pub fn query_bucket_challenges(
+            bucket_id: BucketId,
+        ) -> Vec<crate::runtime_api::ChallengeResponse> {
+            Challenges::<T>::iter()
+                .flat_map(|(block, challenges)| {
+                    let deadline: u32 = block.saturated_into::<u32>();
+                    challenges
+                        .into_iter()
+                        .enumerate()
+                        .map(
+                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
+                                bucket_id: challenge.bucket_id,
+                                provider: challenge.provider.encode(),
+                                challenger: challenge.challenger.encode(),
+                                mmr_root: challenge.mmr_root,
+                                start_seq: challenge.start_seq,
+                                leaf_index: challenge.leaf_index,
+                                chunk_index: challenge.chunk_index,
+                                deadline,
+                                index: idx as u16,
+                                deposit: challenge.deposit.saturated_into::<u128>(),
+                            },
+                        )
+                })
+                .filter(|c| c.bucket_id == bucket_id)
+                .collect()
+        }
+
+        /// Query all challenges targeting a specific provider.
+        pub fn query_provider_challenges(
+            provider: &T::AccountId,
+        ) -> Vec<crate::runtime_api::ChallengeResponse> {
+            let provider_encoded = provider.encode();
+            Challenges::<T>::iter()
+                .flat_map(|(block, challenges)| {
+                    let deadline: u32 = block.saturated_into::<u32>();
+                    challenges
+                        .into_iter()
+                        .enumerate()
+                        .map(
+                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
+                                bucket_id: challenge.bucket_id,
+                                provider: challenge.provider.encode(),
+                                challenger: challenge.challenger.encode(),
+                                mmr_root: challenge.mmr_root,
+                                start_seq: challenge.start_seq,
+                                leaf_index: challenge.leaf_index,
+                                chunk_index: challenge.chunk_index,
+                                deadline,
+                                index: idx as u16,
+                                deposit: challenge.deposit.saturated_into::<u128>(),
+                            },
+                        )
+                })
+                .filter(|c| c.provider == provider_encoded)
                 .collect()
         }
 

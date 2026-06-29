@@ -810,6 +810,14 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_challenges_at(block)
         }
 
+        fn bucket_challenges(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_bucket_challenges(bucket_id)
+        }
+
+        fn provider_challenges(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_provider_challenges(&provider)
+        }
+
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool {
             StorageProvider::query_can_accept_bytes(&provider, additional_bytes)
         }
