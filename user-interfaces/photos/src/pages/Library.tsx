@@ -9,7 +9,7 @@ import { Image, FolderPlus, Anchor, AlertTriangle, Settings2 } from 'lucide-reac
 import { useSelectedAccount } from '@/state/wallet.state'
 import { useSelectedNetwork } from '@/state/network.state'
 import { useConnectionStatus, useConnectionError } from '@/state/chain.state'
-import { getApi } from '@/lib/chain-client'
+import { requireApi } from '@/lib/chain-client'
 import {
   readLibraryOf,
   resolveContractAddress,
@@ -60,7 +60,7 @@ export function Library() {
     ;(async () => {
       try {
         const userH160 = substrateToH160(account.polkadotSigner.publicKey)
-        const library = await readLibraryOf(getApi(), contract.address, userH160, account.address)
+        const library = await readLibraryOf(requireApi(), contract.address, userH160, account.address)
         if (!cancelled) setState({ kind: 'ready', library, contract })
       } catch (e) {
         if (!cancelled) {
