@@ -70,6 +70,21 @@ jobs:
           echo "job_url=$jobLink" >> $GITHUB_OUTPUT
           echo "run_url=$runLink" >> $GITHUB_OUTPUT
 
+      # Comment via the CMD_BOT App token: the default GITHUB_TOKEN is capped
+      # read-only by org policy, so commenting on the PR with it 403s
+      # ("Resource not accessible by integration"). The App token's scope comes
+      # from the App installation, not the org GITHUB_TOKEN policy.
+      - name: Generate App token for PR comment
+        if: ${{ github.event.inputs.is_quiet == 'false' &&
+          !startsWith(github.event.inputs.cmd, 'fmt') }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: comment_token
+        with:
+          app-id: ${{ secrets.CMD_BOT_APP_ID }}
+          private-key: ${{ secrets.CMD_BOT_APP_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+
       - name: Comment PR (Start)
         # No need to comment if --quiet
         if: ${{ github.event.inputs.is_quiet == 'false' &&
@@ -78,7 +93,7 @@ jobs:
         env:
           JOB_URL: ${{ steps.build-link.outputs.job_url }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.comment_token.outputs.token }}
           script: |
             let job_url = process.env.JOB_URL || '';
             let cmd = process.env.CMD;
@@ -302,6 +317,8 @@ jobs:
           app-id: ${{ secrets.CMD_BOT_APP_ID }}
           private-key: ${{ secrets.CMD_BOT_APP_KEY }}
           permission-contents: write
+          permission-issues: write # also used to post the "finished" PR comment
+          permission-pull-requests: write
 
       # Pushes commits to the PR branch via the App token, so this checkout must
       # persist credentials — artipacked is expected and safe here.
@@ -370,7 +387,7 @@ jobs:
           PR_NUM: ${{ github.event.inputs.pr_num }}
           RUN_URL: ${{ needs.before-cmd.outputs.run_url }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.generate_token.outputs.token }}
           script: |
             let runUrl = process.env.RUN_URL || '';
             let subweight = process.env.SUBWEIGHT || '';
@@ -405,6 +422,17 @@ jobs:
       PR_NUM: ${{ github.event.inputs.pr_num }}
       COMMENT_ID: ${{ github.event.inputs.comment_id }}
     steps:
+      # Comment/react via the CMD_BOT App token (the default GITHUB_TOKEN is
+      # capped read-only by org policy and 403s on PR comments).
+      - name: Generate App token for PR comment
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: comment_token
+        with:
+          app-id: ${{ secrets.CMD_BOT_APP_ID }}
+          private-key: ${{ secrets.CMD_BOT_APP_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+
       - name: Comment PR (Failure)
         if: ${{ needs.cmd.result == 'failure' || needs.after-cmd.result == 'failure' ||
           needs.before-cmd.result == 'failure' }}
@@ -412,7 +440,7 @@ jobs:
         env:
           JOB_URL: ${{ needs.before-cmd.outputs.job_url }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.comment_token.outputs.token }}
           script: |
             let jobUrl = process.env.JOB_URL || '';
             let cmdOutput = process.env.CMD_OUTPUT;
@@ -434,7 +462,7 @@ jobs:
           needs.before-cmd.result == 'failure' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.comment_token.outputs.token }}
           script: |
             github.rest.reactions.createForIssueComment({
               comment_id: Number(process.env.COMMENT_ID),
@@ -448,7 +476,7 @@ jobs:
           needs.before-cmd.result == 'success' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.comment_token.outputs.token }}
           script: |
             github.rest.reactions.createForIssueComment({
               comment_id: Number(process.env.COMMENT_ID),
