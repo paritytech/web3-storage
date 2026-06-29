@@ -8,171 +8,251 @@ import type { Abi } from 'viem'
 
 export const PHOTOS_ABI = [
   {
-    "type": "function",
-    "name": "libraryOf",
-    "stateMutability": "view",
+    "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
+        "internalType": "address",
         "name": "user",
         "type": "address"
-      }
-    ],
-    "outputs": [
+      },
       {
+        "indexed": true,
+        "internalType": "uint64",
         "name": "driveId",
         "type": "uint64"
       },
       {
-        "name": "rootCid",
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "provider",
         "type": "bytes32"
-      },
-      {
-        "name": "exists",
-        "type": "bool"
       }
-    ]
+    ],
+    "name": "LibraryCreated",
+    "type": "event"
   },
   {
-    "type": "function",
-    "name": "setRoot",
-    "stateMutability": "nonpayable",
+    "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint64",
+        "name": "driveId",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
         "name": "rootCid",
         "type": "bytes32"
       }
     ],
-    "outputs": []
+    "name": "RootUpdated",
+    "type": "event"
   },
   {
-    "type": "function",
-    "name": "createLibrary",
-    "stateMutability": "payable",
     "inputs": [
       {
+        "internalType": "bytes32",
         "name": "userAccount",
         "type": "bytes32"
       },
       {
+        "internalType": "string",
         "name": "name",
         "type": "string"
       },
       {
+        "internalType": "bytes32",
         "name": "provider",
         "type": "bytes32"
       },
       {
-        "name": "terms",
-        "type": "tuple",
         "components": [
           {
+            "internalType": "bytes32",
             "name": "owner",
             "type": "bytes32"
           },
           {
+            "internalType": "uint64",
             "name": "maxBytes",
             "type": "uint64"
           },
           {
+            "internalType": "uint32",
             "name": "duration",
             "type": "uint32"
           },
           {
+            "internalType": "uint128",
             "name": "pricePerByte",
             "type": "uint128"
           },
           {
+            "internalType": "uint32",
             "name": "validUntil",
             "type": "uint32"
           },
           {
+            "internalType": "uint64",
             "name": "nonce",
             "type": "uint64"
           },
           {
+            "internalType": "bool",
             "name": "hasBucketId",
             "type": "bool"
           },
           {
+            "internalType": "uint64",
             "name": "bucketId",
             "type": "uint64"
           },
           {
+            "internalType": "bool",
             "name": "hasReplicaParams",
             "type": "bool"
           },
           {
-            "name": "replicaParams",
-            "type": "tuple",
             "components": [
               {
+                "internalType": "uint128",
                 "name": "syncBalance",
                 "type": "uint128"
               },
               {
+                "internalType": "uint32",
                 "name": "minSyncInterval",
                 "type": "uint32"
               },
               {
+                "internalType": "uint128",
                 "name": "syncPrice",
                 "type": "uint128"
               }
-            ]
+            ],
+            "internalType": "struct IDriveRegistry.PrimitiveReplicaTerms",
+            "name": "replicaParams",
+            "type": "tuple"
           }
-        ]
+        ],
+        "internalType": "struct IDriveRegistry.PrimitiveAgreementTerms",
+        "name": "terms",
+        "type": "tuple"
       },
       {
+        "internalType": "bytes",
         "name": "signature",
         "type": "bytes"
       }
     ],
+    "name": "createLibrary",
     "outputs": [
       {
+        "internalType": "uint64",
         "name": "driveId",
         "type": "uint64"
       }
-    ]
+    ],
+    "stateMutability": "payable",
+    "type": "function"
   },
   {
-    "type": "event",
-    "name": "LibraryCreated",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "indexed": true
-      },
-      {
-        "name": "driveId",
-        "type": "uint64",
-        "indexed": true
-      },
-      {
-        "name": "provider",
-        "type": "bytes32",
-        "indexed": false
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
       }
-    ]
+    ],
+    "name": "driveOwner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
-    "type": "event",
-    "name": "RootUpdated",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "indexed": true
-      },
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "libraries",
+    "outputs": [
       {
+        "internalType": "uint64",
         "name": "driveId",
-        "type": "uint64",
-        "indexed": true
+        "type": "uint64"
       },
       {
+        "internalType": "bytes32",
         "name": "rootCid",
-        "type": "bytes32",
-        "indexed": false
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bool",
+        "name": "exists",
+        "type": "bool"
       }
-    ]
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      }
+    ],
+    "name": "libraryOf",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "driveId",
+        "type": "uint64"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "rootCid",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bool",
+        "name": "exists",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "rootCid",
+        "type": "bytes32"
+      }
+    ],
+    "name": "setRoot",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   }
 ] as const satisfies Abi
