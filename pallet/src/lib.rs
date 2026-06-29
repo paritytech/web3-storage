@@ -3770,6 +3770,36 @@ pub mod pallet {
                 .collect()
         }
 
+        /// Query all challenges created by a specific challenger.
+        pub fn query_challenger_challenges(
+            challenger: &T::AccountId,
+        ) -> Vec<crate::runtime_api::ChallengeResponse> {
+            let challenger_encoded = challenger.encode();
+            Challenges::<T>::iter()
+                .flat_map(|(block, challenges)| {
+                    let deadline: u32 = block.saturated_into::<u32>();
+                    challenges
+                        .into_iter()
+                        .enumerate()
+                        .map(
+                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
+                                bucket_id: challenge.bucket_id,
+                                provider: challenge.provider.encode(),
+                                challenger: challenge.challenger.encode(),
+                                mmr_root: challenge.mmr_root,
+                                start_seq: challenge.start_seq,
+                                leaf_index: challenge.leaf_index,
+                                chunk_index: challenge.chunk_index,
+                                deadline,
+                                index: idx as u16,
+                                deposit: challenge.deposit.saturated_into::<u128>(),
+                            },
+                        )
+                })
+                .filter(|c| c.challenger == challenger_encoded)
+                .collect()
+        }
+
         /// Check if provider can accept additional bytes.
         pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
             if let Some(provider_info) = Providers::<T>::get(provider) {

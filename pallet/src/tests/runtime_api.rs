@@ -466,3 +466,62 @@ fn query_provider_challenges_returns_data() {
         assert!(empty.is_empty());
     });
 }
+
+#[test]
+fn query_challenger_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        register_provider(2, 200);
+        register_provider(3, 200);
+        let bucket_id_a = setup_agreement(2, 1, 50, 200);
+        let bucket_id_b = setup_agreement(3, 1, 50, 200);
+
+        let snapshot = BucketSnapshot {
+            mmr_root: H256::repeat_byte(0xAB),
+            start_seq: 0,
+            leaf_count: 10,
+            checkpoint_block: 1,
+            primary_signers: vec![0x01],
+        };
+        Buckets::<Test>::mutate(bucket_id_a, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot.clone());
+            }
+        });
+        Buckets::<Test>::mutate(bucket_id_b, |b| {
+            if let Some(b) = b {
+                b.snapshot = Some(snapshot);
+            }
+        });
+
+        // challenger 4 challenges provider 2; challenger 5 challenges provider 3
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(4),
+            bucket_id_a,
+            2,
+            0,
+            0,
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id_b,
+            3,
+            0,
+            0,
+        ));
+
+        let results = StorageProvider::query_challenger_challenges(&4);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_a);
+        assert_eq!(results[0].challenger, 4u64.encode());
+        assert_eq!(results[0].index, 0);
+
+        let results = StorageProvider::query_challenger_challenges(&5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].bucket_id, bucket_id_b);
+        assert_eq!(results[0].challenger, 5u64.encode());
+
+        let empty = StorageProvider::query_challenger_challenges(&99);
+        assert!(empty.is_empty());
+    });
+}

@@ -818,6 +818,10 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_provider_challenges(&provider)
         }
 
+        fn challenger_challenges(challenger: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_challenger_challenges(&challenger)
+        }
+
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool {
             StorageProvider::query_can_accept_bytes(&provider, additional_bytes)
         }
