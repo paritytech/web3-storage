@@ -56,11 +56,11 @@ pub mod api {
     #[doc = r" The error type that is returned when there is a runtime issue."]
     pub type DispatchError = runtime_types::sp_runtime::DispatchError;
     #[doc = r" The outer event enum."]
-    pub type Event = runtime_types::storage_paseo_runtime::RuntimeEvent;
+    pub type Event = runtime_types::storage_parachain_runtime::RuntimeEvent;
     #[doc = r" The outer extrinsic enum."]
-    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
     #[doc = r" The outer error enum represents the DispatchError's Module variant."]
-    pub type Error = runtime_types::storage_paseo_runtime::RuntimeError;
+    pub type Error = runtime_types::storage_parachain_runtime::RuntimeError;
     pub fn constants() -> ConstantsApi {
         ConstantsApi
     }
@@ -236,7 +236,7 @@ pub mod api {
                 pub struct Version {}
                 pub mod execute_block {
                     use super::runtime_types;
-                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: LazyBlock < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
+                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: LazyBlock < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                     pub mod output {
                         use super::runtime_types;
                         pub type Output = ();
@@ -502,7 +502,7 @@ pub mod api {
                 use super::runtime_types;
                 pub mod apply_extrinsic {
                     use super::runtime_types;
-                    pub type Extrinsic = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
+                    pub type Extrinsic = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
                     pub mod output {
                         use super::runtime_types;
                         pub type Output = :: core :: result :: Result < :: core :: result :: Result < () , runtime_types :: sp_runtime :: DispatchError > , runtime_types :: sp_runtime :: transaction_validity :: TransactionValidityError > ;
@@ -546,7 +546,7 @@ pub mod api {
                     pub type Inherent = runtime_types::sp_inherents::InherentData;
                     pub mod output {
                         use super::runtime_types;
-                        pub type Output = :: subxt_core :: alloc :: vec :: Vec < :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
+                        pub type Output = :: subxt_core :: alloc :: vec :: Vec < :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                     }
                 }
                 #[derive(
@@ -564,7 +564,7 @@ pub mod api {
                 }
                 pub mod check_inherents {
                     use super::runtime_types;
-                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: LazyBlock < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
+                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: LazyBlock < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                     pub type Data = runtime_types::sp_inherents::InherentData;
                     pub mod output {
                         use super::runtime_types;
@@ -634,7 +634,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Source =
                         runtime_types::sp_runtime::transaction_validity::TransactionSource;
-                    pub type Tx = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
+                    pub type Tx = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
                     pub type BlockHash = ::subxt_core::utils::H256;
                     pub mod output {
                         use super::runtime_types;
@@ -1048,7 +1048,7 @@ pub mod api {
                 use super::runtime_types;
                 pub mod query_info {
                     use super::runtime_types;
-                    pub type Uxt = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
+                    pub type Uxt = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
                     pub type Len = ::core::primitive::u32;
                     pub mod output {
                         use super::runtime_types;
@@ -1075,7 +1075,7 @@ pub mod api {
                 }
                 pub mod query_fee_details {
                     use super::runtime_types;
-                    pub type Uxt = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
+                    pub type Uxt = :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > ;
                     pub type Len = ::core::primitive::u32;
                     pub mod output {
                         use super::runtime_types;
@@ -1660,10 +1660,10 @@ pub mod api {
                             provider,
                         },
                         [
-                            146u8, 43u8, 156u8, 60u8, 219u8, 153u8, 150u8, 241u8, 93u8, 98u8,
-                            238u8, 216u8, 211u8, 176u8, 17u8, 56u8, 155u8, 45u8, 109u8, 230u8,
-                            126u8, 92u8, 242u8, 13u8, 121u8, 246u8, 137u8, 247u8, 101u8, 65u8,
-                            182u8, 237u8,
+                            185u8, 217u8, 253u8, 74u8, 15u8, 186u8, 160u8, 108u8, 48u8, 91u8,
+                            154u8, 27u8, 151u8, 229u8, 72u8, 112u8, 61u8, 254u8, 203u8, 229u8,
+                            186u8, 114u8, 41u8, 36u8, 105u8, 163u8, 50u8, 17u8, 120u8, 210u8, 88u8,
+                            249u8,
                         ],
                     )
                 }
@@ -1680,10 +1680,10 @@ pub mod api {
                         "bucket_agreements",
                         types::BucketAgreements { bucket_id },
                         [
-                            239u8, 126u8, 178u8, 79u8, 225u8, 250u8, 54u8, 239u8, 245u8, 231u8,
-                            13u8, 190u8, 236u8, 47u8, 92u8, 93u8, 87u8, 211u8, 163u8, 212u8, 163u8,
-                            71u8, 112u8, 241u8, 54u8, 126u8, 255u8, 55u8, 141u8, 185u8, 106u8,
-                            99u8,
+                            11u8, 92u8, 138u8, 146u8, 104u8, 81u8, 8u8, 123u8, 246u8, 134u8, 227u8,
+                            211u8, 110u8, 107u8, 103u8, 107u8, 123u8, 17u8, 106u8, 160u8, 6u8,
+                            17u8, 198u8, 199u8, 245u8, 208u8, 236u8, 14u8, 193u8, 72u8, 190u8,
+                            180u8,
                         ],
                     )
                 }
@@ -1700,9 +1700,9 @@ pub mod api {
                         "provider_agreements",
                         types::ProviderAgreements { provider },
                         [
-                            84u8, 242u8, 205u8, 123u8, 66u8, 231u8, 87u8, 65u8, 79u8, 165u8, 242u8,
-                            119u8, 47u8, 248u8, 97u8, 127u8, 58u8, 21u8, 165u8, 167u8, 165u8, 74u8,
-                            72u8, 145u8, 96u8, 250u8, 75u8, 179u8, 90u8, 72u8, 104u8, 231u8,
+                            70u8, 90u8, 83u8, 16u8, 35u8, 185u8, 148u8, 112u8, 210u8, 153u8, 225u8,
+                            62u8, 151u8, 222u8, 39u8, 198u8, 156u8, 26u8, 100u8, 25u8, 162u8,
+                            235u8, 80u8, 162u8, 99u8, 75u8, 103u8, 56u8, 42u8, 12u8, 136u8, 33u8,
                         ],
                     )
                 }
@@ -1719,9 +1719,67 @@ pub mod api {
                         "challenges_at",
                         types::ChallengesAt { block },
                         [
-                            220u8, 62u8, 223u8, 93u8, 197u8, 111u8, 59u8, 100u8, 135u8, 2u8, 245u8,
-                            114u8, 151u8, 191u8, 140u8, 213u8, 81u8, 203u8, 122u8, 7u8, 12u8,
-                            239u8, 56u8, 147u8, 232u8, 137u8, 6u8, 192u8, 28u8, 164u8, 23u8, 198u8,
+                            173u8, 97u8, 89u8, 253u8, 87u8, 109u8, 200u8, 3u8, 162u8, 165u8, 15u8,
+                            240u8, 136u8, 40u8, 220u8, 56u8, 21u8, 135u8, 15u8, 15u8, 169u8, 88u8,
+                            189u8, 153u8, 242u8, 199u8, 132u8, 162u8, 130u8, 85u8, 9u8, 3u8,
+                        ],
+                    )
+                }
+                #[doc = " Get all challenges for a specific bucket."]
+                pub fn bucket_challenges(
+                    &self,
+                    bucket_id: types::bucket_challenges::BucketId,
+                ) -> ::subxt_core::runtime_api::payload::StaticPayload<
+                    types::BucketChallenges,
+                    types::bucket_challenges::output::Output,
+                > {
+                    ::subxt_core::runtime_api::payload::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "bucket_challenges",
+                        types::BucketChallenges { bucket_id },
+                        [
+                            74u8, 24u8, 86u8, 254u8, 75u8, 122u8, 176u8, 254u8, 51u8, 228u8, 125u8,
+                            9u8, 161u8, 85u8, 116u8, 218u8, 203u8, 129u8, 31u8, 81u8, 8u8, 209u8,
+                            180u8, 251u8, 9u8, 27u8, 217u8, 156u8, 143u8, 53u8, 1u8, 48u8,
+                        ],
+                    )
+                }
+                #[doc = " Get all challenges targeting a specific provider."]
+                pub fn provider_challenges(
+                    &self,
+                    provider: types::provider_challenges::Provider,
+                ) -> ::subxt_core::runtime_api::payload::StaticPayload<
+                    types::ProviderChallenges,
+                    types::provider_challenges::output::Output,
+                > {
+                    ::subxt_core::runtime_api::payload::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "provider_challenges",
+                        types::ProviderChallenges { provider },
+                        [
+                            198u8, 162u8, 7u8, 225u8, 86u8, 110u8, 53u8, 138u8, 248u8, 47u8, 228u8,
+                            110u8, 141u8, 216u8, 213u8, 243u8, 18u8, 29u8, 229u8, 199u8, 114u8,
+                            128u8, 28u8, 44u8, 161u8, 75u8, 93u8, 55u8, 30u8, 192u8, 156u8, 229u8,
+                        ],
+                    )
+                }
+                #[doc = " Get all challenges created by a specific challenger."]
+                pub fn challenger_challenges(
+                    &self,
+                    challenger: types::challenger_challenges::Challenger,
+                ) -> ::subxt_core::runtime_api::payload::StaticPayload<
+                    types::ChallengerChallenges,
+                    types::challenger_challenges::output::Output,
+                > {
+                    ::subxt_core::runtime_api::payload::StaticPayload::new_static(
+                        "StorageProviderApi",
+                        "challenger_challenges",
+                        types::ChallengerChallenges { challenger },
+                        [
+                            72u8, 180u8, 154u8, 21u8, 162u8, 72u8, 30u8, 142u8, 74u8, 226u8, 211u8,
+                            175u8, 142u8, 30u8, 60u8, 144u8, 77u8, 137u8, 190u8, 61u8, 121u8,
+                            155u8, 213u8, 209u8, 159u8, 155u8, 195u8, 19u8, 153u8, 213u8, 123u8,
+                            75u8,
                         ],
                     )
                 }
@@ -2007,6 +2065,75 @@ pub mod api {
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
                 pub struct ChallengesAt {
                     pub block: challenges_at::Block,
+                }
+                pub mod bucket_challenges {
+                    use super::runtime_types;
+                    pub type BucketId = ::core::primitive::u64;
+                    pub mod output {
+                        use super::runtime_types;
+                        pub type Output = ::subxt_core::alloc::vec::Vec<
+                            runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse,
+                        >;
+                    }
+                }
+                #[derive(
+                    :: subxt_core :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt_core :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
+                pub struct BucketChallenges {
+                    pub bucket_id: bucket_challenges::BucketId,
+                }
+                pub mod provider_challenges {
+                    use super::runtime_types;
+                    pub type Provider = ::subxt_core::utils::AccountId32;
+                    pub mod output {
+                        use super::runtime_types;
+                        pub type Output = ::subxt_core::alloc::vec::Vec<
+                            runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse,
+                        >;
+                    }
+                }
+                #[derive(
+                    :: subxt_core :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt_core :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
+                pub struct ProviderChallenges {
+                    pub provider: provider_challenges::Provider,
+                }
+                pub mod challenger_challenges {
+                    use super::runtime_types;
+                    pub type Challenger = ::subxt_core::utils::AccountId32;
+                    pub mod output {
+                        use super::runtime_types;
+                        pub type Output = ::subxt_core::alloc::vec::Vec<
+                            runtime_types::pallet_storage_provider::runtime_api::ChallengeResponse,
+                        >;
+                    }
+                }
+                #[derive(
+                    :: subxt_core :: ext :: scale_decode :: DecodeAsType,
+                    :: subxt_core :: ext :: scale_encode :: EncodeAsType,
+                    Clone,
+                    Debug,
+                    Eq,
+                    PartialEq,
+                )]
+                #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
+                #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
+                pub struct ChallengerChallenges {
+                    pub challenger: challenger_challenges::Challenger,
                 }
                 pub mod can_accept_bytes {
                     use super::runtime_types;
@@ -2382,14 +2509,14 @@ pub mod api {
                 use super::runtime_types;
                 pub mod dry_run_call {
                     use super::runtime_types;
-                    pub type Origin = runtime_types::storage_paseo_runtime::OriginCaller;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Origin = runtime_types::storage_parachain_runtime::OriginCaller;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                     pub type ResultXcmsVersion = ::core::primitive::u32;
                     pub mod output {
                         use super::runtime_types;
                         pub type Output = ::core::result::Result<
                             runtime_types::xcm_runtime_apis::dry_run::CallDryRunEffects<
-                                runtime_types::storage_paseo_runtime::RuntimeEvent,
+                                runtime_types::storage_parachain_runtime::RuntimeEvent,
                             >,
                             runtime_types::xcm_runtime_apis::dry_run::Error,
                         >;
@@ -2418,7 +2545,7 @@ pub mod api {
                         use super::runtime_types;
                         pub type Output = ::core::result::Result<
                             runtime_types::xcm_runtime_apis::dry_run::XcmDryRunEffects<
-                                runtime_types::storage_paseo_runtime::RuntimeEvent,
+                                runtime_types::storage_parachain_runtime::RuntimeEvent,
                             >,
                             runtime_types::xcm_runtime_apis::dry_run::Error,
                         >;
@@ -3593,7 +3720,7 @@ pub mod api {
                 }
                 pub mod trace_block {
                     use super::runtime_types;
-                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
+                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                     pub type Config =
                         runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
                     pub mod output {
@@ -3620,7 +3747,7 @@ pub mod api {
                 }
                 pub mod trace_tx {
                     use super::runtime_types;
-                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_paseo_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
+                    pub type Block = runtime_types :: sp_runtime :: generic :: block :: Block < runtime_types :: sp_runtime :: generic :: header :: Header < :: core :: primitive :: u32 > , :: subxt_core :: utils :: UncheckedExtrinsic < :: subxt_core :: utils :: MultiAddress < :: subxt_core :: utils :: AccountId32 , () > , runtime_types :: storage_parachain_runtime :: RuntimeCall , runtime_types :: sp_runtime :: MultiSignature , runtime_types :: cumulus_pallet_weight_reclaim :: StorageWeightReclaim < (runtime_types :: frame_system :: extensions :: check_non_zero_sender :: CheckNonZeroSender , runtime_types :: frame_system :: extensions :: check_spec_version :: CheckSpecVersion , runtime_types :: frame_system :: extensions :: check_tx_version :: CheckTxVersion , runtime_types :: frame_system :: extensions :: check_genesis :: CheckGenesis , runtime_types :: frame_system :: extensions :: check_mortality :: CheckMortality , runtime_types :: frame_system :: extensions :: check_nonce :: CheckNonce , runtime_types :: frame_system :: extensions :: check_weight :: CheckWeight , runtime_types :: pallet_transaction_payment :: ChargeTransactionPayment , runtime_types :: frame_metadata_hash_extension :: CheckMetadataHash , runtime_types :: pallet_revive :: evm :: tx_extension :: SetOrigin ,) > > > ;
                     pub type TxIndex = ::core::primitive::u32;
                     pub type Config =
                         runtime_types::pallet_revive::evm::api::debug_rpc_types::TracerType;
@@ -3984,9 +4111,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                70u8, 121u8, 230u8, 222u8, 112u8, 166u8, 72u8, 128u8, 63u8, 87u8, 76u8, 4u8, 33u8,
-                238u8, 137u8, 15u8, 238u8, 4u8, 113u8, 35u8, 226u8, 85u8, 242u8, 249u8, 35u8, 16u8,
-                3u8, 110u8, 109u8, 138u8, 221u8, 160u8,
+                168u8, 82u8, 245u8, 138u8, 164u8, 245u8, 29u8, 188u8, 197u8, 192u8, 211u8, 130u8,
+                141u8, 82u8, 103u8, 113u8, 169u8, 191u8, 35u8, 61u8, 64u8, 207u8, 115u8, 115u8,
+                64u8, 64u8, 108u8, 242u8, 218u8, 60u8, 78u8, 11u8,
             ]
     }
     pub mod system {
@@ -4737,7 +4864,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Events = ::subxt_core::alloc::vec::Vec<
                         runtime_types::frame_system::EventRecord<
-                            runtime_types::storage_paseo_runtime::RuntimeEvent,
+                            runtime_types::storage_parachain_runtime::RuntimeEvent,
                             ::subxt_core::utils::H256,
                         >,
                     >;
@@ -7934,7 +8061,7 @@ pub mod api {
             }
             pub mod held {
                 use super::runtime_types;
-                pub type Reason = runtime_types::storage_paseo_runtime::RuntimeHoldReason;
+                pub type Reason = runtime_types::storage_parachain_runtime::RuntimeHoldReason;
                 pub type Who = ::subxt_core::utils::AccountId32;
                 pub type Amount = ::core::primitive::u128;
             }
@@ -7960,7 +8087,7 @@ pub mod api {
             }
             pub mod burned_held {
                 use super::runtime_types;
-                pub type Reason = runtime_types::storage_paseo_runtime::RuntimeHoldReason;
+                pub type Reason = runtime_types::storage_parachain_runtime::RuntimeHoldReason;
                 pub type Who = ::subxt_core::utils::AccountId32;
                 pub type Amount = ::core::primitive::u128;
             }
@@ -7987,7 +8114,7 @@ pub mod api {
             }
             pub mod transfer_on_hold {
                 use super::runtime_types;
-                pub type Reason = runtime_types::storage_paseo_runtime::RuntimeHoldReason;
+                pub type Reason = runtime_types::storage_parachain_runtime::RuntimeHoldReason;
                 pub type Source = ::subxt_core::utils::AccountId32;
                 pub type Dest = ::subxt_core::utils::AccountId32;
                 pub type Amount = ::core::primitive::u128;
@@ -8015,7 +8142,7 @@ pub mod api {
             }
             pub mod transfer_and_hold {
                 use super::runtime_types;
-                pub type Reason = runtime_types::storage_paseo_runtime::RuntimeHoldReason;
+                pub type Reason = runtime_types::storage_parachain_runtime::RuntimeHoldReason;
                 pub type Source = ::subxt_core::utils::AccountId32;
                 pub type Dest = ::subxt_core::utils::AccountId32;
                 pub type Transferred = ::core::primitive::u128;
@@ -8042,7 +8169,7 @@ pub mod api {
             }
             pub mod released {
                 use super::runtime_types;
-                pub type Reason = runtime_types::storage_paseo_runtime::RuntimeHoldReason;
+                pub type Reason = runtime_types::storage_parachain_runtime::RuntimeHoldReason;
                 pub type Who = ::subxt_core::utils::AccountId32;
                 pub type Amount = ::core::primitive::u128;
             }
@@ -8113,7 +8240,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Holds = runtime_types::bounded_collections::bounded_vec::BoundedVec<
                         runtime_types::frame_support::traits::tokens::misc::IdAmount<
-                            runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                            runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                             ::core::primitive::u128,
                         >,
                     >;
@@ -8123,7 +8250,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Freezes = runtime_types::bounded_collections::bounded_vec::BoundedVec<
                         runtime_types::frame_support::traits::tokens::misc::IdAmount<
-                            runtime_types::storage_paseo_runtime::RuntimeFreezeReason,
+                            runtime_types::storage_parachain_runtime::RuntimeFreezeReason,
                             ::core::primitive::u128,
                         >,
                     >;
@@ -8726,7 +8853,7 @@ pub mod api {
                 }
                 pub mod sudo {
                     use super::runtime_types;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for Sudo {
                     const PALLET: &'static str = "Sudo";
@@ -8753,7 +8880,7 @@ pub mod api {
                 }
                 pub mod sudo_unchecked_weight {
                     use super::runtime_types;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                     pub type Weight = runtime_types::sp_weights::weight_v2::Weight;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for SudoUncheckedWeight {
@@ -8806,7 +8933,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type Who =
                         ::subxt_core::utils::MultiAddress<::subxt_core::utils::AccountId32, ()>;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for SudoAs {
                     const PALLET: &'static str = "Sudo";
@@ -10114,7 +10241,7 @@ pub mod api {
                 }
                 pub mod set_keys {
                     use super::runtime_types;
-                    pub type Keys = runtime_types::storage_paseo_runtime::SessionKeys;
+                    pub type Keys = runtime_types::storage_parachain_runtime::SessionKeys;
                     pub type Proof = ::subxt_core::alloc::vec::Vec<::core::primitive::u8>;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for SetKeys {
@@ -10310,7 +10437,7 @@ pub mod api {
                     use super::runtime_types;
                     pub type QueuedKeys = ::subxt_core::alloc::vec::Vec<(
                         ::subxt_core::utils::AccountId32,
-                        runtime_types::storage_paseo_runtime::SessionKeys,
+                        runtime_types::storage_parachain_runtime::SessionKeys,
                     )>;
                 }
                 pub mod disabled_validators {
@@ -10322,7 +10449,7 @@ pub mod api {
                 }
                 pub mod next_keys {
                     use super::runtime_types;
-                    pub type NextKeys = runtime_types::storage_paseo_runtime::SessionKeys;
+                    pub type NextKeys = runtime_types::storage_parachain_runtime::SessionKeys;
                     pub type Param0 = ::subxt_core::utils::AccountId32;
                 }
                 pub mod key_owner {
@@ -15033,7 +15160,7 @@ pub mod api {
                 pub mod batch {
                     use super::runtime_types;
                     pub type Calls = ::subxt_core::alloc::vec::Vec<
-                        runtime_types::storage_paseo_runtime::RuntimeCall,
+                        runtime_types::storage_parachain_runtime::RuntimeCall,
                     >;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for Batch {
@@ -15070,7 +15197,7 @@ pub mod api {
                 pub mod as_derivative {
                     use super::runtime_types;
                     pub type Index = ::core::primitive::u16;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for AsDerivative {
                     const PALLET: &'static str = "Utility";
@@ -15105,7 +15232,7 @@ pub mod api {
                 pub mod batch_all {
                     use super::runtime_types;
                     pub type Calls = ::subxt_core::alloc::vec::Vec<
-                        runtime_types::storage_paseo_runtime::RuntimeCall,
+                        runtime_types::storage_parachain_runtime::RuntimeCall,
                     >;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for BatchAll {
@@ -15134,8 +15261,8 @@ pub mod api {
                 }
                 pub mod dispatch_as {
                     use super::runtime_types;
-                    pub type AsOrigin = runtime_types::storage_paseo_runtime::OriginCaller;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type AsOrigin = runtime_types::storage_parachain_runtime::OriginCaller;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for DispatchAs {
                     const PALLET: &'static str = "Utility";
@@ -15170,7 +15297,7 @@ pub mod api {
                 pub mod force_batch {
                     use super::runtime_types;
                     pub type Calls = ::subxt_core::alloc::vec::Vec<
-                        runtime_types::storage_paseo_runtime::RuntimeCall,
+                        runtime_types::storage_parachain_runtime::RuntimeCall,
                     >;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for ForceBatch {
@@ -15199,7 +15326,7 @@ pub mod api {
                 }
                 pub mod with_weight {
                     use super::runtime_types;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                     pub type Weight = runtime_types::sp_weights::weight_v2::Weight;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for WithWeight {
@@ -15245,8 +15372,8 @@ pub mod api {
                 }
                 pub mod if_else {
                     use super::runtime_types;
-                    pub type Main = runtime_types::storage_paseo_runtime::RuntimeCall;
-                    pub type Fallback = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Main = runtime_types::storage_parachain_runtime::RuntimeCall;
+                    pub type Fallback = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for IfElse {
                     const PALLET: &'static str = "Utility";
@@ -15273,8 +15400,8 @@ pub mod api {
                 }
                 pub mod dispatch_as_fallible {
                     use super::runtime_types;
-                    pub type AsOrigin = runtime_types::storage_paseo_runtime::OriginCaller;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type AsOrigin = runtime_types::storage_parachain_runtime::OriginCaller;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for DispatchAsFallible {
                     const PALLET: &'static str = "Utility";
@@ -20997,7 +21124,7 @@ pub mod api {
                 }
                 pub mod eth_substrate_call {
                     use super::runtime_types;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                     pub type TransactionEncoded =
                         ::subxt_core::alloc::vec::Vec<::core::primitive::u8>;
                 }
@@ -21159,7 +21286,7 @@ pub mod api {
                 }
                 pub mod dispatch_as_fallback_account {
                     use super::runtime_types;
-                    pub type Call = runtime_types::storage_paseo_runtime::RuntimeCall;
+                    pub type Call = runtime_types::storage_parachain_runtime::RuntimeCall;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for DispatchAsFallbackAccount {
                     const PALLET: &'static str = "Revive";
@@ -24166,21 +24293,21 @@ pub mod api {
                     #[codec(index = 24)]
                     #[doc = "Some balance was placed on hold."]
                     Held {
-                        reason: runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                        reason: runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                         who: ::subxt_core::utils::AccountId32,
                         amount: ::core::primitive::u128,
                     },
                     #[codec(index = 25)]
                     #[doc = "Held balance was burned from an account."]
                     BurnedHeld {
-                        reason: runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                        reason: runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                         who: ::subxt_core::utils::AccountId32,
                         amount: ::core::primitive::u128,
                     },
                     #[codec(index = 26)]
                     #[doc = "A transfer of `amount` on hold from `source` to `dest` was initiated."]
                     TransferOnHold {
-                        reason: runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                        reason: runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                         source: ::subxt_core::utils::AccountId32,
                         dest: ::subxt_core::utils::AccountId32,
                         amount: ::core::primitive::u128,
@@ -24188,7 +24315,7 @@ pub mod api {
                     #[codec(index = 27)]
                     #[doc = "The `transferred` balance is placed on hold at the `dest` account."]
                     TransferAndHold {
-                        reason: runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                        reason: runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                         source: ::subxt_core::utils::AccountId32,
                         dest: ::subxt_core::utils::AccountId32,
                         transferred: ::core::primitive::u128,
@@ -24196,7 +24323,7 @@ pub mod api {
                     #[codec(index = 28)]
                     #[doc = "Some balance was released from hold."]
                     Released {
-                        reason: runtime_types::storage_paseo_runtime::RuntimeHoldReason,
+                        reason: runtime_types::storage_parachain_runtime::RuntimeHoldReason,
                         who: ::subxt_core::utils::AccountId32,
                         amount: ::core::primitive::u128,
                     },
@@ -25747,7 +25874,7 @@ pub mod api {
                     #[doc = "* `transaction_encoded`: The RLP encoding of the Ethereum transaction,"]
                     eth_substrate_call {
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                         transaction_encoded: ::subxt_core::alloc::vec::Vec<::core::primitive::u8>,
                     },
@@ -25814,7 +25941,7 @@ pub mod api {
                     #[doc = "recovery function in case an `AccountId20` was used without creating a mapping first."]
                     dispatch_as_fallback_account {
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                 }
@@ -26588,7 +26715,7 @@ pub mod api {
                     #[doc = "  [`impl_opaque_keys`](sp_runtime::impl_opaque_keys) for more information about the"]
                     #[doc = "  proof format."]
                     set_keys {
-                        keys: runtime_types::storage_paseo_runtime::SessionKeys,
+                        keys: runtime_types::storage_parachain_runtime::SessionKeys,
                         proof: ::subxt_core::alloc::vec::Vec<::core::primitive::u8>,
                     },
                     #[codec(index = 1)]
@@ -27691,6 +27818,7 @@ pub mod api {
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
                 pub struct AgreementResponse {
+                    pub bucket_id: ::core::primitive::u64,
                     pub owner: ::subxt_core::alloc::vec::Vec<::core::primitive::u8>,
                     pub provider: ::subxt_core::alloc::vec::Vec<::core::primitive::u8>,
                     pub max_bytes: ::core::primitive::u64,
@@ -27762,6 +27890,7 @@ pub mod api {
                     pub leaf_index: ::core::primitive::u64,
                     pub chunk_index: ::core::primitive::u64,
                     pub deadline: ::core::primitive::u32,
+                    pub index: ::core::primitive::u16,
                     pub deposit: ::core::primitive::u128,
                 }
                 #[derive(
@@ -27873,7 +28002,7 @@ pub mod api {
                     #[doc = "Authenticates the sudo key and dispatches a function call with `Root` origin."]
                     sudo {
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 1)]
@@ -27884,7 +28013,7 @@ pub mod api {
                     #[doc = "The dispatch origin for this call must be _Signed_."]
                     sudo_unchecked_weight {
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                         weight: runtime_types::sp_weights::weight_v2::Weight,
                     },
@@ -27904,7 +28033,7 @@ pub mod api {
                         who:
                             ::subxt_core::utils::MultiAddress<::subxt_core::utils::AccountId32, ()>,
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 4)]
@@ -28148,7 +28277,7 @@ pub mod api {
                     #[doc = "event is deposited."]
                     batch {
                         calls: ::subxt_core::alloc::vec::Vec<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 1)]
@@ -28168,7 +28297,7 @@ pub mod api {
                     as_derivative {
                         index: ::core::primitive::u16,
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 2)]
@@ -28187,7 +28316,7 @@ pub mod api {
                     #[doc = "- O(C) where C is the number of calls to be batched."]
                     batch_all {
                         calls: ::subxt_core::alloc::vec::Vec<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 3)]
@@ -28199,10 +28328,10 @@ pub mod api {
                     #[doc = "- O(1)."]
                     dispatch_as {
                         as_origin: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::OriginCaller,
+                            runtime_types::storage_parachain_runtime::OriginCaller,
                         >,
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 4)]
@@ -28221,7 +28350,7 @@ pub mod api {
                     #[doc = "- O(C) where C is the number of calls to be batched."]
                     force_batch {
                         calls: ::subxt_core::alloc::vec::Vec<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 5)]
@@ -28233,7 +28362,7 @@ pub mod api {
                     #[doc = "The dispatch origin for this call must be _Root_."]
                     with_weight {
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                         weight: runtime_types::sp_weights::weight_v2::Weight,
                     },
@@ -28263,10 +28392,10 @@ pub mod api {
                     #[doc = "  or both."]
                     if_else {
                         main: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                         fallback: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                     #[codec(index = 7)]
@@ -28277,10 +28406,10 @@ pub mod api {
                     #[doc = "The dispatch origin for this call must be _Root_."]
                     dispatch_as_fallible {
                         as_origin: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::OriginCaller,
+                            runtime_types::storage_parachain_runtime::OriginCaller,
                         >,
                         call: ::subxt_core::alloc::boxed::Box<
-                            runtime_types::storage_paseo_runtime::RuntimeCall,
+                            runtime_types::storage_parachain_runtime::RuntimeCall,
                         >,
                     },
                 }
@@ -31835,7 +31964,7 @@ pub mod api {
                 }
             }
         }
-        pub mod storage_paseo_runtime {
+        pub mod storage_parachain_runtime {
             use super::runtime_types;
             #[derive(
                 :: subxt_core :: ext :: scale_decode :: DecodeAsType,
@@ -31861,7 +31990,7 @@ pub mod api {
                 #[codec(index = 60)]
                 Revive(
                     runtime_types::pallet_revive::pallet::Origin<
-                        runtime_types::storage_paseo_runtime::Runtime,
+                        runtime_types::storage_parachain_runtime::Runtime,
                     >,
                 ),
             }

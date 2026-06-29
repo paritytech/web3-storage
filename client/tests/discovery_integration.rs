@@ -66,11 +66,7 @@ async fn test_list_providers() {
         assert!(!account.is_empty(), "account should not be empty");
         println!(
             "  provider={} stake={} capacity={} price={} accepting={}",
-            account,
-            info.stake,
-            info.settings.max_capacity,
-            info.settings.price_per_byte,
-            info.settings.accepting_primary
+            account, info.stake, info.max_capacity, info.price_per_byte, info.accepting_primary
         );
     }
 }
@@ -240,7 +236,7 @@ async fn test_providers_with_capacity() {
 
     for (account, info) in &all_accepting {
         assert!(
-            info.settings.accepting_primary || info.settings.replica_sync_price.is_some(),
+            info.accepting_primary || info.replica_sync_price.is_some(),
             "provider {account} is not accepting any agreement kind"
         );
     }

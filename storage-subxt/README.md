@@ -18,7 +18,7 @@ cargo install subxt-cli@0.44.3 --force --locked
 
     Then on another terminal run:
     ```bash
-    subxt metadata -f bytes --url ws://localhost:2222 > ./metadata/storage-paseo-runtime.scale
+    subxt metadata -f bytes --url ws://localhost:2222 > ./metadata/storage_paseo_runtime.scale
     ```
 
 3. Generating the subxt code from the metadata:

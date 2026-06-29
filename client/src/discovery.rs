@@ -10,11 +10,10 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::ProviderInfo;
-use rt_api::MatchedProvider;
+use rt_api::{MatchedProvider, ProviderInfoResponse};
 use storage_subxt::api as runtime;
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
-use storage_subxt::subxt::utils::AccountId32;
 
 /// Provider recommendation with additional context.
 #[derive(Debug, Clone)]
@@ -143,7 +142,7 @@ impl DiscoveryClient {
         bytes_needed: u64,
         offset: u32,
         limit: u32,
-    ) -> ClientResult<Vec<(String, ProviderInfo)>> {
+    ) -> ClientResult<Vec<(String, ProviderInfoResponse)>> {
         let chain = self.base.chain()?;
 
         tracing::info!(
@@ -153,57 +152,24 @@ impl DiscoveryClient {
             limit
         );
 
-        let storage = chain
+        let raw = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::all_providers())
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                runtime::apis()
+                    .storage_provider_api()
+                    .providers_with_capacity(bytes_needed, offset, limit),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("providers_with_capacity: {e}")))?;
 
-        let mut matching: Vec<(String, ProviderInfo)> = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let account_str = match account_ss58_from_key(&kv.key_bytes) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            let info = kv.value;
-
-            // Must be accepting some kind of agreement
-            if !info.settings.accepting_primary && info.settings.replica_sync_price.is_none() {
-                continue;
-            }
-
-            // Must have sufficient available capacity (0 = unlimited)
-            if info.settings.max_capacity > 0 {
-                let available = info
-                    .settings
-                    .max_capacity
-                    .saturating_sub(info.committed_bytes);
-                if available < bytes_needed {
-                    continue;
-                }
-            }
-
-            matching.push((account_str, info));
-        }
-
-        let page: Vec<(String, ProviderInfo)> = matching
+        Ok(raw
             .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .collect();
-
-        Ok(page)
+            .map(|(account, info)| (account.to_string(), info))
+            .collect())
     }
 
     /// Get recommendations for provider selection based on requirements and budget.
@@ -355,62 +321,28 @@ impl DiscoveryClient {
         &self,
         offset: u32,
         limit: u32,
-    ) -> ClientResult<Vec<(String, ProviderInfo)>> {
+    ) -> ClientResult<Vec<(String, ProviderInfoResponse)>> {
         let chain = self.base.chain()?;
 
         tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
 
-        let storage = chain
+        let raw = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::all_providers())
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                runtime::apis()
+                    .storage_provider_api()
+                    .providers(offset, limit),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("providers: {e}")))?;
 
-        let mut all: Vec<(String, ProviderInfo)> = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let account_str = match account_ss58_from_key(&kv.key_bytes) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            all.push((account_str, kv.value));
-        }
-
-        let page: Vec<(String, ProviderInfo)> = all
+        Ok(raw
             .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .collect();
-
-        Ok(page)
+            .map(|(account, info)| (account.to_string(), info))
+            .collect())
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Private helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Extract the provider's `AccountId32` from a `Providers` storage key and render it as
-/// SS58.
-///
-/// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]`,
-/// so the raw account bytes live at `[48..80]`. Returns `None` when the key is too short
-/// to contain the account suffix.
-fn account_ss58_from_key(key: &[u8]) -> Option<String> {
-    if key.len() < 80 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&key[48..80]);
-    Some(AccountId32::from(bytes).to_string())
 }
