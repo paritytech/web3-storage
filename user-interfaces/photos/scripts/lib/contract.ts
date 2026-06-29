@@ -7,10 +7,9 @@
 // mirroring `examples/papi/sc-support.ts`.
 //
 // The chain-generic revive helpers (deployContract / callContract / encodeCall /
-// decodeContractEmitted / substrateToH160 / ensureAccountMapped) come from
-// `@web3-storage/sdk/revive`.
+// decodeContractEmitted / substrateToH160 / h160ToSubstrate / ensureAccountMapped)
+// come from `@web3-storage/sdk/revive`.
 
-import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import { asHex, negotiateTerms, type ChainSigner } from "@web3-storage/sdk";
 
 /** Owner-shaped value the negotiate helper needs (a signer or a mapped account). */
@@ -36,17 +35,6 @@ export interface PrimitiveAgreementTerms {
 export interface SignedTerms {
   terms: PrimitiveAgreementTerms;
   signature: `0x${string}`;
-}
-
-/**
- * Substrate account `AccountId32Mapper` assigns to an unmapped H160 (e.g. a
- * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`.
- * Use as the `owner` of negotiated terms when a contract forwards them.
- */
-export function h160ToSubstrate(addressBytes: Uint8Array): Owner {
-  const publicKey = new Uint8Array(32).fill(0xee);
-  publicKey.set(addressBytes, 0);
-  return { publicKey, address: ss58Address(publicKey) };
 }
 
 /**
