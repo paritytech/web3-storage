@@ -16,11 +16,9 @@
  */
 
 import {
-  computeDataRoot,
   httpFetch,
   signProviderRequest,
   type HttpFetchOpts,
-  type MerkleEntry,
 } from "@web3-storage/core";
 import {
   createDrive as createDriveTx,
@@ -394,33 +392,15 @@ export class FileSystemClient {
     );
     if (!response.ok) throw new Error(`index_root failed: ${response.status}`);
     const body = await response.json();
+    if (typeof body.metadata_merkle_root !== "string") {
+      throw new Error("index_root response is missing metadata_merkle_root");
+    }
     return {
       indexRoot: body.metadata_merkle_root,
       fileCount: Number(body.file_count ?? 0),
       dirCount: Number(body.dir_count ?? 0),
-      totalSize: Number(body.total_size ?? 0),
+      totalSize: BigInt(body.total_size ?? 0),
     };
-  }
-
-  /**
-   * Enumerate the drive's full entry set as `MerkleEntry[]`, trusting nothing the
-   * provider claims about content: list the whole tree, then for each file
-   * download its bytes and recompute `data_root` locally (directories use a zero
-   * root). Feed the result to `metadataMerkleRoot` to verify a drive against its
-   * on-chain anchor without trusting the provider.
-   */
-  async enumerateEntries(
-    bucketId: bigint,
-    opts: { signal?: AbortSignal } = {},
-  ): Promise<MerkleEntry[]> {
-    const listing = await this.listDirectory(bucketId, "/", { recursive: true, signal: opts.signal });
-    return Promise.all(
-      listing.map(async (e): Promise<MerkleEntry> => {
-        if (e.entryType !== "file") return { path: e.path, dataRoot: new Uint8Array(32), size: 0n };
-        const bytes = await this.downloadFile(bucketId, e.path, { signal: opts.signal });
-        return { path: e.path, dataRoot: computeDataRoot(bytes), size: BigInt(e.size) };
-      }),
-    );
   }
 
   // ── Checkpoint (provider HTTP) ──────────────────────────────────────────

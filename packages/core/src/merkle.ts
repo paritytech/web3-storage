@@ -37,7 +37,8 @@ export function hashChildren(left: Uint8Array, right: Uint8Array): Uint8Array {
  */
 export function paddedMerkleRoot(leaves: Uint8Array[]): Uint8Array {
   if (leaves.length === 0) return new Uint8Array(32);
-  if (leaves.length === 1) return leaves[0];
+  // Copy so the returned root never aliases the caller's input leaf buffer.
+  if (leaves.length === 1) return leaves[0].slice();
 
   let level = leaves.slice();
   const paddedLen = nextPowerOfTwo(level.length);

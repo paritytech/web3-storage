@@ -72,41 +72,6 @@ describe("FileSystemClient HTTP ops", () => {
     });
     const idx = await client.getIndexRoot(1n);
     expect(calls[0].url).toBe("http://provider.test/fs/1/index_root");
-    expect(idx).toEqual({ indexRoot: "0xabc", fileCount: 3, dirCount: 2, totalSize: 99 });
-  });
-
-  it("enumerateEntries recomputes file data roots locally and zeroes directories", async () => {
-    const fileBytes = new TextEncoder().encode("hello");
-    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
-      const u = String(url);
-      if (u.includes("/ls?")) {
-        expect(u).toContain("recursive=true");
-        return new Response(
-          JSON.stringify({
-            entries: [
-              { name: "Beach", path: "/Beach", entry_type: "directory", size: 0 },
-              { name: "p.jpg", path: "/Beach/p.jpg", entry_type: "file", size: fileBytes.length },
-            ],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(fileBytes.slice() as unknown as BodyInit, { status: 200 });
-    });
-    const client = new FileSystemClient({
-      api: {} as never,
-      signer: makeSigner("//Bob"),
-      providerUrl: "http://provider.test",
-      fetch: fetchImpl as never,
-    });
-
-    const { computeDataRoot } = await import("@web3-storage/core");
-    const entries = await client.enumerateEntries(1n);
-    expect(entries).toHaveLength(2);
-    const dir = entries.find((e) => e.path === "/Beach")!;
-    const file = entries.find((e) => e.path === "/Beach/p.jpg")!;
-    expect(dir).toEqual({ path: "/Beach", dataRoot: new Uint8Array(32), size: 0n });
-    expect(file.size).toBe(BigInt(fileBytes.length));
-    expect(file.dataRoot).toEqual(computeDataRoot(fileBytes));
+    expect(idx).toEqual({ indexRoot: "0xabc", fileCount: 3, dirCount: 2, totalSize: 99n });
   });
 });
