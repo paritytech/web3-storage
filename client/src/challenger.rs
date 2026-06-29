@@ -252,56 +252,35 @@ impl ChallengerClient {
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
         let challenger_account = SubstrateClient::parse_account(&self.challenger_account)?;
-        let challenger_bytes: &[u8] = challenger_account.as_ref();
 
-        let storage = chain
+        let raw = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::all_challenges())
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .challenger_challenges(challenger_account),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("challenger_challenges: {e}")))?;
 
-        let mut challenges = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4]
-            // deadline block at [48..52]
-            let key = &kv.key_bytes;
-            if key.len() < 52 {
-                continue;
-            }
-            let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
-
-            for (idx, challenge) in kv.value.iter().enumerate() {
-                if &challenge.challenger.0[..] != challenger_bytes {
-                    continue;
-                }
-
-                let provider = format!("0x{}", hex::encode(challenge.provider.0));
-
-                challenges.push(ChallengeInfo {
-                    challenge_id: ChallengeId {
-                        deadline,
-                        index: idx as u16,
-                    },
-                    bucket_id: challenge.bucket_id,
-                    provider,
-                    deadline,
-                    deposit: challenge.deposit,
-                    status: ChallengeStatus::Pending,
-                });
-            }
-        }
-
-        Ok(challenges)
+        Ok(raw
+            .into_iter()
+            .map(|c| ChallengeInfo {
+                challenge_id: ChallengeId {
+                    deadline: c.deadline,
+                    index: c.index,
+                },
+                bucket_id: c.bucket_id,
+                provider: format!("0x{}", hex::encode(&c.provider)),
+                deadline: c.deadline,
+                deposit: c.deposit,
+                status: ChallengeStatus::Pending,
+            })
+            .collect())
     }
 
     /// Analyze a provider to decide whether to challenge them.
@@ -404,78 +383,60 @@ impl ChallengerClient {
 
         let chain = self.base.chain()?;
 
-        // Step 1: collect all (bucket_id, provider_bytes) from active agreements
-        let mut candidates: Vec<(BucketId, Vec<u8>)> = {
-            let storage = chain
-                .api()
-                .storage()
-                .at_latest()
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-            let mut iter = storage
-                .iter(storage::all_storage_agreements())
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
-
-            let mut raw: Vec<(BucketId, Vec<u8>)> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-
-            while let Some(result) = iter.next().await {
-                let kv = result
-                    .map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-                // Key layout: [pallet=16][storage=16][blake2_128(bucket_id)=16][bucket_id=8]
-                //             [blake2_128(provider)=16][provider=32]
-                let key = &kv.key_bytes;
-                if key.len() < 104 {
-                    continue;
-                }
-
-                let bucket_id =
-                    u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
-                let provider_bytes = key[72..104].to_vec();
-
-                if seen.insert(provider_bytes.clone()) {
-                    raw.push((bucket_id, provider_bytes));
-                }
-            }
-
-            raw
-        };
-
-        // Step 2: score each provider, keep only those below the threshold
-        let storage = chain
+        let rt_api = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?;
 
+        // Step 1: enumerate all providers and score by reputation; collect those below
+        // the threshold along with one of their active agreement bucket_ids.
+        const PAGE: u32 = 256;
         let mut scored: Vec<(BucketId, AccountId32, u8)> = Vec::new();
+        let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+        let mut offset = 0u32;
 
-        for (bucket_id, provider_bytes) in &candidates {
-            let Ok(arr) = <[u8; 32]>::try_from(provider_bytes.as_slice()) else {
-                continue;
-            };
-            let account = AccountId32::from(arr);
+        loop {
+            let page = rt_api
+                .call(
+                    storage_subxt::api::apis()
+                        .storage_provider_api()
+                        .providers(offset, PAGE),
+                )
+                .await
+                .map_err(|e| ClientError::Chain(format!("providers: {e}")))?;
+            let done = (page.len() as u32) < PAGE;
 
-            let Ok(Some(p)) = storage.fetch(&storage::provider_info(&account)).await else {
-                continue;
-            };
-
-            let received = p.stats.challenges_received;
-            let failed = p.stats.challenges_failed;
-
-            let rep = reputation_score(received, failed);
-            if rep < min_reputation_threshold {
-                scored.push((*bucket_id, account, rep));
+            for (account, info) in page {
+                if !seen.insert(account.0) {
+                    continue;
+                }
+                let rep = reputation_score(info.challenges_received, info.challenges_failed);
+                if rep >= min_reputation_threshold {
+                    continue;
+                }
+                let agreements = rt_api
+                    .call(
+                        storage_subxt::api::apis()
+                            .storage_provider_api()
+                            .provider_agreements(account.clone()),
+                    )
+                    .await
+                    .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;
+                if let Some(a) = agreements.into_iter().next() {
+                    scored.push((a.bucket_id, account, rep));
+                }
             }
+
+            if done {
+                break;
+            }
+            offset += PAGE;
         }
 
         // Sort by worst reputation first
         scored.sort_by_key(|(_, _, rep)| *rep);
-        candidates.truncate(max_challenges_per_round);
 
         // Step 3: submit challenges
         let mut challenge_ids = Vec::new();
@@ -602,96 +563,86 @@ impl ChallengerClient {
     pub async fn find_challenge_targets(&self, limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
         let chain = self.base.chain()?;
 
-        // Step 1: collect unique (bucket_id, provider_bytes) from all agreements
-        let candidates: Vec<(BucketId, Vec<u8>)> = {
-            let storage = chain
-                .api()
-                .storage()
-                .at_latest()
+        let rt_api = chain
+            .api()
+            .runtime_api()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?;
+
+        // Enumerate all providers; score and collect those below the 90-rep threshold.
+        const PAGE: u32 = 256;
+        let mut targets: Vec<ChallengeTarget> = Vec::new();
+        let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+        let mut offset = 0u32;
+
+        loop {
+            let page = rt_api
+                .call(
+                    storage_subxt::api::apis()
+                        .storage_provider_api()
+                        .providers(offset, PAGE),
+                )
                 .await
-                .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+                .map_err(|e| ClientError::Chain(format!("providers: {e}")))?;
+            let done = (page.len() as u32) < PAGE;
 
-            let mut iter = storage
-                .iter(storage::all_storage_agreements())
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
-
-            let mut raw: Vec<(BucketId, Vec<u8>)> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-
-            while let Some(result) = iter.next().await {
-                let kv = result
-                    .map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-                let key = &kv.key_bytes;
-                if key.len() < 104 {
+            for (account, info) in page {
+                if !seen.insert(account.0) {
                     continue;
                 }
 
-                let bucket_id =
-                    u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
-                let provider_bytes = key[72..104].to_vec();
+                let stake = info.stake;
+                let received = info.challenges_received;
+                let failed = info.challenges_failed;
 
-                if seen.insert(provider_bytes.clone()) {
-                    raw.push((bucket_id, provider_bytes));
+                let rep = reputation_score(received, failed);
+
+                // Providers below 90 reputation are worth considering
+                if rep >= 90 {
+                    continue;
                 }
+
+                let agreements = rt_api
+                    .call(
+                        storage_subxt::api::apis()
+                            .storage_provider_api()
+                            .provider_agreements(account.clone()),
+                    )
+                    .await
+                    .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;
+
+                let Some(a) = agreements.into_iter().next() else {
+                    continue;
+                };
+
+                // Rough reward estimate: ~10% of stake gets slashed on failure
+                let potential_reward = stake / 10;
+
+                // Success probability is inverse of their historic defense rate
+                let fail_rate = if received == 0 {
+                    0.1 // assume 10% base risk for untested providers
+                } else {
+                    failed as f64 / received as f64
+                };
+                // Higher fail_rate = higher success probability for challenger
+                let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);
+
+                let expected_value = (potential_reward as f64 * success_probability) as u128;
+
+                targets.push(ChallengeTarget {
+                    provider: format!("0x{}", hex::encode(account.0)),
+                    bucket_id: a.bucket_id,
+                    potential_reward,
+                    success_probability,
+                    expected_value,
+                });
             }
 
-            raw
-        };
-
-        // Step 2: score each provider
-        let storage = chain
-            .api()
-            .storage()
-            .at_latest()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut targets: Vec<ChallengeTarget> = Vec::new();
-
-        for (bucket_id, provider_bytes) in &candidates {
-            let Ok(arr) = <[u8; 32]>::try_from(provider_bytes.as_slice()) else {
-                continue;
-            };
-            let account = AccountId32::from(arr);
-
-            let Ok(Some(p)) = storage.fetch(&storage::provider_info(&account)).await else {
-                continue;
-            };
-
-            let stake = p.stake;
-            let received = p.stats.challenges_received;
-            let failed = p.stats.challenges_failed;
-
-            let rep = reputation_score(received, failed);
-
-            // Providers below 90 reputation are worth considering
-            if rep >= 90 {
-                continue;
+            if done {
+                break;
             }
-
-            // Rough reward estimate: ~10% of stake gets slashed on failure
-            let potential_reward = stake / 10;
-
-            // Success probability is inverse of their historic defense rate
-            let fail_rate = if received == 0 {
-                0.1 // assume 10% base risk for untested providers
-            } else {
-                failed as f64 / received as f64
-            };
-            // Higher fail_rate = higher success probability for challenger
-            let success_probability = (fail_rate * 0.8 + 0.1).min(1.0);
-
-            let expected_value = (potential_reward as f64 * success_probability) as u128;
-
-            targets.push(ChallengeTarget {
-                provider: format!("0x{}", hex::encode(provider_bytes)),
-                bucket_id: *bucket_id,
-                potential_reward,
-                success_probability,
-                expected_value,
-            });
+            offset += PAGE;
         }
 
         // Rank by expected value descending

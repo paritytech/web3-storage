@@ -16,6 +16,7 @@ use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
 use storage_primitives::BucketId;
 use storage_subxt::api::runtime_types as rt;
+use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
@@ -329,48 +330,28 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = SubstrateClient::parse_account(&self.provider_account)
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
-        let provider_bytes: &[u8] = provider_account.as_ref();
 
-        let storage = chain
+        let raw = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::all_storage_agreements())
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .provider_agreements(provider_account),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;
 
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
-            //             [blake2_128(bucket_id)=16][bucket_id=8]
-            //             [blake2_128(provider)=16][provider=32]
-            // bucket_id at [48..56], provider at [72..104]
-            let key = &kv.key_bytes;
-            if key.len() < 104 {
-                continue;
-            }
-            if &key[72..104] != provider_bytes {
-                continue;
-            }
-
-            let bucket_id =
-                u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
-
-            agreements.push(ActiveAgreement {
-                bucket_id,
-                agreement: kv.value,
-            });
-        }
-
-        Ok(agreements)
+        Ok(raw
+            .into_iter()
+            .map(|a| ActiveAgreement {
+                bucket_id: a.bucket_id,
+                agreement: a,
+            })
+            .collect())
     }
 
     /// Confirm replica sync to receive payment.
@@ -463,48 +444,28 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = SubstrateClient::parse_account(&self.provider_account)
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
-        let provider_bytes: Vec<u8> = AsRef::<[u8]>::as_ref(&provider_account).to_vec();
 
-        let storage = chain
+        let raw = chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::all_challenges())
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .provider_challenges(provider_account),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
+            .map_err(|e| ClientError::Chain(format!("provider_challenges: {e}")))?;
 
-        let mut challenges = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [twox128(pallet)=16][twox128(storage)=16]
-            //             [blake2_128(deadline)=16][deadline=4]; deadline at [48..52]
-            let key = &kv.key_bytes;
-            if key.len() < 52 {
-                continue;
-            }
-            let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
-
-            for (index, challenge) in kv.value.iter().enumerate() {
-                if &challenge.provider.0[..] != provider_bytes.as_slice() {
-                    continue;
-                }
-
-                challenges.push(ChallengeInfo {
-                    challenge_id: (deadline, index as u16),
-                    deadline,
-                    challenge: challenge.clone(),
-                });
-            }
-        }
-
-        Ok(challenges)
+        Ok(raw
+            .into_iter()
+            .map(|c| ChallengeInfo {
+                challenge_id: (c.deadline, c.index),
+                challenge: c,
+            })
+            .collect())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -603,7 +564,7 @@ impl ProviderClient {
 #[derive(Debug, Clone)]
 pub struct ActiveAgreement {
     pub bucket_id: BucketId,
-    pub agreement: rt::pallet_storage_provider::pallet::StorageAgreement,
+    pub agreement: rt_api::AgreementResponse,
 }
 
 impl ActiveAgreement {
@@ -618,8 +579,7 @@ impl ActiveAgreement {
 #[derive(Debug, Clone)]
 pub struct ChallengeInfo {
     pub challenge_id: (u32, u16),
-    pub deadline: u32,
-    pub challenge: rt::pallet_storage_provider::pallet::Challenge,
+    pub challenge: rt_api::ChallengeResponse,
 }
 
 #[derive(Debug, Clone, Default)]

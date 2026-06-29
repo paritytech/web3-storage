@@ -117,12 +117,12 @@ async fn test_list_active_agreements() {
     println!("Alice has {} active agreement(s)", agreements.len());
 
     for a in &agreements {
-        assert!(!a.agreement.owner.0.is_empty(), "owner should not be empty");
+        assert!(!a.agreement.owner.is_empty(), "owner should not be empty");
         assert!(a.bucket_id > 0, "bucket_id should be non-zero");
         println!(
             "  bucket={} owner={} max_bytes={} expires_at={} primary={}",
             a.bucket_id,
-            a.agreement.owner,
+            hex::encode(&a.agreement.owner),
             a.agreement.max_bytes,
             a.agreement.expires_at,
             a.is_primary()
@@ -158,7 +158,7 @@ async fn test_list_active_challenges() {
             c.challenge_id.0,
             c.challenge_id.1,
             c.challenge.bucket_id,
-            c.deadline,
+            c.challenge.deadline,
             c.challenge.leaf_index,
             c.challenge.chunk_index
         );

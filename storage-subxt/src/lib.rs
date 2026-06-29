@@ -26,3 +26,12 @@ pub use storage_mainnet_runtime::*;
 pub mod storage_paseo_runtime;
 #[cfg(not(feature = "mainnet"))]
 pub use storage_paseo_runtime::*;
+
+impl crate::api::runtime_types::pallet_storage_provider::runtime_api::AgreementResponse {
+    pub fn is_primary(&self) -> bool {
+        matches!(
+            self.role,
+            crate::api::runtime_types::storage_primitives::ProviderRole::Primary
+        )
+    }
+}

@@ -212,7 +212,7 @@ async fn test_list_bucket_agreements_empty() {
 
     for a in &agreements {
         assert!(!a.provider.is_empty(), "provider field should not be empty");
-        assert!(a.agreement.max_bytes > 0, "max_bytes should be positive");
+        assert!(a.max_bytes > 0, "max_bytes should be positive");
     }
 }
 

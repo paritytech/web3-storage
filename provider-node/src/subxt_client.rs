@@ -227,27 +227,6 @@ impl SubxtChainClient {
             rt::storage_primitives::ProviderRole::Primary => None,
         }
     }
-
-    /// Extract bucket_id from a StorageAgreements double-map key if the second key matches
-    /// `account_bytes`. Layout (Blake2_128Concat×2): 16+16 pallet/storage hashes,
-    /// 16+8 key1, 16+32 key2.
-    fn extract_bucket_if_provider(key_bytes: &[u8], account_bytes: &[u8]) -> Option<BucketId> {
-        if key_bytes.len() < 16 + 16 + 16 + 8 + 16 + 32 {
-            return None;
-        }
-        let bucket_id_start = 32 + 16;
-        let bucket_id = u64::from_le_bytes(
-            key_bytes[bucket_id_start..bucket_id_start + 8]
-                .try_into()
-                .ok()?,
-        );
-        let provider_start = bucket_id_start + 8 + 16;
-        if key_bytes[provider_start..provider_start + 32] == account_bytes[..32] {
-            Some(bucket_id)
-        } else {
-            None
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -333,14 +312,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         provider_account: &str,
         local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
-            .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
-        if account_bytes.len() < 32 {
-            return Err(Error::Internal("Account bytes too short".to_string()));
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&account_bytes[..32]);
-        let account = AccountId32::from(arr);
+        let account = SubstrateClient::parse_account(provider_account)
+            .map_err(|e| Error::Internal(format!("Invalid provider account: {e}")))?;
 
         let mut agreements = Vec::new();
 
@@ -352,7 +325,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        // Specific queries for locally-known buckets
+        // Fast path: direct queries for locally-known buckets
         for bucket_id in &local_buckets {
             if let Ok(Some(agreement)) = storage_api
                 .fetch(&storage::agreement_info(*bucket_id, &account))
@@ -364,30 +337,45 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
         }
 
-        // Chain-wide scan to discover agreements for buckets we don't have locally
-        if let Ok(mut iter) = storage_api.iter(storage::all_storage_agreements()).await {
-            while let Some(result) = iter.next().await {
-                let kv = match result {
-                    Ok(kv) => kv,
-                    Err(e) => {
-                        tracing::debug!("Error iterating storage: {e}");
+        // Chain-wide scan via runtime API to discover agreements for buckets we don't have locally
+        match self
+            .client
+            .api()
+            .runtime_api()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .provider_agreements(account),
+            )
+            .await
+        {
+            Ok(all) => {
+                for a in all {
+                    if agreements.iter().any(|x| x.bucket_id == a.bucket_id) {
                         continue;
                     }
-                };
-
-                let bucket_id =
-                    match Self::extract_bucket_if_provider(&kv.key_bytes, &account_bytes) {
-                        Some(id) => id,
-                        None => continue,
-                    };
-
-                if agreements.iter().any(|a| a.bucket_id == bucket_id) {
-                    continue;
+                    if let rt::storage_primitives::ProviderRole::Replica {
+                        sync_balance,
+                        sync_price,
+                        min_sync_interval,
+                        last_sync,
+                    } = a.role
+                    {
+                        agreements.push(ReplicaAgreementInfo {
+                            bucket_id: a.bucket_id,
+                            sync_balance,
+                            sync_price,
+                            min_sync_interval: min_sync_interval as u64,
+                            last_sync: last_sync.map(|(h, b)| (h, b as u64)),
+                        });
+                    }
                 }
-
-                if let Some(info) = Self::to_replica_info(bucket_id, &kv.value) {
-                    agreements.push(info);
-                }
+            }
+            Err(e) => {
+                tracing::debug!("provider_agreements runtime API error: {e}");
             }
         }
 

@@ -16,6 +16,7 @@ use crate::substrate::{extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::Bucket;
 use storage_primitives::{BucketId, EndAction, Role};
 use storage_subxt::api::runtime_types as rt;
+use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;
@@ -515,43 +516,22 @@ impl AdminClient {
     pub async fn list_bucket_agreements(
         &self,
         bucket_id: BucketId,
-    ) -> ClientResult<Vec<AgreementInfo>> {
+    ) -> ClientResult<Vec<rt_api::AgreementResponse>> {
         let chain = self.base.chain()?;
 
-        let storage = chain
+        chain
             .api()
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = storage
-            .iter(storage::agreements_for_bucket(bucket_id))
+            .map_err(|e| ClientError::Chain(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .bucket_agreements(bucket_id),
+            )
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
-
-        let mut agreements = Vec::new();
-
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            // Key layout: [pallet_hash=16][storage_hash=16][blake2_128(bucket_id)=16][bucket_id=8]
-            //             [blake2_128(provider)=16][provider=32]; provider at [72..104]
-            let key = &kv.key_bytes;
-            let provider = if key.len() >= 104 {
-                format!("0x{}", hex::encode(&key[72..104]))
-            } else {
-                String::new()
-            };
-
-            agreements.push(AgreementInfo {
-                provider,
-                agreement: kv.value,
-            });
-        }
-
-        Ok(agreements)
+            .map_err(|e| ClientError::Chain(format!("bucket_agreements: {e}")))
     }
 
     /// Get the buckets this admin account is a member of.
@@ -574,21 +554,5 @@ impl AdminClient {
         };
 
         Ok(thunk.0)
-    }
-}
-
-// Types
-#[derive(Debug, Clone)]
-pub struct AgreementInfo {
-    pub provider: String,
-    pub agreement: rt::pallet_storage_provider::pallet::StorageAgreement,
-}
-
-impl AgreementInfo {
-    pub fn is_primary(&self) -> bool {
-        matches!(
-            self.agreement.role,
-            rt::storage_primitives::ProviderRole::Primary
-        )
     }
 }
