@@ -340,7 +340,7 @@ impl ProviderClient {
             .call(
                 storage_subxt::api::apis()
                     .storage_provider_api()
-                    .provider_agreements(provider_account),
+                    .agreements_by_provider(provider_account),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;
@@ -454,7 +454,7 @@ impl ProviderClient {
             .call(
                 storage_subxt::api::apis()
                     .storage_provider_api()
-                    .provider_challenges(provider_account),
+                    .challenges_by_provider(provider_account),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("provider_challenges: {e}")))?;

@@ -262,7 +262,7 @@ impl ChallengerClient {
             .call(
                 storage_subxt::api::apis()
                     .storage_provider_api()
-                    .challenger_challenges(challenger_account),
+                    .challenges_by_challenger(challenger_account),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("challenger_challenges: {e}")))?;
@@ -420,7 +420,7 @@ impl ChallengerClient {
                     .call(
                         storage_subxt::api::apis()
                             .storage_provider_api()
-                            .provider_agreements(account.clone()),
+                            .agreements_by_provider(account.clone()),
                     )
                     .await
                     .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;
@@ -607,7 +607,7 @@ impl ChallengerClient {
                     .call(
                         storage_subxt::api::apis()
                             .storage_provider_api()
-                            .provider_agreements(account.clone()),
+                            .agreements_by_provider(account.clone()),
                     )
                     .await
                     .map_err(|e| ClientError::Chain(format!("provider_agreements: {e}")))?;

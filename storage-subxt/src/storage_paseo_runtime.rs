@@ -1668,41 +1668,42 @@ pub mod api {
                     )
                 }
                 #[doc = " Get all agreements for a bucket."]
-                pub fn bucket_agreements(
+                pub fn agreements_by_bucket_id(
                     &self,
-                    bucket_id: types::bucket_agreements::BucketId,
+                    bucket_id: types::agreements_by_bucket_id::BucketId,
                 ) -> ::subxt_core::runtime_api::payload::StaticPayload<
-                    types::BucketAgreements,
-                    types::bucket_agreements::output::Output,
+                    types::AgreementsByBucketId,
+                    types::agreements_by_bucket_id::output::Output,
                 > {
                     ::subxt_core::runtime_api::payload::StaticPayload::new_static(
                         "StorageProviderApi",
-                        "bucket_agreements",
-                        types::BucketAgreements { bucket_id },
+                        "agreements_by_bucket_id",
+                        types::AgreementsByBucketId { bucket_id },
                         [
-                            11u8, 92u8, 138u8, 146u8, 104u8, 81u8, 8u8, 123u8, 246u8, 134u8, 227u8,
-                            211u8, 110u8, 107u8, 103u8, 107u8, 123u8, 17u8, 106u8, 160u8, 6u8,
-                            17u8, 198u8, 199u8, 245u8, 208u8, 236u8, 14u8, 193u8, 72u8, 190u8,
-                            180u8,
+                            211u8, 229u8, 227u8, 118u8, 133u8, 113u8, 52u8, 116u8, 156u8, 219u8,
+                            139u8, 243u8, 24u8, 198u8, 39u8, 193u8, 62u8, 43u8, 193u8, 234u8,
+                            190u8, 200u8, 162u8, 251u8, 219u8, 221u8, 121u8, 134u8, 36u8, 73u8,
+                            47u8, 254u8,
                         ],
                     )
                 }
                 #[doc = " Get all agreements for a provider."]
-                pub fn provider_agreements(
+                pub fn agreements_by_provider(
                     &self,
-                    provider: types::provider_agreements::Provider,
+                    provider: types::agreements_by_provider::Provider,
                 ) -> ::subxt_core::runtime_api::payload::StaticPayload<
-                    types::ProviderAgreements,
-                    types::provider_agreements::output::Output,
+                    types::AgreementsByProvider,
+                    types::agreements_by_provider::output::Output,
                 > {
                     ::subxt_core::runtime_api::payload::StaticPayload::new_static(
                         "StorageProviderApi",
-                        "provider_agreements",
-                        types::ProviderAgreements { provider },
+                        "agreements_by_provider",
+                        types::AgreementsByProvider { provider },
                         [
-                            70u8, 90u8, 83u8, 16u8, 35u8, 185u8, 148u8, 112u8, 210u8, 153u8, 225u8,
-                            62u8, 151u8, 222u8, 39u8, 198u8, 156u8, 26u8, 100u8, 25u8, 162u8,
-                            235u8, 80u8, 162u8, 99u8, 75u8, 103u8, 56u8, 42u8, 12u8, 136u8, 33u8,
+                            105u8, 211u8, 54u8, 203u8, 191u8, 104u8, 244u8, 140u8, 2u8, 134u8,
+                            91u8, 102u8, 194u8, 208u8, 33u8, 97u8, 52u8, 193u8, 178u8, 80u8, 67u8,
+                            102u8, 178u8, 201u8, 206u8, 157u8, 45u8, 203u8, 91u8, 231u8, 17u8,
+                            94u8,
                         ],
                     )
                 }
@@ -1726,60 +1727,60 @@ pub mod api {
                     )
                 }
                 #[doc = " Get all challenges for a specific bucket."]
-                pub fn bucket_challenges(
+                pub fn challenges_by_bucket(
                     &self,
-                    bucket_id: types::bucket_challenges::BucketId,
+                    bucket_id: types::challenges_by_bucket::BucketId,
                 ) -> ::subxt_core::runtime_api::payload::StaticPayload<
-                    types::BucketChallenges,
-                    types::bucket_challenges::output::Output,
+                    types::ChallengesByBucket,
+                    types::challenges_by_bucket::output::Output,
                 > {
                     ::subxt_core::runtime_api::payload::StaticPayload::new_static(
                         "StorageProviderApi",
-                        "bucket_challenges",
-                        types::BucketChallenges { bucket_id },
+                        "challenges_by_bucket",
+                        types::ChallengesByBucket { bucket_id },
                         [
-                            74u8, 24u8, 86u8, 254u8, 75u8, 122u8, 176u8, 254u8, 51u8, 228u8, 125u8,
-                            9u8, 161u8, 85u8, 116u8, 218u8, 203u8, 129u8, 31u8, 81u8, 8u8, 209u8,
-                            180u8, 251u8, 9u8, 27u8, 217u8, 156u8, 143u8, 53u8, 1u8, 48u8,
+                            229u8, 153u8, 156u8, 181u8, 175u8, 183u8, 173u8, 56u8, 194u8, 123u8,
+                            72u8, 157u8, 248u8, 225u8, 90u8, 99u8, 183u8, 189u8, 120u8, 46u8,
+                            165u8, 79u8, 94u8, 1u8, 8u8, 23u8, 206u8, 249u8, 69u8, 40u8, 115u8,
+                            229u8,
                         ],
                     )
                 }
                 #[doc = " Get all challenges targeting a specific provider."]
-                pub fn provider_challenges(
+                pub fn challenges_by_provider(
                     &self,
-                    provider: types::provider_challenges::Provider,
+                    provider: types::challenges_by_provider::Provider,
                 ) -> ::subxt_core::runtime_api::payload::StaticPayload<
-                    types::ProviderChallenges,
-                    types::provider_challenges::output::Output,
+                    types::ChallengesByProvider,
+                    types::challenges_by_provider::output::Output,
                 > {
                     ::subxt_core::runtime_api::payload::StaticPayload::new_static(
                         "StorageProviderApi",
-                        "provider_challenges",
-                        types::ProviderChallenges { provider },
+                        "challenges_by_provider",
+                        types::ChallengesByProvider { provider },
                         [
-                            198u8, 162u8, 7u8, 225u8, 86u8, 110u8, 53u8, 138u8, 248u8, 47u8, 228u8,
-                            110u8, 141u8, 216u8, 213u8, 243u8, 18u8, 29u8, 229u8, 199u8, 114u8,
-                            128u8, 28u8, 44u8, 161u8, 75u8, 93u8, 55u8, 30u8, 192u8, 156u8, 229u8,
+                            51u8, 36u8, 241u8, 85u8, 129u8, 137u8, 53u8, 197u8, 246u8, 190u8, 98u8,
+                            55u8, 17u8, 188u8, 161u8, 76u8, 218u8, 190u8, 147u8, 27u8, 6u8, 184u8,
+                            104u8, 82u8, 2u8, 185u8, 218u8, 84u8, 241u8, 92u8, 185u8, 168u8,
                         ],
                     )
                 }
                 #[doc = " Get all challenges created by a specific challenger."]
-                pub fn challenger_challenges(
+                pub fn challenges_by_challenger(
                     &self,
-                    challenger: types::challenger_challenges::Challenger,
+                    challenger: types::challenges_by_challenger::Challenger,
                 ) -> ::subxt_core::runtime_api::payload::StaticPayload<
-                    types::ChallengerChallenges,
-                    types::challenger_challenges::output::Output,
+                    types::ChallengesByChallenger,
+                    types::challenges_by_challenger::output::Output,
                 > {
                     ::subxt_core::runtime_api::payload::StaticPayload::new_static(
                         "StorageProviderApi",
-                        "challenger_challenges",
-                        types::ChallengerChallenges { challenger },
+                        "challenges_by_challenger",
+                        types::ChallengesByChallenger { challenger },
                         [
-                            72u8, 180u8, 154u8, 21u8, 162u8, 72u8, 30u8, 142u8, 74u8, 226u8, 211u8,
-                            175u8, 142u8, 30u8, 60u8, 144u8, 77u8, 137u8, 190u8, 61u8, 121u8,
-                            155u8, 213u8, 209u8, 159u8, 155u8, 195u8, 19u8, 153u8, 213u8, 123u8,
-                            75u8,
+                            6u8, 190u8, 39u8, 1u8, 180u8, 78u8, 50u8, 38u8, 116u8, 17u8, 9u8,
+                            127u8, 251u8, 149u8, 10u8, 7u8, 135u8, 159u8, 0u8, 190u8, 58u8, 185u8,
+                            142u8, 253u8, 54u8, 150u8, 134u8, 21u8, 153u8, 46u8, 250u8, 86u8,
                         ],
                     )
                 }
@@ -1997,7 +1998,7 @@ pub mod api {
                     pub bucket_id: agreement_info::BucketId,
                     pub provider: agreement_info::Provider,
                 }
-                pub mod bucket_agreements {
+                pub mod agreements_by_bucket_id {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
                     pub mod output {
@@ -2017,10 +2018,10 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
-                pub struct BucketAgreements {
-                    pub bucket_id: bucket_agreements::BucketId,
+                pub struct AgreementsByBucketId {
+                    pub bucket_id: agreements_by_bucket_id::BucketId,
                 }
-                pub mod provider_agreements {
+                pub mod agreements_by_provider {
                     use super::runtime_types;
                     pub type Provider = ::subxt_core::utils::AccountId32;
                     pub mod output {
@@ -2040,8 +2041,8 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
-                pub struct ProviderAgreements {
-                    pub provider: provider_agreements::Provider,
+                pub struct AgreementsByProvider {
+                    pub provider: agreements_by_provider::Provider,
                 }
                 pub mod challenges_at {
                     use super::runtime_types;
@@ -2066,7 +2067,7 @@ pub mod api {
                 pub struct ChallengesAt {
                     pub block: challenges_at::Block,
                 }
-                pub mod bucket_challenges {
+                pub mod challenges_by_bucket {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
                     pub mod output {
@@ -2086,10 +2087,10 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
-                pub struct BucketChallenges {
-                    pub bucket_id: bucket_challenges::BucketId,
+                pub struct ChallengesByBucket {
+                    pub bucket_id: challenges_by_bucket::BucketId,
                 }
-                pub mod provider_challenges {
+                pub mod challenges_by_provider {
                     use super::runtime_types;
                     pub type Provider = ::subxt_core::utils::AccountId32;
                     pub mod output {
@@ -2109,10 +2110,10 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
-                pub struct ProviderChallenges {
-                    pub provider: provider_challenges::Provider,
+                pub struct ChallengesByProvider {
+                    pub provider: challenges_by_provider::Provider,
                 }
-                pub mod challenger_challenges {
+                pub mod challenges_by_challenger {
                     use super::runtime_types;
                     pub type Challenger = ::subxt_core::utils::AccountId32;
                     pub mod output {
@@ -2132,8 +2133,8 @@ pub mod api {
                 )]
                 #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
                 #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
-                pub struct ChallengerChallenges {
-                    pub challenger: challenger_challenges::Challenger,
+                pub struct ChallengesByChallenger {
+                    pub challenger: challenges_by_challenger::Challenger,
                 }
                 pub mod can_accept_bytes {
                     use super::runtime_types;
@@ -4111,9 +4112,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                168u8, 82u8, 245u8, 138u8, 164u8, 245u8, 29u8, 188u8, 197u8, 192u8, 211u8, 130u8,
-                141u8, 82u8, 103u8, 113u8, 169u8, 191u8, 35u8, 61u8, 64u8, 207u8, 115u8, 115u8,
-                64u8, 64u8, 108u8, 242u8, 218u8, 60u8, 78u8, 11u8,
+                13u8, 109u8, 165u8, 65u8, 200u8, 201u8, 223u8, 235u8, 22u8, 152u8, 111u8, 100u8,
+                197u8, 252u8, 24u8, 195u8, 214u8, 155u8, 21u8, 69u8, 8u8, 51u8, 5u8, 60u8, 164u8,
+                150u8, 105u8, 159u8, 149u8, 28u8, 193u8, 2u8,
             ]
     }
     pub mod system {

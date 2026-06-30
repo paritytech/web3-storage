@@ -528,7 +528,7 @@ impl AdminClient {
             .call(
                 storage_subxt::api::apis()
                     .storage_provider_api()
-                    .bucket_agreements(bucket_id),
+                    .agreements_by_bucket_id(bucket_id),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("bucket_agreements: {e}")))

@@ -348,7 +348,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .call(
                 storage_subxt::api::apis()
                     .storage_provider_api()
-                    .provider_agreements(account),
+                    .agreements_by_provider(account),
             )
             .await
         {
