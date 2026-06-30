@@ -500,9 +500,11 @@ impl CheckpointChainClient for SubxtChainClient {
             "provider_checkpoint",
             vec![
                 Value::u128(bucket_id as u128),
-                Value::from_bytes(mmr_root.as_bytes()),
-                Value::u128(start_seq as u128),
-                Value::u128(leaf_count as u128),
+                Value::named_composite(vec![
+                    ("mmr_root", Value::from_bytes(mmr_root.as_bytes())),
+                    ("start_seq", Value::u128(start_seq as u128)),
+                    ("leaf_count", Value::u128(leaf_count as u128)),
+                ]),
                 Value::u128(window as u128),
                 Value::unnamed_composite(sig_values),
             ],

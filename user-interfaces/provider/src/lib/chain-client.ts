@@ -412,8 +412,8 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     if (!bucket || !bucket.snapshot) continue
     out.push({
       bucketId,
-      mmrRoot: bucket.snapshot.mmr_root,
-      leafCount: Number(bucket.snapshot.leaf_count),
+      mmrRoot: bucket.snapshot.commitment.mmr_root,
+      leafCount: Number(bucket.snapshot.commitment.leaf_count),
       submittedAt: bucket.snapshot.checkpoint_block,
       blockNumber: bucket.snapshot.checkpoint_block,
       providers: bucket.primary_providers,
@@ -439,9 +439,9 @@ export async function getBucketDetails(
 
     const snapshot: OnChainBucketSnapshot | null = bucket.snapshot
       ? {
-          mmrRoot: bucket.snapshot.mmr_root,
-          startSeq: Number(bucket.snapshot.start_seq),
-          leafCount: Number(bucket.snapshot.leaf_count),
+          mmrRoot: bucket.snapshot.commitment.mmr_root,
+          startSeq: Number(bucket.snapshot.commitment.start_seq),
+          leafCount: Number(bucket.snapshot.commitment.leaf_count),
           checkpointBlock: bucket.snapshot.checkpoint_block,
         }
       : null
@@ -521,8 +521,8 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       bucketId: Number(ch.bucket_id),
       challenger: ch.challenger,
       provider: ch.provider,
-      leafIndex: Number(ch.leaf_index),
-      chunkIndex: Number(ch.chunk_index),
+      leafIndex: Number(ch.location.leaf_index),
+      chunkIndex: Number(ch.location.chunk_index),
       mmrRoot: ch.mmr_root,
       startSeq: Number(ch.start_seq),
       status: currentBlock > deadline ? 'expired' : 'pending',

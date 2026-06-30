@@ -3,7 +3,7 @@
 use super::*;
 use codec::Encode;
 use sp_core::H256;
-use storage_primitives::BucketSnapshot;
+use storage_primitives::{BucketSnapshot, ChunkLocation, Commitment};
 
 #[test]
 fn query_provider_info_returns_data() {
@@ -37,9 +37,11 @@ fn query_bucket_info_returns_data() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
                     commitment_nonce: 0,
@@ -55,8 +57,8 @@ fn query_bucket_info_returns_data() {
         assert!(!response.members.is_empty());
         assert!(response.snapshot.is_some());
         let snapshot = response.snapshot.unwrap();
-        assert_eq!(snapshot.mmr_root, H256::repeat_byte(0xAB));
-        assert_eq!(snapshot.leaf_count, 10);
+        assert_eq!(snapshot.commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(snapshot.commitment.leaf_count, 10);
 
         // Primary providers should include provider 2
         assert!(!response.primary_providers.is_empty());
@@ -259,9 +261,11 @@ fn query_challenges_at_returns_data() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03],
                     commitment_nonce: 0,
@@ -275,15 +279,19 @@ fn query_challenges_at_returns_data() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(5),
             bucket_id,
             4,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         // `iter_prefix` order is hash-dependent, so look entries up by their
@@ -313,9 +321,11 @@ fn query_challenges_at_returns_data() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             let bucket = maybe_bucket.as_mut().unwrap();
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCD),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
                 commitment_nonce: 1,

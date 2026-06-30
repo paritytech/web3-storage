@@ -13,7 +13,9 @@ use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
-use storage_primitives::{AgreementTerms, BucketId, ProviderRole, ReplicaTerms};
+use storage_primitives::{
+    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+};
 
 const SEED: u32 = 0;
 
@@ -221,8 +223,10 @@ fn insert_challenge<T: Config>(
         challenger: challenger.clone(),
         mmr_root,
         start_seq: 0,
-        leaf_index: 0,
-        chunk_index: 0,
+        location: ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
         deposit: 100u32.into(),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
@@ -419,9 +423,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -653,9 +659,11 @@ mod benchmarks {
         checkpoint(
             RawOrigin::Signed(admin),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -689,9 +697,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             empty_sigs,
         );
@@ -790,9 +800,11 @@ mod benchmarks {
         provider_checkpoint(
             RawOrigin::Signed(submitter),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             window,
             signatures,
         );
@@ -874,9 +886,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -894,7 +908,15 @@ mod benchmarks {
         });
 
         #[extrinsic_call]
-        challenge_checkpoint(RawOrigin::Signed(admin), bucket_id, provider, 0, 0);
+        challenge_checkpoint(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     #[benchmark]
@@ -927,11 +949,15 @@ mod benchmarks {
             RawOrigin::Signed(admin),
             bucket_id,
             provider,
-            mmr_root,
-            0,    // start_seq
-            0,    // leaf_count
-            0,    // leaf_index
-            0,    // chunk_index
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 0,
+            },
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
             0u64, // nonce
             signature,
         );
@@ -958,9 +984,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -980,7 +1008,15 @@ mod benchmarks {
         );
 
         #[extrinsic_call]
-        challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
+        challenge_replica(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            replica_provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
@@ -1109,9 +1145,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -1150,9 +1188,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -1221,8 +1261,10 @@ mod benchmarks {
                 challenger,
                 mmr_root: H256::zero(),
                 start_seq: 0,
-                leaf_index: 0,
-                chunk_index: 0,
+                location: ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
                 deposit,
             };
             Challenges::<T>::insert(deadline, i as u16, challenge);
