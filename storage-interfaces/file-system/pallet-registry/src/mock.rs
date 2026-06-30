@@ -111,7 +111,9 @@ impl pallet_storage_provider::Config for Test {
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
-    type DeregisterAnnouncementPeriod = ConstU64<100>;
+    // Must be > ChallengeTimeout (100) AND > RequestTimeout (50) per the
+    // pallet's `integrity_test`. 100 + 50 grace.
+    type DeregisterAnnouncementPeriod = ConstU64<150>;
     type MaxChallengesPerDeadline = ConstU16<1_000>;
     type WeightInfo = ();
 }
