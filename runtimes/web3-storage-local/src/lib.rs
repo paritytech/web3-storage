@@ -791,11 +791,11 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_agreement_info(bucket_id, &provider)
         }
 
-        fn bucket_agreements(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
+        fn agreements_by_bucket_id(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
             StorageProvider::query_bucket_agreements(bucket_id)
         }
 
-        fn provider_agreements(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
+        fn agreements_by_provider(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::AgreementResponse> {
             StorageProvider::query_provider_agreements(&provider)
         }
 
@@ -803,15 +803,15 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_challenges_at(block)
         }
 
-        fn bucket_challenges(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+        fn challenges_by_bucket(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_bucket_challenges(bucket_id)
         }
 
-        fn provider_challenges(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+        fn challenges_by_provider(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_provider_challenges(&provider)
         }
 
-        fn challenger_challenges(challenger: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+        fn challenges_by_challenger(challenger: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_challenger_challenges(&challenger)
         }
 
