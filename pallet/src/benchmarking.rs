@@ -1196,14 +1196,14 @@ mod benchmarks {
     }
 
     /// `on_finalize` slash sweep: drains and slashes every challenge expiring
-    /// at a deadline. Linear in the challenge count `c` (bounded at runtime by
-    /// `MaxChallengesPerDeadline`); each entry is drained, its pending counters
-    /// decremented, and its provider slashed. The cost is charged up front in
-    /// `on_initialize` via `WeightInfo::on_initialize_slash_challenges(c)`. The
-    /// work is independent per challenge, so the linear fit extrapolates to the
-    /// runtime cap.
+    /// at a deadline. Linear in the challenge count `c`; each entry is drained,
+    /// its pending counters decremented, and its provider slashed. The cost is
+    /// charged up front in `on_initialize` via
+    /// `WeightInfo::on_initialize_slash_challenges(c)`. The upper bound is the
+    /// runtime cap `MaxChallengesPerDeadline` itself, so the linear fit covers
+    /// the true worst case rather than extrapolating to it.
     #[benchmark]
-    fn on_initialize_slash_challenges(c: Linear<0, 100>) {
+    fn on_initialize_slash_challenges(c: Linear<0, { T::MaxChallengesPerDeadline::get() as u32 }>) {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
         for i in 0..c {
