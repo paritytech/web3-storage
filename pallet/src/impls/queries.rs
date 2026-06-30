@@ -5,6 +5,25 @@ use frame_system::pallet_prelude::BlockNumberFor;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
 use storage_primitives::{BucketId, BucketSnapshot, ProviderRole};
 
+fn challenge_to_response<T: Config>(
+    deadline: BlockNumberFor<T>,
+    idx: usize,
+    c: Challenge<T>,
+) -> crate::runtime_api::ChallengeResponse {
+    crate::runtime_api::ChallengeResponse {
+        bucket_id: c.bucket_id,
+        provider: c.provider.encode(),
+        challenger: c.challenger.encode(),
+        mmr_root: c.mmr_root,
+        start_seq: c.start_seq,
+        leaf_index: c.leaf_index,
+        chunk_index: c.chunk_index,
+        deadline: deadline.saturated_into(),
+        index: idx as u16,
+        deposit: c.deposit.saturated_into::<u128>(),
+    }
+}
+
 impl<T: Config> Pallet<T> {
     /// Query provider information.
     pub fn query_provider_info(
@@ -253,18 +272,7 @@ impl<T: Config> Pallet<T> {
             .unwrap_or_default()
             .into_iter()
             .enumerate()
-            .map(|(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                bucket_id: challenge.bucket_id,
-                provider: challenge.provider.encode(),
-                challenger: challenge.challenger.encode(),
-                mmr_root: challenge.mmr_root,
-                start_seq: challenge.start_seq,
-                leaf_index: challenge.leaf_index,
-                chunk_index: challenge.chunk_index,
-                deadline: block.saturated_into::<u32>(),
-                index: idx as u16,
-                deposit: challenge.deposit.saturated_into::<u128>(),
-            })
+            .map(|(idx, c)| challenge_to_response::<T>(block, idx, c))
             .collect()
     }
 
@@ -274,26 +282,13 @@ impl<T: Config> Pallet<T> {
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
         Challenges::<T>::iter()
             .flat_map(|(block, challenges)| {
-                let deadline: u32 = block.saturated_into::<u32>();
                 challenges
                     .into_iter()
                     .enumerate()
-                    .map(
-                        move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                            bucket_id: challenge.bucket_id,
-                            provider: challenge.provider.encode(),
-                            challenger: challenge.challenger.encode(),
-                            mmr_root: challenge.mmr_root,
-                            start_seq: challenge.start_seq,
-                            leaf_index: challenge.leaf_index,
-                            chunk_index: challenge.chunk_index,
-                            deadline,
-                            index: idx as u16,
-                            deposit: challenge.deposit.saturated_into::<u128>(),
-                        },
-                    )
+                    .map(move |(idx, c)| (block, idx, c))
             })
-            .filter(|c| c.bucket_id == bucket_id)
+            .filter(|(_, _, c)| c.bucket_id == bucket_id)
+            .map(|(block, idx, c)| challenge_to_response::<T>(block, idx, c))
             .collect()
     }
 
@@ -301,29 +296,15 @@ impl<T: Config> Pallet<T> {
     pub fn query_provider_challenges(
         provider: &T::AccountId,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
-        let provider_encoded = provider.encode();
         Challenges::<T>::iter()
             .flat_map(|(block, challenges)| {
-                let deadline: u32 = block.saturated_into::<u32>();
                 challenges
                     .into_iter()
                     .enumerate()
-                    .map(
-                        move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                            bucket_id: challenge.bucket_id,
-                            provider: challenge.provider.encode(),
-                            challenger: challenge.challenger.encode(),
-                            mmr_root: challenge.mmr_root,
-                            start_seq: challenge.start_seq,
-                            leaf_index: challenge.leaf_index,
-                            chunk_index: challenge.chunk_index,
-                            deadline,
-                            index: idx as u16,
-                            deposit: challenge.deposit.saturated_into::<u128>(),
-                        },
-                    )
+                    .map(move |(idx, c)| (block, idx, c))
             })
-            .filter(|c| c.provider == provider_encoded)
+            .filter(|(_, _, c)| &c.provider == provider)
+            .map(|(block, idx, c)| challenge_to_response::<T>(block, idx, c))
             .collect()
     }
 
@@ -331,29 +312,15 @@ impl<T: Config> Pallet<T> {
     pub fn query_challenger_challenges(
         challenger: &T::AccountId,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
-        let challenger_encoded = challenger.encode();
         Challenges::<T>::iter()
             .flat_map(|(block, challenges)| {
-                let deadline: u32 = block.saturated_into::<u32>();
                 challenges
                     .into_iter()
                     .enumerate()
-                    .map(
-                        move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                            bucket_id: challenge.bucket_id,
-                            provider: challenge.provider.encode(),
-                            challenger: challenge.challenger.encode(),
-                            mmr_root: challenge.mmr_root,
-                            start_seq: challenge.start_seq,
-                            leaf_index: challenge.leaf_index,
-                            chunk_index: challenge.chunk_index,
-                            deadline,
-                            index: idx as u16,
-                            deposit: challenge.deposit.saturated_into::<u128>(),
-                        },
-                    )
+                    .map(move |(idx, c)| (block, idx, c))
             })
-            .filter(|c| c.challenger == challenger_encoded)
+            .filter(|(_, _, c)| &c.challenger == challenger)
+            .map(|(block, idx, c)| challenge_to_response::<T>(block, idx, c))
             .collect()
     }
 
