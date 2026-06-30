@@ -23,6 +23,15 @@ use crate::{
 parameter_types! {
     pub storage MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
     pub storage ChallengeTimeout: BlockNumber = 48 * HOURS;
+    // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
+    // nonce is older than this is rejected. Set wide enough to accommodate
+    // normal off-chain choreography (provider signs, client builds & broadcasts
+    // tx, tx finalises) without forcing re-signing.
+    pub storage MaxNonceAge: BlockNumber = 24 * HOURS;
+    // Reserved from the challenger when opening a challenge. 1 token at 12
+    // decimals = floor on spam economics. Previously hardcoded `100u32`
+    // (1e-10 of a token) which made challenge spam effectively free.
+    pub storage ChallengeDeposit: Balance = UNIT;
     pub storage SettlementTimeout: BlockNumber = 24 * HOURS;
     pub storage RequestTimeout: BlockNumber = 6 * HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
@@ -31,9 +40,17 @@ parameter_types! {
     pub storage DefaultCheckpointGrace: BlockNumber = 20;
     pub storage CheckpointReward: Balance = 1_000_000_000_000; // 1 token
     pub storage CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
-    /// Must be `>= ChallengeTimeout` so any challenge created up to the
-    /// announcement block matures before the provider can withdraw stake.
-    pub storage DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    /// Must be `> ChallengeTimeout` so any challenge opened up to the
+    /// announcement block matures (provider stays slashable) before the
+    /// provider can withdraw stake, and `> RequestTimeout` so a
+    /// pre-deregistration agreement quote expires before re-registration (the
+    /// re-register replay defense). Both are checked in `integrity_test`.
+    /// Value: the 48h challenge window plus a 6h grace.
+    pub storage DeregisterAnnouncementPeriod: BlockNumber = 54 * HOURS;
+    /// Caps the challenges sharing one deadline block so the `on_finalize`
+    /// slash sweep stays bounded. Generous: only challenges created in the
+    /// same block share a deadline.
+    pub storage MaxChallengesPerDeadline: u16 = 1_000;
 }
 
 /// Treasury account that receives slashed funds.
@@ -82,6 +99,8 @@ impl pallet_storage_provider::Config for Runtime {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ChallengeTimeout;
+    type ChallengeDeposit = ChallengeDeposit;
+    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type DefaultCheckpointInterval = DefaultCheckpointInterval;
@@ -90,5 +109,6 @@ impl pallet_storage_provider::Config for Runtime {
     type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
+    type MaxChallengesPerDeadline = MaxChallengesPerDeadline;
     type WeightInfo = crate::weights::pallet_storage_provider::WeightInfo<Runtime>;
 }

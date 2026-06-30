@@ -5,7 +5,10 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::Currency};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{Currency, Hooks, ReservableCurrency},
+};
 use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
@@ -222,7 +225,7 @@ fn insert_challenge<T: Config>(
         chunk_index: 0,
         deposit: 100u32.into(),
     };
-    Challenges::<T>::insert(deadline, alloc::vec![challenge]);
+    Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
 }
 
@@ -419,6 +422,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -630,7 +634,9 @@ mod benchmarks {
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
+        );
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut signatures: BoundedVec<
@@ -650,6 +656,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
     }
@@ -685,10 +692,13 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             empty_sigs,
         );
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
+        );
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut additional_signatures: BoundedVec<
@@ -867,6 +877,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -903,7 +914,9 @@ mod benchmarks {
 
         // Sign the commitment payload via host function
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 0);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id, mmr_root, 0, 0, 0u64, /* nonce */
+        );
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -915,9 +928,11 @@ mod benchmarks {
             bucket_id,
             provider,
             mmr_root,
-            0,
-            0,
-            0,
+            0,    // start_seq
+            0,    // leaf_count
+            0,    // leaf_index
+            0,    // chunk_index
+            0u64, // nonce
             signature,
         );
     }
@@ -946,6 +961,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -1045,8 +1061,13 @@ mod benchmarks {
 
         let new_mmr_root = H256::repeat_byte(0xEF);
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
-        let payload =
-            storage_primitives::CommitmentPayload::new(bucket_id, new_mmr_root, new_start_seq, 0);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            new_mmr_root,
+            new_start_seq,
+            0,
+            0u64, /* nonce */
+        );
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &admin_key, &encoded)
             .expect("signing should work");
@@ -1055,6 +1076,7 @@ mod benchmarks {
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
             new_mmr_root,
             new_start_seq,
+            nonce: 0u64,
             admin: admin.clone(),
             admin_signature,
         };
@@ -1090,6 +1112,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -1130,6 +1153,7 @@ mod benchmarks {
             mmr_root,
             0,
             10,
+            0u64, // nonce
             signatures,
         );
 
@@ -1169,6 +1193,48 @@ mod benchmarks {
             replica_provider,
             top_up_amount,
         );
+    }
+
+    /// `on_finalize` slash sweep: drains and slashes every challenge expiring
+    /// at a deadline. Linear in the challenge count `c`; each entry is drained,
+    /// its pending counters decremented, and its provider slashed. The cost is
+    /// charged up front in `on_initialize` via
+    /// `WeightInfo::on_initialize_slash_challenges(c)`. The upper bound is the
+    /// runtime cap `MaxChallengesPerDeadline` itself, so the linear fit covers
+    /// the true worst case rather than extrapolating to it.
+    #[benchmark]
+    fn on_initialize_slash_challenges(c: Linear<0, { T::MaxChallengesPerDeadline::get() as u32 }>) {
+        let deadline: BlockNumberFor<T> = 200u32.into();
+        let deposit: BalanceOf<T> = 100u32.into();
+        for i in 0..c {
+            // Distinct slashable provider (stake reserved) + challenger per
+            // challenge — the worst case (each touches a distinct `Providers`,
+            // `ChallengerStats`, and pending-counter entry).
+            let provider = create_provider::<T>(i);
+            let challenger = funded_account::<T>("challenger", i);
+            // The slash unreserves the challenger's deposit, so reserve it.
+            let _ = T::Currency::reserve(&challenger, deposit);
+            let bucket_id: BucketId = i as u64;
+            let challenge = pallet::Challenge::<T> {
+                bucket_id,
+                provider: provider.clone(),
+                challenger,
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_index: 0,
+                chunk_index: 0,
+                deposit,
+            };
+            Challenges::<T>::insert(deadline, i as u16, challenge);
+            PendingChallenges::<T>::insert(&provider, 1u32);
+            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        }
+        NextChallengeIndex::<T>::insert(deadline, c as u16);
+
+        #[block]
+        {
+            StorageProvider::<T>::on_finalize(deadline);
+        }
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

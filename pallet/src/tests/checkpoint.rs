@@ -59,6 +59,7 @@ fn insert_snapshot(bucket_id: u64, providers: &[u64]) {
                 leaf_count: 10,
                 checkpoint_block: 1,
                 primary_signers: signers,
+                commitment_nonce: 0,
             });
         }
     });
@@ -182,6 +183,7 @@ fn checkpoint_fails_not_writer() {
                 H256::repeat_byte(0xAA),
                 0,
                 10,
+                0, // nonce
                 Default::default(),
             ),
             Error::<Test>::NotBucketWriter
@@ -199,6 +201,7 @@ fn checkpoint_fails_no_bucket() {
                 H256::repeat_byte(0xAA),
                 0,
                 10,
+                0, // nonce
                 Default::default(),
             ),
             Error::<Test>::BucketNotFound
@@ -218,6 +221,7 @@ fn checkpoint_works_with_zero_min_providers() {
             H256::repeat_byte(0xAA),
             0,
             10,
+            0,                  // nonce
             Default::default(), // empty signatures
         ));
 
@@ -252,6 +256,7 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
             H256::repeat_byte(0xAA),
             0,
             10,
+            0, // nonce
             Default::default(),
         ));
 

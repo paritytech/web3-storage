@@ -35,21 +35,28 @@ mod mock;
 mod tests;
 
 #[frame_support::pallet]
+// Several extrinsics in this pallet legitimately take more than 7 args (e.g.
+// `checkpoint` now takes 7 explicit + a replay-protection nonce). The
+// macro-generated wrapper functions exceed clippy's `too_many_arguments`
+// threshold even when the originals have `#[allow(...)]`, so allow at the
+// module level.
+#[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::weights::WeightInfo;
     use alloc::vec;
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{Currency, ExistenceRequirement, ReservableCurrency},
+        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Verify, Zero};
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplayError, ReplayWindow, Role, HISTORICAL_ROOT_PRIMES,
+        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, CommitmentPayload, EndAction,
+        MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayError, ReplayWindow,
+        ReplicaSyncRecord, Role, SlashReason, HISTORICAL_ROOT_PRIMES,
     };
 
     pub type BalanceOf<T> =
@@ -68,19 +75,49 @@ pub mod pallet {
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        /// Reserve weight for the bounded challenge sweep that `on_finalize(n)`
+        /// performs this block.
+        ///
+        /// The sweep drains every challenge whose deadline is `n` and slashes
+        /// its provider. Every challenge targeting deadline `n` is created
+        /// strictly before block `n` (`deadline = created_at + ChallengeTimeout`
+        /// and `ChallengeTimeout > 0`), so `NextChallengeIndex(n)` — the count
+        /// of challenges ever allocated for that deadline — is already final
+        /// here and is capped at `MaxChallengesPerDeadline` by
+        /// `create_challenge`. That makes the sweep's work bounded and lets us
+        /// account for it up front instead of doing unbounded work in
+        /// `on_finalize` without a weight charge.
+        fn on_initialize(n: BlockNumberFor<T>) -> Weight {
+            // `NextChallengeIndex(n)` is the final count of challenges expiring
+            // at `n` (every such challenge was created strictly before `n` and
+            // is capped at `MaxChallengesPerDeadline`). Charge the benchmarked
+            // cost of the `on_finalize` slash sweep up front, since
+            // `on_finalize` cannot return weight.
+            let count = NextChallengeIndex::<T>::get(n);
+            T::WeightInfo::on_initialize_slash_challenges(count as u32)
+        }
+
         /// Process expired challenges at the end of each block.
         fn on_finalize(n: BlockNumberFor<T>) {
-            // Check if there are any challenges expiring at this block
-            if let Some(expired_challenges) = Challenges::<T>::take(n) {
-                for (index, challenge) in expired_challenges.iter().enumerate() {
-                    // Slash the provider for failing to respond
-                    let challenge_id = ChallengeId {
-                        deadline: n,
-                        index: index as u16,
-                    };
-                    Self::slash_provider_for_failed_challenge(challenge, challenge_id);
-                }
+            // Drain every challenge expiring at this block by its stable
+            // per-deadline index and slash the provider for failing to
+            // respond. `drain_prefix` removes the entries as it iterates.
+            for (index, challenge) in Challenges::<T>::drain_prefix(n) {
+                let challenge_id = ChallengeId { deadline: n, index };
+                // Timeout is a resolution: decrement the pending counters
+                // exactly once here, mirroring the increment in
+                // `create_challenge`. (The slash helper is shared with the
+                // invalid-response path, so it must NOT touch the counters.)
+                Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+                Self::slash_provider_for_failed_challenge(
+                    &challenge,
+                    challenge_id,
+                    SlashReason::Timeout,
+                );
             }
+            // Clear the per-deadline index allocator now the deadline has
+            // passed; no further challenges can target this block.
+            NextChallengeIndex::<T>::remove(n);
         }
 
         fn integrity_test() {
@@ -90,9 +127,19 @@ pub mod pallet {
             // deregistration and re-register (requiring DeregisterAnnouncementPeriod
             // more blocks), so an old quote cannot be replayed against the new
             // incarnation.
+            // At the same time, the deregistration announcement window must be
+            // strictly longer than the challenge response timeout, so any
+            // challenge created up to the announcement block matures (and the
+            // provider stays slashable) strictly before the provider can
+            // complete deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod to close the re-register replay window"
+                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
+                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
+                to close the re-register replay window, and \
+                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
+                challenge created at the announcement block matures while the \
+                provider is still slashable"
             );
         }
     }
@@ -134,6 +181,23 @@ pub mod pallet {
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
+        /// Deposit required to open a challenge. Reserved from the challenger
+        /// on `challenge_*` and refunded (minus a response-time-proportional
+        /// cost share) when the provider successfully defends, or returned
+        /// in full alongside a 10% slash reward when the provider is
+        /// slashed. Sets the floor on challenge spam economics — too low
+        /// and griefing is free; too high and legitimate challenges become
+        /// unaffordable.
+        #[pallet::constant]
+        type ChallengeDeposit: Get<BalanceOf<Self>>;
+
+        /// Maximum age of a `CommitmentPayload::nonce` (in blocks) the pallet
+        /// will accept on inbound signatures. The nonce is the block number
+        /// at which the signer signed; values older than this are rejected
+        /// to prevent indefinite signature replay.
+        #[pallet::constant]
+        type MaxNonceAge: Get<BlockNumberFor<Self>>;
+
         /// Settlement window after agreement expiry for owner to call end_agreement.
         #[pallet::constant]
         type SettlementTimeout: Get<BlockNumberFor<Self>>;
@@ -163,11 +227,22 @@ pub mod pallet {
         type MaxBucketsPerMember: Get<u32>;
 
         /// Minimum number of blocks between announcing a deregistration and
-        /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
+        /// being allowed to complete it. Must be `> ChallengeTimeout` so any
         /// challenge against this provider that was created up to the
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+        /// Maximum number of challenges that may share a single deadline block.
+        ///
+        /// Bounds the per-deadline challenge count so the `on_finalize` slash
+        /// sweep — which drains and slashes every challenge expiring at a given
+        /// block — does a bounded amount of work whose weight `on_initialize`
+        /// can reserve up front. Only challenges created in the *same* block
+        /// share a deadline (`deadline = created_at + ChallengeTimeout`), so a
+        /// generous value still cannot be exceeded under honest load.
+        #[pallet::constant]
+        type MaxChallengesPerDeadline: Get<u16>;
 
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: WeightInfo;
@@ -212,12 +287,63 @@ pub mod pallet {
         StorageAgreement<T>,
     >;
 
-    /// Pending challenges indexed by deadline block.
+    /// Pending challenges indexed by `(deadline block, stable per-deadline
+    /// index)`. The index is allocated by [`NextChallengeIndex`] and never
+    /// reused for a given deadline, so a `ChallengeId { deadline, index }`
+    /// stays valid even when sibling challenges sharing the same deadline are
+    /// resolved (the old `Vec`-backed layout shifted indices on removal,
+    /// making siblings unaddressable).
     #[pallet::storage]
-    #[pallet::unbounded]
     #[pallet::getter(fn challenges)]
-    pub type Challenges<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+    pub type Challenges<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BlockNumberFor<T>,
+        Twox64Concat,
+        u16,
+        Challenge<T>,
+        OptionQuery,
+    >;
+
+    /// Next stable challenge index to allocate for a given deadline block.
+    /// Monotonically increasing per deadline; never decremented when a
+    /// challenge is resolved, guaranteeing index stability for siblings.
+    #[pallet::storage]
+    pub type NextChallengeIndex<T: Config> =
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+
+    /// Number of unresolved challenges currently outstanding against a
+    /// provider, summed across every bucket. Incremented in `create_challenge`
+    /// and decremented exactly once per resolution (defended/invalid-response
+    /// in `respond_to_challenge`, or timeout in `on_finalize`). Gates
+    /// `complete_deregister`: a provider cannot exit while still slashable for
+    /// a pending challenge.
+    #[pallet::storage]
+    pub type PendingChallenges<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+    /// Number of unresolved challenges outstanding against a specific
+    /// `(bucket, provider)` pair. Maintained in lockstep with
+    /// [`PendingChallenges`] and gates that bucket's agreement teardown
+    /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+    #[pallet::storage]
+    pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BucketId,
+        Blake2_128Concat,
+        T::AccountId,
+        u32,
+        ValueQuery,
+    >;
+
+    /// Per-challenger aggregates so the SDK doesn't have to scan historical
+    /// events to answer `get_challenge_stats`. Updated by `create_challenge`,
+    /// the defended path of `respond_to_challenge`, and
+    /// `slash_provider_for_failed_challenge`.
+    #[pallet::storage]
+    pub type ChallengerStats<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -551,6 +677,10 @@ pub mod pallet {
         Deleted {
             new_mmr_root: H256,
             new_start_seq: u64,
+            /// Block at which the admin signed the deletion commitment. Used
+            /// as the `nonce` in `CommitmentPayload` and recency-checked by
+            /// the pallet to prevent signature replay.
+            nonce: u64,
             admin: T::AccountId,
             admin_signature: sp_runtime::MultiSignature,
         },
@@ -742,6 +872,10 @@ pub mod pallet {
             provider: T::AccountId,
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
+            /// Whether the provider was slashed for failing to respond
+            /// (`Timeout`) or for submitting a demonstrably-false response
+            /// (`InvalidProof` etc).
+            reason: SlashReason,
         },
 
         // Provider-initiated checkpoint events
@@ -853,12 +987,27 @@ pub mod pallet {
         ProviderNotInSnapshot,
         LeafBeyondCanonical,
         InvalidDeletionProof,
+        /// A provider with unresolved challenges (`PendingChallenges > 0`)
+        /// cannot complete deregistration — they are still slashable.
+        ProviderHasPendingChallenges,
+        /// An agreement with an unresolved challenge against this
+        /// `(bucket, provider)` cannot be torn down until the challenge
+        /// resolves (defended, slashed, or timed out).
+        AgreementHasPendingChallenge,
+        /// `MaxChallengesPerDeadline` challenges have already been allocated
+        /// for the deadline this challenge would land on. Bounds the
+        /// `on_finalize` slash sweep so it stays within its reserved weight.
+        TooManyChallengesThisBlock,
 
         // Checkpoint errors
         InvalidSignature,
         NoSnapshot,
         SnapshotViolatesFrozen,
         InsufficientSignatures,
+        /// `CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks
+        /// behind the current block, or refers to a future block. Rejected
+        /// to prevent replay of captured signatures.
+        CommitmentNonceTooOld,
 
         // General errors
         ArithmeticOverflow,
@@ -921,6 +1070,7 @@ pub mod pallet {
     // ─────────────────────────────────────────────────────────────────────────
 
     #[pallet::call]
+    #[allow(clippy::too_many_arguments)]
     impl<T: Config> Pallet<T> {
         // ─────────────────────────────────────────────────────────────────────
         // Provider Management
@@ -990,7 +1140,7 @@ pub mod pallet {
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
         ///    announcement block has already matured, because the period
-        ///    must be `>= ChallengeTimeout`).
+        ///    must be `> ChallengeTimeout`).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1060,6 +1210,16 @@ pub mod pallet {
             ensure!(
                 provider.committed_bytes == 0,
                 Error::<T>::ProviderHasActiveAgreements
+            );
+            // A provider with unresolved challenges is still slashable; they
+            // must not be able to exit and unreserve their stake before those
+            // challenges mature. The `DeregisterAnnouncementPeriod >
+            // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
+            // challenge created up to the announcement block resolves before
+            // the wait window elapses, so this only blocks genuinely-live ones.
+            ensure!(
+                PendingChallenges::<T>::get(&who) == 0,
+                Error::<T>::ProviderHasPendingChallenges
             );
 
             // Drain pending checkpoint rewards (provider-keyed thanks to the
@@ -1449,7 +1609,13 @@ pub mod pallet {
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
+                        // Capture the position before removal so the snapshot's
+                        // positional signer bitfield can be re-indexed to match.
+                        let pos = bucket.primary_providers.iter().position(|p| p == &provider);
                         bucket.primary_providers.retain(|p| p != &provider);
+                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
+                            snapshot.remove_provider_bit(pos);
+                        }
                     }
                 });
 
@@ -1512,6 +1678,14 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
+            // Block teardown while a challenge is pending against this
+            // `(bucket, provider)` — settling/paying out the agreement now
+            // would let the provider escape a live slashable challenge.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
+
             let current_block = frame_system::Pallet::<T>::block_number();
 
             let is_early_termination = current_block < agreement.expires_at;
@@ -1558,6 +1732,14 @@ pub mod pallet {
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementNotFound)?;
+
+            // Block payout while a challenge is pending against this provider
+            // for this bucket — the provider must not claim and exit while
+            // still slashable.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &who) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
 
             let current_block = frame_system::Pallet::<T>::block_number();
 
@@ -1819,18 +2001,24 @@ pub mod pallet {
         /// Submit a new checkpoint with provider signatures.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
+        #[allow(clippy::too_many_arguments)]
         pub fn checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             mmr_root: H256,
             start_seq: u64,
             leaf_count: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // all `signatures` signed. Recency-checked to prevent replay.
+            nonce: u64,
             signatures: BoundedVec<
                 (T::AccountId, sp_runtime::MultiSignature),
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
@@ -1847,7 +2035,8 @@ pub mod pallet {
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
+                let payload =
+                    CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -1893,6 +2082,7 @@ pub mod pallet {
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: nonce,
                 });
 
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
@@ -1934,12 +2124,15 @@ pub mod pallet {
                 // Must have existing snapshot
                 let snapshot = bucket.snapshot.as_mut().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Verify and add signatures
+                // Verify and add signatures. The late signer signs the same
+                // payload the original signers signed — including the nonce
+                // captured in the snapshot.
                 let payload = CommitmentPayload::new(
                     bucket_id,
                     snapshot.mmr_root,
                     snapshot.start_seq,
                     snapshot.leaf_count,
+                    snapshot.commitment_nonce,
                 );
                 let encoded_payload = payload.encode();
 
@@ -2114,13 +2307,23 @@ pub mod pallet {
                 // Update historical roots
                 Self::update_historical_roots(bucket, current_block, mmr_root);
 
-                // Update bucket snapshot
+                // Update bucket snapshot.
+                //
+                // `commitment_nonce` is only meaningful for snapshots produced
+                // by the client-initiated `checkpoint` extrinsic (which signs
+                // over `CommitmentPayload`). Provider-initiated checkpoints
+                // sign over `CheckpointProposal::window` instead, so
+                // `extend_checkpoint` (which expects `CommitmentPayload`-shaped
+                // late signatures) is not applicable here — leave the nonce
+                // at zero rather than smuggling in `window` and confusing the
+                // two schemes.
                 bucket.snapshot = Some(BucketSnapshot {
                     mmr_root,
                     start_seq,
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: 0,
                 });
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
 
@@ -2370,6 +2573,18 @@ pub mod pallet {
             let provider_signed = snapshot.has_provider_signed(provider_idx);
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
 
+            // Verify provider has an ACTIVE agreement for this bucket. As with
+            // `challenge_offchain`/`challenge_replica`, challengeability must
+            // track genuine obligation: a challenge can only open while the
+            // agreement is live (not into the settlement window), so an expired
+            // checkpoint can no longer be challenged.
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
+
             Self::create_challenge(
                 who,
                 bucket_id,
@@ -2396,11 +2611,22 @@ pub mod pallet {
             provider: T::AccountId,
             mmr_root: H256,
             start_seq: u64,
+            // `leaf_count` is the value the provider included in the signed
+            // `CommitmentPayload`. The challenger passes it through so the
+            // payload reconstruction matches exactly. (Previously the pallet
+            // used a hardcoded `0u64` placeholder which would mismatch any
+            // provider that signed with a real leaf_count.)
+            leaf_count: u64,
             leaf_index: u64,
             chunk_index: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // the provider signed. Recency-checked to prevent replay.
+            nonce: u64,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             // Verify the bucket exists
             ensure!(
@@ -2408,16 +2634,20 @@ pub mod pallet {
                 Error::<T>::BucketNotFound
             );
 
-            // Verify provider has an agreement for this bucket
+            // Verify provider has an ACTIVE agreement for this bucket. An
+            // expired-but-unswept agreement leaves a stale row in
+            // `StorageAgreements`; challengeability must track genuine
+            // obligation, so a challenge can only open while the agreement is
+            // live (not into the settlement window).
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                StorageAgreements::<T>::contains_key(bucket_id, &provider),
-                Error::<T>::AgreementNotFound
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
             );
 
-            // Build the commitment payload that the provider signed
-            // Note: We use leaf_count = 0 here as a placeholder since we don't have it
-            // The actual verification will be based on the mmr_proof submitted in the response
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0);
+            // Build the commitment payload that the provider signed.
+            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2454,12 +2684,17 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
+            // Challengeability tracks genuine obligation: only while the
+            // agreement is live (not into the settlement window).
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
+
             let (mmr_root, start_seq) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let (root, _block) = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    // We need to get the start_seq from the bucket's snapshot at that root
-                    // For simplicity, we'll use 0 here - in production this should be tracked
-                    (*root, 0u64)
+                    let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
+                    (record.mmr_root, record.start_seq)
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
@@ -2489,12 +2724,22 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut challenges =
-                Challenges::<T>::get(challenge_id.deadline).ok_or(Error::<T>::ChallengeNotFound)?;
-
-            let challenge = challenges
-                .get(challenge_id.index as usize)
+            // Consume the challenge up front. With the stable-index DoubleMap
+            // a single `take` removes exactly this challenge and leaves its
+            // siblings (sharing the same deadline) untouched and addressable.
+            // Any `?`-bail below (wrong provider, expired, missing bucket)
+            // reverts the extrinsic, rolling the `take` back so the challenge
+            // remains pending; only the adjudicated `response_outcome` (which
+            // never short-circuits with `?`) commits the removal.
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
+
+            // The `take` consumes this challenge, so resolve the pending
+            // counters now — this covers BOTH the defended path and the
+            // invalid-response slash path below. Any `?`-bail after this point
+            // reverts the whole extrinsic (including this decrement and the
+            // `take`), so the challenge and its counters stay in lockstep.
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
@@ -2508,78 +2753,108 @@ pub mod pallet {
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            match &response {
+            // Adjudicate the response. Returns:
+            //   `Ok(())`       — response defends the challenge
+            //   `Err(reason)`  — response is a demonstrable lie; slash the
+            //                    provider immediately (do NOT let them stall
+            //                    until the deadline timeout)
+            //
+            // Parameter-shape errors (stale nonce, non-admin signer, missing
+            // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
+            // — they represent caller mistakes, not adversarial responses.
+            let response_outcome: Result<(), SlashReason> = match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    // Verify chunk hash
                     let chunk_hash = storage_primitives::blake2_256(chunk_data);
-
-                    // Verify chunk is in data_root
-                    ensure!(
-                        storage_primitives::verify_merkle_proof(
-                            chunk_hash,
-                            challenge.chunk_index,
-                            chunk_proof,
-                            &mmr_proof.leaf.data_root,
-                        ),
-                        Error::<T>::InvalidChallengeProof
+                    let chunk_ok = storage_primitives::verify_merkle_proof(
+                        chunk_hash,
+                        challenge.chunk_index,
+                        chunk_proof,
+                        &mmr_proof.leaf.data_root,
                     );
-
-                    // Verify MMR proof: leaf is in the MMR with the challenged root
-                    ensure!(
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root),
-                        Error::<T>::InvalidChallengeProof
-                    );
+                    let mmr_ok =
+                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    if chunk_ok && mmr_ok {
+                        Ok(())
+                    } else {
+                        Err(SlashReason::InvalidProof)
+                    }
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
                     new_start_seq,
+                    nonce,
                     admin,
                     admin_signature,
                 } => {
-                    // Verify admin is bucket admin
+                    Self::ensure_recent_nonce(*nonce)?;
                     Self::ensure_admin(admin, &bucket)?;
 
-                    // Verify challenged seq is before new start
                     let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    ensure!(
-                        challenged_seq < *new_start_seq,
-                        Error::<T>::InvalidDeletionProof
-                    );
-
-                    // Verify admin signature on the deletion commitment
-                    let deletion_payload = CommitmentPayload::new(
-                        challenge.bucket_id,
-                        *new_mmr_root,
-                        *new_start_seq,
-                        0, // leaf_count not needed for deletion proof
-                    );
-                    let encoded = deletion_payload.encode();
-                    Self::verify_signature(admin_signature, &encoded, admin)?;
+                    if challenged_seq >= *new_start_seq {
+                        // Provider claims data was purged before the
+                        // challenged leaf, but the new start_seq doesn't
+                        // actually cover it.
+                        Err(SlashReason::InvalidDeletionClaim)
+                    } else {
+                        let deletion_payload = CommitmentPayload::new(
+                            challenge.bucket_id,
+                            *new_mmr_root,
+                            *new_start_seq,
+                            0, // leaf_count not needed for deletion proof
+                            *nonce,
+                        );
+                        let encoded = deletion_payload.encode();
+                        if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {
+                            Ok(())
+                        } else {
+                            Err(SlashReason::InvalidDeletionClaim)
+                        }
+                    }
                 }
                 ChallengeResponse::Superseded => {
-                    let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-                    let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    let canonical_end = snapshot.start_seq.saturating_add(snapshot.leaf_count);
-
-                    ensure!(
-                        challenged_seq < canonical_end,
-                        Error::<T>::LeafBeyondCanonical
-                    );
+                    // A `Superseded` defense only holds when the challenged
+                    // commitment was genuinely replaced by a newer canonical
+                    // snapshot. Without a snapshot to lean on the claim is
+                    // unsupported, so we slash.
+                    match bucket.snapshot.as_ref() {
+                        None => Err(SlashReason::InvalidSupersededClaim),
+                        Some(snapshot) => {
+                            let challenged_seq =
+                                challenge.start_seq.saturating_add(challenge.leaf_index);
+                            // (a) The challenged root must NOT be the current
+                            // canonical root — if it still is, the data is live
+                            // and the provider must answer with a `Proof`.
+                            // (b)+(c) The challenged seq must still sit inside
+                            // the canonical range; front-rolled/deleted data
+                            // has to go through the admin-signed `Deleted` path.
+                            if challenge.mmr_root != snapshot.mmr_root
+                                && snapshot.contains_seq(challenged_seq)
+                            {
+                                Ok(())
+                            } else {
+                                Err(SlashReason::InvalidSupersededClaim)
+                            }
+                        }
+                    }
                 }
-            }
+            };
 
-            // Challenge defended - calculate costs based on response time
-            let challenge = challenges.remove(challenge_id.index as usize);
+            // The challenge was already removed by the `take` above; the owned
+            // `challenge` value feeds either the defended-path cost-split or
+            // the slash helper. The adjudication has concluded, so the
+            // removal now becomes the committed state transition.
 
-            // Update or remove the challenges list
-            if challenges.is_empty() {
-                Challenges::<T>::remove(challenge_id.deadline);
-            } else {
-                Challenges::<T>::insert(challenge_id.deadline, challenges);
+            if let Err(reason) = response_outcome {
+                // Invalid response → slash now. The extrinsic itself returns
+                // `Ok(())` because the slash *is* the valid state transition;
+                // the provider is the one paying the price, recorded via the
+                // `ChallengeSlashed { reason, .. }` event.
+                Self::slash_provider_for_failed_challenge(&challenge, challenge_id, reason);
+                return Ok(());
             }
 
             // Calculate response time (blocks since challenge was created)
@@ -2614,20 +2889,45 @@ pub mod pallet {
             let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
             let provider_cost = challenge.deposit * provider_percent.into() / 100u32.into();
 
-            // Refund challenger (deposit minus their cost)
-            let refund = challenge.deposit.saturating_sub(challenger_cost);
+            // Challenger forfeits `challenger_cost` to the provider as
+            // compensation for the work of responding: move it from the
+            // challenger's reserved balance into the provider's free balance.
+            let not_moved = T::Currency::repatriate_reserved(
+                &challenge.challenger,
+                &challenge.provider,
+                challenger_cost,
+                BalanceStatus::Free,
+            )
+            .unwrap_or(challenger_cost);
+            // Refund challenger the rest of their deposit. Anything that could
+            // not be moved (should not happen) is released back to them too, so
+            // no funds stay stuck in the challenger's reserved balance.
+            let refund = challenge
+                .deposit
+                .saturating_sub(challenger_cost)
+                .saturating_add(not_moved);
             T::Currency::unreserve(&challenge.challenger, refund);
 
-            // Slash provider_cost from provider's stake
-            // Note: In on_finalize we can't easily handle errors, but here we can
-            let (_, remaining) = T::Currency::slash_reserved(&who, provider_cost);
+            // Slash provider_cost from provider's stake and route it to the
+            // Treasury (no burning). `resolve_creating` restores the issuance
+            // burned by `slash_reserved`, keeping total issuance unchanged.
+            let (provider_cost_imbalance, remaining) =
+                T::Currency::slash_reserved(&who, provider_cost);
             let actually_slashed = provider_cost.saturating_sub(remaining);
+            T::Currency::resolve_creating(&T::Treasury::get(), provider_cost_imbalance);
 
             // Update provider stake in storage
             Providers::<T>::mutate(&who, |maybe_provider| {
                 if let Some(provider) = maybe_provider {
                     provider.stake = provider.stake.saturating_sub(actually_slashed);
                 }
+            });
+
+            // Challenger lost — they pay `challenger_cost` from their deposit
+            // and the provider keeps their stake. Bump the failed counter so
+            // the SDK can report a realistic success rate.
+            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
+                stats.failed_challenges = stats.failed_challenges.saturating_add(1);
             });
 
             Self::deposit_event(Event::ChallengeDefended {
@@ -2680,8 +2980,8 @@ pub mod pallet {
                     let current_block = frame_system::Pallet::<T>::block_number();
 
                     // Check sync interval
-                    if let Some((_, last_block)) = last_sync {
-                        let min_next_block = last_block.saturating_add(*min_sync_interval);
+                    if let Some(record) = last_sync {
+                        let min_next_block = record.block.saturating_add(*min_sync_interval);
                         ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
@@ -2690,8 +2990,8 @@ pub mod pallet {
                         Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
-                    if let Some((old_root, _)) = last_sync {
-                        ensure!(matched_root != *old_root, Error::<T>::InvalidSyncRoot);
+                    if let Some(record) = last_sync {
+                        ensure!(matched_root != record.mmr_root, Error::<T>::InvalidSyncRoot);
                     }
 
                     // Pay for sync
@@ -2701,8 +3001,32 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
+                    // Capture sequence metadata for the matched root so a
+                    // future `challenge_replica` can target a specific leaf.
+                    // For the current snapshot (position_matched == 0) we
+                    // know start_seq + leaf_count exactly. Historical roots
+                    // don't carry sequence metadata in `historical_roots`, so
+                    // they default to 0 here — challenges targeting a leaf
+                    // beyond seq 0 in that case still work because
+                    // `challenge_replica` only uses `start_seq` as an offset
+                    // additive identity.
+                    let (start_seq, leaf_count) = if position_matched == 0 {
+                        bucket
+                            .snapshot
+                            .as_ref()
+                            .map(|s| (s.start_seq, s.leaf_count))
+                            .unwrap_or((0, 0))
+                    } else {
+                        (0u64, 0u64)
+                    };
+
                     // Update last sync
-                    *last_sync = Some((matched_root, current_block));
+                    *last_sync = Some(ReplicaSyncRecord {
+                        mmr_root: matched_root,
+                        start_seq,
+                        leaf_count,
+                        block: current_block,
+                    });
 
                     // Transfer sync payment to provider
                     T::Currency::unreserve(&agreement.owner, *sync_price);
@@ -2782,6 +3106,23 @@ pub mod pallet {
         /// 3. Verifies the signature matches the message and public key
         ///
         /// Returns Error::InvalidSignature if verification fails.
+        /// Reject a `CommitmentPayload::nonce` that is too far behind (or ahead
+        /// of) the current block. This prevents an attacker who captures one
+        /// signed commitment from replaying it forever.
+        fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
+            use sp_runtime::traits::SaturatedConversion;
+            let current: u64 = frame_system::Pallet::<T>::block_number().saturated_into();
+            let max_age: u64 = T::MaxNonceAge::get().saturated_into();
+            // Future-dated nonces are nonsensical — the signer can only know
+            // the current block at sign-time. Allow exact equality.
+            ensure!(nonce <= current, Error::<T>::CommitmentNonceTooOld);
+            ensure!(
+                current.saturating_sub(nonce) <= max_age,
+                Error::<T>::CommitmentNonceTooOld
+            );
+            Ok(())
+        }
+
         fn verify_signature(
             signature: &sp_runtime::MultiSignature,
             message: &[u8],
@@ -3099,7 +3440,13 @@ pub mod pallet {
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
+                        // Capture the position before removal so the snapshot's
+                        // positional signer bitfield can be re-indexed to match.
+                        let pos = bucket.primary_providers.iter().position(|p| p == provider);
                         bucket.primary_providers.retain(|p| p != provider);
+                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
+                            snapshot.remove_provider_bit(pos);
+                        }
                     }
                 });
 
@@ -3147,6 +3494,17 @@ pub mod pallet {
 
             // End all agreements for this bucket (pay providers fairly)
             let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
+
+            // Refuse to delete the bucket while any of its agreements has a
+            // pending challenge — otherwise tearing down here would let the
+            // provider escape a live slashable challenge. Checked before any
+            // state mutation/payout so the whole call is a no-op on failure.
+            for (provider, _) in &agreements {
+                ensure!(
+                    PendingChallengesByBucket::<T>::get(bucket_id, provider) == 0,
+                    Error::<T>::AgreementHasPendingChallenge
+                );
+            }
 
             for (provider, agreement) in agreements {
                 // Calculate prorated refund based on remaining time
@@ -3240,8 +3598,11 @@ pub mod pallet {
             leaf_index: u64,
             chunk_index: u64,
         ) -> DispatchResult {
-            // Calculate deposit (simplified - would be based on expected costs)
-            let deposit: BalanceOf<T> = 100u32.into();
+            // Deposit comes from `T::ChallengeDeposit` — a runtime constant
+            // sized to make spam expensive without pricing out legitimate
+            // challengers. Previously hardcoded `100u32` (1e-10 of a token
+            // at 12 decimals), which made challenge spam effectively free.
+            let deposit: BalanceOf<T> = T::ChallengeDeposit::get();
 
             T::Currency::reserve(&challenger, deposit)?;
 
@@ -3259,11 +3620,36 @@ pub mod pallet {
                 deposit,
             };
 
-            let index = Challenges::<T>::mutate(deadline, |challenges| {
-                let challenges = challenges.get_or_insert_with(Vec::new);
-                let idx = challenges.len() as u16;
-                challenges.push(challenge);
-                idx
+            // Cap the number of challenges that can share this deadline so the
+            // `on_finalize` sweep stays bounded (and within the weight
+            // `on_initialize` reserves for it). `NextChallengeIndex(deadline)`
+            // is the count ever allocated for that deadline and is never
+            // decremented, so it is a tight upper bound on the sweep size.
+            ensure!(
+                NextChallengeIndex::<T>::get(deadline) < T::MaxChallengesPerDeadline::get(),
+                Error::<T>::TooManyChallengesThisBlock
+            );
+
+            // Allocate a stable per-deadline index. Unlike the old
+            // `Vec`-position scheme, this counter is never decremented when a
+            // sibling challenge resolves, so the `ChallengeId` we emit stays
+            // valid for the life of the challenge.
+            let index = NextChallengeIndex::<T>::mutate(deadline, |n| {
+                let i = *n;
+                *n = n.saturating_add(1);
+                i
+            });
+            Challenges::<T>::insert(deadline, index, &challenge);
+
+            // Bump the pending-challenge counters. These are decremented
+            // exactly once per resolution (defended/invalid-response in
+            // `respond_to_challenge`, or timeout in `on_finalize`), so a
+            // fully-resolved provider/bucket returns to 0. They gate
+            // `complete_deregister` and agreement teardown so a provider can't
+            // escape a live challenge.
+            PendingChallenges::<T>::mutate(&provider, |n| *n = n.saturating_add(1));
+            PendingChallengesByBucket::<T>::mutate(bucket_id, &provider, |n| {
+                *n = n.saturating_add(1)
             });
 
             // Update provider stats
@@ -3272,6 +3658,12 @@ pub mod pallet {
                     provider_info.stats.challenges_received =
                         provider_info.stats.challenges_received.saturating_add(1);
                 }
+            });
+
+            // Bump challenger's total_challenges aggregate so the SDK's
+            // `get_challenge_stats` doesn't have to scan event history.
+            ChallengerStats::<T>::mutate(&challenger, |stats| {
+                stats.total_challenges = stats.total_challenges.saturating_add(1);
             });
 
             let challenge_id = ChallengeId { deadline, index };
@@ -3325,41 +3717,58 @@ pub mod pallet {
             Err(Error::<T>::InvalidSyncRoot.into())
         }
 
-        /// Slash a provider who failed to respond to a challenge.
+        /// Decrement both pending-challenge counters for a resolved
+        /// `(bucket, provider)` challenge. Called from the two resolution
+        /// sites — `respond_to_challenge` (after the `take` consumes the
+        /// challenge, covering both the defended and invalid-response paths)
+        /// and `on_finalize` (per drained timed-out challenge) — never from
+        /// `slash_provider_for_failed_challenge`, which both sites share and
+        /// which would otherwise double-count. `saturating_sub` keeps the
+        /// counters non-negative even if invariants are ever violated.
+        fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
+            PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));
+            PendingChallengesByBucket::<T>::mutate(bucket_id, provider, |n| {
+                *n = n.saturating_sub(1)
+            });
+        }
+
+        /// Slash a provider for failing a challenge.
         ///
         /// This:
         /// 1. Slashes the provider's entire stake
-        /// 2. Refunds the challenger with their deposit plus a reward
+        /// 2. Refunds the challenger's deposit plus a 10% slash reward
         /// 3. Updates provider statistics
-        /// 4. Marks the provider as slashed (so they can be removed from buckets)
+        /// 4. Emits `ChallengeSlashed` with the supplied `SlashReason`
+        ///
+        /// `reason` distinguishes a timeout (`on_finalize` path) from an
+        /// invalid response (`respond_to_challenge` paths). Both lead to the
+        /// same financial outcome — the distinction is for observers
+        /// reading the event log.
         fn slash_provider_for_failed_challenge(
             challenge: &Challenge<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
+            reason: SlashReason,
         ) {
             // Get provider info
             if let Some(mut provider_info) = Providers::<T>::get(&challenge.provider) {
                 // Slash the provider's entire stake
                 let slashed_amount = provider_info.stake;
 
-                // Unreserve and slash the stake
-                // In Substrate, slashing typically burns or sends to treasury
-                let (_, remaining) =
+                // Slash the provider's stake, capturing the imbalance so we can
+                // settle it into the Treasury instead of burning it.
+                let (slashed_imbalance, remaining) =
                     T::Currency::slash_reserved(&challenge.provider, slashed_amount);
                 let actually_slashed = slashed_amount.saturating_sub(remaining);
 
-                // Calculate challenger reward (e.g., 10% of slashed amount, rest goes to treasury)
-                let challenger_reward = actually_slashed / 10u32.into();
-                let to_treasury = actually_slashed.saturating_sub(challenger_reward);
-
-                // Refund challenger's deposit
+                // Per the design, a successful challenger receives NO reward —
+                // only their deposit back. Refund the deposit and route the
+                // entire slashed amount to the Treasury. Paying the challenger
+                // a cut of the slash would create a profit-from-slashing
+                // incentive (the "refund me or I burn" blackmail channel the
+                // design explicitly closes). `resolve_creating` restores the
+                // issuance burned by `slash_reserved`, keeping issuance whole.
                 T::Currency::unreserve(&challenge.challenger, challenge.deposit);
-
-                // Transfer reward to challenger
-                // Note: We need to handle potential errors gracefully in on_finalize
-                let _ = T::Currency::deposit_creating(&challenge.challenger, challenger_reward);
-
-                // The rest goes to treasury (burned by slash_reserved)
-                let _ = to_treasury; // Acknowledged
+                T::Currency::resolve_creating(&T::Treasury::get(), slashed_imbalance);
 
                 // Update provider stats
                 provider_info.stats.challenges_failed =
@@ -3368,12 +3777,20 @@ pub mod pallet {
 
                 Providers::<T>::insert(&challenge.provider, provider_info);
 
+                // Bump the challenger's successful-challenge count. Challengers
+                // earn no reward (the slashed stake goes entirely to the
+                // Treasury), so only the counter moves here.
+                ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
+                    stats.successful_challenges = stats.successful_challenges.saturating_add(1);
+                });
+
                 // Emit event
                 Self::deposit_event(Event::ChallengeSlashed {
                     challenge_id,
                     provider: challenge.provider.clone(),
                     slashed_amount: actually_slashed,
-                    challenger_reward,
+                    challenger_reward: Zero::zero(),
+                    reason,
                 });
             }
         }
@@ -3560,6 +3977,7 @@ pub mod pallet {
                     leaf_count: s.leaf_count,
                     checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
                     primary_signers: s.primary_signers.clone(),
+                    commitment_nonce: s.commitment_nonce,
                 }),
                 total_snapshots: bucket.total_snapshots,
             })
@@ -3597,8 +4015,12 @@ pub mod pallet {
                             sync_balance: sync_balance.saturated_into::<u128>(),
                             sync_price: sync_price.saturated_into::<u128>(),
                             min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync
-                                .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                            last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                mmr_root: r.mmr_root,
+                                start_seq: r.start_seq,
+                                leaf_count: r.leaf_count,
+                                block: r.block.saturated_into::<u32>(),
+                            }),
                         },
                     },
                     started_at: agreement.started_at.saturated_into::<u32>(),
@@ -3631,8 +4053,12 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                    mmr_root: r.mmr_root,
+                                    start_seq: r.start_seq,
+                                    leaf_count: r.leaf_count,
+                                    block: r.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
@@ -3675,8 +4101,12 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                    mmr_root: r.mmr_root,
+                                    start_seq: r.start_seq,
+                                    leaf_count: r.leaf_count,
+                                    block: r.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
@@ -3689,10 +4119,8 @@ pub mod pallet {
         pub fn query_challenges_at(
             block: BlockNumberFor<T>,
         ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            Challenges::<T>::get(block)
-                .unwrap_or_default()
-                .iter()
-                .map(|challenge| crate::runtime_api::ChallengeResponse {
+            Challenges::<T>::iter_prefix(block)
+                .map(|(index, challenge)| crate::runtime_api::ChallengeResponse {
                     bucket_id: challenge.bucket_id,
                     provider: challenge.provider.encode(),
                     challenger: challenge.challenger.encode(),
@@ -3701,6 +4129,7 @@ pub mod pallet {
                     leaf_index: challenge.leaf_index,
                     chunk_index: challenge.chunk_index,
                     deadline: block.saturated_into::<u32>(),
+                    index,
                     deposit: challenge.deposit.saturated_into::<u128>(),
                 })
                 .collect()

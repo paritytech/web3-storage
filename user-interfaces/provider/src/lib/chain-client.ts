@@ -510,25 +510,25 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
   const entries = await requireApi().query.StorageProvider.Challenges.getEntries()
   const currentBlock = blockNumber$.getValue() || 0
   const challenges: OnChainChallenge[] = []
-  for (const { keyArgs, value } of entries) {
+  // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry is
+  // a single challenge with keyArgs = [deadline, index] and value = Challenge.
+  for (const { keyArgs, value: ch } of entries) {
     const deadline = Number(keyArgs[0])
-    for (let idx = 0; idx < value.length; idx++) {
-      const ch = value[idx]
-      if (!isSameAddress(ch.provider, address)) continue
-      challenges.push({
-        id: idx,
-        bucketId: Number(ch.bucket_id),
-        challenger: ch.challenger,
-        provider: ch.provider,
-        leafIndex: Number(ch.leaf_index),
-        chunkIndex: Number(ch.chunk_index),
-        mmrRoot: ch.mmr_root,
-        startSeq: Number(ch.start_seq),
-        status: currentBlock > deadline ? 'expired' : 'pending',
-        createdAt: 0,
-        deadline,
-      })
-    }
+    const index = Number(keyArgs[1])
+    if (!isSameAddress(ch.provider, address)) continue
+    challenges.push({
+      id: index,
+      bucketId: Number(ch.bucket_id),
+      challenger: ch.challenger,
+      provider: ch.provider,
+      leafIndex: Number(ch.leaf_index),
+      chunkIndex: Number(ch.chunk_index),
+      mmrRoot: ch.mmr_root,
+      startSeq: Number(ch.start_seq),
+      status: currentBlock > deadline ? 'expired' : 'pending',
+      createdAt: 0,
+      deadline,
+    })
   }
   return challenges.sort((a, b) => b.deadline - a.deadline)
 }

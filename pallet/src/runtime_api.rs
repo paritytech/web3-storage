@@ -132,6 +132,8 @@ pub struct ChallengeResponse {
     pub leaf_index: u64,
     pub chunk_index: u64,
     pub deadline: u32,
+    /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
+    pub index: u16,
     pub deposit: u128,
 }
 
