@@ -74,6 +74,24 @@ fn challenge_checkpoint_works() {
 }
 
 #[test]
+fn challenge_checkpoint_fails_expired_agreement() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        // Agreement opened at block 1 with duration 200 → expires_at == 201.
+        let bucket_id = setup_with_snapshot(2, 1);
+
+        // Past the agreement's expiry: challengeability tracks genuine
+        // obligation, so an expired (unswept) checkpoint can no longer be
+        // challenged.
+        frame_system::Pallet::<Test>::set_block_number(202);
+        assert_noop!(
+            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            Error::<Test>::AgreementExpired
+        );
+    });
+}
+
+#[test]
 fn challenge_checkpoint_fails_no_snapshot() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);

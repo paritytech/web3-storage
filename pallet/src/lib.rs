@@ -127,16 +127,17 @@ pub mod pallet {
             // deregistration and re-register (requiring DeregisterAnnouncementPeriod
             // more blocks), so an old quote cannot be replayed against the new
             // incarnation.
-            // At the same time, the deregistration announcement window must be at least
-            // as long as the challenge response timeout, so any challenge created
-            // up to the announcement block matures (and the provider stays
-            // slashable) before the provider can complete deregistration.
+            // At the same time, the deregistration announcement window must be
+            // strictly longer than the challenge response timeout, so any
+            // challenge created up to the announcement block matures (and the
+            // provider stays slashable) strictly before the provider can
+            // complete deregistration.
             assert!(
                 T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
-                    && T::DeregisterAnnouncementPeriod::get() >= T::ChallengeTimeout::get(),
+                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
                 "RequestTimeout must be less than DeregisterAnnouncementPeriod \
                 to close the re-register replay window, and \
-                DeregisterAnnouncementPeriod must be >= ChallengeTimeout so a \
+                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
@@ -226,7 +227,7 @@ pub mod pallet {
         type MaxBucketsPerMember: Get<u32>;
 
         /// Minimum number of blocks between announcing a deregistration and
-        /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
+        /// being allowed to complete it. Must be `> ChallengeTimeout` so any
         /// challenge against this provider that was created up to the
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
@@ -1139,7 +1140,7 @@ pub mod pallet {
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
         ///    announcement block has already matured, because the period
-        ///    must be `>= ChallengeTimeout`).
+        ///    must be `> ChallengeTimeout`).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1212,7 +1213,7 @@ pub mod pallet {
             );
             // A provider with unresolved challenges is still slashable; they
             // must not be able to exit and unreserve their stake before those
-            // challenges mature. The `DeregisterAnnouncementPeriod >=
+            // challenges mature. The `DeregisterAnnouncementPeriod >
             // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
             // challenge created up to the announcement block resolves before
             // the wait window elapses, so this only blocks genuinely-live ones.
@@ -2571,6 +2572,18 @@ pub mod pallet {
             // Check if provider bit is set in the bitfield
             let provider_signed = snapshot.has_provider_signed(provider_idx);
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
+
+            // Verify provider has an ACTIVE agreement for this bucket. As with
+            // `challenge_offchain`/`challenge_replica`, challengeability must
+            // track genuine obligation: a challenge can only open while the
+            // agreement is live (not into the settlement window), so an expired
+            // checkpoint can no longer be challenged.
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
 
             Self::create_challenge(
                 who,

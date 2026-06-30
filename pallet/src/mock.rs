@@ -96,9 +96,10 @@ impl pallet_storage_provider::Config for Test {
     type CheckpointReward = ConstU64<10>; // 10 units reward
     type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
     type MaxBucketsPerMember = ConstU32<100>;
-    // Must be >= ChallengeTimeout (100 in this mock) AND > RequestTimeout (50).
-    // Set to a small multiple so tests can advance past the period quickly.
-    type DeregisterAnnouncementPeriod = ConstU64<100>;
+    // Must be > ChallengeTimeout (100 in this mock) AND > RequestTimeout (50).
+    // = ChallengeTimeout (100) + RequestTimeout (50); small enough that tests
+    // can advance past the period quickly.
+    type DeregisterAnnouncementPeriod = ConstU64<150>;
     // Small cap so the cap-enforcement test can hit it without creating
     // thousands of challenges.
     type MaxChallengesPerDeadline = ConstU16<5>;

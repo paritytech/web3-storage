@@ -40,9 +40,10 @@ parameter_types! {
     pub storage DefaultCheckpointGrace: BlockNumber = 20;
     pub storage CheckpointReward: Balance = 1_000_000_000_000; // 1 token
     pub storage CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
-    /// Must be `>= ChallengeTimeout` so any challenge created up to the
+    /// Must be `> ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
-    pub storage DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    /// = ChallengeTimeout (48h) + RequestTimeout (6h).
+    pub storage DeregisterAnnouncementPeriod: BlockNumber = 54 * HOURS;
     /// Caps the challenges sharing one deadline block so the `on_finalize`
     /// slash sweep stays bounded. Generous: only challenges created in the
     /// same block share a deadline.

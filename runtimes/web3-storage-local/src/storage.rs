@@ -34,9 +34,10 @@ parameter_types! {
     pub const DefaultCheckpointGrace: BlockNumber = 20;
     pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
     pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
-    /// Must be `>= ChallengeTimeout` so any challenge created up to the
+    /// Must be `> ChallengeTimeout` so any challenge created up to the
     /// announcement block matures before the provider can withdraw stake.
-    pub const DeregisterAnnouncementPeriod: BlockNumber = 48 * HOURS;
+    /// = ChallengeTimeout (48h) + RequestTimeout (6h).
+    pub const DeregisterAnnouncementPeriod: BlockNumber = 54 * HOURS;
     /// Caps the challenges sharing one deadline block so the `on_finalize`
     /// slash sweep stays bounded. Generous: only challenges created in the
     /// same block share a deadline.
