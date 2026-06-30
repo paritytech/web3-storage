@@ -68,6 +68,11 @@ coverage:
     git fetch --no-tags origin dev
     scripts/coverage.sh all
 
+# Run the database engine benchmarks (writes JSON under docs/design/database-evaluation/results/).
+# Pass --quick for a fast smoke run: `just db-bench --quick`
+db-bench *ARGS:
+    bash scripts/run-db-benchmarks.sh {{ARGS}}
+
 [private]
 _download BIN URL SHA256="":
     #!/usr/bin/env bash

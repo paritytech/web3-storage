@@ -31,6 +31,7 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
+- **[Database Engine Evaluation](./design/database-evaluation/README.md)** — benchmark-backed engine selection.
 
 ## Drafts
 

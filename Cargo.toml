@@ -34,6 +34,36 @@ members = [
 	"crates/pallets/drive-registry/precompiles",
 	"crates/pallets/s3-registry/precompiles",
 	"crates/pallets/storage-provider/precompiles",
+
+	# Benchmarks (excluded from default-members; build with `-p db-bench`)
+	"benchmarks/db-bench",
+]
+
+# Keep the heavy benchmark-only DB dependencies out of normal `cargo build`/`cargo
+# test`/CI runs. `db-bench` is built explicitly via `cargo build -p db-bench`
+# or `just db-bench`.
+default-members = [
+	"clients/file-system",
+	"clients/s3",
+	"clients/storage",
+	"crates/pallets/drive-registry",
+	"crates/pallets/s3-registry",
+	"crates/pallets/storage-provider",
+	"crates/pallets/drive-registry/precompiles",
+	"crates/pallets/s3-registry/precompiles",
+	"crates/pallets/storage-provider/precompiles",
+	"crates/primitives/file-system",
+	"crates/primitives/s3",
+	"crates/primitives/storage",
+	"crates/providers/auth",
+	"crates/providers/chain",
+	"crates/providers/negotiation",
+	"crates/providers/storage",
+	"crates/storage-subxt",
+	"crates/utils/storage-indexers",
+	"provider-node",
+	"runtimes/web3-storage-local",
+	"runtimes/web3-storage-paseo",
 ]
 
 [workspace.package]
