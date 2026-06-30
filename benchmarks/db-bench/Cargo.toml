@@ -1,0 +1,28 @@
+[package]
+name = "db-bench"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Database engine benchmark harness"
+publish = false
+
+[[bin]]
+name = "db-bench"
+path = "src/main.rs"
+
+[dependencies]
+# Candidate engines
+rocksdb = { version = "0.22", default-features = false }
+sled = "0.34"
+rusqlite = { version = "0.32", features = ["bundled"] }
+parity-db = "0.5"
+
+# Harness plumbing
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std"] }
+rand = "0.8"
+rand_chacha = "0.3"
+tempfile = "3"
