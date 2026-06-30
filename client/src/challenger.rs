@@ -10,9 +10,8 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
-use sp_core::H256;
 use sp_runtime::AccountId32;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use subxt::blocks::ExtrinsicEvents;
 use subxt::dynamic::At;
 use subxt::ext::scale_value::{Composite, ValueDef};
@@ -61,12 +60,11 @@ impl ChallengerClient {
     /// # Parameters
     /// - `bucket_id`: Bucket to challenge
     /// - `provider`: Provider to challenge
-    /// - `leaf_index`: Which leaf in the MMR to challenge
-    /// - `chunk_index`: Which chunk within that leaf to challenge
+    /// - `location`: Which leaf + chunk within the MMR to challenge
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::ChallengerClient;
+    /// # use storage_client::{ChallengerClient, ChunkLocation};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
     ///
@@ -76,7 +74,7 @@ impl ChallengerClient {
     /// let leaf_index = 5;
     /// let chunk_index = 123;
     ///
-    /// client.challenge_checkpoint(bucket_id, provider, leaf_index, chunk_index).await?;
+    /// client.challenge_checkpoint(bucket_id, provider, ChunkLocation { leaf_index, chunk_index }).await?;
     /// println!("Challenge created!");
     /// # Ok(())
     /// # }
@@ -85,8 +83,7 @@ impl ChallengerClient {
         &self,
         bucket_id: BucketId,
         provider: String,
-        leaf_index: u64,
-        chunk_index: u64,
+        location: ChunkLocation,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -95,16 +92,15 @@ impl ChallengerClient {
             "Challenging {} on bucket {} checkpoint (leaf {}, chunk {})",
             provider,
             bucket_id,
-            leaf_index,
-            chunk_index
+            location.leaf_index,
+            location.chunk_index
         );
 
         // Parse provider account
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
         // Create and submit the extrinsic
-        let tx =
-            extrinsics::challenge_checkpoint(bucket_id, provider_account, leaf_index, chunk_index);
+        let tx = extrinsics::challenge_checkpoint(bucket_id, provider_account, location);
 
         let tx_progress = chain
             .api()
@@ -135,21 +131,16 @@ impl ChallengerClient {
     /// You need to have obtained a signed commitment from the provider off-chain.
     ///
     /// # Parameters
-    /// - `mmr_root`: The MMR root from the provider's commitment
-    /// - `start_seq`: The start sequence from the commitment
-    /// - `leaf_count`: The leaf count from the commitment
+    /// - `commitment`: The MMR commitment (root + range) the provider signed over
+    /// - `location`: Which leaf + chunk within that commitment to challenge
     /// - `nonce`: The nonce the provider signed over (echoed from their commitment)
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
-    #[allow(clippy::too_many_arguments)]
     pub async fn challenge_offchain(
         &self,
         bucket_id: BucketId,
         provider: String,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        location: ChunkLocation,
         nonce: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
@@ -160,8 +151,8 @@ impl ChallengerClient {
             "Challenging {} on bucket {} using off-chain commitment (leaf {}, chunk {})",
             provider,
             bucket_id,
-            leaf_index,
-            chunk_index
+            location.leaf_index,
+            location.chunk_index
         );
 
         // Parse provider account
@@ -171,11 +162,8 @@ impl ChallengerClient {
         let tx = extrinsics::challenge_offchain(
             bucket_id,
             provider_account,
-            mmr_root,
-            start_seq,
-            leaf_count,
-            leaf_index,
-            chunk_index,
+            commitment,
+            location,
             nonce,
             provider_signature,
         );
@@ -211,8 +199,7 @@ impl ChallengerClient {
         &self,
         bucket_id: BucketId,
         provider: String,
-        leaf_index: u64,
-        chunk_index: u64,
+        location: ChunkLocation,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
@@ -221,13 +208,12 @@ impl ChallengerClient {
             "Challenging replica {} on bucket {} (leaf {}, chunk {})",
             provider,
             bucket_id,
-            leaf_index,
-            chunk_index
+            location.leaf_index,
+            location.chunk_index
         );
 
         let provider_account = SubstrateClient::parse_account(&provider)?;
-        let tx =
-            extrinsics::challenge_replica(bucket_id, provider_account, leaf_index, chunk_index);
+        let tx = extrinsics::challenge_replica(bucket_id, provider_account, location);
 
         let tx_progress = chain
             .api()
@@ -555,7 +541,14 @@ impl ChallengerClient {
             let signer = chain.signer()?;
 
             // Challenge leaf 0, chunk 0 as a basic liveness check
-            let tx = extrinsics::challenge_checkpoint(*bucket_id, provider_account.clone(), 0, 0);
+            let tx = extrinsics::challenge_checkpoint(
+                *bucket_id,
+                provider_account.clone(),
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            );
 
             let result = chain
                 .api()
