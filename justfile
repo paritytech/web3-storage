@@ -273,6 +273,10 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
+# Photos dApp (Layer 1) — namespaced module. Run `just photos` to list its recipes;
+# e.g. `just photos build`, `just photos deploy`, `just photos flow`.
+mod photos 'user-interfaces/photos/photos.just'
+
 # Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
 # NFT-shaped access token per S3 object through the s3-registry precompile,
 # transfers + burns + shuts down.

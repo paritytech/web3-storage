@@ -55,4 +55,23 @@ describe("FileSystemClient HTTP ops", () => {
     await client.listDirectory(42n, "/");
     expect(calls[0].url.startsWith("http://provider.test/fs/42/")).toBe(true);
   });
+
+  it("listDirectory passes recursive=true when requested", async () => {
+    const { client, calls } = makeClient({ entries: [] });
+    await client.listDirectory(1n, "/", { recursive: true });
+    expect(calls[0].url).toBe("http://provider.test/fs/1/ls?path=%2F&recursive=true");
+  });
+
+  it("getIndexRoot maps the wire metadata_merkle_root + counts", async () => {
+    const { client, calls } = makeClient({
+      bucket_id: 1,
+      metadata_merkle_root: "0xabc",
+      file_count: 3,
+      dir_count: 2,
+      total_size: 99,
+    });
+    const idx = await client.getIndexRoot(1n);
+    expect(calls[0].url).toBe("http://provider.test/fs/1/index_root");
+    expect(idx).toEqual({ indexRoot: "0xabc", fileCount: 3, dirCount: 2, totalSize: 99n });
+  });
 });

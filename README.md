@@ -149,6 +149,7 @@ just s3-test-all             # S3 layer only
 | [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
 | [Architecture Design](./docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](./docs/design/scalable-web3-storage-implementation.md) | Technical specs |
+| [Photos dApp](./user-interfaces/photos/README.md) | Example photo-storage dApp — Layer 1 + a custom contract ([design](./user-interfaces/photos/DESIGN.md)) |
 
 ## Architecture
 
