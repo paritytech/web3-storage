@@ -3,7 +3,7 @@
 use super::*;
 use codec::Encode;
 use sp_core::{sr25519, Pair, H256};
-use storage_primitives::BucketSnapshot;
+use storage_primitives::{BucketSnapshot, Commitment};
 
 /// Create a signed checkpoint proposal for use in provider_checkpoint calls.
 fn sign_checkpoint_proposal(
@@ -54,9 +54,11 @@ fn insert_snapshot(bucket_id: u64, providers: &[u64]) {
                 signers[i / 8] |= 1 << (i % 8);
             }
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAB),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: signers,
                 commitment_nonce: 0,
@@ -180,9 +182,11 @@ fn checkpoint_fails_not_writer() {
             StorageProvider::checkpoint(
                 RuntimeOrigin::signed(3),
                 0,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 0, // nonce
                 Default::default(),
             ),
@@ -198,9 +202,11 @@ fn checkpoint_fails_no_bucket() {
             StorageProvider::checkpoint(
                 RuntimeOrigin::signed(1),
                 999,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 0, // nonce
                 Default::default(),
             ),
@@ -218,17 +224,19 @@ fn checkpoint_works_with_zero_min_providers() {
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             0,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,                  // nonce
             Default::default(), // empty signatures
         ));
 
         let bucket = Buckets::<Test>::get(0).unwrap();
         let snapshot = bucket.snapshot.unwrap();
-        assert_eq!(snapshot.mmr_root, H256::repeat_byte(0xAA));
-        assert_eq!(snapshot.leaf_count, 10);
+        assert_eq!(snapshot.commitment.mmr_root, H256::repeat_byte(0xAA));
+        assert_eq!(snapshot.commitment.leaf_count, 10);
     });
 }
 
@@ -253,9 +261,11 @@ fn extend_checkpoint_works_after_initial_checkpoint() {
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             0,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0, // nonce
             Default::default(),
         ));
@@ -343,9 +353,11 @@ fn provider_checkpoint_fails_disabled() {
             StorageProvider::provider_checkpoint(
                 RuntimeOrigin::signed(2),
                 bucket_id,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 0,
                 Default::default(),
             ),
@@ -366,9 +378,11 @@ fn provider_checkpoint_fails_wrong_window() {
             StorageProvider::provider_checkpoint(
                 RuntimeOrigin::signed(2),
                 bucket_id,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 5, // wrong window
                 Default::default(),
             ),
@@ -392,17 +406,19 @@ fn provider_checkpoint_leader_within_grace_period() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0, // window 0
             vec![sig].try_into().unwrap(),
         ));
 
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
         let snapshot = bucket.snapshot.unwrap();
-        assert_eq!(snapshot.mmr_root, H256::repeat_byte(0xAA));
-        assert_eq!(snapshot.leaf_count, 10);
+        assert_eq!(snapshot.commitment.mmr_root, H256::repeat_byte(0xAA));
+        assert_eq!(snapshot.commitment.leaf_count, 10);
         assert_eq!(LastCheckpointWindow::<Test>::get(bucket_id), Some(0));
     });
 }
@@ -454,9 +470,11 @@ fn provider_checkpoint_non_leader_rejected_during_grace() {
             StorageProvider::provider_checkpoint(
                 RuntimeOrigin::signed(non_leader_account),
                 bucket_id,
-                H256::repeat_byte(0xAA),
-                0,
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 0,
                 vec![sig].try_into().unwrap(),
             ),
@@ -487,14 +505,19 @@ fn provider_checkpoint_fallback_after_grace() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig2].try_into().unwrap(),
         ));
         let bucket = Buckets::<Test>::get(bucket_id).unwrap();
-        assert_eq!(bucket.snapshot.unwrap().mmr_root, H256::repeat_byte(0xAA));
+        assert_eq!(
+            bucket.snapshot.unwrap().commitment.mmr_root,
+            H256::repeat_byte(0xAA)
+        );
     });
 }
 
@@ -509,9 +532,11 @@ fn provider_checkpoint_already_submitted() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig].try_into().unwrap(),
         ));
@@ -523,9 +548,11 @@ fn provider_checkpoint_already_submitted() {
             StorageProvider::provider_checkpoint(
                 RuntimeOrigin::signed(2),
                 bucket_id,
-                H256::repeat_byte(0xBB),
-                0,
-                20,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xBB),
+                    start_seq: 0,
+                    leaf_count: 20,
+                },
                 0,
                 vec![sig2].try_into().unwrap(),
             ),
@@ -553,9 +580,11 @@ fn provider_checkpoint_frozen_constraint() {
             StorageProvider::provider_checkpoint(
                 RuntimeOrigin::signed(2),
                 bucket_id,
-                H256::repeat_byte(0xAA),
-                3, // start_seq < frozen_start_seq(5)
-                10,
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAA),
+                    start_seq: 3, // start_seq < frozen_start_seq(5)
+                    leaf_count: 10,
+                },
                 0,
                 vec![sig].try_into().unwrap(),
             ),
@@ -585,9 +614,11 @@ fn provider_checkpoint_reward_from_pool() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig].try_into().unwrap(),
         ));
@@ -611,9 +642,11 @@ fn provider_checkpoint_no_reward_empty_pool() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig].try_into().unwrap(),
         ));
@@ -641,9 +674,11 @@ fn provider_checkpoint_emits_event() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig].try_into().unwrap(),
         ));
@@ -706,9 +741,11 @@ fn report_missed_checkpoint_fails_already_submitted() {
         assert_ok!(StorageProvider::provider_checkpoint(
             RuntimeOrigin::signed(2),
             bucket_id,
-            H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0,
             vec![sig].try_into().unwrap(),
         ));

@@ -279,12 +279,44 @@ pub mod extrinsics {
         )
     }
 
+    /// Encode a [`Commitment`](storage_primitives::Commitment) as a subxt
+    /// dynamic named composite (`mmr_root`, `start_seq`, `leaf_count`).
+    fn dynamic_commitment(mmr_root: H256, start_seq: u64, leaf_count: u64) -> subxt::dynamic::Value {
+        subxt::dynamic::Value::named_composite([
+            (
+                "mmr_root",
+                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
+            ),
+            ("start_seq", subxt::dynamic::Value::u128(start_seq as u128)),
+            (
+                "leaf_count",
+                subxt::dynamic::Value::u128(leaf_count as u128),
+            ),
+        ])
+    }
+
+    /// Encode a [`ChunkLocation`](storage_primitives::ChunkLocation) as a subxt
+    /// dynamic named composite (`leaf_index`, `chunk_index`).
+    fn dynamic_chunk_location(leaf_index: u64, chunk_index: u64) -> subxt::dynamic::Value {
+        subxt::dynamic::Value::named_composite([
+            (
+                "leaf_index",
+                subxt::dynamic::Value::u128(leaf_index as u128),
+            ),
+            (
+                "chunk_index",
+                subxt::dynamic::Value::u128(chunk_index as u128),
+            ),
+        ])
+    }
+
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
     pub fn checkpoint(
         bucket_id: u64,
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
+        nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         let sigs: Vec<subxt::dynamic::Value> = signatures
@@ -305,9 +337,8 @@ pub mod extrinsics {
             "checkpoint",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_count as u128),
+                dynamic_commitment(mmr_root, start_seq, leaf_count),
+                subxt::dynamic::Value::u128(nonce as u128),
                 subxt::dynamic::Value::unnamed_composite(sigs),
             ],
         )
@@ -326,8 +357,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_chunk_location(leaf_index, chunk_index),
             ],
         )
     }
@@ -335,26 +365,27 @@ pub mod extrinsics {
     /// Create a challenge_offchain extrinsic payload.
     ///
     /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
+    #[allow(clippy::too_many_arguments)]
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
         mmr_root: H256,
         start_seq: u64,
+        leaf_count: u64,
         leaf_index: u64,
         chunk_index: u64,
+        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
-        // MultiSignature::Sr25519 variant index is 0
         subxt::dynamic::tx(
             PALLET_NAME,
             "challenge_offchain",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_commitment(mmr_root, start_seq, leaf_count),
+                dynamic_chunk_location(leaf_index, chunk_index),
+                subxt::dynamic::Value::u128(nonce as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
                 subxt::dynamic::Value::unnamed_variant(
                     "Sr25519",
@@ -430,8 +461,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_chunk_location(leaf_index, chunk_index),
             ],
         )
     }

@@ -137,6 +137,8 @@ impl ChallengerClient {
     /// # Parameters
     /// - `mmr_root`: The MMR root from the provider's commitment
     /// - `start_seq`: The start sequence from the commitment
+    /// - `leaf_count`: The leaf count from the commitment
+    /// - `nonce`: The nonce the provider signed over (echoed from their commitment)
     /// - `provider_signature`: The provider's signature on the commitment (64 bytes for Sr25519)
     #[allow(clippy::too_many_arguments)]
     pub async fn challenge_offchain(
@@ -145,8 +147,10 @@ impl ChallengerClient {
         provider: String,
         mmr_root: H256,
         start_seq: u64,
+        leaf_count: u64,
         leaf_index: u64,
         chunk_index: u64,
+        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
@@ -169,8 +173,10 @@ impl ChallengerClient {
             provider_account,
             mmr_root,
             start_seq,
+            leaf_count,
             leaf_index,
             chunk_index,
+            nonce,
             provider_signature,
         );
 
