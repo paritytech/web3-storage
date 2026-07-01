@@ -4,9 +4,9 @@
 
 The provider stores file bytes as content-addressed chunks: each chunk's key is `blake2_256(bytes)`, so two PUTs that produce a byte-identical chunk get stored once. That dedup is automatic — *if* the chunker actually produces identical chunks across edits.
 
-With a fixed-size chunker, it doesn't. Inserting a single byte at the start of a file shifts every downstream byte by one, so every chunk has different bytes, so every chunk has a different hash. v2's PUT effectively re-uploads the entire file.
+With a fixed-size chunker, it doesn't. Consider an already-uploaded file (the "original blob") and a small edit that produces a new blob to upload. If the edit inserts a single byte at the start of the file, every downstream byte shifts by one — so every chunk has different bytes, so every chunk has a different hash. The PUT for the new blob effectively re-uploads the entire file.
 
-Content-defined chunking solves this by choosing chunk boundaries from the *content* (via a rolling hash), not from fixed byte offsets. When you insert bytes in the middle of a file, the boundaries downstream of the edit fall at the same content positions as before; the chunks between them are byte-identical to v1's chunks and dedup through content addressing.
+Content-defined chunking solves this by choosing chunk boundaries from the *content* (via a rolling hash), not from fixed byte offsets. When you insert bytes in the middle of a file, the boundaries downstream of the edit fall at the same content positions as before; the chunks between them are byte-identical to the original blob's chunks and dedup through content addressing.
 
 ## Algorithm
 
