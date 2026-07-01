@@ -109,6 +109,7 @@ pub struct BucketResponse {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementResponse {
+    pub bucket_id: BucketId,
     pub owner: Vec<u8>,    // Encoded AccountId
     pub provider: Vec<u8>, // Encoded AccountId
     pub max_bytes: u64,
@@ -164,13 +165,22 @@ sp_api::decl_runtime_apis! {
         fn agreement_info(bucket_id: BucketId, provider: AccountId) -> Option<AgreementResponse>;
 
         /// Get all agreements for a bucket.
-        fn bucket_agreements(bucket_id: BucketId) -> Vec<AgreementResponse>;
+        fn agreements_by_bucket_id(bucket_id: BucketId) -> Vec<AgreementResponse>;
 
         /// Get all agreements for a provider.
-        fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
+        fn agreements_by_provider(provider: AccountId) -> Vec<AgreementResponse>;
 
         /// Get challenges expiring at a specific block.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges for a specific bucket.
+        fn challenges_by_bucket(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges targeting a specific provider.
+        fn challenges_by_provider(provider: AccountId) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges created by a specific challenger.
+        fn challenges_by_challenger(challenger: AccountId) -> Vec<ChallengeResponse>;
 
         /// Check if a provider has sufficient stake for additional bytes.
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool;
