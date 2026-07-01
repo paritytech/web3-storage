@@ -160,6 +160,26 @@ pub(crate) async fn check_role(
     .await
 }
 
+/// Parse a user-supplied hex string into an `H256`. Accepts `0x`-prefixed or
+/// bare hex, validates the character set and enforces the 32-byte length.
+/// Callers previously did `hex_decode(...); H256::from_slice(&bytes)`, which
+/// panics on wrong-length input — this helper returns `Error::InvalidHash`
+/// instead so `?` yields a 400 to the client.
+fn parse_h256(input: &str) -> Result<H256, Error> {
+    let hex = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex_decode(hex).map_err(|_| Error::InvalidHash {
+        expected: input.to_string(),
+        actual: "invalid hex".to_string(),
+    })?;
+    if bytes.len() != 32 {
+        return Err(Error::InvalidHash {
+            expected: input.to_string(),
+            actual: format!("wrong length: expected 32 bytes, got {}", bytes.len()),
+        });
+    }
+    Ok(H256::from_slice(&bytes))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Health and Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,11 +238,7 @@ async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
-    let hash_bytes = hex_decode(&query.hash).map_err(|_| Error::InvalidHash {
-        expected: query.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = parse_h256(&query.hash)?;
 
     let node = state
         .storage
@@ -244,30 +260,17 @@ async fn upload_node(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
-    // Decode hash
-    let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
-        expected: request.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let hash = H256::from_slice(&hash_bytes);
+    let hash = parse_h256(&request.hash)?;
 
-    // Decode data
     let data = BASE64
         .decode(&request.data)
         .map_err(|e| Error::Serialization(e.to_string()))?;
 
-    // Decode children
     let children = request
         .children
         .map(|c| {
             c.iter()
-                .map(|h| {
-                    let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                        expected: h.clone(),
-                        actual: "invalid hex".to_string(),
-                    })?;
-                    Ok(H256::from_slice(&bytes))
-                })
+                .map(|h| parse_h256(h))
                 .collect::<Result<Vec<_>, Error>>()
         })
         .transpose()?;
@@ -290,13 +293,7 @@ async fn check_exists(
     let hashes: Vec<H256> = request
         .hashes
         .iter()
-        .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| parse_h256(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let (exists, missing) = state.storage.check_exists(request.bucket_id, &hashes);
@@ -324,13 +321,7 @@ async fn commit(
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
-        .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
-            Ok(H256::from_slice(&bytes))
-        })
+        .map(|h| parse_h256(h))
         .collect::<Result<Vec<_>, Error>>()?;
 
     let (mmr_root, start_seq, leaf_indices) =
@@ -353,11 +344,7 @@ async fn read_chunks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = parse_h256(&query.data_root)?;
 
     // `/read`'s offset/length math assumes every leaf except the last is exactly
     // `DEFAULT_CHUNK_SIZE` bytes. CDC-chunked roots break that assumption — the
@@ -400,15 +387,16 @@ async fn read_chunks(
 /// `DEFAULT_CHUNK_SIZE` bytes. Used by `/read` to reject CDC roots — the
 /// fixed-size offset math would otherwise serve misaligned bytes.
 ///
-/// Returns `Ok(false)` for an empty / unknown root (no leaves to validate);
-/// downstream `get_chunk_at_index` already errors cleanly on those.
+/// Unknown / empty roots return `Ok(true)` (pass-through): downstream
+/// `get_chunk_at_index` already returns empty results cleanly for those, and
+/// we don't want to conflate "we can't tell" with "positively CDC."
 fn data_root_is_fixed_size(
     storage: &dyn crate::storage::StorageBackend,
     data_root: H256,
 ) -> Result<bool, Error> {
     let hashes = storage.collect_chunk_hashes(data_root);
     if hashes.is_empty() {
-        return Ok(false);
+        return Ok(true);
     }
     let chunk_size = storage_primitives::DEFAULT_CHUNK_SIZE as usize;
     let (last, prefix) = hashes
@@ -444,11 +432,7 @@ async fn get_content(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetContentQuery>,
 ) -> Result<Response, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = parse_h256(&query.data_root)?;
 
     let chunks = state.storage.collect_chunks(data_root);
     if chunks.is_empty() && data_root != H256::zero() {
@@ -563,11 +547,7 @@ async fn get_chunk_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
-        expected: query.data_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let data_root = H256::from_slice(&root_bytes);
+    let data_root = parse_h256(&query.data_root)?;
 
     let (chunk_data, proof) = state
         .storage
@@ -668,11 +648,7 @@ async fn fetch_nodes(
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {
-        let hash_bytes = hex_decode(hash_str).map_err(|_| Error::InvalidHash {
-            expected: hash_str.clone(),
-            actual: "invalid hex".to_string(),
-        })?;
-        let hash = H256::from_slice(&hash_bytes);
+        let hash = parse_h256(hash_str)?;
 
         if let Some(node) = state.storage.get_node(&hash) {
             nodes.push(FetchedNode {
@@ -711,11 +687,7 @@ async fn sign_checkpoint_proposal(
     let local_mmr_root = format!("0x{}", hex_encode(bucket.mmr_root.as_bytes()));
 
     // Check if we agree with the proposal
-    let proposed_root_bytes = hex_decode(&request.mmr_root).map_err(|_| Error::InvalidHash {
-        expected: request.mmr_root.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
-    let proposed_root = H256::from_slice(&proposed_root_bytes);
+    let proposed_root = parse_h256(&request.mmr_root)?;
 
     // We agree if MMR roots match and sequence numbers are compatible
     let agreed = bucket.mmr_root == proposed_root

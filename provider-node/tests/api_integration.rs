@@ -1393,6 +1393,30 @@ async fn test_chunk_proof_invalid_hex() {
     assert_eq!(body["error"], "invalid_hash");
 }
 
+/// Wrong-length hex on an H256 query parameter used to panic in
+/// `H256::from_slice`, surfacing as a 500. It's now a clean 400 via the
+/// shared `parse_h256` helper.
+#[tokio::test]
+async fn test_short_hex_returns_400_not_500() {
+    let server = TestServer::new().await;
+
+    for path in [
+        "/node?hash=abcd",
+        "/content?data_root=abcd",
+        "/read?data_root=abcd&offset=0&length=10",
+        "/chunk_proof?data_root=abcd&chunk_index=0",
+    ] {
+        let resp = server.client.get(server.url(path)).send().await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "{path} should be 400"
+        );
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_hash", "{path} wrong error tag");
+    }
+}
+
 #[tokio::test]
 async fn test_checkpoint_trigger_unknown_bucket() {
     let server = TestServer::new().await;
