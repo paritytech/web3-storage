@@ -904,10 +904,15 @@ sp_api::decl_runtime_apis! {
         fn agreements_by_bucket_id(bucket_id: BucketId) -> Vec<AgreementResponse>;
         fn agreements_by_provider(provider: AccountId) -> Vec<AgreementResponse>;
 
+
         // ── Challenges ────────────────────────────────────────────────────
-        /// Challenges expiring at a specific block. Used by provider nodes
-        /// and challengers to track outstanding challenges.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
+        fn challenges_by_bucket(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+        fn challenges_by_provider(provider: AccountId) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges created by a specific challenger.
+        fn challenges_by_challenger(challenger: AccountId) -> Vec<ChallengeResponse>;
+
     }
 }
 ```
