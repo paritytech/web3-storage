@@ -63,7 +63,7 @@ It reads `libraryOf` unsigned for state detection. **State A** ("no library") ru
 library: the album bar lists/creates folders, **Upload** generates a downscaled JPEG thumbnail per
 photo (canvas, longest edge ~320px) and PUTs the full photo plus the thumbnail, the grid renders
 from thumbnails (kilobytes per cell), and clicking a photo opens it full-resolution in a lightbox.
-Every mutation recomputes the drive's metadata Merkle root client-side (`src/lib/merkle.ts`) and
+Every mutation recomputes the drive's metadata Merkle root client-side (`@web3-storage/core`'s `merkle.ts`) and
 anchors it on-chain via `setRoot`, so the on-chain anchor shown in the header updates live. `/fs`
 requests are unsigned (dev providers run `/fs` auth disabled; signed requests are M8).
 

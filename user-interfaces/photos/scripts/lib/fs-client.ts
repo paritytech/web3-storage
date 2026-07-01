@@ -7,9 +7,7 @@
 // `/fs` auth disabled (the M1 Writer grant covers the auth-enabled case,
 // exercised by the browser in M6). Reused unchanged by the UI later.
 
-import { httpFetch } from "@web3-storage/sdk";
-
-import { computeDataRoot, type MerkleEntry } from "./merkle.js";
+import { computeDataRoot, httpFetch, type MerkleEntry } from "@web3-storage/sdk";
 
 /** Parsed `PUT /fs/{bucketId}/file` response. */
 export interface PutFileResult {

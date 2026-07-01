@@ -32,7 +32,7 @@ import {
   type CachedDataRoot,
   type FsContext,
 } from '@/lib/fs-client'
-import { computeDataRoot } from '@/lib/merkle'
+import { computeDataRoot } from '@web3-storage/sdk'
 import { rootToBytes32, submitSetRoot } from '@/lib/photos-contract-write'
 import { makeThumbnail } from '@/lib/thumbnail'
 

@@ -22,9 +22,12 @@
 import assert from "node:assert";
 
 import {
+  computeDataRoot,
   connect,
   isSameAddress,
   makeSigner,
+  type MerkleEntry,
+  metadataMerkleRoot,
   READ_OPTS,
   requireOneEvent,
   toHex,
@@ -42,7 +45,6 @@ import {
 import { h160ToSubstrate, negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
 import { downloadFile, enumerateEntries, indexRoot, listDir, mkdir, putFile } from "./lib/fs-client.js";
-import { computeDataRoot, metadataMerkleRoot, type MerkleEntry } from "./lib/merkle.js";
 
 // pnpm forwards a literal `--` into argv; drop it.
 const args = process.argv.slice(2).filter((a) => a !== "--");

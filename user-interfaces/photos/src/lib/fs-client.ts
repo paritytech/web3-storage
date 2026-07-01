@@ -11,7 +11,7 @@
 //   driveId → DriveRegistry.Drives.bucket_id → resolveProviderEndpoint(bucket).
 
 import { httpFetch, resolveProviderEndpoint, type ParachainApi } from '@web3-storage/papi'
-import { computeDataRoot, metadataMerkleRoot, type MerkleEntry } from '@/lib/merkle'
+import { computeDataRoot, metadataMerkleRoot, type MerkleEntry } from '@web3-storage/sdk'
 
 /** A resolved drive's `/fs` endpoint + bucket — cached per library in state. */
 export interface FsContext {
