@@ -1606,7 +1606,7 @@ pub mod pallet {
             });
 
             // Remove from bucket's primary providers if primary
-            // TODO(no-admin-left)
+            // TODO(no-primary-provider-left)
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {

@@ -1,5 +1,6 @@
 use crate::*;
 use frame_support::pallet_prelude::*;
+use sp_runtime::traits::SaturatedConversion;
 
 impl<T: Config> Pallet<T> {
     /// Verify a MultiSignature against an encoded message using stored public key.
@@ -14,7 +15,6 @@ impl<T: Config> Pallet<T> {
     /// of) the current block. This prevents an attacker who captures one
     /// signed commitment from replaying it forever.
     pub fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
-        use sp_runtime::traits::SaturatedConversion;
         let current: u64 = frame_system::Pallet::<T>::block_number().saturated_into();
         let max_age: u64 = T::MaxNonceAge::get().saturated_into();
         // Future-dated nonces are nonsensical — the signer can only know

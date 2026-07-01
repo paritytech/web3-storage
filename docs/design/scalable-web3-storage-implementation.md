@@ -901,8 +901,8 @@ sp_api::decl_runtime_apis! {
 
         // ── Agreements ────────────────────────────────────────────────────
         fn agreement_info(bucket_id: BucketId, provider: AccountId) -> Option<AgreementResponse>;
-        fn bucket_agreements(bucket_id: BucketId) -> Vec<AgreementResponse>;
-        fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
+        fn agreements_by_bucket_id(bucket_id: BucketId) -> Vec<AgreementResponse>;
+        fn agreements_by_provider(provider: AccountId) -> Vec<AgreementResponse>;
 
         // ── Challenges ────────────────────────────────────────────────────
         /// Challenges expiring at a specific block. Used by provider nodes
