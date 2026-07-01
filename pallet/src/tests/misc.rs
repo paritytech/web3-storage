@@ -246,6 +246,7 @@ fn challenge_checkpoint_emits_event() {
                     leaf_count: 10,
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
+                    commitment_nonce: 0,
                 });
             }
         });
@@ -286,6 +287,7 @@ fn checkpoint_emits_event() {
             sp_core::H256::repeat_byte(0xAA),
             0,
             10,
+            1, // nonce
             Default::default(),
         ));
 

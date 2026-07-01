@@ -167,7 +167,8 @@ async function main() {
     // 5) Off-chain ops are unchanged — they bypass the contract entirely.
     console.log("\n[5/6] Off-chain upload + challenge round-trip…");
     const payload = `Hello via SC! ${new Date().toISOString()}`;
-    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload);
+    const uploadNonce = Number(await api.query.System.Number.getValue());
+    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(
       downloaded,
@@ -177,8 +178,10 @@ async function main() {
     const offchainId = await challengeOffchain(api, client, provider, bucketId, {
       mmrRoot: upload.commit.mmr_root,
       startSeq: upload.commit.start_seq,
+      leafCount: upload.commit.leaf_count,
       leafIndex: upload.commit.leaf_indices[0],
       providerSignature: upload.commit.provider_signature,
+      nonce: upload.commit.nonce,
     });
     const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
     await respondToChallenge(api, provider, offchainId, proof);

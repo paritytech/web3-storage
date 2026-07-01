@@ -249,7 +249,7 @@ fn establish_storage_agreement_fails_when_terms_validity_too_long() {
 
 #[test]
 fn re_register_replay_blocked_by_expiry() {
-    // Regression: the timing invariant RequestTimeout(50) < DeregisterAnnouncementPeriod(100)
+    // Regression: the timing invariant RequestTimeout(50) < DeregisterAnnouncementPeriod(150)
     // ensures a quote signed before deregistration has already expired by the time
     // complete_deregister is callable and the provider can re-register.
     new_test_ext().execute_with(|| {
@@ -261,14 +261,14 @@ fn re_register_replay_blocked_by_expiry() {
         let sig = sign_terms(&pair, &terms);
 
         // Announce deregistration (committed_bytes == 0).
-        // deregister_at = 0 + DeregisterAnnouncementPeriod(100) = block 100.
+        // deregister_at = 0 + DeregisterAnnouncementPeriod(150) = block 150.
         assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
             2
         )));
 
         // Advance to the deregistration block and complete it.
         // complete_deregister wipes ProviderReplayStates[2].
-        run_to_block(100);
+        run_to_block(150);
         assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
             2
         )));
@@ -276,7 +276,7 @@ fn re_register_replay_blocked_by_expiry() {
         // Re-register under the same account with a fresh empty replay window.
         register_provider(2, 200);
 
-        // At block 100 the old quote is expired (valid_until=50 < 100): TermsExpired
+        // At block 150 the old quote is expired (valid_until=50 < 150): TermsExpired
         // fires before the signature check so key mismatch is irrelevant.
         assert_noop!(
             StorageProvider::establish_storage_agreement(RuntimeOrigin::signed(1), 2, terms, sig),
