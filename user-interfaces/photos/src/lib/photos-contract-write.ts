@@ -10,7 +10,7 @@
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
 import { decodeEventLog, encodeFunctionData } from 'viem'
 import type { PolkadotSigner } from 'polkadot-api'
-import { fromHex, toHex, toSs58, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+import { fromHex, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
 import { getClient } from '@/lib/chain-client'
 import { PHOTOS_ABI } from '@/contract/photos-abi'
 
@@ -41,24 +41,6 @@ export interface PrimitiveAgreementTerms {
 export interface ContractSignedTerms {
   terms: PrimitiveAgreementTerms
   signature: `0x${string}`
-}
-
-/** Owner-shaped value the negotiate helper needs (a mapped account). */
-export interface MappedOwner {
-  publicKey: Uint8Array
-  address: string
-}
-
-/**
- * Substrate account `AccountId32Mapper` assigns to an unmapped H160 (e.g. a
- * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`. Use
- * as the `owner` of negotiated terms when the contract forwards them. Mirrors
- * `scripts/lib/contract.ts:h160ToSubstrate`.
- */
-export function h160ToSubstrate(addressBytes: Uint8Array): MappedOwner {
-  const publicKey = new Uint8Array(32).fill(0xee)
-  publicKey.set(addressBytes, 0)
-  return { publicKey, address: toSs58(publicKey) }
 }
 
 /** Decode a provider's SS58 account to its raw 32-byte public key, as bytes32 hex. */

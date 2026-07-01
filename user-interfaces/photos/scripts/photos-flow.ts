@@ -24,6 +24,7 @@ import assert from "node:assert";
 import {
   computeDataRoot,
   connect,
+  h160ToSubstrate,
   isSameAddress,
   makeSigner,
   type MerkleEntry,
@@ -42,7 +43,7 @@ import {
   ensureAccountMapped,
   substrateToH160,
 } from "@web3-storage/sdk/revive";
-import { h160ToSubstrate, negotiatePrecompileTerms } from "./lib/contract.js";
+import { negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
 import { downloadFile, enumerateEntries, indexRoot, listDir, mkdir, putFile } from "./lib/fs-client.js";
 

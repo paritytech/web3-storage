@@ -5,6 +5,7 @@
  * Strictly no chain coupling: no descriptors, no polkadot-api.
  */
 
+export * from "./address.js";
 export * from "./bytes.js";
 export * from "./http.js";
 export * from "./merkle.js";

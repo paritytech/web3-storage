@@ -10,13 +10,13 @@ import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, toHex, negotiateProviderTerms } from '@web3-storage/papi'
+import { h160ToSubstrate } from '@web3-storage/sdk'
 import { getApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
   computePaymentAndValue,
   encodeCreateLibrary,
   ensureAccountMapped,
-  h160ToSubstrate,
   providerAccountToBytes32,
   submitCreateLibrary,
   toContractTerms,
