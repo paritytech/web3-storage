@@ -38,6 +38,19 @@ struct CachedMembership {
     fetched_at: Instant,
 }
 
+/// A bucket's cache slot: its membership (if any) plus a generation counter bumped on every
+/// [`MembershipCache::invalidate`] call.
+///
+/// The generation lets a chain fetch that was already in flight when an `invalidate()` landed
+/// detect that its result is now stale and must not be persisted — without it, a fetch started
+/// just before a revocation could still write the pre-revocation members into the cache after
+/// the invalidation ran, silently resurrecting access for a full TTL.
+#[derive(Debug, Clone, Default)]
+struct CacheSlot {
+    membership: Option<CachedMembership>,
+    generation: u64,
+}
+
 /// Trait for resolving bucket membership (enables mocking in tests).
 #[async_trait::async_trait]
 pub trait MembershipResolver: Send + Sync {
@@ -46,7 +59,7 @@ pub trait MembershipResolver: Send + Sync {
 
 /// Membership cache backed by chain queries via subxt.
 pub struct MembershipCache {
-    cache: DashMap<u64, CachedMembership>,
+    cache: DashMap<u64, CacheSlot>,
     ttl: Duration,
     resolver: Box<dyn MembershipResolver>,
 }
@@ -67,39 +80,76 @@ impl MembershipCache {
         bucket_id: u64,
         account: &AccountId32,
     ) -> Result<Option<Role>, String> {
-        // Check cache first
-        if let Some(entry) = self.cache.get(&bucket_id) {
-            if entry.fetched_at.elapsed() < self.ttl {
-                return Ok(find_role(&entry.members, account));
+        // Check cache first, remembering the generation so the fetch below can detect an
+        // invalidate() that lands while it's in flight.
+        let generation_before = match self.cache.get(&bucket_id) {
+            Some(slot) => {
+                if let Some(cached) = &slot.membership {
+                    if cached.fetched_at.elapsed() < self.ttl {
+                        return Ok(find_role(&cached.members, account));
+                    }
+                }
+                slot.generation
             }
-        }
+            None => 0,
+        };
 
         // Cache miss or stale — fetch from chain
         match self.resolver.fetch_members(bucket_id).await {
             Ok(members) => {
                 let role = find_role(&members, account);
-                self.cache.insert(
-                    bucket_id,
-                    CachedMembership {
-                        members,
-                        fetched_at: Instant::now(),
-                    },
-                );
+                let membership = CachedMembership {
+                    members,
+                    fetched_at: Instant::now(),
+                };
+                // Only persist the fetch if the generation hasn't moved since we started —
+                // otherwise an invalidate() ran while we awaited the chain and this result is
+                // stale. and_modify/or_insert_with run under the same per-key lock as
+                // invalidate()'s, so there is no window between the check and the write.
+                self.cache
+                    .entry(bucket_id)
+                    .and_modify(|slot| {
+                        if slot.generation == generation_before {
+                            slot.membership = Some(membership.clone());
+                        }
+                    })
+                    .or_insert_with(|| CacheSlot {
+                        membership: Some(membership),
+                        generation: generation_before,
+                    });
                 Ok(role)
             }
             Err(e) => {
                 // Stale-while-revalidate: serve stale data if chain is unreachable
-                if let Some(entry) = self.cache.get(&bucket_id) {
-                    tracing::warn!(
-                        "Chain unreachable for bucket {} membership, serving stale data: {}",
-                        bucket_id,
-                        e
-                    );
-                    return Ok(find_role(&entry.members, account));
+                if let Some(slot) = self.cache.get(&bucket_id) {
+                    if let Some(cached) = &slot.membership {
+                        tracing::warn!(
+                            "Chain unreachable for bucket {} membership, serving stale data: {}",
+                            bucket_id,
+                            e
+                        );
+                        return Ok(find_role(&cached.members, account));
+                    }
                 }
                 Err(e)
             }
         }
+    }
+
+    /// Drop the cached entry for `bucket_id`, if any, so the next lookup re-fetches from
+    /// chain, and bump its generation so a fetch already in flight cannot resurrect the
+    /// invalidated membership once it completes.
+    pub fn invalidate(&self, bucket_id: u64) {
+        self.cache
+            .entry(bucket_id)
+            .and_modify(|slot| {
+                slot.membership = None;
+                slot.generation = slot.generation.saturating_add(1);
+            })
+            .or_insert_with(|| CacheSlot {
+                membership: None,
+                generation: 1,
+            });
     }
 }
 
@@ -490,5 +540,131 @@ mod tests {
 
         let unknown = AccountId32::new([4u8; 32]);
         assert_eq!(find_role(&members, &unknown), None);
+    }
+
+    /// Resolver that counts calls via a shared counter, so tests can assert whether a
+    /// lookup hit the cache or went to the resolver.
+    struct CountingResolver {
+        members: Vec<(AccountId32, Role)>,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for CountingResolver {
+        async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.members.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_forces_refetch() {
+        let alice = AccountId32::new([1u8; 32]);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resolver = CountingResolver {
+            members: vec![(alice.clone(), Role::Admin)],
+            calls: calls.clone(),
+        };
+        let cache = MembershipCache::new(Box::new(resolver), Duration::from_secs(300));
+
+        assert_eq!(cache.get_role(1, &alice).await, Ok(Some(Role::Admin)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Second lookup within TTL hits the cache — no new resolver call.
+        assert_eq!(cache.get_role(1, &alice).await, Ok(Some(Role::Admin)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        cache.invalidate(1);
+
+        // Lookup after invalidation must re-fetch.
+        assert_eq!(cache.get_role(1, &alice).await, Ok(Some(Role::Admin)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_absent_bucket_is_noop() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resolver = CountingResolver {
+            members: vec![],
+            calls: calls.clone(),
+        };
+        let cache = MembershipCache::new(Box::new(resolver), Duration::from_secs(300));
+        cache.invalidate(42); // no entry cached yet — must not panic
+
+        // Invalidating an uncached bucket must not change get_role's behavior: the first
+        // lookup still triggers exactly one resolver call, same as any other cold miss.
+        let account = AccountId32::new([1u8; 32]);
+        assert_eq!(cache.get_role(42, &account).await, Ok(None));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// Resolver whose `fetch_members` blocks until the test tells it to proceed, so a test
+    /// can deterministically interleave an `invalidate()` call in the middle of a fetch that
+    /// is already in flight — reproducing the lost-update race `get_role` must not have.
+    struct BlockingResolver {
+        members: Vec<(AccountId32, Role)>,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        /// Signaled by the test once the in-flight fetch should resume.
+        proceed: std::sync::Arc<tokio::sync::Notify>,
+        /// Signaled by `fetch_members` once it has started, so the test knows it's safe to
+        /// invalidate before the fetch returns.
+        started: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl MembershipResolver for BlockingResolver {
+        async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.started.notify_one();
+            self.proceed.notified().await;
+            Ok(self.members.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_during_in_flight_fetch_discards_stale_result() {
+        let alice = AccountId32::new([1u8; 32]);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let proceed = std::sync::Arc::new(tokio::sync::Notify::new());
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let resolver = BlockingResolver {
+            members: vec![(alice.clone(), Role::Admin)],
+            calls: calls.clone(),
+            proceed: proceed.clone(),
+            started: started.clone(),
+        };
+        let cache = std::sync::Arc::new(MembershipCache::new(
+            Box::new(resolver),
+            Duration::from_secs(300),
+        ));
+
+        // Kick off a fetch for bucket 1 and let it block inside fetch_members — simulating a
+        // request that started reading membership just before a revocation lands.
+        let cache_clone = cache.clone();
+        let alice_clone = alice.clone();
+        let fetch_task = tokio::spawn(async move { cache_clone.get_role(1, &alice_clone).await });
+        started.notified().await;
+
+        // A revocation lands while the fetch above is still in flight.
+        cache.invalidate(1);
+
+        // Let the stale fetch complete.
+        proceed.notify_one();
+        let result = fetch_task.await.unwrap();
+        assert_eq!(
+            result,
+            Ok(Some(Role::Admin)),
+            "the in-flight fetch's own read reflects what it actually fetched"
+        );
+
+        // The stale result must NOT have been cached: the next lookup re-fetches from chain
+        // instead of serving the discarded pre-revocation membership for a full TTL.
+        proceed.notify_one(); // arm the next fetch_members call to also proceed immediately
+        assert_eq!(cache.get_role(1, &alice).await, Ok(Some(Role::Admin)));
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a fetch that raced against invalidate() must not persist its stale result"
+        );
     }
 }

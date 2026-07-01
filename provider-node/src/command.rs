@@ -167,7 +167,8 @@ fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
 }
 
 /// Start the chain-state coordinator, which keeps `chain_state.current_block`
-/// and `chain_state.provider_info` in sync with the chain.
+/// and `chain_state.provider_info` in sync with the chain, and invalidates
+/// `state.membership_cache` entries for buckets whose membership changes on-chain.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and
@@ -192,6 +193,7 @@ fn start_chain_state_coordinator(
         cli.rpc.chain_rpc.clone(),
         provider_account,
         state.chain_state.clone(),
+        state.membership_cache.clone(),
     );
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");

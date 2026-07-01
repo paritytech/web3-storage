@@ -18,6 +18,12 @@
 //!    Pointed at an unreachable chain it must stay up, never panic, leave
 //!    [`ChainState`] at its defaults (so `/negotiate` keeps returning 503), and
 //!    shut down cleanly when stopped.
+//!
+//! 4. **Membership invalidation.** [`invalidate_membership_on_events`] scans a
+//!    finalized block's events for membership changes and evicts the affected
+//!    bucket from [`MembershipCache`] — keyed by `bucket_id`, independent of
+//!    [`is_relevant_provider_event`] — so the next `require_role` lookup re-fetches
+//!    fresh roles instead of serving a stale cached role until TTL expiry.
 
 use async_trait::async_trait;
 use sp_core::H256;
@@ -27,10 +33,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_client::discovery::ProviderInfo;
 use storage_client::{ClientError, ProviderSettings, StorageEvent};
+use storage_primitives::Role;
+use storage_provider_node::auth::{MembershipCache, MembershipResolver};
 use storage_provider_node::{
-    is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
-    PalletConstants,
+    invalidate_membership_on_events, is_relevant_provider_event, refresh_if_relevant_event,
+    refresh_provider_state, sync_constants, ChainState, ChainStateChainClient,
+    ChainStateCoordinator, NonceCounter, NonceStore, PalletConstants,
 };
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
@@ -70,6 +78,7 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
         UNREACHABLE_CHAIN.to_string(),
         provider_account(),
         chain_state.clone(),
+        None,
     );
     let handle = coordinator.start();
 
@@ -96,6 +105,7 @@ async fn coordinator_shares_chain_state_with_caller() {
         UNREACHABLE_CHAIN.to_string(),
         provider_account(),
         chain_state.clone(),
+        None,
     );
     let handle = coordinator.start();
 
@@ -117,6 +127,7 @@ async fn coordinator_stop_is_prompt() {
         UNREACHABLE_CHAIN.to_string(),
         provider_account(),
         chain_state,
+        None,
     )
     .start();
 
@@ -134,6 +145,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
         UNREACHABLE_CHAIN.to_string(),
         provider_account(),
         chain_state.clone(),
+        None,
     )
     .start();
 
@@ -155,6 +167,7 @@ async fn coordinator_releases_shared_state_after_stop() {
         UNREACHABLE_CHAIN.to_string(),
         provider_account(),
         chain_state.clone(),
+        None,
     )
     .start();
 
@@ -575,6 +588,90 @@ async fn empty_block_does_not_refresh() {
     refresh_if_relevant_event(&chain, &cs, &provider_account(), &[], 1).await;
 
     assert!(cs.provider_info.read().is_none());
+}
+
+// ── membership cache invalidation (invalidate_membership_on_events) ───────────
+
+/// Resolver that counts calls, so tests can tell whether a lookup hit the cache or
+/// went to the resolver.
+struct CountingMembershipResolver {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl MembershipResolver for CountingMembershipResolver {
+    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![])
+    }
+}
+
+fn member_removed_event(bucket_id: u64) -> StorageEvent {
+    StorageEvent::MemberRemoved {
+        bucket_id,
+        member: AccountId32::new([8u8; 32]),
+        block_hash: H256::zero(),
+        block_number: 1,
+    }
+}
+
+#[tokio::test]
+async fn membership_event_in_finalized_block_invalidates_cached_bucket() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let cache = MembershipCache::new(
+        Box::new(CountingMembershipResolver {
+            calls: calls.clone(),
+        }),
+        Duration::from_secs(300),
+    );
+    let account = provider_account();
+
+    // Populate the cache for bucket 1.
+    cache.get_role(1, &account).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // A finalized block carrying a MemberRemoved event for bucket 1, alongside an
+    // unrelated provider event — mirroring what the coordinator parses per block.
+    let block_events = [
+        registered_event(provider_account_2()),
+        member_removed_event(1),
+    ];
+    invalidate_membership_on_events(&cache, &block_events);
+
+    // The cached role can no longer be trusted — the next lookup must re-fetch.
+    cache.get_role(1, &account).await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "a membership event for the cached bucket must force a re-fetch"
+    );
+}
+
+#[tokio::test]
+async fn unrelated_block_event_leaves_cached_membership_intact() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let cache = MembershipCache::new(
+        Box::new(CountingMembershipResolver {
+            calls: calls.clone(),
+        }),
+        Duration::from_secs(300),
+    );
+    let account = provider_account();
+
+    cache.get_role(1, &account).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // A block with only a provider-lifecycle event (no bucket_id) must not touch
+    // a cached bucket's membership.
+    let block_events = [registered_event(provider_account())];
+    invalidate_membership_on_events(&cache, &block_events);
+
+    cache.get_role(1, &account).await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "an unrelated event must leave the cached bucket intact"
+    );
 }
 
 // ─── Nonce counter persistence (nonce_store seeding) ──────────────────────────

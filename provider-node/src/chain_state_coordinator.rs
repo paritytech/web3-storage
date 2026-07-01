@@ -15,6 +15,7 @@
 //! `stake`, and all settings stay current — no field-patching, no partial
 //! updates, no second writer.
 
+use crate::auth::MembershipCache;
 use crate::negotiate::NonceCounter;
 use crate::storage::{NonceStore, NullNonceStore};
 use async_trait::async_trait;
@@ -139,6 +140,9 @@ pub struct ChainStateCoordinator {
     chain_ws_url: String,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
+    /// Invalidated (never populated) on membership-changing events. `None` when auth is
+    /// disabled, in which case the coordinator's membership-invalidation path no-ops.
+    membership_cache: Option<Arc<MembershipCache>>,
 }
 
 impl ChainStateCoordinator {
@@ -146,11 +150,13 @@ impl ChainStateCoordinator {
         chain_ws_url: String,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
+        membership_cache: Option<Arc<MembershipCache>>,
     ) -> Self {
         Self {
             chain_ws_url,
             provider_account,
             chain_state,
+            membership_cache,
         }
     }
 
@@ -241,6 +247,7 @@ impl ChainStateCoordinator {
 
             self.process_provider_events(&chain, &parsed, block_number)
                 .await;
+            self.invalidate_membership_cache(&parsed);
         }
 
         Ok(())
@@ -261,6 +268,14 @@ impl ChainStateCoordinator {
             block_number,
         )
         .await;
+    }
+
+    /// Invalidate the membership cache for any bucket whose membership changed in
+    /// `parsed`. No-op when auth is disabled (`membership_cache` is `None`).
+    fn invalidate_membership_cache(&self, parsed: &[StorageEvent]) {
+        if let Some(cache) = &self.membership_cache {
+            invalidate_membership_on_events(cache, parsed);
+        }
     }
 }
 
@@ -417,6 +432,24 @@ pub fn is_relevant_provider_event(event: &StorageEvent, provider_account: &Accou
     }
 }
 
+/// Invalidate the membership cache entry for any bucket whose membership changed in
+/// `events`. Independent of [`is_relevant_provider_event`]: membership events are keyed by
+/// bucket, not by provider account, so they apply regardless of whose block this is.
+/// Invalidating a bucket that isn't cached is a no-op.
+pub fn invalidate_membership_on_events(cache: &MembershipCache, events: &[StorageEvent]) {
+    for event in events {
+        let bucket_id = match event {
+            StorageEvent::MemberSet { bucket_id, .. }
+            | StorageEvent::MemberRemoved { bucket_id, .. }
+            | StorageEvent::BucketDeleted { bucket_id, .. } => Some(*bucket_id),
+            _ => None,
+        };
+        if let Some(bucket_id) = bucket_id {
+            cache.invalidate(bucket_id);
+        }
+    }
+}
+
 // ── ChainStateCoordinatorHandle ───────────────────────────────────────────────
 
 /// Keeps the coordinator alive. Drop or call [`stop`](Self::stop) to shut down.
@@ -519,5 +552,94 @@ mod tests {
             request_timeout: 100,
         });
         assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 100);
+    }
+
+    /// Resolver that counts calls via a shared counter, so tests can tell whether a
+    /// lookup hit the cache or went to the resolver.
+    struct CountingResolver {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl crate::auth::MembershipResolver for CountingResolver {
+        async fn fetch_members(
+            &self,
+            _bucket_id: u64,
+        ) -> Result<Vec<(AccountId32, storage_primitives::Role)>, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![])
+        }
+    }
+
+    fn counting_cache() -> (MembershipCache, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resolver = CountingResolver {
+            calls: calls.clone(),
+        };
+        (
+            MembershipCache::new(Box::new(resolver), Duration::from_secs(300)),
+            calls,
+        )
+    }
+
+    fn member_removed(bucket_id: u64) -> StorageEvent {
+        StorageEvent::MemberRemoved {
+            bucket_id,
+            member: AccountId32::new([9u8; 32]),
+            block_hash: H256::zero(),
+            block_number: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn membership_event_invalidates_matching_bucket() {
+        let (cache, calls) = counting_cache();
+        let account = AccountId32::new([1u8; 32]);
+
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        invalidate_membership_on_events(&cache, &[member_removed(1)]);
+
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "a membership event for the cached bucket must force a re-fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn unrelated_event_does_not_invalidate() {
+        let (cache, calls) = counting_cache();
+        let account = AccountId32::new([1u8; 32]);
+
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // A provider-lifecycle event carries no bucket_id and must not touch the cache,
+        // independent of is_relevant_provider_event.
+        let events = [StorageEvent::ProviderRegistered {
+            provider: account.clone(),
+            stake: 0,
+            block_hash: H256::zero(),
+            block_number: 1,
+        }];
+        invalidate_membership_on_events(&cache, &events);
+
+        cache.get_role(1, &account).await.unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "an unrelated event must not invalidate a cached bucket"
+        );
+    }
+
+    #[test]
+    fn invalidate_on_uncached_bucket_is_noop() {
+        let (cache, calls) = counting_cache();
+        // Nothing cached yet — must not panic.
+        invalidate_membership_on_events(&cache, &[member_removed(42)]);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

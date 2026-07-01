@@ -44,7 +44,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Role};
 use subxt::ext::scale_value::{self, At};
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
@@ -250,6 +250,26 @@ pub enum StorageEvent {
     },
 
     // ========================================================================
+    // Membership Events
+    // ========================================================================
+    /// A member was added to a bucket, or an existing member's role changed.
+    MemberSet {
+        bucket_id: BucketId,
+        member: AccountId32,
+        role: Role,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    /// A member was removed from a bucket.
+    MemberRemoved {
+        bucket_id: BucketId,
+        member: AccountId32,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    // ========================================================================
     // Replica Events
     // ========================================================================
     /// A replica synced its data.
@@ -289,6 +309,8 @@ impl StorageEvent {
             StorageEvent::BucketCreated { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::BucketFrozen { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::BucketDeleted { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::MemberSet { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::MemberRemoved { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::ReplicaSynced { bucket_id, .. } => Some(*bucket_id),
             _ => None,
         }
@@ -340,6 +362,8 @@ impl StorageEvent {
             StorageEvent::BucketCreated { block_hash, .. } => *block_hash,
             StorageEvent::BucketFrozen { block_hash, .. } => *block_hash,
             StorageEvent::BucketDeleted { block_hash, .. } => *block_hash,
+            StorageEvent::MemberSet { block_hash, .. } => *block_hash,
+            StorageEvent::MemberRemoved { block_hash, .. } => *block_hash,
             StorageEvent::ReplicaSynced { block_hash, .. } => *block_hash,
             StorageEvent::Unknown { block_hash, .. } => *block_hash,
         }
@@ -367,6 +391,8 @@ impl StorageEvent {
             StorageEvent::BucketCreated { block_number, .. } => *block_number,
             StorageEvent::BucketFrozen { block_number, .. } => *block_number,
             StorageEvent::BucketDeleted { block_number, .. } => *block_number,
+            StorageEvent::MemberSet { block_number, .. } => *block_number,
+            StorageEvent::MemberRemoved { block_number, .. } => *block_number,
             StorageEvent::ReplicaSynced { block_number, .. } => *block_number,
             StorageEvent::Unknown { block_number, .. } => *block_number,
         }
@@ -516,7 +542,9 @@ impl EventFilter {
             | StorageEvent::AgreementEnded { .. } => self.include_agreements,
             StorageEvent::BucketCreated { .. }
             | StorageEvent::BucketFrozen { .. }
-            | StorageEvent::BucketDeleted { .. } => self.include_bucket_lifecycle,
+            | StorageEvent::BucketDeleted { .. }
+            | StorageEvent::MemberSet { .. }
+            | StorageEvent::MemberRemoved { .. } => self.include_bucket_lifecycle,
             StorageEvent::ProviderRegistered { .. }
             | StorageEvent::ProviderAddedToBucket { .. }
             | StorageEvent::PrimaryProviderRemoved { .. }
@@ -1130,6 +1158,21 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 block_number,
             }),
 
+            // ── Membership ────────────────────────────────────────────────────
+            "MemberSet" => Some(StorageEvent::MemberSet {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                member: scale_decode::field_account(&fields, "member")?,
+                role: field_role(&fields, "role")?,
+                block_hash,
+                block_number,
+            }),
+            "MemberRemoved" => Some(StorageEvent::MemberRemoved {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                member: scale_decode::field_account(&fields, "member")?,
+                block_hash,
+                block_number,
+            }),
+
             // ── Replicas ──────────────────────────────────────────────────────
             "ReplicaSynced" => Some(StorageEvent::ReplicaSynced {
                 bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
@@ -1220,6 +1263,21 @@ fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> Str
         .at(name)
         .and_then(scale_decode::variant_name)
         .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Read a `Role`-shaped variant field. Returns `None` if missing, not a variant, or an
+/// unrecognized variant name.
+fn field_role(fields: &scale_value::Composite<u32>, name: &str) -> Option<Role> {
+    match fields
+        .at(name)
+        .and_then(scale_decode::variant_name)?
+        .as_str()
+    {
+        "Admin" => Some(Role::Admin),
+        "Writer" => Some(Role::Writer),
+        "Reader" => Some(Role::Reader),
+        _ => None,
+    }
 }
 
 // ============================================================================
@@ -1370,5 +1428,49 @@ mod tests {
         assert_eq!(event.block_number(), 750);
         assert!(event.is_agreement_event());
         assert!(!event.is_checkpoint_event());
+    }
+
+    #[test]
+    fn test_member_set_helpers() {
+        let member = AccountId32::new([6u8; 32]);
+        let event = StorageEvent::MemberSet {
+            bucket_id: 9,
+            member: member.clone(),
+            role: Role::Writer,
+            block_hash: H256::repeat_byte(0x03),
+            block_number: 111,
+        };
+
+        assert_eq!(event.bucket_id(), Some(9));
+        assert_eq!(event.block_hash(), H256::repeat_byte(0x03));
+        assert_eq!(event.block_number(), 111);
+        match event {
+            StorageEvent::MemberSet {
+                member: m, role, ..
+            } => {
+                assert_eq!(m, member);
+                assert_eq!(role, Role::Writer);
+            }
+            _ => panic!("expected MemberSet"),
+        }
+    }
+
+    #[test]
+    fn test_member_removed_helpers() {
+        let member = AccountId32::new([7u8; 32]);
+        let event = StorageEvent::MemberRemoved {
+            bucket_id: 10,
+            member: member.clone(),
+            block_hash: H256::repeat_byte(0x04),
+            block_number: 222,
+        };
+
+        assert_eq!(event.bucket_id(), Some(10));
+        assert_eq!(event.block_hash(), H256::repeat_byte(0x04));
+        assert_eq!(event.block_number(), 222);
+        match event {
+            StorageEvent::MemberRemoved { member: m, .. } => assert_eq!(m, member),
+            _ => panic!("expected MemberRemoved"),
+        }
     }
 }
