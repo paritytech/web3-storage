@@ -36,7 +36,7 @@ These live in [`primitives/src/chunking.rs`](../../primitives/src/chunking.rs).
 
 The `GET /read?data_root=&offset=&length=` byte-range endpoint assumes fixed-size chunks — its arithmetic is `chunk_index = offset / DEFAULT_CHUNK_SIZE`. Now that S3 and FS uploads always use CDC, that's wrong for the **common** case rather than a rare one, and `get_chunk_at_index` would still hand back *a* chunk, so the endpoint would silently serve misaligned bytes with a 200.
 
-To prevent that, `/read` now **guards** every call: it walks the leaves under `data_root` and rejects with `422 variable_chunk_root` if any non-trailing leaf isn't exactly `DEFAULT_CHUNK_SIZE`. Implementation: `data_root_is_fixed_size` in `provider-node/src/api.rs`; integration coverage in `test_read_rejects_cdc_root`. For whole-file historical fetch, use the new `GET /content?data_root=` endpoint, which walks the manifest and works for any chunking strategy.
+To prevent that, `/read` now **guards** every call: it walks the leaves under `data_root` and rejects with `422 variable_chunk_root` if any non-trailing leaf isn't exactly `DEFAULT_CHUNK_SIZE`. Implementation: `data_root_is_fixed_size` in `provider-node/src/api.rs`; integration coverage in `test_read_rejects_cdc_root`. For whole-file historical fetch, use the `GET /content?data_root=` endpoint, which walks the tree by hash (streaming chunk-by-chunk, so provider memory is one chunk per request, not the whole object) and works for any chunking strategy.
 
 Worth flagging: **roots don't record their chunking strategy.** A `data_root` is just a Merkle root over a list of `blake2_256(chunk)` leaves; nothing in the tree distinguishes a fixed-256K-chunked root from a CDC root from anything else. Any future endpoint that does offset/length arithmetic is therefore globally unsafe until we either (a) tag roots with their strategy (e.g. an extra storage map alongside the bucket's S3/FS index), (b) make the read side fully strategy-agnostic by walking a manifest with explicit per-chunk offsets, or (c) only emit one canonical chunking. Right now the guard substitutes for that by content-inspecting the leaves at request time: it rejects only when it can positively prove the root is variable-size (any non-trailing leaf differs from `DEFAULT_CHUNK_SIZE`). Empty / unknown roots pass through — downstream `get_chunk_at_index` returns empty results cleanly for those, so this preserves the pre-guard behaviour for nonexistent roots.
 
@@ -54,10 +54,14 @@ A real variable-size byte-range implementation of `/read` is deferred until a ca
 | Append dedup | ✅ Works (only trailing chunk changes) | ✅ Works |
 | Best for | Binary blobs with fixed-offset fields; embedded use where every byte counts | Text, structured data, anything with shifting edits |
 
-`ChunkingStrategy::Fixed(usize)` remains the SDK default; CDC is opt-in via `ChunkingStrategy::ContentDefined`. The provider's HTTP upload endpoints (S3 / FS) always use CDC since their callers don't pick a strategy.
+`ChunkingStrategy::default()` is now `ContentDefined` — the SDK CDC-chunks on upload by default; `Fixed(usize)` stays available for the binary/embedded cases above. The provider's HTTP upload endpoints (S3 / FS) always use CDC since their callers don't pick a strategy.
+
+The default could flip because the SDK's read path no longer depends on `/read`. `StorageUserClient::download` (and `spot_check`) now fetch chunks by index through `GET /chunk_proof?data_root=&chunk_index=`, which is index-based — it never touches the fixed-size offset math that the `/read` guard rejects — and returns each chunk with its Merkle proof. The client verifies every chunk two ways: `blake2_256(bytes) == leaf_hash`, then `verify_merkle_proof(leaf_hash, index, proof, data_root)`. It iterates `0..` until the provider 404s (end of file). This is strictly stronger than the old `/read` path, which returned proofs but never checked them against `data_root` — so a lying provider was previously undetectable on download. `download(offset, length)` walks from chunk 0 and slices the result; there's no client-side random access by byte offset under CDC (chunk sizes are content-defined), which is fine since real callers read from offset 0.
 
 ## Verification
 
 - Unit tests in `primitives/src/chunking.rs::tests` cover determinism, size-distribution bounds, byte-equal reassembly, and ≥ 90% chunk reuse on mid-file insertion / deletion of 8 MiB random data.
 - Integration test `test_s3_cdc_dedup_across_versions` in `provider-node/tests/s3_integration.rs` PUTs an 8 MiB blob, then a mid-file-edited variant, and asserts the second PUT adds fewer than `total_nodes(v1) / 4` new nodes.
-- `test_get_content_returns_full_bytes` exercises the new `/content` endpoint.
+- `test_get_content_returns_full_bytes` exercises `/content` (multi-chunk); `test_get_content_unknown_root_404` covers the missing-root path.
+- `test_read_rejects_cdc_root` asserts `/read` refuses variable-size roots.
+- The SDK's `download` / `spot_check` verify each chunk's Merkle proof against `data_root` via `/chunk_proof`, so a CDC `upload` → `download` round-trip is cryptographically checked end-to-end.

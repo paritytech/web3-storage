@@ -14,10 +14,11 @@ use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
+    body::{Body, Bytes},
     extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderValue},
     middleware::{from_fn_with_state, Next},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post, put},
     Json, Router,
 };
@@ -434,16 +435,33 @@ async fn get_content(
 ) -> Result<Response, Error> {
     let data_root = parse_h256(&query.data_root)?;
 
-    let chunks = state.storage.collect_chunks(data_root);
-    if chunks.is_empty() && data_root != H256::zero() {
+    // Resolve the leaf list up front (cheap — hashes only) so a missing root
+    // returns a clean 404 before we commit to a 200 + streamed body.
+    let chunk_hashes = state.storage.collect_chunk_hashes(data_root);
+    if chunk_hashes.is_empty() && data_root != H256::zero() {
         return Err(Error::NodeNotFound(query.data_root));
     }
-    let total: usize = chunks.iter().map(Vec::len).sum();
-    let mut body = Vec::with_capacity(total);
-    for chunk in chunks {
-        body.extend_from_slice(&chunk);
-    }
-    let mut response = (StatusCode::OK, body).into_response();
+
+    // Stream chunk-by-chunk instead of buffering the whole object: peak memory
+    // is one chunk per in-flight request, not object-size × concurrency. Each
+    // leaf's bytes are fetched from storage on demand as the body is polled.
+    let storage = state.storage.clone();
+    let stream = tokio_stream::iter(chunk_hashes.into_iter().map(move |hash| {
+        storage
+            .get_node(&hash)
+            .map(|node| Bytes::from(node.data))
+            .ok_or_else(|| {
+                // A leaf vanished mid-stream (e.g. concurrent prune). The 200 is
+                // already sent, so truncate the body with an error rather than
+                // silently serving a short read.
+                std::io::Error::other(format!(
+                    "chunk 0x{} missing during stream",
+                    hex_encode(hash.as_bytes())
+                ))
+            })
+    }));
+
+    let mut response = Response::new(Body::from_stream(stream));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/octet-stream"),

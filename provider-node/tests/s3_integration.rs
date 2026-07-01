@@ -512,6 +512,22 @@ async fn test_get_content_returns_full_bytes() {
     assert_eq!(returned.as_ref(), body.as_slice());
 }
 
+/// A well-formed but unknown `data_root` must still 404 — the emptiness check
+/// now runs against `collect_chunk_hashes` before the streaming body starts.
+#[tokio::test]
+async fn test_get_content_unknown_root_404() {
+    let server = TestServer::new().await;
+
+    let unknown = format!("0x{}", "ab".repeat(32));
+    let r = server
+        .client
+        .get(server.url(&format!("/content?data_root={unknown}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
 /// `/read` must refuse CDC roots — fixed-size offset math would otherwise
 /// silently serve misaligned bytes.
 #[tokio::test]

@@ -14,7 +14,7 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::{blake2_256, verify_merkle_proof, BucketId, MerkleProof};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -169,20 +169,72 @@ impl StorageUserClient {
         offset: u64,
         length: u64,
     ) -> ClientResult<Vec<u8>> {
+        // Walk chunks by index, verifying each against `data_root`, until we've
+        // covered the requested range or the provider signals end-of-file.
+        // Content-defined chunking makes chunk sizes variable, so a byte offset
+        // can't be mapped to a chunk index up front — we walk from chunk 0. In
+        // practice callers read from offset 0 (whole object or prefix), so this
+        // is a single forward pass; `spot_check` fetches a single chunk by index
+        // directly rather than going through here.
+        let end = offset.saturating_add(length);
+        let mut data = Vec::new();
+        let mut chunk_index = 0u64;
+        while (data.len() as u64) < end {
+            match self.fetch_chunk_verified(data_root, chunk_index).await? {
+                Some(chunk) => data.extend_from_slice(&chunk),
+                None => break, // no more chunks
+            }
+            chunk_index += 1;
+        }
+
+        // Slice to the requested range (clamped — a short object yields fewer
+        // bytes rather than erroring).
+        let start = (offset as usize).min(data.len());
+        let stop = (end as usize).min(data.len());
+        let ranged = data[start..stop].to_vec();
+
+        // Decrypt after reassembly if encryption is enabled.
+        if let Some(cipher) = &self.cipher {
+            cipher.decrypt(&ranged)
+        } else {
+            Ok(ranged)
+        }
+    }
+
+    /// Fetch a single chunk by index and verify its Merkle proof against
+    /// `data_root`. Returns `Ok(None)` when `chunk_index` is past the last
+    /// chunk (the provider's 404 end-of-file signal), so callers can iterate
+    /// `0..` until they hit it.
+    ///
+    /// Uses `/chunk_proof`, which is index-based and therefore works for any
+    /// chunking strategy — unlike `/read`, whose fixed-size offset math the
+    /// provider rejects for content-defined roots. This is also strictly
+    /// stronger than the old `/read` path: it verifies the chunk actually sits
+    /// under `data_root`, not just that the bytes match a hash the provider
+    /// itself supplied.
+    async fn fetch_chunk_verified(
+        &self,
+        data_root: &H256,
+        chunk_index: u64,
+    ) -> ClientResult<Option<Vec<u8>>> {
         let provider_url = self.base.get_provider_url()?;
 
         let response = self
             .base
             .http
-            .get(format!("{provider_url}/read"))
+            .get(format!("{provider_url}/chunk_proof"))
             .query(&[
                 ("data_root", BaseClient::hex_encode(data_root.as_bytes())),
-                ("offset", offset.to_string()),
-                ("length", length.to_string()),
+                ("chunk_index", chunk_index.to_string()),
             ])
             .send()
             .await?;
 
+        // 404 means `chunk_index` ran past the last leaf — the loop's stop
+        // condition, not an error.
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
                 "Provider returned error: {}",
@@ -190,40 +242,51 @@ impl StorageUserClient {
             )));
         }
 
-        let read_response: ReadResponse = response.json().await?;
+        let proof_response: ChunkProofResponse = response
+            .json()
+            .await
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
 
-        let mut data = Vec::new();
-        for chunk in read_response.chunks {
-            let chunk_data = BASE64
-                .decode(&chunk.data)
-                .map_err(|e| ClientError::Serialization(e.to_string()))?;
+        let chunk_data = proof_response
+            .chunk_data
+            .ok_or(ClientError::VerificationFailed)
+            .and_then(|d| {
+                BASE64
+                    .decode(d)
+                    .map_err(|e| ClientError::Serialization(e.to_string()))
+            })?;
 
-            // Verify chunk hash
-            let expected_hash = BaseClient::hex_decode(&chunk.hash)?;
-            let actual_hash = blake2_256(&chunk_data);
-            if actual_hash.as_bytes() != expected_hash.as_slice() {
-                return Err(ClientError::VerificationFailed);
-            }
-
-            data.extend_from_slice(&chunk_data);
+        // 1. The leaf hash must be the hash of the bytes we actually received.
+        let leaf_hash = blake2_256(&chunk_data);
+        let claimed_hash = BaseClient::hex_decode(&proof_response.chunk_hash)?;
+        if leaf_hash.as_bytes() != claimed_hash.as_slice() {
+            return Err(ClientError::VerificationFailed);
         }
 
-        // Trim to requested range
-        let chunk_size = 256 * 1024;
-        let start = (offset % chunk_size) as usize;
-        let end = start + length as usize;
-        let trimmed = if end <= data.len() {
-            data[start..end].to_vec()
-        } else {
-            data[start..].to_vec()
+        // 2. That leaf must sit under `data_root` at `chunk_index`.
+        let siblings = proof_response
+            .proof
+            .siblings
+            .iter()
+            .map(|h| {
+                let bytes = BaseClient::hex_decode(h)?;
+                if bytes.len() != 32 {
+                    return Err(ClientError::Serialization(
+                        "proof sibling is not 32 bytes".to_string(),
+                    ));
+                }
+                Ok(H256::from_slice(&bytes))
+            })
+            .collect::<ClientResult<Vec<H256>>>()?;
+        let proof = MerkleProof {
+            siblings,
+            path: proof_response.proof.path,
         };
-
-        // Decrypt after reassembly if encryption is enabled
-        if let Some(cipher) = &self.cipher {
-            cipher.decrypt(&trimmed)
-        } else {
-            Ok(trimmed)
+        if !verify_merkle_proof(leaf_hash, chunk_index, &proof, data_root) {
+            return Err(ClientError::VerificationFailed);
         }
+
+        Ok(Some(chunk_data))
     }
 
     /// Download entire file by data root.
@@ -403,22 +466,22 @@ impl StorageUserClient {
     pub async fn spot_check(&mut self, data_root: &H256, chunk_index: u64) -> ClientResult<bool> {
         use std::time::Instant;
 
-        let chunk_size = 256 * 1024u64; // 256 KiB
-        let offset = chunk_index * chunk_size;
         let provider_url = self.base.get_provider_url()?.to_string();
 
+        // Fetch the chunk by index and verify its Merkle proof against
+        // `data_root`. Index-based, so it's correct regardless of chunk size.
         let start = Instant::now();
-        let result = self.download(data_root, offset, chunk_size).await;
+        let result = self.fetch_chunk_verified(data_root, chunk_index).await;
         let duration = start.elapsed();
 
         match result {
-            Ok(data) if !data.is_empty() => {
+            Ok(Some(_)) => {
                 self.verifier.record_request(&provider_url, duration, true);
                 Ok(true)
             }
             _ => {
-                // Either download failed or the provider returned no data for this chunk,
-                // which means the data is unavailable.
+                // Missing chunk, failed verification, or transport error — the
+                // provider can't prove it holds this chunk.
                 self.verifier.record_request(&provider_url, duration, false);
                 Ok(false)
             }
@@ -683,16 +746,16 @@ pub struct CommitResponse {
 }
 
 #[derive(serde::Deserialize)]
-struct ReadResponse {
-    chunks: Vec<ChunkWithProof>,
+struct ChunkProofResponse {
+    chunk_hash: String,
+    chunk_data: Option<String>,
+    proof: MerkleProofResponse,
 }
 
 #[derive(serde::Deserialize)]
-#[allow(dead_code)]
-struct ChunkWithProof {
-    hash: String,
-    data: String,
-    proof: Vec<String>,
+struct MerkleProofResponse {
+    siblings: Vec<String>,
+    path: Vec<bool>,
 }
 
 #[derive(serde::Deserialize)]

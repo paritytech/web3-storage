@@ -211,24 +211,17 @@ pub struct AgreementInfo {
 }
 
 /// Chunking strategy for data upload.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum ChunkingStrategy {
-    /// Fixed-size chunks (default: 256 KiB)
+    /// Fixed-size chunks of the given size. A byte-shifting edit invalidates
+    /// every chunk after the edit point, so cross-version dedup only survives
+    /// in-place overwrites and appends.
     Fixed(usize),
-    /// TODO: Content-defined chunking (not yet implemented)
-    ///
-    /// ContentDefined {
-    ///     min_size: usize,
-    ///     target_size: usize,
-    ///     max_size: usize,
-    /// },
+    /// Content-defined chunks via FastCDC (parameters in
+    /// `storage_primitives::chunking`). Boundaries track content, so an
+    /// insertion only changes the chunks straddling the edit — the default.
+    #[default]
     ContentDefined,
-}
-
-impl Default for ChunkingStrategy {
-    fn default() -> Self {
-        Self::Fixed(256 * 1024)
-    }
 }
 
 /// Result type for client operations.
