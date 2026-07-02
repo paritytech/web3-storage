@@ -24,6 +24,43 @@ fn challenge_to_response<T: Config>(
     }
 }
 
+fn agreement_to_response<T: Config>(
+    bucket_id: BucketId,
+    provider: &T::AccountId,
+    agreement: StorageAgreement<T>,
+) -> crate::runtime_api::AgreementResponse {
+    crate::runtime_api::AgreementResponse {
+        bucket_id,
+        owner: agreement.owner.encode(),
+        provider: provider.encode(),
+        max_bytes: agreement.max_bytes,
+        payment_locked: agreement.payment_locked.saturated_into::<u128>(),
+        price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
+        expires_at: agreement.expires_at.saturated_into::<u32>(),
+        extensions_blocked: agreement.extensions_blocked,
+        role: match agreement.role {
+            ProviderRole::Primary => ProviderRole::Primary,
+            ProviderRole::Replica {
+                sync_balance,
+                sync_price,
+                min_sync_interval,
+                last_sync,
+            } => ProviderRole::Replica {
+                sync_balance: sync_balance.saturated_into::<u128>(),
+                sync_price: sync_price.saturated_into::<u128>(),
+                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
+                last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                    mmr_root: r.mmr_root,
+                    start_seq: r.start_seq,
+                    leaf_count: r.leaf_count,
+                    block: r.block.saturated_into::<u32>(),
+                }),
+            },
+        },
+        started_at: agreement.started_at.saturated_into::<u32>(),
+    }
+}
+
 impl<T: Config> Pallet<T> {
     /// Query provider information.
     pub fn query_provider_info(
@@ -154,38 +191,8 @@ impl<T: Config> Pallet<T> {
         bucket_id: BucketId,
         provider: &T::AccountId,
     ) -> Option<crate::runtime_api::AgreementResponse> {
-        StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
-            crate::runtime_api::AgreementResponse {
-                bucket_id,
-                owner: agreement.owner.encode(),
-                provider: provider.encode(),
-                max_bytes: agreement.max_bytes,
-                payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                expires_at: agreement.expires_at.saturated_into::<u32>(),
-                extensions_blocked: agreement.extensions_blocked,
-                role: match agreement.role {
-                    ProviderRole::Primary => ProviderRole::Primary,
-                    ProviderRole::Replica {
-                        sync_balance,
-                        sync_price,
-                        min_sync_interval,
-                        last_sync,
-                    } => ProviderRole::Replica {
-                        sync_balance: sync_balance.saturated_into::<u128>(),
-                        sync_price: sync_price.saturated_into::<u128>(),
-                        min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                        last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                            mmr_root: r.mmr_root,
-                            start_seq: r.start_seq,
-                            leaf_count: r.leaf_count,
-                            block: r.block.saturated_into::<u32>(),
-                        }),
-                    },
-                },
-                started_at: agreement.started_at.saturated_into::<u32>(),
-            }
-        })
+        StorageAgreements::<T>::get(bucket_id, provider)
+            .map(|agreement| agreement_to_response::<T>(bucket_id, provider, agreement))
     }
 
     /// Query all agreements for a bucket.
@@ -193,38 +200,9 @@ impl<T: Config> Pallet<T> {
         bucket_id: BucketId,
     ) -> Vec<crate::runtime_api::AgreementResponse> {
         StorageAgreements::<T>::iter_prefix(bucket_id)
-            .map(
-                |(provider, agreement)| crate::runtime_api::AgreementResponse {
-                    bucket_id,
-                    owner: agreement.owner.encode(),
-                    provider: provider.encode(),
-                    max_bytes: agreement.max_bytes,
-                    payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                    price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                    expires_at: agreement.expires_at.saturated_into::<u32>(),
-                    extensions_blocked: agreement.extensions_blocked,
-                    role: match agreement.role {
-                        ProviderRole::Primary => ProviderRole::Primary,
-                        ProviderRole::Replica {
-                            sync_balance,
-                            sync_price,
-                            min_sync_interval,
-                            last_sync,
-                        } => ProviderRole::Replica {
-                            sync_balance: sync_balance.saturated_into::<u128>(),
-                            sync_price: sync_price.saturated_into::<u128>(),
-                            min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                                mmr_root: r.mmr_root,
-                                start_seq: r.start_seq,
-                                leaf_count: r.leaf_count,
-                                block: r.block.saturated_into::<u32>(),
-                            }),
-                        },
-                    },
-                    started_at: agreement.started_at.saturated_into::<u32>(),
-                },
-            )
+            .map(|(provider, agreement)| {
+                agreement_to_response::<T>(bucket_id, &provider, agreement)
+            })
             .collect()
     }
 
@@ -242,38 +220,9 @@ impl<T: Config> Pallet<T> {
     ) -> Vec<crate::runtime_api::AgreementResponse> {
         StorageAgreements::<T>::iter()
             .filter(|(_, p, _)| p == provider)
-            .map(
-                |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
-                    bucket_id,
-                    owner: agreement.owner.encode(),
-                    provider: provider.encode(),
-                    max_bytes: agreement.max_bytes,
-                    payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                    price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                    expires_at: agreement.expires_at.saturated_into::<u32>(),
-                    extensions_blocked: agreement.extensions_blocked,
-                    role: match agreement.role {
-                        ProviderRole::Primary => ProviderRole::Primary,
-                        ProviderRole::Replica {
-                            sync_balance,
-                            sync_price,
-                            min_sync_interval,
-                            last_sync,
-                        } => ProviderRole::Replica {
-                            sync_balance: sync_balance.saturated_into::<u128>(),
-                            sync_price: sync_price.saturated_into::<u128>(),
-                            min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                                mmr_root: r.mmr_root,
-                                start_seq: r.start_seq,
-                                leaf_count: r.leaf_count,
-                                block: r.block.saturated_into::<u32>(),
-                            }),
-                        },
-                    },
-                    started_at: agreement.started_at.saturated_into::<u32>(),
-                },
-            )
+            .map(|(bucket_id, _, agreement)| {
+                agreement_to_response::<T>(bucket_id, provider, agreement)
+            })
             .collect()
     }
 
@@ -282,18 +231,7 @@ impl<T: Config> Pallet<T> {
         block: BlockNumberFor<T>,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
         Challenges::<T>::iter_prefix(block)
-            .map(|(index, challenge)| crate::runtime_api::ChallengeResponse {
-                bucket_id: challenge.bucket_id,
-                provider: challenge.provider.encode(),
-                challenger: challenge.challenger.encode(),
-                mmr_root: challenge.mmr_root,
-                start_seq: challenge.start_seq,
-                leaf_index: challenge.leaf_index,
-                chunk_index: challenge.chunk_index,
-                deadline: block.saturated_into::<u32>(),
-                index,
-                deposit: challenge.deposit.saturated_into::<u128>(),
-            })
+            .map(|(index, challenge)| challenge_to_response::<T>(block, index, challenge))
             .collect()
     }
 

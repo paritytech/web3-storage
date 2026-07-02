@@ -14,7 +14,7 @@ impl<T: Config> Pallet<T> {
     /// Reject a `CommitmentPayload::nonce` that is too far behind (or ahead
     /// of) the current block. This prevents an attacker who captures one
     /// signed commitment from replaying it forever.
-    pub fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
+    pub(crate) fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
         let current: u64 = frame_system::Pallet::<T>::block_number().saturated_into();
         let max_age: u64 = T::MaxNonceAge::get().saturated_into();
         // Future-dated nonces are nonsensical — the signer can only know
@@ -35,7 +35,7 @@ impl<T: Config> Pallet<T> {
     /// 3. Verifies the signature matches the message and public key
     ///
     /// Returns Error::InvalidSignature if verification fails.
-    pub fn verify_signature(
+    pub(crate) fn verify_signature(
         signature: &sp_runtime::MultiSignature,
         message: &[u8],
         signer: &T::AccountId,
@@ -83,7 +83,7 @@ impl<T: Config> Pallet<T> {
     /// [`storage_primitives::REPLICA_TERM_CONTEXT`]) — the caller, not
     /// the terms, decides it, so a quote signed for one flavour can
     /// never be redeemed as the other.
-    pub fn verify_terms_signature(
+    pub(crate) fn verify_terms_signature(
         provider_info: &ProviderInfo<T>,
         terms: &AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
