@@ -676,9 +676,7 @@ pub enum Event<T: Config> {
     },
     BucketCheckpointed {
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
     ProviderAddedToBucket {

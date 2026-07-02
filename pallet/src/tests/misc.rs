@@ -300,9 +300,50 @@ fn checkpoint_emits_event() {
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
+            commitment: Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            providers: vec![],
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected));
+    });
+}
+
+#[test]
+fn extend_checkpoint_emits_event() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = create_bucket(1, 0);
+
+        let commitment = Commitment {
             mmr_root: sp_core::H256::repeat_byte(0xAA),
             start_seq: 0,
             leaf_count: 10,
+        };
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            1, // nonce
+            Default::default(),
+        ));
+
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            Default::default(),
+        ));
+
+        // `extend_checkpoint` only adds signatures — it must re-emit the same
+        // commitment the initial checkpoint carried, not a stale or default one.
+        let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
+            bucket_id,
+            commitment,
             providers: vec![],
         });
         assert!(frame_system::Pallet::<Test>::events()

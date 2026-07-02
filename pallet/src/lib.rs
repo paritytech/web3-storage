@@ -756,9 +756,7 @@ pub mod pallet {
         },
         BucketCheckpointed {
             bucket_id: BucketId,
-            mmr_root: H256,
-            start_seq: u64,
-            leaf_count: u64,
+            commitment: Commitment,
             providers: Vec<T::AccountId>,
         },
         ProviderAddedToBucket {
@@ -2082,9 +2080,7 @@ pub mod pallet {
 
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
-                    mmr_root: commitment.mmr_root,
-                    start_seq: commitment.start_seq,
-                    leaf_count: commitment.leaf_count,
+                    commitment,
                     providers: signing_providers,
                 });
 
@@ -2162,9 +2158,7 @@ pub mod pallet {
 
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
-                    mmr_root: snapshot.commitment.mmr_root,
-                    start_seq: snapshot.commitment.start_seq,
-                    leaf_count: snapshot.commitment.leaf_count,
+                    commitment: snapshot.commitment,
                     providers: added_providers,
                 });
 
