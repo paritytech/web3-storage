@@ -27,7 +27,11 @@ let currentEndpoint: string = ''
 export const clientReady$ = new BehaviorSubject<boolean>(false)
 
 export async function connectToChain(endpoint: string): Promise<PolkadotClient> {
-  if (client && currentEndpoint === endpoint) return client
+  if (client) {
+    if (currentEndpoint === endpoint) return client
+    // Endpoint changed: tear down the old client (and its WebSocket) first.
+    disconnectFromChain()
+  }
 
   try {
     currentEndpoint = endpoint
