@@ -173,6 +173,7 @@ pub mod extrinsics {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
