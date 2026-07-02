@@ -21,6 +21,7 @@ includes = [
 ]
 excludes = [
 	"**/*.bin.ts",
+	"runtimes/*/src/weights/**",
 ]
 
 [mapping.DOUBLESLASH_STYLE]
