@@ -901,17 +901,15 @@ sp_api::decl_runtime_apis! {
 
         // ── Agreements ────────────────────────────────────────────────────
         fn agreement_info(bucket_id: BucketId, provider: AccountId) -> Option<AgreementResponse>;
-        fn agreements_by_bucket_id(bucket_id: BucketId) -> Vec<AgreementResponse>;
-        fn agreements_by_provider(provider: AccountId) -> Vec<AgreementResponse>;
+        fn bucket_agreements(bucket_id: BucketId) -> Vec<AgreementResponse>;
+        fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
 
 
         // ── Challenges ────────────────────────────────────────────────────
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
-        fn challenges_by_bucket(bucket_id: BucketId) -> Vec<ChallengeResponse>;
-        fn challenges_by_provider(provider: AccountId) -> Vec<ChallengeResponse>;
-
-        /// Get all challenges created by a specific challenger.
-        fn challenges_by_challenger(challenger: AccountId) -> Vec<ChallengeResponse>;
+        fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+        fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
+        fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
 
     }
 }
