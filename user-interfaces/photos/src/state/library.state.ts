@@ -11,7 +11,7 @@ import { bind } from '@react-rxjs/core'
 import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, toHex, negotiateProviderTerms } from '@web3-storage/papi'
 import { h160ToSubstrate } from '@web3-storage/sdk'
-import { getApi } from '@/lib/chain-client'
+import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import {
   computePaymentAndValue,
@@ -73,7 +73,7 @@ export async function loadProviders(): Promise<void> {
   providersLoading$.next(true)
   providersError$.next(undefined)
   try {
-    providers$.next(await listProviders(getApi()))
+    providers$.next(await listProviders(requireApi()))
   } catch (err) {
     providersError$.next(err instanceof Error ? err.message : 'Failed to list providers')
     providers$.next([])
@@ -102,7 +102,7 @@ export async function retryCreate(): Promise<void> {
 export async function createLibrary(input: CreateLibraryInput): Promise<void> {
   lastInput = input
   const { account, contract, provider, sizeBytes, durationBlocks, name } = input
-  const api = getApi()
+  const api = requireApi()
   const signer = account.polkadotSigner
 
   try {

@@ -18,7 +18,7 @@ import { BehaviorSubject } from 'rxjs'
 import { bind } from '@react-rxjs/core'
 import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
-import { getApi } from '@/lib/chain-client'
+import { requireApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
 import { getFsClient, resolveBucketId } from '@/lib/fs-client'
 import { recomputeRoot } from '@/lib/fs-root'
@@ -141,7 +141,7 @@ export async function initLibrary(
   rootCid: `0x${string}`,
   onAnchored: () => void,
 ): Promise<void> {
-  api = getApi()
+  api = requireApi()
   signer = account.polkadotSigner
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored

@@ -9,14 +9,14 @@
 
 import { type ParachainApi } from '@web3-storage/papi'
 import { FileSystemClient } from '@web3-storage/sdk/fs'
-import { getApi } from '@/lib/chain-client'
+import { requireApi } from '@/lib/chain-client'
 
 let fsClient: FileSystemClient | null = null
 let fsClientApi: ParachainApi | null = null
 
 /** Shared FileSystemClient, rebuilt if the chain api changes (e.g. network switch). */
 export function getFsClient(): FileSystemClient {
-  const api = getApi()
+  const api = requireApi()
   if (!fsClient || fsClientApi !== api) {
     fsClient = new FileSystemClient({ api })
     fsClientApi = api
