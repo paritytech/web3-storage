@@ -2016,12 +2016,6 @@ pub mod pallet {
 
             Self::ensure_recent_nonce(nonce)?;
 
-            let Commitment {
-                mmr_root,
-                start_seq,
-                leaf_count,
-            } = commitment;
-
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
 
@@ -2031,14 +2025,13 @@ pub mod pallet {
                 // Check frozen constraint
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
-                        start_seq >= frozen_start,
+                        commitment.start_seq >= frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
                     );
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload =
-                    CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+                let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -2076,7 +2069,7 @@ pub mod pallet {
                 let current_block = frame_system::Pallet::<T>::block_number();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, current_block, mmr_root);
+                Self::update_historical_roots(bucket, current_block, commitment.mmr_root);
 
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
@@ -2089,9 +2082,9 @@ pub mod pallet {
 
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
-                    mmr_root,
-                    start_seq,
-                    leaf_count,
+                    mmr_root: commitment.mmr_root,
+                    start_seq: commitment.start_seq,
+                    leaf_count: commitment.leaf_count,
                     providers: signing_providers,
                 });
 
@@ -2129,9 +2122,7 @@ pub mod pallet {
                 // captured in the snapshot.
                 let payload = CommitmentPayload::new(
                     bucket_id,
-                    snapshot.commitment.mmr_root,
-                    snapshot.commitment.start_seq,
-                    snapshot.commitment.leaf_count,
+                    snapshot.commitment,
                     snapshot.commitment_nonce,
                 );
                 let encoded_payload = payload.encode();
@@ -2629,11 +2620,6 @@ pub mod pallet {
 
             Self::ensure_recent_nonce(nonce)?;
 
-            let Commitment {
-                mmr_root,
-                start_seq,
-                leaf_count,
-            } = commitment;
             let ChunkLocation {
                 leaf_index,
                 chunk_index,
@@ -2658,7 +2644,7 @@ pub mod pallet {
             );
 
             // Build the commitment payload that the provider signed.
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+            let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2669,8 +2655,8 @@ pub mod pallet {
                 who,
                 bucket_id,
                 provider,
-                mmr_root,
-                start_seq,
+                commitment.mmr_root,
+                commitment.start_seq,
                 leaf_index,
                 chunk_index,
             )
@@ -2819,9 +2805,11 @@ pub mod pallet {
                     } else {
                         let deletion_payload = CommitmentPayload::new(
                             challenge.bucket_id,
-                            *new_mmr_root,
-                            *new_start_seq,
-                            0, // leaf_count not needed for deletion proof
+                            Commitment {
+                                mmr_root: *new_mmr_root,
+                                start_seq: *new_start_seq,
+                                leaf_count: 0, // not needed for deletion proof
+                            },
                             *nonce,
                         );
                         let encoded = deletion_payload.encode();

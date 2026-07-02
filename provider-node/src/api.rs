@@ -26,7 +26,7 @@ use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::AgreementTerms;
-use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use storage_primitives::{CheckpointProposal, Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -391,9 +391,11 @@ async fn commit(
 
     let payload = CommitmentPayload::new(
         request.bucket_id,
-        mmr_root,
-        start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
         request.nonce,
     );
     let signature = state.sign(&payload.encode())?;
@@ -464,9 +466,11 @@ async fn get_commitment(
     // honours leaf_count rather than hardcoding `0`.
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        bucket.leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count,
+        },
         query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
@@ -500,9 +504,11 @@ async fn get_checkpoint_signature(
     // Sign with real leaf_count for on-chain checkpoint verification.
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count,
+        },
         query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
@@ -613,9 +619,11 @@ async fn delete_data(
     // Sign with the real post-delete leaf_count — pallet honours it now.
     let payload = CommitmentPayload::new(
         request.bucket_id,
-        mmr_root,
-        start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
         request.nonce,
     );
     let signature = state.sign(&payload.encode())?;

@@ -2135,7 +2135,13 @@ mod challenge_tests {
     ) -> sp_runtime::MultiSignature {
         let pair = provider_signer(provider);
         let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, start_seq, leaf_count, nonce,
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+            nonce,
         );
         // `verify_signature` checks the raw encoded payload (sr25519 hashes
         // internally), so sign the encoding directly — no extra blake2 round.

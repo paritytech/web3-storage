@@ -394,21 +394,11 @@ impl CommitmentPayload {
     pub const CURRENT_VERSION: u8 = 2;
 
     /// Create a new commitment payload
-    pub fn new(
-        bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        nonce: u64,
-    ) -> Self {
+    pub fn new(bucket_id: BucketId, commitment: Commitment, nonce: u64) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
-            commitment: Commitment {
-                mmr_root,
-                start_seq,
-                leaf_count,
-            },
+            commitment,
             nonce,
         }
     }
@@ -680,7 +670,15 @@ mod tests {
 
     #[test]
     fn test_commitment_payload_range() {
-        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5, 42);
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 10,
+                leaf_count: 5,
+            },
+            42,
+        );
 
         assert_eq!(payload.range_end(), 15);
         assert!(!payload.contains_seq(9));
@@ -695,7 +693,15 @@ mod tests {
     /// values need no migration. Pin the exact encoding to guard that.
     #[test]
     fn commitment_payload_encoding_is_byte_identical() {
-        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5, 42);
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 10,
+                leaf_count: 5,
+            },
+            42,
+        );
 
         let mut expected = alloc::vec![CommitmentPayload::CURRENT_VERSION]; // version: u8
         expected.extend_from_slice(&1u64.to_le_bytes()); // bucket_id

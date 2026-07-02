@@ -640,9 +640,12 @@ mod benchmarks {
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
 
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
-        );
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut signatures: BoundedVec<
@@ -659,11 +662,7 @@ mod benchmarks {
         checkpoint(
             RawOrigin::Signed(admin),
             bucket_id,
-            Commitment {
-                mmr_root,
-                start_seq: 0,
-                leaf_count: 10,
-            },
+            commitment,
             0u64, // nonce
             signatures,
         );
@@ -694,21 +693,20 @@ mod benchmarks {
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            Commitment {
-                mmr_root,
-                start_seq: 0,
-                leaf_count: 10,
-            },
+            commitment,
             0u64, // nonce
             empty_sigs,
         );
 
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
-        );
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut additional_signatures: BoundedVec<
@@ -936,9 +934,12 @@ mod benchmarks {
 
         // Sign the commitment payload via host function
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 0, 0u64, /* nonce */
-        );
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 0,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -949,11 +950,7 @@ mod benchmarks {
             RawOrigin::Signed(admin),
             bucket_id,
             provider,
-            Commitment {
-                mmr_root,
-                start_seq: 0,
-                leaf_count: 0,
-            },
+            commitment,
             ChunkLocation {
                 leaf_index: 0,
                 chunk_index: 0,
@@ -1099,9 +1096,11 @@ mod benchmarks {
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
         let payload = storage_primitives::CommitmentPayload::new(
             bucket_id,
-            new_mmr_root,
-            new_start_seq,
-            0,
+            Commitment {
+                mmr_root: new_mmr_root,
+                start_seq: new_start_seq,
+                leaf_count: 0,
+            },
             0u64, /* nonce */
         );
         let encoded = codec::Encode::encode(&payload);
