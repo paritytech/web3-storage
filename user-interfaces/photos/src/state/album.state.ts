@@ -20,17 +20,8 @@ import type { InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
 import { fromHex, type ParachainApi } from '@web3-storage/papi'
 import { getApi } from '@/lib/chain-client'
 import type { ResolvedContract } from '@/lib/photos-contract'
-import {
-  deleteFile,
-  downloadFile,
-  downloadFileWithType,
-  listDir,
-  mkdir,
-  putFile,
-  recomputeRoot,
-  resolveFsContext,
-  type FsContext,
-} from '@/lib/fs-client'
+import { getFsClient, resolveBucketId } from '@/lib/fs-client'
+import { recomputeRoot } from '@/lib/fs-root'
 import { computeDataRoot, toHex } from '@web3-storage/sdk'
 import { LocalIndex } from '@/lib/local-index'
 import { loadIndex, saveIndex } from '@/lib/index-store'
@@ -80,7 +71,7 @@ export interface LightboxState {
 // State
 // ─────────────────────────────────────────────────────────────────────────────
 
-const fsContext$ = new BehaviorSubject<FsContext | null>(null)
+const bucketId$ = new BehaviorSubject<bigint | null>(null)
 const libraryError$ = new BehaviorSubject<string | undefined>(undefined)
 const albums$ = new BehaviorSubject<string[]>([])
 const selectedAlbum$ = new BehaviorSubject<string | null>(null)
@@ -92,7 +83,7 @@ const lightbox$ = new BehaviorSubject<LightboxState | null>(null)
 const lightboxLoading$ = new BehaviorSubject<boolean>(false)
 const editorOpen$ = new BehaviorSubject<boolean>(false)
 
-export const [useFsContext] = bind(fsContext$, null)
+export const [useBucketId] = bind(bucketId$, null)
 export const [useLibraryError] = bind(libraryError$, undefined)
 export const [useAlbums] = bind(albums$, [])
 export const [useSelectedAlbum] = bind(selectedAlbum$, null)
@@ -155,7 +146,7 @@ export async function initLibrary(
   contractBytes = fromHex(contract.address)
   anchoredCallback = onAnchored
 
-  if (currentDriveId === driveId && fsContext$.getValue()) {
+  if (currentDriveId === driveId && bucketId$.getValue() !== null) {
     // Same drive — keep caches/selection, just refresh listings.
     await loadAlbums()
     return
@@ -165,8 +156,8 @@ export async function initLibrary(
   currentDriveId = driveId
   libraryError$.next(undefined)
   try {
-    const ctx = await resolveFsContext(api, driveId)
-    fsContext$.next(ctx)
+    const bucketId = await resolveBucketId(driveId)
+    bucketId$.next(bucketId)
     await loadPersistedIndex(driveId, rootCid)
     await loadAlbums()
   } catch (err) {
@@ -196,10 +187,10 @@ async function loadPersistedIndex(driveId: bigint, rootCid: `0x${string}`): Prom
 
 /** List top-level directories as albums (hiding the `.thumbs` subtree and dotfolders). */
 export async function loadAlbums(): Promise<void> {
-  const ctx = fsContext$.getValue()
-  if (!ctx) return
+  const bucketId = bucketId$.getValue()
+  if (bucketId === null) return
   try {
-    const listing = await listDir(ctx, '/')
+    const listing = await getFsClient().listDirectory(bucketId, '/')
     const names = listing
       .filter((e) => e.entryType === 'directory' && !e.name.startsWith('.'))
       .map((e) => e.name)
@@ -229,22 +220,22 @@ export async function selectAlbum(name: string): Promise<void> {
 
 /** List the selected album's files and load each photo's thumbnail into the grid. */
 export async function loadGrid(): Promise<void> {
-  const ctx = fsContext$.getValue()
+  const bucketId = bucketId$.getValue()
   const album = selectedAlbum$.getValue()
-  if (!ctx || !album) {
+  if (bucketId === null || !album) {
     replaceGrid([])
     return
   }
 
   gridLoading$.next(true)
   try {
-    const files = (await listDir(ctx, `/${album}`)).filter((e) => e.entryType === 'file')
+    const files = (await getFsClient().listDirectory(bucketId, `/${album}`)).filter((e) => e.entryType === 'file')
     const items: GridItem[] = await Promise.all(
       files.map(async (f): Promise<GridItem> => {
         const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
         let thumbUrl: string | undefined
         try {
-          const bytes = await downloadFile(ctx, thumbPath)
+          const bytes = await getFsClient().downloadFile(bucketId, thumbPath)
           thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
         } catch {
           // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
@@ -266,8 +257,8 @@ export async function loadGrid(): Promise<void> {
  * then schedule a background re-anchor. Rejects an empty/slashed/dot name.
  */
 export async function createAlbum(rawName: string): Promise<void> {
-  const ctx = fsContext$.getValue()
-  if (!ctx) return
+  const bucketId = bucketId$.getValue()
+  if (bucketId === null) return
   const name = rawName.trim()
   if (!name || name.includes('/') || name.startsWith('.')) {
     libraryError$.next('Album name cannot be empty, contain "/", or start with ".".')
@@ -280,9 +271,9 @@ export async function createAlbum(rawName: string): Promise<void> {
 
   libraryError$.next(undefined)
   try {
-    await ensureDir(ctx, `/${name}`)
-    await ensureDir(ctx, THUMBS_ROOT)
-    await ensureDir(ctx, `${THUMBS_ROOT}/${name}`)
+    await ensureDir(bucketId, `/${name}`)
+    await ensureDir(bucketId, THUMBS_ROOT)
+    await ensureDir(bucketId, `${THUMBS_ROOT}/${name}`)
     await loadAlbums()
     await selectAlbum(name)
     scheduleReanchor()
@@ -297,16 +288,16 @@ export async function createAlbum(rawName: string): Promise<void> {
  * refresh the grid, then schedule a background re-anchor for the whole batch.
  */
 export async function uploadPhotos(files: File[]): Promise<void> {
-  const ctx = fsContext$.getValue()
+  const bucketId = bucketId$.getValue()
   const album = selectedAlbum$.getValue()
-  if (!ctx || !album || files.length === 0) return
+  if (bucketId === null || !album || files.length === 0) return
 
   libraryError$.next(undefined)
   uploads$.next({ total: files.length, done: 0 })
   try {
     // Make sure the thumbnail subtree for this album exists (older albums may predate it).
-    await ensureDir(ctx, THUMBS_ROOT)
-    await ensureDir(ctx, `${THUMBS_ROOT}/${album}`)
+    await ensureDir(bucketId, THUMBS_ROOT)
+    await ensureDir(bucketId, `${THUMBS_ROOT}/${album}`)
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
@@ -314,11 +305,11 @@ export async function uploadPhotos(files: File[]): Promise<void> {
 
       const bytes = new Uint8Array(await file.arrayBuffer())
       const photoPath = `/${album}/${file.name}`
-      await putVerified(ctx, photoPath, bytes, file.type || 'application/octet-stream')
+      await putVerified(bucketId, photoPath, bytes, file.type || 'application/octet-stream')
 
       try {
         const thumb = await makeThumbnail(file)
-        await putVerified(ctx, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
+        await putVerified(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
       } catch {
         // Thumbnail generation failed (unsupported/corrupt image) — keep the full
         // photo; the grid will fall back for this one.
@@ -337,11 +328,11 @@ export async function uploadPhotos(files: File[]): Promise<void> {
 
 /** Open a photo full-resolution in the lightbox. */
 export async function openPhoto(item: GridItem): Promise<void> {
-  const ctx = fsContext$.getValue()
-  if (!ctx) return
+  const bucketId = bucketId$.getValue()
+  if (bucketId === null) return
   lightboxLoading$.next(true)
   try {
-    const bytes = await downloadFile(ctx, item.path)
+    const bytes = await getFsClient().downloadFile(bucketId, item.path)
     revokeLightbox()
     const url = URL.createObjectURL(new Blob([bytes as BlobPart]))
     lightbox$.next({ name: item.name, url, item })
@@ -377,18 +368,18 @@ export function closeEditor(): void {
  * doesn't abort the edit, and on a PUT error the editor stays open for retry.
  */
 export async function saveEdit(editedBytes: Uint8Array, contentType: string): Promise<void> {
-  const ctx = fsContext$.getValue()
+  const bucketId = bucketId$.getValue()
   const photo = lightbox$.getValue()
-  if (!ctx || !photo) return
+  if (bucketId === null || !photo) return
 
   const { path, thumbPath } = photo.item
   libraryError$.next(undefined)
   try {
-    await putVerified(ctx, path, editedBytes, contentType)
+    await putVerified(bucketId, path, editedBytes, contentType)
 
     try {
       const thumb = await makeThumbnail(new Blob([editedBytes as BlobPart], { type: contentType }))
-      await putVerified(ctx, thumbPath, thumb.bytes, thumb.contentType)
+      await putVerified(bucketId, thumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // Thumbnail regeneration failed — keep the edited full photo; the grid falls back.
     }
@@ -411,9 +402,9 @@ export async function saveEdit(editedBytes: Uint8Array, contentType: string): Pr
  * `rawName` is the full new filename (the caller preserves the extension).
  */
 export async function renamePhoto(item: GridItem, rawName: string): Promise<void> {
-  const ctx = fsContext$.getValue()
+  const bucketId = bucketId$.getValue()
   const album = selectedAlbum$.getValue()
-  if (!ctx || !album) return
+  if (bucketId === null || !album) return
 
   const name = rawName.trim()
   if (!name || name.includes('/') || name.startsWith('.')) {
@@ -431,17 +422,17 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
   libraryError$.next(undefined)
   try {
     // Copy first; only delete the old path once the new one is safely in place.
-    const photo = await downloadFileWithType(ctx, item.path)
-    await putVerified(ctx, newPath, photo.bytes, photo.contentType)
+    const photo = await getFsClient().downloadFileWithType(bucketId, item.path)
+    await putVerified(bucketId, newPath, photo.bytes, photo.contentType)
     try {
-      const thumb = await downloadFileWithType(ctx, item.thumbPath)
-      await putVerified(ctx, newThumbPath, thumb.bytes, thumb.contentType)
+      const thumb = await getFsClient().downloadFileWithType(bucketId, item.thumbPath)
+      await putVerified(bucketId, newThumbPath, thumb.bytes, thumb.contentType)
     } catch {
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
     }
 
-    await deleteFile(ctx, item.path)
-    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    await getFsClient().deleteFile(bucketId, item.path)
+    await getFsClient().deleteFile(bucketId, item.thumbPath).catch(() => {})
     index.remove(item.path)
     index.remove(item.thumbPath)
 
@@ -458,13 +449,13 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
  * model. Refreshes the grid and schedules a background re-anchor.
  */
 export async function deletePhoto(item: GridItem): Promise<void> {
-  const ctx = fsContext$.getValue()
-  if (!ctx) return
+  const bucketId = bucketId$.getValue()
+  if (bucketId === null) return
 
   libraryError$.next(undefined)
   try {
-    await deleteFile(ctx, item.path)
-    await deleteFile(ctx, item.thumbPath).catch(() => {})
+    await getFsClient().deleteFile(bucketId, item.path)
+    await getFsClient().deleteFile(bucketId, item.thumbPath).catch(() => {})
     index.remove(item.path)
     index.remove(item.thumbPath)
 
@@ -478,7 +469,7 @@ export async function deletePhoto(item: GridItem): Promise<void> {
 /** Tear down the album layer (on wallet/network/drive change). */
 export function resetLibrary(): void {
   currentDriveId = null
-  fsContext$.next(null)
+  bucketId$.next(null)
   resetSession()
 }
 
@@ -529,14 +520,14 @@ async function runReanchor(): Promise<void> {
   // Snapshot the session up front: a background anchor can outlive a library/account
   // switch that reassigns these module-level vars, and it must sign for the drive it
   // started on (not whatever is selected by the time the slow recompute finishes).
-  const ctx = fsContext$.getValue()
+  const bucketId = bucketId$.getValue()
   const sessionApi = api
   const sessionSigner = signer
   const sessionContract = contractBytes
   const sessionIndex = index
   const sessionKey = indexKey
   const sessionAuthoritative = indexAuthoritative
-  if (!ctx || !sessionApi || !sessionSigner || !sessionContract) return
+  if (bucketId === null || !sessionApi || !sessionSigner || !sessionContract) return
   try {
     anchorStatus$.next({ stage: 'recomputing' })
     // Authoritative ⇒ the index already mirrors the whole tree, so anchor its root
@@ -547,7 +538,7 @@ async function runReanchor(): Promise<void> {
     if (sessionAuthoritative) {
       root = sessionIndex.root()
     } else {
-      root = await recomputeRoot(ctx, sessionIndex)
+      root = await recomputeRoot(getFsClient(), bucketId, sessionIndex)
       if (index === sessionIndex) indexAuthoritative = true
     }
     anchorStatus$.next({ stage: 'anchoring' })
@@ -567,22 +558,23 @@ async function runReanchor(): Promise<void> {
 }
 
 /** PUT a blob, assert the provider's `data_root` matches our local computation, and record it in the index. */
-async function putVerified(ctx: FsContext, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
-  const res = await putFile(ctx, path, bytes, contentType)
+async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  const res = await getFsClient().uploadFile(bucketId, path, bytes, { contentType })
   const localRoot = computeDataRoot(bytes)
-  if (rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
+  if (!res.dataRoot || rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
     throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
   }
   index.setFile(path, localRoot, BigInt(bytes.length))
 }
 
 /** Create `path` if a directory of that name isn't already present in its parent; record it in the index. */
-async function ensureDir(ctx: FsContext, path: string): Promise<void> {
+async function ensureDir(bucketId: bigint, path: string): Promise<void> {
   const slash = path.lastIndexOf('/')
   const parent = slash <= 0 ? '/' : path.slice(0, slash)
   const name = path.slice(slash + 1)
-  const siblings = await listDir(ctx, parent)
-  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await mkdir(ctx, path)
+  const client = getFsClient()
+  const siblings = await client.listDirectory(bucketId, parent)
+  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await client.createDirectory(bucketId, path)
   index.setDir(path)
 }
 
