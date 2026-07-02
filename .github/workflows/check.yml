@@ -77,6 +77,14 @@ jobs:
             exit 1
           fi
 
+      - name: Check license headers
+        run: |
+          cargo install --locked hawkeye && hawkeye --version
+          if ! hawkeye check --config licenserc.toml; then
+            echo "Please run 'hawkeye format --config licenserc.toml' to fix any license header issues"
+            exit 1
+          fi
+
   check:
     name: Cargo check
     runs-on: parity-large
