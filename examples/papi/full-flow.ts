@@ -65,7 +65,10 @@ async function setupAgreement(
   provider: ChainSigner
 ): Promise<bigint> {
   const maxBytes = 1_073_741_824n; // 1 GiB
-  const duration = 15;
+  // Must outlast Step 6's checkpoint challenge, which requires a live agreement:
+  // the finalized establish + off-chain challenge land it at ~block 16, so 15
+  // expired too soon. 30 leaves ~14 blocks of margin for finality jitter.
+  const duration = 30;
   console.log(
     "  Negotiating signed terms with provider (max_bytes=%s, duration=%d)...",
     maxBytes,
