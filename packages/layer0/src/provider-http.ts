@@ -138,11 +138,13 @@ export async function putChunk(
  *
  * `signer` authenticates the `PUT /node` and `POST /commit` requests; it must
  * hold a Writer/Admin role on `bucketId` (the provider always enforces this).
+ * `nonce` is threaded into `/commit` for the pallet's signature-recency check.
  */
 export async function uploadChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
+  nonce: bigint | number,
   signer?: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
@@ -158,9 +160,12 @@ export async function uploadChunk(
     },
     sign,
   });
+  // `nonce` is the block at which the caller intends to submit the extrinsic
+  // consuming the resulting `provider_signature`. The pallet rejects signatures
+  // whose nonce is older than `MaxNonceAge`, so thread it into /commit.
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    body: { bucket_id: Number(bucketId), data_roots: [hash], nonce: Number(nonce) },
     sign,
   });
   return { hash, data: bytes, commit };
@@ -179,9 +184,12 @@ export async function downloadChunk(
 export async function fetchCheckpointSignature(
   providerUrl: string,
   bucketId: bigint | number,
+  nonce: bigint | number,
 ): Promise<any> {
+  // The provider signs the CommitmentPayload including `nonce`; pass the block
+  // the caller will submit at so the on-chain recency check passes.
   return providerFetch(providerUrl, "/checkpoint-signature", {
-    params: { bucket_id: bucketId },
+    params: { bucket_id: bucketId, nonce: Number(nonce) },
   });
 }
 
@@ -222,15 +230,20 @@ export async function fetchChallengeProof(
   challengeId: { deadline: number; index: number },
 ): Promise<any> {
   // Best block: a finalized read would lag the just-created challenge.
-  const challenges = await api.query.StorageProvider.Challenges.getValue(
+  // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
+  // challenge is read directly with both keys.
+  const challenge = await api.query.StorageProvider.Challenges.getValue(
     challengeId.deadline,
+    challengeId.index,
     READ_OPTS,
   );
-  if (!challenges)
-    throw new Error("No challenges at deadline " + challengeId.deadline);
-  const challenge = challenges[challengeId.index];
   if (!challenge)
-    throw new Error("Challenge index not found: " + challengeId.index);
+    throw new Error(
+      "Challenge not found: deadline " +
+        challengeId.deadline +
+        " index " +
+        challengeId.index,
+    );
 
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {

@@ -8,7 +8,8 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
     CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
     StorageBackend,
@@ -105,6 +106,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+    let _challenge_responder_handle =
+        start_challenge_responder(&cli, chain_client.as_ref(), state.clone()).await;
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -252,6 +255,44 @@ async fn start_replica_sync_coordinator(
         }
         Err(e) => {
             tracing::error!("Failed to start replica sync coordinator: {}", e);
+            None
+        }
+    }
+}
+
+async fn start_challenge_responder(
+    cli: &Cli,
+    chain_client: Option<&SubxtChainClient>,
+    state: Arc<ProviderState>,
+) -> Option<ChallengeResponderHandle> {
+    if !cli.challenge_responder.enable_challenge_responder {
+        return None;
+    }
+
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
+        None => {
+            tracing::error!(
+                "Challenge responder needs a chain client (--keyfile + reachable chain). Skipping."
+            );
+            return None;
+        }
+    };
+
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
+        ..Default::default()
+    };
+
+    let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
+
+    match responder.start(None).await {
+        Ok(handle) => {
+            tracing::info!("Challenge responder started — auto-responding to challenges");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::error!("Failed to start challenge responder: {}", e);
             None
         }
     }

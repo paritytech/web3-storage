@@ -86,10 +86,36 @@ pub enum ProviderRole<Balance, BlockNumber> {
         sync_price: Balance,
         /// Minimum blocks between sync confirmations for this agreement.
         min_sync_interval: BlockNumber,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumber)>,
+        /// Last confirmed sync. None if replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSyncRecord<BlockNumber>>,
     },
+}
+
+/// Snapshot metadata captured at a replica's `confirm_replica_sync` so the
+/// pallet can later challenge a specific leaf without going back to the
+/// historical_roots table (which doesn't store sequence metadata).
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReplicaSyncRecord<BlockNumber> {
+    /// MMR root the replica confirmed sync to.
+    pub mmr_root: H256,
+    /// First sequence number covered by that root.
+    pub start_seq: u64,
+    /// Number of leaves under that root.
+    pub leaf_count: u64,
+    /// Block at which `confirm_replica_sync` was executed.
+    pub block: BlockNumber,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,6 +172,68 @@ pub enum RemovalReason {
 // ─────────────────────────────────────────────────────────────────────────────
 // Challenge Types
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Aggregated per-challenger statistics kept on-chain so the SDK can answer
+/// "how many challenges have I issued / won / lost / earned" without scanning
+/// historical events. Updated on `create_challenge`, on `ChallengeDefended`,
+/// and on `ChallengeSlashed`.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Default,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ChallengerStatRecord {
+    /// Total challenges the challenger has ever opened.
+    pub total_challenges: u32,
+    /// Challenges where the provider was slashed (either invalid response or
+    /// timeout). The challenger is only made whole (deposit refunded) and earns
+    /// no reward — the slashed stake goes entirely to the Treasury, per the
+    /// design's challenge model.
+    pub successful_challenges: u32,
+    /// Challenges where the provider successfully defended.
+    pub failed_challenges: u32,
+}
+
+/// Why a provider was slashed via the challenge mechanism.
+///
+/// Emitted in `ChallengeSlashed` so observers can distinguish a provider that
+/// went silent (Timeout) from one that submitted a demonstrably-false response
+/// (InvalidProof, InvalidDeletionClaim, InvalidSupersededClaim).
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SlashReason {
+    /// Provider failed to respond before the challenge deadline.
+    Timeout,
+    /// Provider submitted a `Proof` response whose chunk-Merkle or MMR proof
+    /// did not verify.
+    InvalidProof,
+    /// Provider submitted a `Deleted` response with a signature or
+    /// `new_start_seq` that does not stand up against on-chain state.
+    InvalidDeletionClaim,
+    /// Provider claimed `Superseded` but the bucket's canonical snapshot
+    /// does not actually cover the challenged sequence.
+    InvalidSupersededClaim,
+}
 
 /// Challenge identifier combining deadline and index.
 #[derive(
@@ -213,6 +301,12 @@ pub struct MmrProof {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Payload that providers sign to commit to bucket state.
+///
+/// The `nonce` field binds each signature to a specific moment in time —
+/// callers populate it with the block number at sign-time. The pallet rejects
+/// signatures whose nonce is too far in the past, preventing an attacker who
+/// captures a single signature from replaying it forever to challenge or
+/// defend against the signer.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
 )]
@@ -228,20 +322,31 @@ pub struct CommitmentPayload {
     pub start_seq: u64,
     /// Number of leaves in this MMR
     pub leaf_count: u64,
+    /// Replay-protection nonce — block number at the time the signer signed.
+    pub nonce: u64,
 }
 
 impl CommitmentPayload {
-    /// Current protocol version
-    pub const CURRENT_VERSION: u8 = 1;
+    /// Current protocol version. Bumped from `0x01` to `0x02` when the `nonce`
+    /// field was added; older signatures (no nonce) cannot be replayed against
+    /// this version because the encoded payload would mismatch on `version`.
+    pub const CURRENT_VERSION: u8 = 2;
 
     /// Create a new commitment payload
-    pub fn new(bucket_id: BucketId, mmr_root: H256, start_seq: u64, leaf_count: u64) -> Self {
+    pub fn new(
+        bucket_id: BucketId,
+        mmr_root: H256,
+        start_seq: u64,
+        leaf_count: u64,
+        nonce: u64,
+    ) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
             mmr_root,
             start_seq,
             leaf_count,
+            nonce,
         }
     }
 
@@ -276,6 +381,11 @@ pub struct BucketSnapshot<BlockNumber> {
     /// Bit i is set if primary_providers[i] signed.
     /// Uses Vec<u8> with LSB0 ordering for efficient bit manipulation.
     pub primary_signers: Vec<u8>,
+    /// The `nonce` value from the `CommitmentPayload` that the original
+    /// signers signed. Required by `extend_checkpoint` so a late-arriving
+    /// signature can be verified against the same payload the initial
+    /// signers committed to.
+    pub commitment_nonce: u64,
 }
 
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
@@ -297,6 +407,38 @@ impl<BlockNumber> BucketSnapshot<BlockNumber> {
             .get(byte_index)
             .map(|byte| (byte & (1 << bit_index)) != 0)
             .unwrap_or(false)
+    }
+
+    /// Re-index the signer bitfield after the provider at `idx` is removed
+    /// from `primary_providers`.
+    ///
+    /// The bitfield is positional: bit `i` corresponds to
+    /// `primary_providers[i]`. Removing element `idx` shifts every later
+    /// provider down one index, so the bits must shift to match: new bit `j`
+    /// is old bit `j` for `j < idx`, and old bit `j + 1` for `j >= idx` (i.e.
+    /// bit `idx` is dropped and all higher bits shift down by one).
+    pub fn remove_provider_bit(&mut self, idx: usize) {
+        let total_bits = self.primary_signers.len().saturating_mul(8);
+        // Unpack into individual bits (LSB-first within each byte, matching
+        // how `has_provider_signed` reads them).
+        let mut bits: Vec<bool> = (0..total_bits)
+            .map(|i| self.has_provider_signed(i))
+            .collect();
+        if idx < bits.len() {
+            bits.remove(idx);
+        }
+        // Repack into the minimal Vec<u8>, dropping trailing all-zero bytes.
+        let byte_len = bits.len().div_ceil(8);
+        let mut bytes = alloc::vec![0u8; byte_len];
+        for (i, set) in bits.iter().enumerate() {
+            if *set {
+                bytes[i / 8] |= 1 << (i % 8);
+            }
+        }
+        while bytes.last() == Some(&0) {
+            bytes.pop();
+        }
+        self.primary_signers = bytes;
     }
 
     /// Count the number of providers who signed this snapshot
@@ -521,13 +663,79 @@ mod tests {
 
     #[test]
     fn test_commitment_payload_range() {
-        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5);
+        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5, 42);
 
         assert_eq!(payload.range_end(), 15);
         assert!(!payload.contains_seq(9));
         assert!(payload.contains_seq(10));
         assert!(payload.contains_seq(14));
         assert!(!payload.contains_seq(15));
+    }
+
+    fn snapshot_with_signers(primary_signers: Vec<u8>) -> BucketSnapshot<u32> {
+        BucketSnapshot {
+            mmr_root: H256::zero(),
+            start_seq: 0,
+            leaf_count: 0,
+            checkpoint_block: 0,
+            primary_signers,
+            commitment_nonce: 0,
+        }
+    }
+
+    #[test]
+    fn test_remove_provider_bit_shifts_higher_bits_down() {
+        // Positions {0, 1, 3} set -> 0b0000_1011.
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_1011]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(snapshot.has_provider_signed(1));
+        assert!(!snapshot.has_provider_signed(2));
+        assert!(snapshot.has_provider_signed(3));
+
+        // Remove index 1: the old bit 1 is dropped, higher bits shift down.
+        // New layout: old bit 0 -> new bit 0 (set), old bit 2 -> new bit 1
+        // (clear), old bit 3 -> new bit 2 (set) => positions {0, 2} =>
+        // 0b0000_0101.
+        snapshot.remove_provider_bit(1);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b0000_0101]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(!snapshot.has_provider_signed(1));
+        assert!(snapshot.has_provider_signed(2));
+        assert!(!snapshot.has_provider_signed(3));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_drops_highest_set_bit() {
+        // Positions {0, 2} set -> 0b0000_0101.
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0101]);
+        // Remove the highest set bit (index 2). Remaining position {0}.
+        snapshot.remove_provider_bit(2);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b0000_0001]);
+        assert!(snapshot.has_provider_signed(0));
+        assert!(!snapshot.has_provider_signed(1));
+        assert!(!snapshot.has_provider_signed(2));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_trims_trailing_zero_bytes() {
+        // Only bit 0 set in a two-byte field; removing index 0 leaves all
+        // bits clear, so the repacked field is empty (trailing zeros dropped).
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0001, 0b0000_0000]);
+        snapshot.remove_provider_bit(0);
+        assert!(snapshot.primary_signers.is_empty());
+        assert!(!snapshot.has_provider_signed(0));
+    }
+
+    #[test]
+    fn test_remove_provider_bit_across_byte_boundary() {
+        // Bit 8 set (first bit of second byte) -> [0, 1]. Removing index 0
+        // shifts it down to bit 7 of the first byte -> [0b1000_0000].
+        let mut snapshot = snapshot_with_signers(alloc::vec![0b0000_0000, 0b0000_0001]);
+        assert!(snapshot.has_provider_signed(8));
+        snapshot.remove_provider_bit(0);
+        assert_eq!(snapshot.primary_signers, alloc::vec![0b1000_0000]);
+        assert!(snapshot.has_provider_signed(7));
+        assert!(!snapshot.has_provider_signed(8));
     }
 
     #[test]

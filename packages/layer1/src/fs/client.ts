@@ -46,6 +46,7 @@ import type {
   CreateDriveOptions,
   DriveInfo,
   FsEntry,
+  IndexRoot,
   MemberRole,
   UploadOptions,
   UploadResult,
@@ -284,10 +285,11 @@ export class FileSystemClient {
   async listDirectory(
     bucketId: bigint,
     path: string,
-    opts: { signal?: AbortSignal } = {},
+    opts: { recursive?: boolean; signal?: AbortSignal } = {},
   ): Promise<FsEntry[]> {
     const providerUrl = await this.getProviderUrl(bucketId);
     const params = new URLSearchParams({ path });
+    if (opts.recursive) params.set("recursive", "true");
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/ls?${params.toString()}`,
       { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
@@ -378,6 +380,27 @@ export class FileSystemClient {
     if (!response.ok) {
       throw new Error(`Create directory failed: ${response.status} ${await response.text().catch(() => "")}`);
     }
+  }
+
+  /** The provider's own view of the drive's metadata Merkle root + counts. */
+  async getIndexRoot(bucketId: bigint): Promise<IndexRoot> {
+    const providerUrl = await this.getProviderUrl(bucketId);
+    const response = await httpFetch(
+      `${providerUrl}/fs/${bucketId}/index_root`,
+      { headers: this.authHeaders("GET", bucketId) },
+      this.fetchOpts,
+    );
+    if (!response.ok) throw new Error(`index_root failed: ${response.status}`);
+    const body = await response.json();
+    if (typeof body.metadata_merkle_root !== "string") {
+      throw new Error("index_root response is missing metadata_merkle_root");
+    }
+    return {
+      indexRoot: body.metadata_merkle_root,
+      fileCount: Number(body.file_count ?? 0),
+      dirCount: Number(body.dir_count ?? 0),
+      totalSize: BigInt(body.total_size ?? 0),
+    };
   }
 
   // ── Checkpoint (provider HTTP) ──────────────────────────────────────────

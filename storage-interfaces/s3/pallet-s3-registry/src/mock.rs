@@ -5,7 +5,7 @@
 use crate as pallet_s3_registry;
 use frame_support::{
     derive_impl, parameter_types,
-    traits::{ConstU32, ConstU64},
+    traits::{ConstU16, ConstU32, ConstU64},
 };
 use sp_core::H256;
 use sp_runtime::{
@@ -81,6 +81,8 @@ parameter_types! {
     pub const MaxPrimaryProviders: u32 = 5;
     pub const MaxChunkSize: u32 = 262144;
     pub const ChallengeTimeout: u64 = 100;
+    pub const ChallengeDeposit: u64 = 100;
+    pub const MaxNonceAge: u64 = 200;
     pub const SettlementTimeout: u64 = 50;
     pub const RequestTimeout: u64 = 25;
     pub const DefaultCheckpointInterval: u64 = 100;
@@ -101,13 +103,18 @@ impl pallet_storage_provider::Config for Test {
     type MinProviderStake = MinProviderStake;
     type MaxChunkSize = ConstU32<262144>;
     type ChallengeTimeout = ChallengeTimeout;
+    type ChallengeDeposit = ChallengeDeposit;
+    type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
     type DefaultCheckpointInterval = DefaultCheckpointInterval;
     type DefaultCheckpointGrace = DefaultCheckpointGrace;
     type CheckpointReward = CheckpointReward;
     type CheckpointMissPenalty = CheckpointMissPenalty;
-    type DeregisterAnnouncementPeriod = ConstU64<100>;
+    // Must be > ChallengeTimeout (100) AND > RequestTimeout (25) per the
+    // pallet's `integrity_test`. 100 + 50 grace.
+    type DeregisterAnnouncementPeriod = ConstU64<150>;
+    type MaxChallengesPerDeadline = ConstU16<1_000>;
     type WeightInfo = ();
 }
 

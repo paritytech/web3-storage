@@ -370,6 +370,7 @@ fn setup_replica_with_snapshot() -> u64 {
                 leaf_count: 10,
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
+                commitment_nonce: 0,
             });
         }
     });
@@ -423,9 +424,9 @@ fn confirm_replica_sync_happy_path() {
             } => {
                 assert_eq!(*sync_balance, 490); // 500 - 10
                 assert!(last_sync.is_some());
-                let (root, block) = last_sync.unwrap();
-                assert_eq!(root, sp_core::H256::repeat_byte(0xAB));
-                assert_eq!(block, 1);
+                let record = last_sync.unwrap();
+                assert_eq!(record.mmr_root, sp_core::H256::repeat_byte(0xAB));
+                assert_eq!(record.block, 1);
             }
             _ => panic!("expected replica"),
         }
@@ -492,6 +493,7 @@ fn confirm_replica_sync_fails_insufficient_balance() {
                     leaf_count: 10,
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
+                    commitment_nonce: 0,
                 });
             }
         });
@@ -655,9 +657,9 @@ fn confirm_replica_sync_after_interval_with_new_root() {
                 ..
             } => {
                 assert_eq!(*sync_balance, 480); // 500 - 10 - 10
-                let (root, block) = last_sync.unwrap();
-                assert_eq!(root, sp_core::H256::repeat_byte(0xCD));
-                assert_eq!(block, 12);
+                let record = last_sync.unwrap();
+                assert_eq!(record.mmr_root, sp_core::H256::repeat_byte(0xCD));
+                assert_eq!(record.block, 12);
             }
             _ => panic!("expected replica"),
         }

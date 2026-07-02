@@ -175,7 +175,8 @@ async function main() {
     // the provider's finalized view, so an in-block grant would race it.
     await callContract(api, client, deployed.addressBytes, grantData, { finalized: true });
     const payload = `Hello via SC! ${new Date().toISOString()}`;
-    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
+    const uploadNonce = Number(await api.query.System.Number.getValue());
+    const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce, client);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(
       downloaded,
@@ -185,8 +186,10 @@ async function main() {
     const offchainId = await challengeOffchain(api, client, provider, bucketId, {
       mmrRoot: upload.commit.mmr_root,
       startSeq: upload.commit.start_seq,
+      leafCount: upload.commit.leaf_count,
       leafIndex: upload.commit.leaf_indices[0],
       providerSignature: upload.commit.provider_signature,
+      nonce: upload.commit.nonce,
     });
     const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);
     await respondToChallenge(api, provider, offchainId, proof);

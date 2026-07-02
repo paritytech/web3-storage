@@ -94,9 +94,10 @@ async function setupAgreement(
   return bucketId;
 }
 
-async function uploadAndVerify(bucketId: bigint, client: ChainSigner) {
+async function uploadAndVerify(api: ParachainApi, bucketId: bigint, client: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, client);
+  const nonce = Number(await api.query.System.Number.getValue());
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, client);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -111,7 +112,9 @@ async function uploadAndVerify(bucketId: bigint, client: ChainSigner) {
     leafIndex: commit.leaf_indices[0],
     mmrRoot: commit.mmr_root,
     startSeq: commit.start_seq,
+    leafCount: commit.leaf_count,
     providerSignature: commit.provider_signature,
+    nonce: commit.nonce,
   };
 }
 
@@ -180,7 +183,7 @@ async function main() {
     const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(bucketId, client);
+    const upload = await uploadAndVerify(api, bucketId, client);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
@@ -210,7 +213,8 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+    const ckNonce = Number(await api.query.System.Number.getValue());
+    const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);
     await submitClientCheckpoint(api, client, provider, bucketId, ck);
