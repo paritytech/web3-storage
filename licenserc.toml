@@ -2,18 +2,18 @@ inlineHeader = "SPDX-License-Identifier: Apache-2.0"
 keywords = ["SPDX-License-Identifier"]
 
 includes = [
-    "**/*.rs",
-    "**/*.js",
-    "**/*.ts",
-    "**/*.tsx",
-    "**/*.sol",
+	"**/*.js",
+	"**/*.rs",
+	"**/*.sol",
+	"**/*.ts",
+	"**/*.tsx",
 ]
 excludes = [
-    "**/*.bin.ts",
-    "runtimes/web3-storage-local/src/weights/*.rs",
-    "runtimes/web3-paseo-local/src/weights/*.rs",
-    "**/*weight.rs",
+	"**/*.bin.ts",
+	"**/*weight.rs",
+	"runtimes/web3-paseo-local/src/weights/*.rs",
+	"runtimes/web3-storage-local/src/weights/*.rs",
 ]
 
 [mapping.DOUBLESLASH_STYLE]
-extensions = ["js", "ts", "tsx", "sol"]
+extensions = ["js", "sol", "ts", "tsx"]
