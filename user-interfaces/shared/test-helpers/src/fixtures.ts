@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { test as base, expect, type Page } from "@playwright/test";
 import { firstMatch } from "@web3-storage/sdk";

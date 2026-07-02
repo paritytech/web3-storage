@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Shared chain test-helpers for the three Web3-Storage UIs and the PAPI E2E

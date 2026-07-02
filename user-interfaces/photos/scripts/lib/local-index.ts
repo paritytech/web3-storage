@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //
 // A client-maintained mirror of a drive's entry set: the source of truth for the
 // anchored metadata Merkle root, updated on upload/edit/delete so the root never

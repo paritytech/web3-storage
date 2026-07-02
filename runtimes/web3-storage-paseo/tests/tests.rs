@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(test)]
-// SPDX-License-Identifier: GPL-3.0-only
 
 use frame_support::{
     assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,

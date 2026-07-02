@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * S3 Client — s3-ui's thin adapter over the SDK's S3Client + layer0 pallet

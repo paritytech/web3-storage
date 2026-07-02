@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import {

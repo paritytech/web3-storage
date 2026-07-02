@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //
 // Byte-exact TypeScript port of the provider's drive metadata Merkle root and
 // per-file data root, so a client can compute the on-chain integrity anchor

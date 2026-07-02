@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { expect, type Browser, type Page } from "@playwright/test";
 import { getApi, getBestBlockNumber } from "@web3-storage/test-helpers";

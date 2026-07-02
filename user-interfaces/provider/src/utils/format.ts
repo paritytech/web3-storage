@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // Chain-derived configuration — initialized with defaults, updated from chain
 // metadata at connection time via configureFromChain().

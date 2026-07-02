@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { test, expect } from "../fixtures";
 import { expectBestBlockToAdvance } from "@web3-storage/test-helpers/playwright";

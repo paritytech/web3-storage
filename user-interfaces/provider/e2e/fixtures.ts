@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { Eve } from "@web3-storage/test-helpers";
 import { makeLocalPageFixture, expect } from "@web3-storage/test-helpers/playwright";

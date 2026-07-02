@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Chain-state coordinator: keeps the provider node's view of the runtime in
 //! sync via a finalized-block subscription.
 //!
