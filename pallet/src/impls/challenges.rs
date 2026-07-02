@@ -9,7 +9,7 @@ use sp_runtime::traits::{Saturating, Zero};
 use storage_primitives::{BucketId, ChallengeId, SlashReason};
 
 impl<T: Config> Pallet<T> {
-    pub fn create_challenge(
+    pub(crate) fn create_challenge(
         challenger: T::AccountId,
         bucket_id: BucketId,
         provider: T::AccountId,
@@ -109,7 +109,7 @@ impl<T: Config> Pallet<T> {
     /// invalid response (`respond_to_challenge` paths). Both lead to the
     /// same financial outcome — the distinction is for observers
     /// reading the event log.
-    pub fn slash_provider_for_failed_challenge(
+    pub(crate) fn slash_provider_for_failed_challenge(
         challenge: &Challenge<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         reason: SlashReason,
@@ -168,7 +168,7 @@ impl<T: Config> Pallet<T> {
     /// `slash_provider_for_failed_challenge`, which both sites share and
     /// which would otherwise double-count. `saturating_sub` keeps the
     /// counters non-negative even if invariants are ever violated.
-    pub fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
+    pub(crate) fn decrement_pending(bucket_id: BucketId, provider: &T::AccountId) {
         PendingChallenges::<T>::mutate(provider, |n| *n = n.saturating_sub(1));
         PendingChallengesByBucket::<T>::mutate(bucket_id, provider, |n| *n = n.saturating_sub(1));
     }

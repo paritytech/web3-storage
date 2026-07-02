@@ -4,7 +4,7 @@ use frame_support::pallet_prelude::*;
 use storage_primitives::{BucketId, Role};
 
 impl<T: Config> Pallet<T> {
-    pub fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
+    pub(crate) fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
         ensure!(
             bucket
                 .members
@@ -19,7 +19,10 @@ impl<T: Config> Pallet<T> {
     /// - the target member's index (if present),
     /// - whether that member currently holds `Role::Admin`,
     /// - the total number of admins in the bucket.
-    pub fn locate_member(bucket: &Bucket<T>, member: &T::AccountId) -> (Option<usize>, bool, u32) {
+    pub(crate) fn locate_member(
+        bucket: &Bucket<T>,
+        member: &T::AccountId,
+    ) -> (Option<usize>, bool, u32) {
         let mut target_idx = None;
         let mut target_is_admin = false;
         let mut admin_count: u32 = 0;
@@ -35,7 +38,7 @@ impl<T: Config> Pallet<T> {
         (target_idx, target_is_admin, admin_count)
     }
 
-    pub fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
+    pub(crate) fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
         ensure!(
             bucket
                 .members

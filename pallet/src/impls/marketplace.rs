@@ -4,39 +4,6 @@ use frame_support::pallet_prelude::*;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
 
 impl<T: Config> Pallet<T> {
-    /// Query available providers that can accept storage of given size
-    ///
-    /// This is a helper for Layer 1 to find suitable providers automatically.
-    ///
-    /// Parameters:
-    /// - `max_bytes`: Storage size needed
-    /// - `accepting_primary`: True to filter for primary providers, false for replica providers
-    ///
-    /// Returns: Vec of provider account IDs that can accept the storage
-    pub fn query_available_providers(max_bytes: u64, accepting_primary: bool) -> Vec<T::AccountId> {
-        Providers::<T>::iter()
-            .filter_map(|(account, info)| {
-                // Check if provider is accepting the right type of agreements
-                let accepts_type = if accepting_primary {
-                    info.settings.accepting_primary
-                } else {
-                    info.settings.replica_sync_price.is_some()
-                };
-
-                if !accepts_type {
-                    return None;
-                }
-
-                // Check if provider has capacity
-                if Self::query_can_accept_bytes(&account, max_bytes) {
-                    Some(account)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     /// Find providers matching the given storage requirements.
     pub fn query_find_matching_providers(
         requirements: crate::runtime_api::StorageRequirements,

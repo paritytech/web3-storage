@@ -7,7 +7,7 @@ impl<T: Config> Pallet<T> {
     /// Reject any path that would create a new commitment for a
     /// provider who has announced deregistration. `deregister_provider`
     /// also flips `accepting_primary`/`accepting_extensions` to `false`,
-    pub fn ensure_provider_active(provider: &ProviderInfo<T>) -> DispatchResult {
+    pub(crate) fn ensure_provider_active(provider: &ProviderInfo<T>) -> DispatchResult {
         ensure!(
             provider.deregister_at.is_none(),
             Error::<T>::DeregisterAnnounced
@@ -18,7 +18,7 @@ impl<T: Config> Pallet<T> {
     /// Validate provider settings against committed bytes and stake.
     ///
     /// Shared by `update_provider_settings` and `register_provider_internal`.
-    pub fn validate_settings(
+    pub(crate) fn validate_settings(
         settings: &ProviderSettings<T>,
         committed_bytes: u64,
         stake: BalanceOf<T>,

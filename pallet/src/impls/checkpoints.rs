@@ -6,7 +6,7 @@ use sp_runtime::traits::{SaturatedConversion, Saturating};
 use storage_primitives::{BucketId, HISTORICAL_ROOT_PRIMES};
 
 impl<T: Config> Pallet<T> {
-    pub fn update_historical_roots(
+    pub(crate) fn update_historical_roots(
         bucket: &mut Bucket<T>,
         current_block: BlockNumberFor<T>,
         mmr_root: H256,
@@ -21,7 +21,7 @@ impl<T: Config> Pallet<T> {
         }
     }
 
-    pub fn find_matching_root(
+    pub(crate) fn find_matching_root(
         bucket: &Bucket<T>,
         roots: &[Option<H256>; 7],
     ) -> Result<(u8, H256), DispatchError> {
@@ -47,7 +47,7 @@ impl<T: Config> Pallet<T> {
     /// Calculate the checkpoint window number for a given block.
     ///
     /// Window 0 starts at block 0, window 1 at block `interval`, etc.
-    pub fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
+    pub(crate) fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
         if interval.is_zero() {
             return 0;
         }
@@ -57,7 +57,10 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Calculate the start block for a given checkpoint window.
-    pub fn window_start_block(window: u64, interval: BlockNumberFor<T>) -> BlockNumberFor<T> {
+    pub(crate) fn window_start_block(
+        window: u64,
+        interval: BlockNumberFor<T>,
+    ) -> BlockNumberFor<T> {
         let interval_num: u64 = interval.saturated_into();
         let start: u64 = window.saturating_mul(interval_num);
         start.saturated_into()
@@ -67,7 +70,11 @@ impl<T: Config> Pallet<T> {
     ///
     /// Uses deterministic selection: blake2_256(bucket_id || window) % num_providers.
     /// This ensures all providers can independently calculate who the leader is.
-    pub fn calculate_leader_index(bucket_id: BucketId, window: u64, num_providers: u32) -> u32 {
+    pub(crate) fn calculate_leader_index(
+        bucket_id: BucketId,
+        window: u64,
+        num_providers: u32,
+    ) -> u32 {
         if num_providers == 0 {
             return 0;
         }
@@ -82,7 +89,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Get the checkpoint config for a bucket, falling back to defaults.
-    pub fn get_checkpoint_config(
+    pub(crate) fn get_checkpoint_config(
         bucket_id: BucketId,
     ) -> storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>> {
         CheckpointConfigs::<T>::get(bucket_id).unwrap_or_else(|| {
@@ -95,7 +102,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Check if the current block is within the grace period for a window.
-    pub fn is_within_grace_period(
+    pub(crate) fn is_within_grace_period(
         current_block: BlockNumberFor<T>,
         window: u64,
         config: &storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>>,

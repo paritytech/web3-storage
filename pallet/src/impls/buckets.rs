@@ -139,7 +139,7 @@ impl<T: Config> Pallet<T> {
     ///   buckets that will register primaries later.
     ///
     /// Returns: bucket_id
-    pub fn create_bucket_internal(
+    pub(crate) fn create_bucket_internal(
         admin: &T::AccountId,
         min_providers: u32,
         initial_primary: Option<&T::AccountId>,

@@ -8,7 +8,7 @@ use sp_runtime::traits::{CheckedAdd, CheckedMul, SaturatedConversion, Saturating
 use storage_primitives::{BucketId, EndAction, ProviderRole, RemovalReason, ReplayError};
 
 impl<T: Config> Pallet<T> {
-    pub fn validate_duration(
+    pub(crate) fn validate_duration(
         settings: &ProviderSettings<T>,
         duration: BlockNumberFor<T>,
     ) -> DispatchResult {
@@ -23,7 +23,7 @@ impl<T: Config> Pallet<T> {
         Ok(())
     }
 
-    pub fn calculate_payment(
+    pub(crate) fn calculate_payment(
         price_per_byte: BalanceOf<T>,
         max_bytes: u64,
         duration: BlockNumberFor<T>,
@@ -40,7 +40,7 @@ impl<T: Config> Pallet<T> {
             .ok_or(Error::<T>::ArithmeticOverflow.into())
     }
 
-    pub fn finalize_agreement(
+    pub(crate) fn finalize_agreement(
         bucket_id: BucketId,
         provider: &T::AccountId,
         agreement: &StorageAgreement<T>,
@@ -274,7 +274,7 @@ impl<T: Config> Pallet<T> {
     /// runs the provider/capacity/stake checks before opening the replica
     /// agreement on an existing bucket. `terms.replica_params` must be
     /// `Some(_)`.
-    pub fn establish_replica_agreement_internal(
+    pub(crate) fn establish_replica_agreement_internal(
         owner: &T::AccountId,
         bucket_id: BucketId,
         provider: &T::AccountId,
