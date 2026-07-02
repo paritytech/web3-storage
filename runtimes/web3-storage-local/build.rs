@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 #[cfg(all(not(feature = "metadata-hash"), feature = "std"))]
 fn main() {

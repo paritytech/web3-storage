@@ -29,8 +29,11 @@ Run all formatting, linting, and cleaning tasks that should be done before commi
 
 5. **License headers** (SPDX):
    ```bash
-   hawkeye format --config licenserc.toml
+   hawkeye format --config licenserc.apache.toml
+   hawkeye format --config licenserc.gpl.toml
    ```
+   - `licenserc.apache.toml` covers library/SDK crates (pallets, primitives, client SDKs, precompiles, examples, `packages/*`) — Apache-2.0
+   - `licenserc.gpl.toml` covers runtime/node crates (parachain runtimes, provider node, UI apps) — GPL-3.0-only
 
 ## Notes
 

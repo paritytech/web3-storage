@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 // Deploy the Photos contract once per network and print its H160 address.
 // Usage: tsx scripts/deploy-contract.ts [chain_ws] [deployer_seed]

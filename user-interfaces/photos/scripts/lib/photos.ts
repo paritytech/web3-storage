@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 // Photos-contract specifics: load the compiled artifact and read `libraryOf`
 // unsigned via the `ReviveApi.call` runtime API (no signature, no gas) — the

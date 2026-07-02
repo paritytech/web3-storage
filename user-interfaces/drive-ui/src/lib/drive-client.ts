@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 /**
  * Drive Client — drive-ui's thin adapter over the sdk's FileSystemClient.

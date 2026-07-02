@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw, Trash2, Plus } from "lucide-react";

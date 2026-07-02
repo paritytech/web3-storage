@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 // Photos-specific contract glue: reshape a provider-signed quote into the
 // drive-registry precompile's `PrimitiveAgreementTerms` ABI struct, and derive
