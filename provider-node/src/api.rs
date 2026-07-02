@@ -382,16 +382,32 @@ async fn commit(
     let (mmr_root, start_seq, leaf_indices) =
         state.storage.commit(request.bucket_id, data_roots)?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    // Read the post-commit `leaf_count` so the signed payload matches what
+    // the pallet reconstructs from the challenger's args. Previously this
+    // signed with `leaf_count = 0` as a workaround for the pallet using `0`
+    // as a placeholder; now the pallet honours the real value.
+    let leaf_count = state
+        .storage
+        .get_bucket(request.bucket_id)
+        .map(|b| b.leaf_count)
+        .unwrap_or(0);
+
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        mmr_root,
+        start_seq,
+        leaf_count,
+        request.nonce,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
         start_seq,
+        leaf_count,
         leaf_indices,
         provider_signature: signature,
+        nonce: request.nonce,
     }))
 }
 
@@ -447,9 +463,15 @@ async fn get_commitment(
         .get_bucket(query.bucket_id)
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, 0);
+    // Sign with the real leaf_count — the pallet's `challenge_offchain` now
+    // honours leaf_count rather than hardcoding `0`.
+    let payload = CommitmentPayload::new(
+        query.bucket_id,
+        bucket.mmr_root,
+        bucket.start_seq,
+        bucket.leaf_count,
+        query.nonce,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitmentResponse {
@@ -458,6 +480,7 @@ async fn get_commitment(
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
+        nonce: query.nonce,
     }))
 }
 
@@ -477,12 +500,13 @@ async fn get_checkpoint_signature(
 
     let leaf_count = bucket.leaf_count;
 
-    // Sign with real leaf_count for on-chain checkpoint verification
+    // Sign with real leaf_count for on-chain checkpoint verification.
     let payload = CommitmentPayload::new(
         query.bucket_id,
         bucket.mmr_root,
         bucket.start_seq,
         leaf_count,
+        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -492,6 +516,7 @@ async fn get_checkpoint_signature(
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
+        nonce: query.nonce,
     }))
 }
 
@@ -588,9 +613,14 @@ async fn delete_data(
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    // Sign with the real post-delete leaf_count — pallet honours it now.
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        mmr_root,
+        start_seq,
+        leaf_count,
+        request.nonce,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
@@ -598,6 +628,7 @@ async fn delete_data(
         start_seq,
         leaf_count,
         provider_signature: signature,
+        nonce: request.nonce,
     }))
 }
 

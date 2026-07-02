@@ -454,8 +454,11 @@ impl AdminClient {
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
+        nonce: u64,
         signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
+        // TODO: replace `nonce`, `signatures` with API call
+
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
@@ -468,7 +471,14 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, mmr_root, start_seq, leaf_count, parsed_sigs);
+        let tx = extrinsics::checkpoint(
+            bucket_id,
+            mmr_root,
+            start_seq,
+            leaf_count,
+            nonce,
+            parsed_sigs,
+        );
 
         let tx_progress = chain
             .api()

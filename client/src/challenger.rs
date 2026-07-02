@@ -11,6 +11,7 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use storage_primitives::BucketId;
+use storage_subxt::api::runtime_types::storage_primitives::ChallengerStatRecord;
 use storage_subxt::api::storage_provider::events::ChallengeCreated as EvChallengeCreated;
 use storage_subxt::subxt::blocks::ExtrinsicEvents;
 use storage_subxt::subxt::utils::AccountId32;
@@ -144,19 +145,23 @@ impl ChallengerClient {
         provider: String,
         mmr_root: H256,
         start_seq: u64,
+        leaf_count: u64,
         leaf_index: u64,
         chunk_index: u64,
+        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> ClientResult<ChallengeId> {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        tracing::info!(
-            "Challenging {} on bucket {} using off-chain commitment (leaf {}, chunk {})",
+        tracing::debug!(
+            "Challenging {} on bucket {} using off-chain commitment (total leave {}, leaf index {}, chunk index {}) with nonce {}",
             provider,
             bucket_id,
+            leaf_count,
             leaf_index,
-            chunk_index
+            chunk_index,
+            nonce
         );
 
         // Parse provider account
@@ -168,8 +173,10 @@ impl ChallengerClient {
             provider_account,
             mmr_root,
             start_seq,
+            leaf_count,
             leaf_index,
             chunk_index,
+            nonce,
             provider_signature,
         );
 
@@ -476,84 +483,43 @@ impl ChallengerClient {
         Ok(challenge_ids)
     }
 
-    /// Check if a challenge has been settled.
-    ///
-    /// Challenge rewards are distributed automatically by the chain in `on_finalize`
-    /// when the response deadline passes without a valid response from the provider.
-    /// Returns `None` if the challenge is still pending or has already been settled
-    /// (reward auto-distributed). The exact reward amount is not available on-chain
-    /// after settlement without querying historical events.
-    pub async fn check_and_claim_reward(
-        &self,
-        challenge_id: ChallengeId,
-    ) -> ClientResult<Option<u128>> {
-        let chain = self.base.chain()?;
+    // ═════════════════════════════════════════════════════════════════════════
+    // Analytics
+    // ═════════════════════════════════════════════════════════════════════════
 
-        let thunk = chain
+    /// Get aggregated stats for this account's challenge activity.
+    ///
+    /// Pulls counters from on-chain `ChallengerStats`. The pallet maintains
+    /// these on `create_challenge`, on `ChallengeDefended`, and on each
+    /// `slash_provider_for_failed_challenge` call.
+    pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
+        let stats = self.fetch_challenger_stats().await?;
+        Ok(ChallengeStats {
+            total_challenges: stats.total_challenges,
+            successful_challenges: stats.successful_challenges,
+            failed_challenges: stats.failed_challenges,
+            // The pallet doesn't yet track an average response time per
+            // challenger; leave at 0 until that aggregate is added.
+            avg_response_time: 0,
+        })
+    }
+
+    /// Read this account's `ChallengerStats` record from chain. Returns a
+    /// zeroed record (matching the pallet's `ValueQuery` default) if the
+    /// account has never opened a challenge.
+    async fn fetch_challenger_stats(&self) -> ClientResult<ChallengerStatRecord> {
+        let chain = self.base.chain()?;
+        let challenger_account = SubstrateClient::parse_account(&self.challenger_account)?;
+
+        chain
             .api()
             .storage()
             .at_latest()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::challenges(challenge_id.deadline))
+            .fetch_or_default(&storage::challenger_stats(&challenger_account))
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch challenges: {e}")))?;
-
-        let Some(thunk) = thunk else {
-            // No entry at this deadline block — all challenges there were settled
-            tracing::info!(
-                "Challenge (deadline={}, index={}) has been settled (no longer in storage)",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            return Ok(None);
-        };
-
-        let still_exists = (challenge_id.index as usize) < thunk.len();
-
-        if still_exists {
-            tracing::info!(
-                "Challenge (deadline={}, index={}) is still pending",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            Ok(None) // Pending — no reward yet
-        } else {
-            tracing::info!(
-                "Challenge (deadline={}, index={}) has been settled",
-                challenge_id.deadline,
-                challenge_id.index
-            );
-            Ok(None) // Settled — reward was auto-distributed on-chain
-        }
-    }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // Analytics
-    // ═════════════════════════════════════════════════════════════════════════
-
-    /// Get your total earnings from challenges.
-    ///
-    /// Note: challenge rewards are distributed automatically on-chain. There is no
-    /// per-challenger aggregate stored in chain state. Querying historical earnings
-    /// requires scanning block events, which is not supported here.
-    pub async fn get_total_challenge_earnings(&self) -> ClientResult<u128> {
-        Ok(0)
-    }
-
-    /// Get statistics about your active challenge activity.
-    ///
-    /// Counts currently pending challenges. Historical success/failure counts and
-    /// earnings are not aggregated on-chain per challenger.
-    pub async fn get_challenge_stats(&self) -> ClientResult<ChallengeStats> {
-        let active = self.list_my_challenges().await?;
-        Ok(ChallengeStats {
-            total_challenges: active.len() as u32,
-            successful_challenges: 0,
-            failed_challenges: 0,
-            total_earnings: 0,
-            avg_response_time: 0,
-        })
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))
     }
 
     /// Find the most profitable providers to challenge, ranked by expected value.
@@ -740,7 +706,6 @@ pub struct ChallengeStats {
     pub total_challenges: u32,
     pub successful_challenges: u32,
     pub failed_challenges: u32,
-    pub total_earnings: u128,
     pub avg_response_time: u32,
 }
 

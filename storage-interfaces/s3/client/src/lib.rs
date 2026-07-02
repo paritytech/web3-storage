@@ -12,6 +12,7 @@ use s3_primitives::{
     validate_bucket_name, validate_object_key, ListObjectsParams, ListObjectsResponse, S3BucketId,
 };
 use std::collections::HashMap;
+use storage_client::storage_user::StorageUserClient;
 use storage_subxt::subxt::utils::H256;
 use thiserror::Error;
 use tracing::{debug, info};
@@ -127,7 +128,7 @@ pub struct BucketInfo {
 /// S3 client for interacting with web3-storage using S3-compatible semantics.
 pub struct S3Client {
     /// Layer 0 storage client for blob operations.
-    storage_client: storage_client::StorageUserClient,
+    storage_client: StorageUserClient,
     /// Substrate client for chain operations.
     substrate_client: SubstrateClient,
 }
@@ -145,7 +146,7 @@ impl S3Client {
             provider_urls: vec![provider_url.to_string()],
             ..Default::default()
         };
-        let storage_client = storage_client::StorageUserClient::new(config)
+        let storage_client = StorageUserClient::new(config)
             .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
         let substrate_client = SubstrateClient::new(chain_url, seed_phrase)

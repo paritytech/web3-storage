@@ -7,6 +7,8 @@ use storage_primitives::BucketId;
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitmentQuery {
     pub bucket_id: BucketId,
+    /// `CommitmentPayload` nonce. See [`CommitRequest::nonce`].
+    pub nonce: u64,
 }
 
 /// Response with current commitment.
@@ -17,6 +19,7 @@ pub struct CommitmentResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+    pub nonce: u64,
 }
 
 /// Response with checkpoint-compatible signature (signs with real leaf_count).
@@ -27,6 +30,7 @@ pub struct CheckpointSignatureResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+    pub nonce: u64,
 }
 
 /// Response from triggering a checkpoint via the coordinator.

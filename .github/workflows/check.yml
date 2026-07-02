@@ -244,7 +244,7 @@ jobs:
           if [ -n "$TEST_FLAGS" ]; then
             PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
               -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --ignore-filename-regex='(\.cargo|rustc|subxt_client\.rs|command\.rs|cli\.rs|main\.rs)' \
               --summary-only 2>&1 \
               | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
           else
@@ -291,7 +291,7 @@ jobs:
           if [ -n "$TEST_FLAGS" ]; then
             BASE_PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
               -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
+              --ignore-filename-regex='(\.cargo|rustc|subxt_client\.rs|command\.rs|cli\.rs|main\.rs)' \
               --summary-only 2>&1 \
               | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
           else

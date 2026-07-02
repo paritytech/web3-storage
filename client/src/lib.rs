@@ -21,7 +21,7 @@
 //! let data_root = client.upload(1, data, ChunkingStrategy::default()).await?;
 //!
 //! // Commit to chain
-//! let commitment = client.commit(1, vec![data_root]).await?;
+//! let commitment = client.commit(1, vec![data_root], 0u64).await?;
 //!
 //! // Download and verify
 //! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
@@ -144,10 +144,7 @@ pub use provider::ProviderClient;
 pub use provider_node_request_scheme::{
     AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms,
 };
-pub use storage_user::{
-    CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
-    HealthResponse, StorageUserClient,
-};
+pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
 
 // Encryption re-exports

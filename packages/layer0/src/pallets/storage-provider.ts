@@ -280,6 +280,7 @@ export async function submitClientCheckpoint(
     start_seq: number | string;
     leaf_count: number | string;
     provider_signature: string;
+    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -289,6 +290,7 @@ export async function submitClientCheckpoint(
       mmr_root: asHex(ck.mmr_root),
       start_seq: BigInt(ck.start_seq),
       leaf_count: BigInt(ck.leaf_count),
+      nonce: BigInt(ck.nonce),
       signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
     }),
     client.signer,
@@ -304,8 +306,10 @@ export async function challengeOffchain(
   upload: {
     mmrRoot: string;
     startSeq: number | string;
+    leafCount: number | string;
     leafIndex: number | string;
     providerSignature: string;
+    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -317,8 +321,13 @@ export async function challengeOffchain(
       provider: provider.address,
       mmr_root: asHex(upload.mmrRoot),
       start_seq: BigInt(upload.startSeq),
+      // The pallet honours `leaf_count` in the reconstructed CommitmentPayload
+      // (previously hardcoded 0). The provider returned the value it signed
+      // over from /commit — pass it through verbatim.
+      leaf_count: BigInt(upload.leafCount),
       leaf_index: BigInt(upload.leafIndex),
       chunk_index: 0n,
+      nonce: BigInt(upload.nonce),
       provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
     }),
     client.signer,

@@ -146,6 +146,7 @@ pub mod extrinsics {
         mmr_root: H256,
         start_seq: u64,
         leaf_count: u64,
+        nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         runtime::tx().storage_provider().checkpoint(
@@ -153,6 +154,7 @@ pub mod extrinsics {
             mmr_root,
             start_seq,
             leaf_count,
+            nonce,
             rc::to_signatures(signatures),
         )
     }
@@ -176,8 +178,10 @@ pub mod extrinsics {
         provider: AccountId32,
         mmr_root: H256,
         start_seq: u64,
+        leaf_count: u64,
         leaf_index: u64,
         chunk_index: u64,
+        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_offchain(
@@ -185,8 +189,10 @@ pub mod extrinsics {
             provider,
             mmr_root,
             start_seq,
+            leaf_count,
             leaf_index,
             chunk_index,
+            nonce,
             rc::raw_sr25519_to_multi_sig(provider_signature),
         )
     }
@@ -378,6 +384,18 @@ pub mod storage {
             .storage_agreements(bucket_id, provider.clone())
     }
 
+    pub fn challenger_stats(
+        account: &AccountId32,
+    ) -> impl subxt::storage::Address<
+        IsFetchable = subxt::utils::Yes,
+        IsDefaultable = subxt::utils::Yes,
+        Target = rt::storage_primitives::ChallengerStatRecord,
+    > {
+        runtime::storage()
+            .storage_provider()
+            .challenger_stats(account.clone())
+    }
+
     pub fn agreements_for_bucket(
         bucket_id: u64,
     ) -> impl subxt::storage::Address<
@@ -416,22 +434,16 @@ pub mod storage {
             .storage_agreements_iter()
     }
 
-    pub fn all_challenges() -> impl subxt::storage::Address<
-        IsIterable = subxt::utils::Yes,
-        Target = Vec<rt::pallet_storage_provider::pallet::Challenge>,
-    > {
-        runtime::storage().storage_provider().challenges_iter()
-    }
-
     pub fn challenges(
         deadline_block: u32,
+        index: u16,
     ) -> impl subxt::storage::Address<
         IsFetchable = subxt::utils::Yes,
-        Target = Vec<rt::pallet_storage_provider::pallet::Challenge>,
+        Target = rt::pallet_storage_provider::pallet::Challenge,
     > {
         runtime::storage()
             .storage_provider()
-            .challenges(deadline_block)
+            .challenges(deadline_block, index)
     }
 
     pub fn provider_replay_state(

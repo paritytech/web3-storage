@@ -21,6 +21,7 @@ extern crate alloc;
 
 pub use pallet::*;
 
+pub mod impls;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -35,21 +36,28 @@ mod mock;
 mod tests;
 
 #[frame_support::pallet]
+// Several extrinsics in this pallet legitimately take more than 7 args (e.g.
+// `checkpoint` now takes 7 explicit + a replay-protection nonce). The
+// macro-generated wrapper functions exceed clippy's `too_many_arguments`
+// threshold even when the originals have `#[allow(...)]`, so allow at the
+// module level.
+#[allow(clippy::too_many_arguments)]
 pub mod pallet {
     use crate::weights::WeightInfo;
     use alloc::vec;
     use alloc::vec::Vec;
     use frame_support::{
         pallet_prelude::*,
-        traits::{Currency, ExistenceRequirement, ReservableCurrency},
+        traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, SaturatedConversion, Saturating, Verify, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, CommitmentPayload, EndAction, MerkleProof, MmrProof,
-        ProviderRole, RemovalReason, ReplayError, ReplayWindow, Role, HISTORICAL_ROOT_PRIMES,
+        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, CommitmentPayload, EndAction,
+        MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow, ReplicaSyncRecord, Role,
+        SlashReason,
     };
 
     pub type BalanceOf<T> =
@@ -68,19 +76,49 @@ pub mod pallet {
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        /// Reserve weight for the bounded challenge sweep that `on_finalize(n)`
+        /// performs this block.
+        ///
+        /// The sweep drains every challenge whose deadline is `n` and slashes
+        /// its provider. Every challenge targeting deadline `n` is created
+        /// strictly before block `n` (`deadline = created_at + ChallengeTimeout`
+        /// and `ChallengeTimeout > 0`), so `NextChallengeIndex(n)` — the count
+        /// of challenges ever allocated for that deadline — is already final
+        /// here and is capped at `MaxChallengesPerDeadline` by
+        /// `create_challenge`. That makes the sweep's work bounded and lets us
+        /// account for it up front instead of doing unbounded work in
+        /// `on_finalize` without a weight charge.
+        fn on_initialize(n: BlockNumberFor<T>) -> Weight {
+            // `NextChallengeIndex(n)` is the final count of challenges expiring
+            // at `n` (every such challenge was created strictly before `n` and
+            // is capped at `MaxChallengesPerDeadline`). Charge the benchmarked
+            // cost of the `on_finalize` slash sweep up front, since
+            // `on_finalize` cannot return weight.
+            let count = NextChallengeIndex::<T>::get(n);
+            T::WeightInfo::on_initialize_slash_challenges(count as u32)
+        }
+
         /// Process expired challenges at the end of each block.
         fn on_finalize(n: BlockNumberFor<T>) {
-            // Check if there are any challenges expiring at this block
-            if let Some(expired_challenges) = Challenges::<T>::take(n) {
-                for (index, challenge) in expired_challenges.iter().enumerate() {
-                    // Slash the provider for failing to respond
-                    let challenge_id = ChallengeId {
-                        deadline: n,
-                        index: index as u16,
-                    };
-                    Self::slash_provider_for_failed_challenge(challenge, challenge_id);
-                }
+            // Drain every challenge expiring at this block by its stable
+            // per-deadline index and slash the provider for failing to
+            // respond. `drain_prefix` removes the entries as it iterates.
+            for (index, challenge) in Challenges::<T>::drain_prefix(n) {
+                let challenge_id = ChallengeId { deadline: n, index };
+                // Timeout is a resolution: decrement the pending counters
+                // exactly once here, mirroring the increment in
+                // `create_challenge`. (The slash helper is shared with the
+                // invalid-response path, so it must NOT touch the counters.)
+                Self::decrement_pending(challenge.bucket_id, &challenge.provider);
+                Self::slash_provider_for_failed_challenge(
+                    &challenge,
+                    challenge_id,
+                    SlashReason::Timeout,
+                );
             }
+            // Clear the per-deadline index allocator now the deadline has
+            // passed; no further challenges can target this block.
+            NextChallengeIndex::<T>::remove(n);
         }
 
         fn integrity_test() {
@@ -90,9 +128,19 @@ pub mod pallet {
             // deregistration and re-register (requiring DeregisterAnnouncementPeriod
             // more blocks), so an old quote cannot be replayed against the new
             // incarnation.
+            // At the same time, the deregistration announcement window must be
+            // strictly longer than the challenge response timeout, so any
+            // challenge created up to the announcement block matures (and the
+            // provider stays slashable) strictly before the provider can
+            // complete deregistration.
             assert!(
-                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
-                "RequestTimeout must be less than DeregisterAnnouncementPeriod to close the re-register replay window"
+                T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get()
+                    && T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+                "RequestTimeout must be less than DeregisterAnnouncementPeriod \
+                to close the re-register replay window, and \
+                DeregisterAnnouncementPeriod must be > ChallengeTimeout so a \
+                challenge created at the announcement block matures while the \
+                provider is still slashable"
             );
         }
     }
@@ -134,6 +182,23 @@ pub mod pallet {
         #[pallet::constant]
         type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
+        /// Deposit required to open a challenge. Reserved from the challenger
+        /// on `challenge_*` and refunded (minus a response-time-proportional
+        /// cost share) when the provider successfully defends, or returned
+        /// in full alongside a 10% slash reward when the provider is
+        /// slashed. Sets the floor on challenge spam economics — too low
+        /// and griefing is free; too high and legitimate challenges become
+        /// unaffordable.
+        #[pallet::constant]
+        type ChallengeDeposit: Get<BalanceOf<Self>>;
+
+        /// Maximum age of a `CommitmentPayload::nonce` (in blocks) the pallet
+        /// will accept on inbound signatures. The nonce is the block number
+        /// at which the signer signed; values older than this are rejected
+        /// to prevent indefinite signature replay.
+        #[pallet::constant]
+        type MaxNonceAge: Get<BlockNumberFor<Self>>;
+
         /// Settlement window after agreement expiry for owner to call end_agreement.
         #[pallet::constant]
         type SettlementTimeout: Get<BlockNumberFor<Self>>;
@@ -163,11 +228,22 @@ pub mod pallet {
         type MaxBucketsPerMember: Get<u32>;
 
         /// Minimum number of blocks between announcing a deregistration and
-        /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
+        /// being allowed to complete it. Must be `> ChallengeTimeout` so any
         /// challenge against this provider that was created up to the
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
         type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+        /// Maximum number of challenges that may share a single deadline block.
+        ///
+        /// Bounds the per-deadline challenge count so the `on_finalize` slash
+        /// sweep — which drains and slashes every challenge expiring at a given
+        /// block — does a bounded amount of work whose weight `on_initialize`
+        /// can reserve up front. Only challenges created in the *same* block
+        /// share a deadline (`deadline = created_at + ChallengeTimeout`), so a
+        /// generous value still cannot be exceeded under honest load.
+        #[pallet::constant]
+        type MaxChallengesPerDeadline: Get<u16>;
 
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: WeightInfo;
@@ -212,12 +288,63 @@ pub mod pallet {
         StorageAgreement<T>,
     >;
 
-    /// Pending challenges indexed by deadline block.
+    /// Pending challenges indexed by `(deadline block, stable per-deadline
+    /// index)`. The index is allocated by [`NextChallengeIndex`] and never
+    /// reused for a given deadline, so a `ChallengeId { deadline, index }`
+    /// stays valid even when sibling challenges sharing the same deadline are
+    /// resolved (the old `Vec`-backed layout shifted indices on removal,
+    /// making siblings unaddressable).
     #[pallet::storage]
-    #[pallet::unbounded]
     #[pallet::getter(fn challenges)]
-    pub type Challenges<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, Vec<Challenge<T>>>;
+    pub type Challenges<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BlockNumberFor<T>,
+        Twox64Concat,
+        u16,
+        Challenge<T>,
+        OptionQuery,
+    >;
+
+    /// Next stable challenge index to allocate for a given deadline block.
+    /// Monotonically increasing per deadline; never decremented when a
+    /// challenge is resolved, guaranteeing index stability for siblings.
+    #[pallet::storage]
+    pub type NextChallengeIndex<T: Config> =
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+
+    /// Number of unresolved challenges currently outstanding against a
+    /// provider, summed across every bucket. Incremented in `create_challenge`
+    /// and decremented exactly once per resolution (defended/invalid-response
+    /// in `respond_to_challenge`, or timeout in `on_finalize`). Gates
+    /// `complete_deregister`: a provider cannot exit while still slashable for
+    /// a pending challenge.
+    #[pallet::storage]
+    pub type PendingChallenges<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
+
+    /// Number of unresolved challenges outstanding against a specific
+    /// `(bucket, provider)` pair. Maintained in lockstep with
+    /// [`PendingChallenges`] and gates that bucket's agreement teardown
+    /// (`end_agreement`, `claim_expired_agreement`, `cleanup_bucket_internal`).
+    #[pallet::storage]
+    pub type PendingChallengesByBucket<T: Config> = StorageDoubleMap<
+        _,
+        Blake2_128Concat,
+        BucketId,
+        Blake2_128Concat,
+        T::AccountId,
+        u32,
+        ValueQuery,
+    >;
+
+    /// Per-challenger aggregates so the SDK doesn't have to scan historical
+    /// events to answer `get_challenge_stats`. Updated by `create_challenge`,
+    /// the defended path of `respond_to_challenge`, and
+    /// `slash_provider_for_failed_challenge`.
+    #[pallet::storage]
+    pub type ChallengerStats<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ChallengerStatRecord, ValueQuery>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider-Initiated Checkpoint Storage
@@ -551,6 +678,10 @@ pub mod pallet {
         Deleted {
             new_mmr_root: H256,
             new_start_seq: u64,
+            /// Block at which the admin signed the deletion commitment. Used
+            /// as the `nonce` in `CommitmentPayload` and recency-checked by
+            /// the pallet to prevent signature replay.
+            nonce: u64,
             admin: T::AccountId,
             admin_signature: sp_runtime::MultiSignature,
         },
@@ -742,6 +873,10 @@ pub mod pallet {
             provider: T::AccountId,
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
+            /// Whether the provider was slashed for failing to respond
+            /// (`Timeout`) or for submitting a demonstrably-false response
+            /// (`InvalidProof` etc).
+            reason: SlashReason,
         },
 
         // Provider-initiated checkpoint events
@@ -853,12 +988,27 @@ pub mod pallet {
         ProviderNotInSnapshot,
         LeafBeyondCanonical,
         InvalidDeletionProof,
+        /// A provider with unresolved challenges (`PendingChallenges > 0`)
+        /// cannot complete deregistration — they are still slashable.
+        ProviderHasPendingChallenges,
+        /// An agreement with an unresolved challenge against this
+        /// `(bucket, provider)` cannot be torn down until the challenge
+        /// resolves (defended, slashed, or timed out).
+        AgreementHasPendingChallenge,
+        /// `MaxChallengesPerDeadline` challenges have already been allocated
+        /// for the deadline this challenge would land on. Bounds the
+        /// `on_finalize` slash sweep so it stays within its reserved weight.
+        TooManyChallengesThisBlock,
 
         // Checkpoint errors
         InvalidSignature,
         NoSnapshot,
         SnapshotViolatesFrozen,
         InsufficientSignatures,
+        /// `CommitmentPayload::nonce` is older than `T::MaxNonceAge` blocks
+        /// behind the current block, or refers to a future block. Rejected
+        /// to prevent replay of captured signatures.
+        CommitmentNonceTooOld,
 
         // General errors
         ArithmeticOverflow,
@@ -921,6 +1071,7 @@ pub mod pallet {
     // ─────────────────────────────────────────────────────────────────────────
 
     #[pallet::call]
+    #[allow(clippy::too_many_arguments)]
     impl<T: Config> Pallet<T> {
         // ─────────────────────────────────────────────────────────────────────
         // Provider Management
@@ -990,7 +1141,7 @@ pub mod pallet {
         /// 2. `complete_deregister` — callable once `deregister_at` has
         ///    elapsed (by which point any challenge created up to the
         ///    announcement block has already matured, because the period
-        ///    must be `>= ChallengeTimeout`).
+        ///    must be `> ChallengeTimeout`).
         ///
         /// The two-step flow closes the slashing race where a provider
         /// could withdraw stake between the end of their last agreement
@@ -1060,6 +1211,16 @@ pub mod pallet {
             ensure!(
                 provider.committed_bytes == 0,
                 Error::<T>::ProviderHasActiveAgreements
+            );
+            // A provider with unresolved challenges is still slashable; they
+            // must not be able to exit and unreserve their stake before those
+            // challenges mature. The `DeregisterAnnouncementPeriod >
+            // ChallengeTimeout` invariant (see `integrity_test`) guarantees any
+            // challenge created up to the announcement block resolves before
+            // the wait window elapses, so this only blocks genuinely-live ones.
+            ensure!(
+                PendingChallenges::<T>::get(&who) == 0,
+                Error::<T>::ProviderHasPendingChallenges
             );
 
             // Drain pending checkpoint rewards (provider-keyed thanks to the
@@ -1445,11 +1606,17 @@ pub mod pallet {
             });
 
             // Remove from bucket's primary providers if primary
-            // TODO(no-admin-left)
+            // TODO(no-primary-provider-left)
             if matches!(agreement.role, ProviderRole::Primary) {
                 Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
                     if let Some(bucket) = maybe_bucket {
+                        // Capture the position before removal so the snapshot's
+                        // positional signer bitfield can be re-indexed to match.
+                        let pos = bucket.primary_providers.iter().position(|p| p == &provider);
                         bucket.primary_providers.retain(|p| p != &provider);
+                        if let (Some(pos), Some(snapshot)) = (pos, bucket.snapshot.as_mut()) {
+                            snapshot.remove_provider_bit(pos);
+                        }
                     }
                 });
 
@@ -1512,6 +1679,14 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
+            // Block teardown while a challenge is pending against this
+            // `(bucket, provider)` — settling/paying out the agreement now
+            // would let the provider escape a live slashable challenge.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &provider) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
+
             let current_block = frame_system::Pallet::<T>::block_number();
 
             let is_early_termination = current_block < agreement.expires_at;
@@ -1558,6 +1733,14 @@ pub mod pallet {
 
             let agreement = StorageAgreements::<T>::get(bucket_id, &who)
                 .ok_or(Error::<T>::AgreementNotFound)?;
+
+            // Block payout while a challenge is pending against this provider
+            // for this bucket — the provider must not claim and exit while
+            // still slashable.
+            ensure!(
+                PendingChallengesByBucket::<T>::get(bucket_id, &who) == 0,
+                Error::<T>::AgreementHasPendingChallenge
+            );
 
             let current_block = frame_system::Pallet::<T>::block_number();
 
@@ -1819,18 +2002,24 @@ pub mod pallet {
         /// Submit a new checkpoint with provider signatures.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
+        #[allow(clippy::too_many_arguments)]
         pub fn checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             mmr_root: H256,
             start_seq: u64,
             leaf_count: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // all `signatures` signed. Recency-checked to prevent replay.
+            nonce: u64,
             signatures: BoundedVec<
                 (T::AccountId, sp_runtime::MultiSignature),
                 T::MaxPrimaryProviders,
             >,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
                 let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
@@ -1847,7 +2036,8 @@ pub mod pallet {
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
+                let payload =
+                    CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -1893,6 +2083,7 @@ pub mod pallet {
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: nonce,
                 });
 
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
@@ -1934,12 +2125,15 @@ pub mod pallet {
                 // Must have existing snapshot
                 let snapshot = bucket.snapshot.as_mut().ok_or(Error::<T>::NoSnapshot)?;
 
-                // Verify and add signatures
+                // Verify and add signatures. The late signer signs the same
+                // payload the original signers signed — including the nonce
+                // captured in the snapshot.
                 let payload = CommitmentPayload::new(
                     bucket_id,
                     snapshot.mmr_root,
                     snapshot.start_seq,
                     snapshot.leaf_count,
+                    snapshot.commitment_nonce,
                 );
                 let encoded_payload = payload.encode();
 
@@ -2114,13 +2308,23 @@ pub mod pallet {
                 // Update historical roots
                 Self::update_historical_roots(bucket, current_block, mmr_root);
 
-                // Update bucket snapshot
+                // Update bucket snapshot.
+                //
+                // `commitment_nonce` is only meaningful for snapshots produced
+                // by the client-initiated `checkpoint` extrinsic (which signs
+                // over `CommitmentPayload`). Provider-initiated checkpoints
+                // sign over `CheckpointProposal::window` instead, so
+                // `extend_checkpoint` (which expects `CommitmentPayload`-shaped
+                // late signatures) is not applicable here — leave the nonce
+                // at zero rather than smuggling in `window` and confusing the
+                // two schemes.
                 bucket.snapshot = Some(BucketSnapshot {
                     mmr_root,
                     start_seq,
                     leaf_count,
                     checkpoint_block: current_block,
                     primary_signers,
+                    commitment_nonce: 0,
                 });
                 bucket.total_snapshots = bucket.total_snapshots.saturating_add(1);
 
@@ -2370,6 +2574,18 @@ pub mod pallet {
             let provider_signed = snapshot.has_provider_signed(provider_idx);
             ensure!(provider_signed, Error::<T>::ProviderNotInSnapshot);
 
+            // Verify provider has an ACTIVE agreement for this bucket. As with
+            // `challenge_offchain`/`challenge_replica`, challengeability must
+            // track genuine obligation: a challenge can only open while the
+            // agreement is live (not into the settlement window), so an expired
+            // checkpoint can no longer be challenged.
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
+
             Self::create_challenge(
                 who,
                 bucket_id,
@@ -2396,11 +2612,22 @@ pub mod pallet {
             provider: T::AccountId,
             mmr_root: H256,
             start_seq: u64,
+            // `leaf_count` is the value the provider included in the signed
+            // `CommitmentPayload`. The challenger passes it through so the
+            // payload reconstruction matches exactly. (Previously the pallet
+            // used a hardcoded `0u64` placeholder which would mismatch any
+            // provider that signed with a real leaf_count.)
+            leaf_count: u64,
             leaf_index: u64,
             chunk_index: u64,
+            // `nonce` is the `CommitmentPayload` nonce — the block at which
+            // the provider signed. Recency-checked to prevent replay.
+            nonce: u64,
             provider_signature: sp_runtime::MultiSignature,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            Self::ensure_recent_nonce(nonce)?;
 
             // Verify the bucket exists
             ensure!(
@@ -2408,16 +2635,20 @@ pub mod pallet {
                 Error::<T>::BucketNotFound
             );
 
-            // Verify provider has an agreement for this bucket
+            // Verify provider has an ACTIVE agreement for this bucket. An
+            // expired-but-unswept agreement leaves a stale row in
+            // `StorageAgreements`; challengeability must track genuine
+            // obligation, so a challenge can only open while the agreement is
+            // live (not into the settlement window).
+            let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
+                .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                StorageAgreements::<T>::contains_key(bucket_id, &provider),
-                Error::<T>::AgreementNotFound
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
             );
 
-            // Build the commitment payload that the provider signed
-            // Note: We use leaf_count = 0 here as a placeholder since we don't have it
-            // The actual verification will be based on the mmr_proof submitted in the response
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0);
+            // Build the commitment payload that the provider signed.
+            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2454,12 +2685,17 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
+            // Challengeability tracks genuine obligation: only while the
+            // agreement is live (not into the settlement window).
+            ensure!(
+                frame_system::Pallet::<T>::block_number() < agreement.expires_at,
+                Error::<T>::AgreementExpired
+            );
+
             let (mmr_root, start_seq) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let (root, _block) = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    // We need to get the start_seq from the bucket's snapshot at that root
-                    // For simplicity, we'll use 0 here - in production this should be tracked
-                    (*root, 0u64)
+                    let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
+                    (record.mmr_root, record.start_seq)
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
@@ -2489,12 +2725,22 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut challenges =
-                Challenges::<T>::get(challenge_id.deadline).ok_or(Error::<T>::ChallengeNotFound)?;
-
-            let challenge = challenges
-                .get(challenge_id.index as usize)
+            // Consume the challenge up front. With the stable-index DoubleMap
+            // a single `take` removes exactly this challenge and leaves its
+            // siblings (sharing the same deadline) untouched and addressable.
+            // Any `?`-bail below (wrong provider, expired, missing bucket)
+            // reverts the extrinsic, rolling the `take` back so the challenge
+            // remains pending; only the adjudicated `response_outcome` (which
+            // never short-circuits with `?`) commits the removal.
+            let challenge = Challenges::<T>::take(challenge_id.deadline, challenge_id.index)
                 .ok_or(Error::<T>::ChallengeNotFound)?;
+
+            // The `take` consumes this challenge, so resolve the pending
+            // counters now — this covers BOTH the defended path and the
+            // invalid-response slash path below. Any `?`-bail after this point
+            // reverts the whole extrinsic (including this decrement and the
+            // `take`), so the challenge and its counters stay in lockstep.
+            Self::decrement_pending(challenge.bucket_id, &challenge.provider);
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
@@ -2508,78 +2754,108 @@ pub mod pallet {
             let bucket =
                 Buckets::<T>::get(challenge.bucket_id).ok_or(Error::<T>::BucketNotFound)?;
 
-            match &response {
+            // Adjudicate the response. Returns:
+            //   `Ok(())`       — response defends the challenge
+            //   `Err(reason)`  — response is a demonstrable lie; slash the
+            //                    provider immediately (do NOT let them stall
+            //                    until the deadline timeout)
+            //
+            // Parameter-shape errors (stale nonce, non-admin signer, missing
+            // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
+            // — they represent caller mistakes, not adversarial responses.
+            let response_outcome: Result<(), SlashReason> = match &response {
                 ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
                 } => {
-                    // Verify chunk hash
                     let chunk_hash = storage_primitives::blake2_256(chunk_data);
-
-                    // Verify chunk is in data_root
-                    ensure!(
-                        storage_primitives::verify_merkle_proof(
-                            chunk_hash,
-                            challenge.chunk_index,
-                            chunk_proof,
-                            &mmr_proof.leaf.data_root,
-                        ),
-                        Error::<T>::InvalidChallengeProof
+                    let chunk_ok = storage_primitives::verify_merkle_proof(
+                        chunk_hash,
+                        challenge.chunk_index,
+                        chunk_proof,
+                        &mmr_proof.leaf.data_root,
                     );
-
-                    // Verify MMR proof: leaf is in the MMR with the challenged root
-                    ensure!(
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root),
-                        Error::<T>::InvalidChallengeProof
-                    );
+                    let mmr_ok =
+                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root);
+                    if chunk_ok && mmr_ok {
+                        Ok(())
+                    } else {
+                        Err(SlashReason::InvalidProof)
+                    }
                 }
                 ChallengeResponse::Deleted {
                     new_mmr_root,
                     new_start_seq,
+                    nonce,
                     admin,
                     admin_signature,
                 } => {
-                    // Verify admin is bucket admin
+                    Self::ensure_recent_nonce(*nonce)?;
                     Self::ensure_admin(admin, &bucket)?;
 
-                    // Verify challenged seq is before new start
                     let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    ensure!(
-                        challenged_seq < *new_start_seq,
-                        Error::<T>::InvalidDeletionProof
-                    );
-
-                    // Verify admin signature on the deletion commitment
-                    let deletion_payload = CommitmentPayload::new(
-                        challenge.bucket_id,
-                        *new_mmr_root,
-                        *new_start_seq,
-                        0, // leaf_count not needed for deletion proof
-                    );
-                    let encoded = deletion_payload.encode();
-                    Self::verify_signature(admin_signature, &encoded, admin)?;
+                    if challenged_seq >= *new_start_seq {
+                        // Provider claims data was purged before the
+                        // challenged leaf, but the new start_seq doesn't
+                        // actually cover it.
+                        Err(SlashReason::InvalidDeletionClaim)
+                    } else {
+                        let deletion_payload = CommitmentPayload::new(
+                            challenge.bucket_id,
+                            *new_mmr_root,
+                            *new_start_seq,
+                            0, // leaf_count not needed for deletion proof
+                            *nonce,
+                        );
+                        let encoded = deletion_payload.encode();
+                        if Self::verify_signature(admin_signature, &encoded, admin).is_ok() {
+                            Ok(())
+                        } else {
+                            Err(SlashReason::InvalidDeletionClaim)
+                        }
+                    }
                 }
                 ChallengeResponse::Superseded => {
-                    let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
-                    let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
-                    let canonical_end = snapshot.start_seq.saturating_add(snapshot.leaf_count);
-
-                    ensure!(
-                        challenged_seq < canonical_end,
-                        Error::<T>::LeafBeyondCanonical
-                    );
+                    // A `Superseded` defense only holds when the challenged
+                    // commitment was genuinely replaced by a newer canonical
+                    // snapshot. Without a snapshot to lean on the claim is
+                    // unsupported, so we slash.
+                    match bucket.snapshot.as_ref() {
+                        None => Err(SlashReason::InvalidSupersededClaim),
+                        Some(snapshot) => {
+                            let challenged_seq =
+                                challenge.start_seq.saturating_add(challenge.leaf_index);
+                            // (a) The challenged root must NOT be the current
+                            // canonical root — if it still is, the data is live
+                            // and the provider must answer with a `Proof`.
+                            // (b)+(c) The challenged seq must still sit inside
+                            // the canonical range; front-rolled/deleted data
+                            // has to go through the admin-signed `Deleted` path.
+                            if challenge.mmr_root != snapshot.mmr_root
+                                && snapshot.contains_seq(challenged_seq)
+                            {
+                                Ok(())
+                            } else {
+                                Err(SlashReason::InvalidSupersededClaim)
+                            }
+                        }
+                    }
                 }
-            }
+            };
 
-            // Challenge defended - calculate costs based on response time
-            let challenge = challenges.remove(challenge_id.index as usize);
+            // The challenge was already removed by the `take` above; the owned
+            // `challenge` value feeds either the defended-path cost-split or
+            // the slash helper. The adjudication has concluded, so the
+            // removal now becomes the committed state transition.
 
-            // Update or remove the challenges list
-            if challenges.is_empty() {
-                Challenges::<T>::remove(challenge_id.deadline);
-            } else {
-                Challenges::<T>::insert(challenge_id.deadline, challenges);
+            if let Err(reason) = response_outcome {
+                // Invalid response → slash now. The extrinsic itself returns
+                // `Ok(())` because the slash *is* the valid state transition;
+                // the provider is the one paying the price, recorded via the
+                // `ChallengeSlashed { reason, .. }` event.
+                Self::slash_provider_for_failed_challenge(&challenge, challenge_id, reason);
+                return Ok(());
             }
 
             // Calculate response time (blocks since challenge was created)
@@ -2614,20 +2890,45 @@ pub mod pallet {
             let challenger_cost = challenge.deposit * challenger_percent.into() / 100u32.into();
             let provider_cost = challenge.deposit * provider_percent.into() / 100u32.into();
 
-            // Refund challenger (deposit minus their cost)
-            let refund = challenge.deposit.saturating_sub(challenger_cost);
+            // Challenger forfeits `challenger_cost` to the provider as
+            // compensation for the work of responding: move it from the
+            // challenger's reserved balance into the provider's free balance.
+            let not_moved = T::Currency::repatriate_reserved(
+                &challenge.challenger,
+                &challenge.provider,
+                challenger_cost,
+                BalanceStatus::Free,
+            )
+            .unwrap_or(challenger_cost);
+            // Refund challenger the rest of their deposit. Anything that could
+            // not be moved (should not happen) is released back to them too, so
+            // no funds stay stuck in the challenger's reserved balance.
+            let refund = challenge
+                .deposit
+                .saturating_sub(challenger_cost)
+                .saturating_add(not_moved);
             T::Currency::unreserve(&challenge.challenger, refund);
 
-            // Slash provider_cost from provider's stake
-            // Note: In on_finalize we can't easily handle errors, but here we can
-            let (_, remaining) = T::Currency::slash_reserved(&who, provider_cost);
+            // Slash provider_cost from provider's stake and route it to the
+            // Treasury (no burning). `resolve_creating` restores the issuance
+            // burned by `slash_reserved`, keeping total issuance unchanged.
+            let (provider_cost_imbalance, remaining) =
+                T::Currency::slash_reserved(&who, provider_cost);
             let actually_slashed = provider_cost.saturating_sub(remaining);
+            T::Currency::resolve_creating(&T::Treasury::get(), provider_cost_imbalance);
 
             // Update provider stake in storage
             Providers::<T>::mutate(&who, |maybe_provider| {
                 if let Some(provider) = maybe_provider {
                     provider.stake = provider.stake.saturating_sub(actually_slashed);
                 }
+            });
+
+            // Challenger lost — they pay `challenger_cost` from their deposit
+            // and the provider keeps their stake. Bump the failed counter so
+            // the SDK can report a realistic success rate.
+            ChallengerStats::<T>::mutate(&challenge.challenger, |stats| {
+                stats.failed_challenges = stats.failed_challenges.saturating_add(1);
             });
 
             Self::deposit_event(Event::ChallengeDefended {
@@ -2680,8 +2981,8 @@ pub mod pallet {
                     let current_block = frame_system::Pallet::<T>::block_number();
 
                     // Check sync interval
-                    if let Some((_, last_block)) = last_sync {
-                        let min_next_block = last_block.saturating_add(*min_sync_interval);
+                    if let Some(record) = last_sync {
+                        let min_next_block = record.block.saturating_add(*min_sync_interval);
                         ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
@@ -2690,8 +2991,8 @@ pub mod pallet {
                         Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
-                    if let Some((old_root, _)) = last_sync {
-                        ensure!(matched_root != *old_root, Error::<T>::InvalidSyncRoot);
+                    if let Some(record) = last_sync {
+                        ensure!(matched_root != record.mmr_root, Error::<T>::InvalidSyncRoot);
                     }
 
                     // Pay for sync
@@ -2701,8 +3002,32 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
+                    // Capture sequence metadata for the matched root so a
+                    // future `challenge_replica` can target a specific leaf.
+                    // For the current snapshot (position_matched == 0) we
+                    // know start_seq + leaf_count exactly. Historical roots
+                    // don't carry sequence metadata in `historical_roots`, so
+                    // they default to 0 here — challenges targeting a leaf
+                    // beyond seq 0 in that case still work because
+                    // `challenge_replica` only uses `start_seq` as an offset
+                    // additive identity.
+                    let (start_seq, leaf_count) = if position_matched == 0 {
+                        bucket
+                            .snapshot
+                            .as_ref()
+                            .map(|s| (s.start_seq, s.leaf_count))
+                            .unwrap_or((0, 0))
+                    } else {
+                        (0u64, 0u64)
+                    };
+
                     // Update last sync
-                    *last_sync = Some((matched_root, current_block));
+                    *last_sync = Some(ReplicaSyncRecord {
+                        mmr_root: matched_root,
+                        start_seq,
+                        leaf_count,
+                        block: current_block,
+                    });
 
                     // Transfer sync payment to provider
                     T::Currency::unreserve(&agreement.owner, *sync_price);
@@ -2766,1749 +3091,6 @@ pub mod pallet {
                     Ok(())
                 },
             )
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helper Functions
-    // ─────────────────────────────────────────────────────────────────────────
-
-    impl<T: Config> Pallet<T> {
-        /// Verify a MultiSignature against an encoded message using stored public key.
-        ///
-        /// This:
-        /// 1. Retrieves the provider's registered public key from storage
-        /// 2. Reconstructs the appropriate public key type from raw bytes
-        /// 3. Verifies the signature matches the message and public key
-        ///
-        /// Returns Error::InvalidSignature if verification fails.
-        fn verify_signature(
-            signature: &sp_runtime::MultiSignature,
-            message: &[u8],
-            signer: &T::AccountId,
-        ) -> DispatchResult {
-            use sp_runtime::traits::Verify;
-
-            // Get the provider's registered public key
-            let provider = Providers::<T>::get(signer).ok_or(Error::<T>::ProviderNotFound)?;
-            let public_key_bytes = provider.public_key.as_slice();
-
-            // Convert public key to AccountId32 based on signature type
-            let account_id = match signature {
-                sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
-                    // Sr25519 and Ed25519 public keys are 32 bytes, directly used as AccountId32
-                    if public_key_bytes.len() != 32 {
-                        return Err(Error::<T>::InvalidPublicKey.into());
-                    }
-                    let mut key_bytes = [0u8; 32];
-                    key_bytes.copy_from_slice(public_key_bytes);
-                    sp_runtime::AccountId32::new(key_bytes)
-                }
-                sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
-                    // Ecdsa/Eth public keys are 33 bytes (compressed), AccountId32 is blake2_256 hash
-                    if public_key_bytes.len() != 33 {
-                        return Err(Error::<T>::InvalidPublicKey.into());
-                    }
-                    let hash = sp_io::hashing::blake2_256(public_key_bytes);
-                    sp_runtime::AccountId32::new(hash)
-                }
-            };
-
-            // Verify signature against the account ID
-            let is_valid = signature.verify(message, &account_id);
-
-            ensure!(is_valid, Error::<T>::InvalidSignature);
-
-            Ok(())
-        }
-
-        /// Verify a provider signature over a SCALE-encoded
-        /// [`AgreementTermsOf<T>`]. The signed payload is
-        /// `blake2_256(context | terms.encode())`, where `context` is the
-        /// domain-separation prefix for the redemption path
-        /// ([`storage_primitives::PRIMARY_TERM_CONTEXT`] or
-        /// [`storage_primitives::REPLICA_TERM_CONTEXT`]) — the caller, not
-        /// the terms, decides it, so a quote signed for one flavour can
-        /// never be redeemed as the other.
-        fn verify_terms_signature(
-            provider_info: &ProviderInfo<T>,
-            terms: &AgreementTermsOf<T>,
-            sig: &sp_runtime::MultiSignature,
-            context: &[u8],
-        ) -> DispatchResult {
-            let public_key_bytes = provider_info.public_key.as_slice();
-            let account_id = match sig {
-                sp_runtime::MultiSignature::Sr25519(_) | sp_runtime::MultiSignature::Ed25519(_) => {
-                    ensure!(public_key_bytes.len() == 32, Error::<T>::InvalidPublicKey);
-                    let mut key_bytes = [0u8; 32];
-                    key_bytes.copy_from_slice(public_key_bytes);
-                    sp_runtime::AccountId32::new(key_bytes)
-                }
-                sp_runtime::MultiSignature::Ecdsa(_) | sp_runtime::MultiSignature::Eth(_) => {
-                    ensure!(public_key_bytes.len() == 33, Error::<T>::InvalidPublicKey);
-                    let hash = sp_io::hashing::blake2_256(public_key_bytes);
-                    sp_runtime::AccountId32::new(hash)
-                }
-            };
-
-            let mut payload = context.to_vec();
-            terms.encode_to(&mut payload);
-            let hash = sp_io::hashing::blake2_256(&payload);
-            ensure!(
-                sig.verify(&hash[..], &account_id),
-                Error::<T>::InvalidProviderSignature
-            );
-            Ok(())
-        }
-
-        fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
-            ensure!(
-                bucket
-                    .members
-                    .iter()
-                    .any(|m| &m.account == who && m.role == Role::Admin),
-                Error::<T>::NotBucketAdmin
-            );
-            Ok(())
-        }
-
-        /// Single `bucket.member` iteration to find `member` matching. Returns:
-        /// - the target member's index (if present),
-        /// - whether that member currently holds `Role::Admin`,
-        /// - the total number of admins in the bucket.
-        fn locate_member(bucket: &Bucket<T>, member: &T::AccountId) -> (Option<usize>, bool, u32) {
-            let mut target_idx = None;
-            let mut target_is_admin = false;
-            let mut admin_count: u32 = 0;
-            for (i, m) in bucket.members.iter().enumerate() {
-                if m.role == Role::Admin {
-                    admin_count = admin_count.saturating_add(1);
-                }
-                if &m.account == member {
-                    target_idx = Some(i);
-                    target_is_admin = m.role == Role::Admin;
-                }
-            }
-            (target_idx, target_is_admin, admin_count)
-        }
-
-        fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
-            ensure!(
-                bucket.members.iter().any(|m| &m.account == who
-                    && (m.role == Role::Admin || m.role == Role::Writer)),
-                Error::<T>::NotBucketWriter
-            );
-            Ok(())
-        }
-
-        /// Reject any path that would create a new commitment for a
-        /// provider who has announced deregistration. `deregister_provider`
-        /// also flips `accepting_primary`/`accepting_extensions` to `false`,
-        fn ensure_provider_active(provider: &ProviderInfo<T>) -> DispatchResult {
-            ensure!(
-                provider.deregister_at.is_none(),
-                Error::<T>::DeregisterAnnounced
-            );
-            Ok(())
-        }
-
-        /// Add or update a member's role on a bucket (callable from other pallets).
-        ///
-        /// The `caller` must be an Admin of the bucket.
-        pub fn set_member_internal(
-            caller: &T::AccountId,
-            bucket_id: BucketId,
-            member: T::AccountId,
-            role: Role,
-        ) -> DispatchResult {
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(caller, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                if let Some(idx) = target_idx {
-                    if target_is_admin && role != Role::Admin {
-                        // Admins can only demote themselves, never another admin.
-                        ensure!(member == *caller, Error::<T>::CannotDemoteAdmin);
-                        // And even self-demotion must leave at least one admin.
-                        ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                    }
-                    bucket.members[idx].role = role;
-                } else {
-                    let new_member = Member {
-                        account: member.clone(),
-                        role,
-                    };
-                    bucket
-                        .members
-                        .try_push(new_member)
-                        .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-                    MemberBuckets::<T>::try_mutate(&member, |buckets| {
-                        if !buckets.contains(&bucket_id) {
-                            buckets
-                                .try_push(bucket_id)
-                                .map_err(|_| Error::<T>::TooManyBucketsForMember)
-                        } else {
-                            Ok(())
-                        }
-                    })?;
-                }
-
-                Self::deposit_event(Event::MemberSet {
-                    bucket_id,
-                    member,
-                    role,
-                });
-
-                Ok(())
-            })
-        }
-
-        /// Remove a member from a bucket (callable from other pallets).
-        ///
-        /// The `caller` must be an Admin of the bucket.
-        pub fn remove_member_internal(
-            caller: &T::AccountId,
-            bucket_id: BucketId,
-            member: T::AccountId,
-        ) -> DispatchResult {
-            Buckets::<T>::try_mutate(bucket_id, |maybe_bucket| -> DispatchResult {
-                let bucket = maybe_bucket.as_mut().ok_or(Error::<T>::BucketNotFound)?;
-
-                Self::ensure_admin(caller, bucket)?;
-
-                let (target_idx, target_is_admin, admin_count) =
-                    Self::locate_member(bucket, &member);
-                let member_idx = target_idx.ok_or(Error::<T>::MemberNotFound)?;
-
-                if target_is_admin {
-                    // Admins can only remove themselves, never another admin.
-                    ensure!(member == *caller, Error::<T>::CannotDemoteAdmin);
-                    // And even self-removal must leave at least one admin.
-                    ensure!(admin_count > 1, Error::<T>::LastAdminCannotBeRemoved);
-                }
-
-                bucket.members.remove(member_idx);
-
-                MemberBuckets::<T>::mutate(&member, |buckets| {
-                    buckets.retain(|id| *id != bucket_id);
-                });
-
-                Self::deposit_event(Event::MemberRemoved { bucket_id, member });
-
-                Ok(())
-            })
-        }
-
-        fn validate_duration(
-            settings: &ProviderSettings<T>,
-            duration: BlockNumberFor<T>,
-        ) -> DispatchResult {
-            ensure!(
-                duration >= settings.min_duration,
-                Error::<T>::DurationTooShort
-            );
-            ensure!(
-                duration <= settings.max_duration,
-                Error::<T>::DurationTooLong
-            );
-            Ok(())
-        }
-
-        fn calculate_payment(
-            price_per_byte: BalanceOf<T>,
-            max_bytes: u64,
-            duration: BlockNumberFor<T>,
-        ) -> Result<BalanceOf<T>, DispatchError> {
-            // payment = price_per_byte * max_bytes * duration
-            // Use saturated_from for type conversions
-            let bytes_balance: BalanceOf<T> = max_bytes.saturated_into();
-            let duration_u128: u128 = duration.saturated_into();
-            let duration_balance: BalanceOf<T> = duration_u128.saturated_into();
-
-            price_per_byte
-                .checked_mul(&bytes_balance)
-                .and_then(|p| p.checked_mul(&duration_balance))
-                .ok_or(Error::<T>::ArithmeticOverflow.into())
-        }
-
-        fn finalize_agreement(
-            bucket_id: BucketId,
-            provider: &T::AccountId,
-            agreement: &StorageAgreement<T>,
-            action: EndAction,
-            is_early: bool,
-        ) -> DispatchResult {
-            let (to_provider, to_burn) = match action {
-                EndAction::Pay => (agreement.payment_locked, Zero::zero()),
-                EndAction::Burn { burn_percent } => {
-                    let burn_percent = burn_percent.min(100);
-                    let burn_amount =
-                        agreement.payment_locked * burn_percent.into() / 100u32.into();
-                    let pay_amount = agreement.payment_locked.saturating_sub(burn_amount);
-                    (pay_amount, burn_amount)
-                }
-            };
-
-            // Unreserve from owner
-            T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
-
-            // Pay provider
-            if !to_provider.is_zero() {
-                T::Currency::transfer(
-                    &agreement.owner,
-                    provider,
-                    to_provider,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-            }
-
-            // Send burned amount to treasury
-            if !to_burn.is_zero() {
-                T::Currency::transfer(
-                    &agreement.owner,
-                    &T::Treasury::get(),
-                    to_burn,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-            }
-
-            // Update provider stats
-            Providers::<T>::mutate(provider, |maybe_provider| {
-                if let Some(provider_info) = maybe_provider {
-                    provider_info.committed_bytes = provider_info
-                        .committed_bytes
-                        .saturating_sub(agreement.max_bytes);
-
-                    if to_burn > Zero::zero() {
-                        provider_info.stats.agreements_burned =
-                            provider_info.stats.agreements_burned.saturating_add(1);
-                    } else {
-                        provider_info.stats.agreements_not_extended = provider_info
-                            .stats
-                            .agreements_not_extended
-                            .saturating_add(1);
-                    }
-                }
-            });
-
-            // Remove from primary_providers if primary
-            if matches!(agreement.role, ProviderRole::Primary) {
-                Buckets::<T>::mutate(bucket_id, |maybe_bucket| {
-                    if let Some(bucket) = maybe_bucket {
-                        bucket.primary_providers.retain(|p| p != provider);
-                    }
-                });
-
-                let reason = if is_early {
-                    RemovalReason::AdminTerminated
-                } else {
-                    RemovalReason::Expired
-                };
-
-                Self::deposit_event(Event::PrimaryProviderRemoved {
-                    bucket_id,
-                    provider: provider.clone(),
-                    reason,
-                });
-            }
-
-            // Remove agreement
-            StorageAgreements::<T>::remove(bucket_id, provider);
-
-            Self::deposit_event(Event::AgreementEnded {
-                bucket_id,
-                provider: provider.clone(),
-                payment_to_provider: to_provider,
-                burned: to_burn,
-            });
-
-            Ok(())
-        }
-
-        /// Internal function to cleanup a bucket and all its agreements.
-        /// This is called by Layer 1 (drive-registry) when deleting a drive.
-        ///
-        /// Returns the total amount refunded to the owner.
-        pub fn cleanup_bucket_internal(
-            bucket_id: BucketId,
-            owner: &T::AccountId,
-        ) -> Result<BalanceOf<T>, DispatchError> {
-            // Verify bucket exists
-            let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
-
-            // Verify caller is an admin of the bucket
-            Self::ensure_admin(owner, &bucket)?;
-
-            let mut total_refunded: BalanceOf<T> = Zero::zero();
-
-            // End all agreements for this bucket (pay providers fairly)
-            let agreements: Vec<_> = StorageAgreements::<T>::iter_prefix(bucket_id).collect();
-
-            for (provider, agreement) in agreements {
-                // Calculate prorated refund based on remaining time
-                let current_block = frame_system::Pallet::<T>::block_number();
-                let remaining_blocks = agreement.expires_at.saturating_sub(current_block);
-
-                // If there's remaining time, calculate prorated refund
-                let refund_to_owner = if remaining_blocks > Zero::zero() {
-                    let total_duration = agreement.expires_at.saturating_sub(agreement.started_at);
-                    if total_duration > Zero::zero() {
-                        let remaining_u128: u128 = remaining_blocks.saturated_into();
-                        let total_u128: u128 = total_duration.saturated_into();
-                        let payment_u128: u128 = agreement.payment_locked.saturated_into();
-
-                        // refund = payment * (remaining / total)
-                        let refund_u128 = payment_u128
-                            .saturating_mul(remaining_u128)
-                            .saturating_div(total_u128);
-                        refund_u128.saturated_into()
-                    } else {
-                        Zero::zero()
-                    }
-                } else {
-                    Zero::zero()
-                };
-
-                // Payment to provider = total locked - refund to owner
-                let payment_to_provider = agreement.payment_locked.saturating_sub(refund_to_owner);
-
-                // Unreserve from owner
-                T::Currency::unreserve(&agreement.owner, agreement.payment_locked);
-
-                // Pay provider their earned portion
-                if !payment_to_provider.is_zero() {
-                    T::Currency::transfer(
-                        &agreement.owner,
-                        &provider,
-                        payment_to_provider,
-                        ExistenceRequirement::KeepAlive,
-                    )?;
-                }
-
-                // Track total refunded (owner keeps the unspent portion)
-                total_refunded = total_refunded.saturating_add(refund_to_owner);
-
-                // Update provider stats
-                Providers::<T>::mutate(&provider, |maybe_provider| {
-                    if let Some(provider_info) = maybe_provider {
-                        provider_info.committed_bytes = provider_info
-                            .committed_bytes
-                            .saturating_sub(agreement.max_bytes);
-                        provider_info.stats.agreements_not_extended = provider_info
-                            .stats
-                            .agreements_not_extended
-                            .saturating_add(1);
-                    }
-                });
-
-                // Remove agreement
-                StorageAgreements::<T>::remove(bucket_id, &provider);
-
-                Self::deposit_event(Event::AgreementEnded {
-                    bucket_id,
-                    provider: provider.clone(),
-                    payment_to_provider,
-                    burned: Zero::zero(),
-                });
-            }
-
-            // Clean up reverse index for all members
-            for member in &bucket.members {
-                MemberBuckets::<T>::mutate(&member.account, |buckets| {
-                    buckets.retain(|id| *id != bucket_id);
-                });
-            }
-
-            // Remove the bucket itself
-            Buckets::<T>::remove(bucket_id);
-
-            Self::deposit_event(Event::BucketDeleted { bucket_id });
-
-            Ok(total_refunded)
-        }
-
-        fn create_challenge(
-            challenger: T::AccountId,
-            bucket_id: BucketId,
-            provider: T::AccountId,
-            mmr_root: H256,
-            start_seq: u64,
-            leaf_index: u64,
-            chunk_index: u64,
-        ) -> DispatchResult {
-            // Calculate deposit (simplified - would be based on expected costs)
-            let deposit: BalanceOf<T> = 100u32.into();
-
-            T::Currency::reserve(&challenger, deposit)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let deadline = current_block.saturating_add(T::ChallengeTimeout::get());
-
-            let challenge = Challenge {
-                bucket_id,
-                provider: provider.clone(),
-                challenger: challenger.clone(),
-                mmr_root,
-                start_seq,
-                leaf_index,
-                chunk_index,
-                deposit,
-            };
-
-            let index = Challenges::<T>::mutate(deadline, |challenges| {
-                let challenges = challenges.get_or_insert_with(Vec::new);
-                let idx = challenges.len() as u16;
-                challenges.push(challenge);
-                idx
-            });
-
-            // Update provider stats
-            Providers::<T>::mutate(&provider, |maybe_provider| {
-                if let Some(provider_info) = maybe_provider {
-                    provider_info.stats.challenges_received =
-                        provider_info.stats.challenges_received.saturating_add(1);
-                }
-            });
-
-            let challenge_id = ChallengeId { deadline, index };
-
-            Self::deposit_event(Event::ChallengeCreated {
-                challenge_id,
-                bucket_id,
-                provider,
-                challenger,
-                respond_by: deadline,
-            });
-
-            Ok(())
-        }
-
-        fn update_historical_roots(
-            bucket: &mut Bucket<T>,
-            current_block: BlockNumberFor<T>,
-            mmr_root: H256,
-        ) {
-            let block_num: u32 = current_block.try_into().unwrap_or(0u32);
-
-            for (i, &prime) in HISTORICAL_ROOT_PRIMES.iter().enumerate() {
-                let quotient = block_num / prime;
-                if quotient != bucket.historical_roots[i].0 {
-                    bucket.historical_roots[i] = (quotient, mmr_root);
-                }
-            }
-        }
-
-        fn find_matching_root(
-            bucket: &Bucket<T>,
-            roots: &[Option<H256>; 7],
-        ) -> Result<(u8, H256), DispatchError> {
-            // Check current snapshot first
-            if let (Some(snapshot), Some(root)) = (&bucket.snapshot, roots[0]) {
-                if snapshot.mmr_root == root {
-                    return Ok((0, root));
-                }
-            }
-
-            // Check historical roots
-            for i in 0..6 {
-                if let Some(root) = roots[i + 1] {
-                    if bucket.historical_roots[i].1 == root {
-                        return Ok((i as u8 + 1, root));
-                    }
-                }
-            }
-
-            Err(Error::<T>::InvalidSyncRoot.into())
-        }
-
-        /// Slash a provider who failed to respond to a challenge.
-        ///
-        /// This:
-        /// 1. Slashes the provider's entire stake
-        /// 2. Refunds the challenger with their deposit plus a reward
-        /// 3. Updates provider statistics
-        /// 4. Marks the provider as slashed (so they can be removed from buckets)
-        fn slash_provider_for_failed_challenge(
-            challenge: &Challenge<T>,
-            challenge_id: ChallengeId<BlockNumberFor<T>>,
-        ) {
-            // Get provider info
-            if let Some(mut provider_info) = Providers::<T>::get(&challenge.provider) {
-                // Slash the provider's entire stake
-                let slashed_amount = provider_info.stake;
-
-                // Unreserve and slash the stake
-                // In Substrate, slashing typically burns or sends to treasury
-                let (_, remaining) =
-                    T::Currency::slash_reserved(&challenge.provider, slashed_amount);
-                let actually_slashed = slashed_amount.saturating_sub(remaining);
-
-                // Calculate challenger reward (e.g., 10% of slashed amount, rest goes to treasury)
-                let challenger_reward = actually_slashed / 10u32.into();
-                let to_treasury = actually_slashed.saturating_sub(challenger_reward);
-
-                // Refund challenger's deposit
-                T::Currency::unreserve(&challenge.challenger, challenge.deposit);
-
-                // Transfer reward to challenger
-                // Note: We need to handle potential errors gracefully in on_finalize
-                let _ = T::Currency::deposit_creating(&challenge.challenger, challenger_reward);
-
-                // The rest goes to treasury (burned by slash_reserved)
-                let _ = to_treasury; // Acknowledged
-
-                // Update provider stats
-                provider_info.stats.challenges_failed =
-                    provider_info.stats.challenges_failed.saturating_add(1);
-                provider_info.stake = Zero::zero();
-
-                Providers::<T>::insert(&challenge.provider, provider_info);
-
-                // Emit event
-                Self::deposit_event(Event::ChallengeSlashed {
-                    challenge_id,
-                    provider: challenge.provider.clone(),
-                    slashed_amount: actually_slashed,
-                    challenger_reward,
-                });
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Provider-Initiated Checkpoint Helpers
-        // ─────────────────────────────────────────────────────────────────────────
-
-        /// Calculate the checkpoint window number for a given block.
-        ///
-        /// Window 0 starts at block 0, window 1 at block `interval`, etc.
-        fn calculate_window(block: BlockNumberFor<T>, interval: BlockNumberFor<T>) -> u64 {
-            if interval.is_zero() {
-                return 0;
-            }
-            let block_num: u64 = block.saturated_into();
-            let interval_num: u64 = interval.saturated_into();
-            block_num / interval_num
-        }
-
-        /// Calculate the start block for a given checkpoint window.
-        fn window_start_block(window: u64, interval: BlockNumberFor<T>) -> BlockNumberFor<T> {
-            let interval_num: u64 = interval.saturated_into();
-            let start: u64 = window.saturating_mul(interval_num);
-            start.saturated_into()
-        }
-
-        /// Calculate the leader index for a given bucket and window.
-        ///
-        /// Uses deterministic selection: blake2_256(bucket_id || window) % num_providers.
-        /// This ensures all providers can independently calculate who the leader is.
-        fn calculate_leader_index(bucket_id: BucketId, window: u64, num_providers: u32) -> u32 {
-            if num_providers == 0 {
-                return 0;
-            }
-            // Create deterministic seed from bucket_id and window
-            let mut data = [0u8; 16];
-            data[..8].copy_from_slice(&bucket_id.to_le_bytes());
-            data[8..].copy_from_slice(&window.to_le_bytes());
-            let hash = sp_io::hashing::blake2_256(&data);
-            // Take first 4 bytes as u32 and mod by num_providers
-            let seed = u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
-            seed % num_providers
-        }
-
-        /// Get the checkpoint config for a bucket, falling back to defaults.
-        fn get_checkpoint_config(
-            bucket_id: BucketId,
-        ) -> storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>> {
-            CheckpointConfigs::<T>::get(bucket_id).unwrap_or_else(|| {
-                storage_primitives::CheckpointWindowConfig {
-                    interval: T::DefaultCheckpointInterval::get(),
-                    grace_period: T::DefaultCheckpointGrace::get(),
-                    enabled: true, // Enabled by default
-                }
-            })
-        }
-
-        /// Check if the current block is within the grace period for a window.
-        fn is_within_grace_period(
-            current_block: BlockNumberFor<T>,
-            window: u64,
-            config: &storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>>,
-        ) -> bool {
-            let window_start = Self::window_start_block(window, config.interval);
-            let grace_end = window_start.saturating_add(config.grace_period);
-            current_block <= grace_end
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Runtime API Implementation
-        // ─────────────────────────────────────────────────────────────────────────
-
-        /// Query provider information.
-        pub fn query_provider_info(
-            provider: &T::AccountId,
-        ) -> Option<crate::runtime_api::ProviderInfoResponse> {
-            Providers::<T>::get(provider).map(|info| {
-                let max_capacity = info.settings.max_capacity;
-                let available_capacity = if max_capacity > 0 {
-                    Some(max_capacity.saturating_sub(info.committed_bytes))
-                } else {
-                    None // Unlimited
-                };
-
-                crate::runtime_api::ProviderInfoResponse {
-                    multiaddr: info.multiaddr.to_vec(),
-                    public_key: info.public_key.to_vec(),
-                    stake: info.stake.saturated_into::<u128>(),
-                    committed_bytes: info.committed_bytes,
-                    min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                    max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                    price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                    accepting_primary: info.settings.accepting_primary,
-                    replica_sync_price: info
-                        .settings
-                        .replica_sync_price
-                        .map(|p| p.saturated_into::<u128>()),
-                    accepting_extensions: info.settings.accepting_extensions,
-                    registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                    agreements_total: info.stats.agreements_total,
-                    agreements_extended: info.stats.agreements_extended,
-                    agreements_not_extended: info.stats.agreements_not_extended,
-                    agreements_burned: info.stats.agreements_burned,
-                    challenges_received: info.stats.challenges_received,
-                    challenges_failed: info.stats.challenges_failed,
-                    max_capacity,
-                    available_capacity,
-                }
-            })
-        }
-
-        /// Query all providers (paginated).
-        pub fn query_providers(
-            offset: u32,
-            limit: u32,
-        ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            Providers::<T>::iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .map(|(account, info)| {
-                    let max_capacity = info.settings.max_capacity;
-                    let available_capacity = if max_capacity > 0 {
-                        Some(max_capacity.saturating_sub(info.committed_bytes))
-                    } else {
-                        None // Unlimited
-                    };
-
-                    (
-                        account,
-                        crate::runtime_api::ProviderInfoResponse {
-                            multiaddr: info.multiaddr.to_vec(),
-                            public_key: info.public_key.to_vec(),
-                            stake: info.stake.saturated_into::<u128>(),
-                            committed_bytes: info.committed_bytes,
-                            min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                            max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                            price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                            accepting_primary: info.settings.accepting_primary,
-                            replica_sync_price: info
-                                .settings
-                                .replica_sync_price
-                                .map(|p| p.saturated_into::<u128>()),
-                            accepting_extensions: info.settings.accepting_extensions,
-                            registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                            agreements_total: info.stats.agreements_total,
-                            agreements_extended: info.stats.agreements_extended,
-                            agreements_not_extended: info.stats.agreements_not_extended,
-                            agreements_burned: info.stats.agreements_burned,
-                            challenges_received: info.stats.challenges_received,
-                            challenges_failed: info.stats.challenges_failed,
-                            max_capacity,
-                            available_capacity,
-                        },
-                    )
-                })
-                .collect()
-        }
-
-        /// Query bucket information.
-        pub fn query_bucket_info(
-            bucket_id: BucketId,
-        ) -> Option<crate::runtime_api::BucketResponse> {
-            Buckets::<T>::get(bucket_id).map(|bucket| crate::runtime_api::BucketResponse {
-                bucket_id,
-                members: bucket
-                    .members
-                    .iter()
-                    .map(|m| crate::runtime_api::BucketMemberResponse {
-                        account: m.account.encode(),
-                        role: m.role,
-                    })
-                    .collect(),
-                frozen_start_seq: bucket.frozen_start_seq,
-                min_providers: bucket.min_providers,
-                primary_providers: bucket
-                    .primary_providers
-                    .iter()
-                    .map(|p| p.encode())
-                    .collect(),
-                snapshot: bucket.snapshot.map(|s| BucketSnapshot {
-                    mmr_root: s.mmr_root,
-                    start_seq: s.start_seq,
-                    leaf_count: s.leaf_count,
-                    checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
-                    primary_signers: s.primary_signers.clone(),
-                }),
-                total_snapshots: bucket.total_snapshots,
-            })
-        }
-
-        /// Query bucket providers.
-        pub fn query_bucket_providers(bucket_id: BucketId) -> Vec<T::AccountId> {
-            Buckets::<T>::get(bucket_id)
-                .map(|bucket| bucket.primary_providers.to_vec())
-                .unwrap_or_default()
-        }
-
-        /// Query agreement information.
-        pub fn query_agreement_info(
-            bucket_id: BucketId,
-            provider: &T::AccountId,
-        ) -> Option<crate::runtime_api::AgreementResponse> {
-            StorageAgreements::<T>::get(bucket_id, provider).map(|agreement| {
-                crate::runtime_api::AgreementResponse {
-                    bucket_id,
-                    owner: agreement.owner.encode(),
-                    provider: provider.encode(),
-                    max_bytes: agreement.max_bytes,
-                    payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                    price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                    expires_at: agreement.expires_at.saturated_into::<u32>(),
-                    extensions_blocked: agreement.extensions_blocked,
-                    role: match agreement.role {
-                        ProviderRole::Primary => ProviderRole::Primary,
-                        ProviderRole::Replica {
-                            sync_balance,
-                            sync_price,
-                            min_sync_interval,
-                            last_sync,
-                        } => ProviderRole::Replica {
-                            sync_balance: sync_balance.saturated_into::<u128>(),
-                            sync_price: sync_price.saturated_into::<u128>(),
-                            min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync
-                                .map(|(root, block)| (root, block.saturated_into::<u32>())),
-                        },
-                    },
-                    started_at: agreement.started_at.saturated_into::<u32>(),
-                }
-            })
-        }
-
-        /// Query all agreements for a bucket.
-        pub fn query_bucket_agreements(
-            bucket_id: BucketId,
-        ) -> Vec<crate::runtime_api::AgreementResponse> {
-            StorageAgreements::<T>::iter_prefix(bucket_id)
-                .map(
-                    |(provider, agreement)| crate::runtime_api::AgreementResponse {
-                        bucket_id,
-                        owner: agreement.owner.encode(),
-                        provider: provider.encode(),
-                        max_bytes: agreement.max_bytes,
-                        payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                        price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                        expires_at: agreement.expires_at.saturated_into::<u32>(),
-                        extensions_blocked: agreement.extensions_blocked,
-                        role: match agreement.role {
-                            ProviderRole::Primary => ProviderRole::Primary,
-                            ProviderRole::Replica {
-                                sync_balance,
-                                sync_price,
-                                min_sync_interval,
-                                last_sync,
-                            } => ProviderRole::Replica {
-                                sync_balance: sync_balance.saturated_into::<u128>(),
-                                sync_price: sync_price.saturated_into::<u128>(),
-                                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
-                            },
-                        },
-                        started_at: agreement.started_at.saturated_into::<u32>(),
-                    },
-                )
-                .collect()
-        }
-
-        /// Query all bucket IDs (paginated).
-        pub fn query_bucket_ids(offset: u32, limit: u32) -> Vec<BucketId> {
-            Buckets::<T>::iter_keys()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .collect()
-        }
-
-        /// Query all agreements for a provider.
-        pub fn query_provider_agreements(
-            provider: &T::AccountId,
-        ) -> Vec<crate::runtime_api::AgreementResponse> {
-            StorageAgreements::<T>::iter()
-                .filter(|(_, p, _)| p == provider)
-                .map(
-                    |(bucket_id, _, agreement)| crate::runtime_api::AgreementResponse {
-                        bucket_id,
-                        owner: agreement.owner.encode(),
-                        provider: provider.encode(),
-                        max_bytes: agreement.max_bytes,
-                        payment_locked: agreement.payment_locked.saturated_into::<u128>(),
-                        price_per_byte: agreement.price_per_byte.saturated_into::<u128>(),
-                        expires_at: agreement.expires_at.saturated_into::<u32>(),
-                        extensions_blocked: agreement.extensions_blocked,
-                        role: match agreement.role {
-                            ProviderRole::Primary => ProviderRole::Primary,
-                            ProviderRole::Replica {
-                                sync_balance,
-                                sync_price,
-                                min_sync_interval,
-                                last_sync,
-                            } => ProviderRole::Replica {
-                                sync_balance: sync_balance.saturated_into::<u128>(),
-                                sync_price: sync_price.saturated_into::<u128>(),
-                                min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
-                            },
-                        },
-                        started_at: agreement.started_at.saturated_into::<u32>(),
-                    },
-                )
-                .collect()
-        }
-
-        /// Query challenges expiring at a specific block.
-        pub fn query_challenges_at(
-            block: BlockNumberFor<T>,
-        ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            Challenges::<T>::get(block)
-                .unwrap_or_default()
-                .into_iter()
-                .enumerate()
-                .map(|(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                    bucket_id: challenge.bucket_id,
-                    provider: challenge.provider.encode(),
-                    challenger: challenge.challenger.encode(),
-                    mmr_root: challenge.mmr_root,
-                    start_seq: challenge.start_seq,
-                    leaf_index: challenge.leaf_index,
-                    chunk_index: challenge.chunk_index,
-                    deadline: block.saturated_into::<u32>(),
-                    index: idx as u16,
-                    deposit: challenge.deposit.saturated_into::<u128>(),
-                })
-                .collect()
-        }
-
-        /// Query all challenges for a specific bucket.
-        pub fn query_bucket_challenges(
-            bucket_id: BucketId,
-        ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            Challenges::<T>::iter()
-                .flat_map(|(block, challenges)| {
-                    let deadline: u32 = block.saturated_into::<u32>();
-                    challenges
-                        .into_iter()
-                        .enumerate()
-                        .map(
-                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                                bucket_id: challenge.bucket_id,
-                                provider: challenge.provider.encode(),
-                                challenger: challenge.challenger.encode(),
-                                mmr_root: challenge.mmr_root,
-                                start_seq: challenge.start_seq,
-                                leaf_index: challenge.leaf_index,
-                                chunk_index: challenge.chunk_index,
-                                deadline,
-                                index: idx as u16,
-                                deposit: challenge.deposit.saturated_into::<u128>(),
-                            },
-                        )
-                })
-                .filter(|c| c.bucket_id == bucket_id)
-                .collect()
-        }
-
-        /// Query all challenges targeting a specific provider.
-        pub fn query_provider_challenges(
-            provider: &T::AccountId,
-        ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            let provider_encoded = provider.encode();
-            Challenges::<T>::iter()
-                .flat_map(|(block, challenges)| {
-                    let deadline: u32 = block.saturated_into::<u32>();
-                    challenges
-                        .into_iter()
-                        .enumerate()
-                        .map(
-                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                                bucket_id: challenge.bucket_id,
-                                provider: challenge.provider.encode(),
-                                challenger: challenge.challenger.encode(),
-                                mmr_root: challenge.mmr_root,
-                                start_seq: challenge.start_seq,
-                                leaf_index: challenge.leaf_index,
-                                chunk_index: challenge.chunk_index,
-                                deadline,
-                                index: idx as u16,
-                                deposit: challenge.deposit.saturated_into::<u128>(),
-                            },
-                        )
-                })
-                .filter(|c| c.provider == provider_encoded)
-                .collect()
-        }
-
-        /// Query all challenges created by a specific challenger.
-        pub fn query_challenger_challenges(
-            challenger: &T::AccountId,
-        ) -> Vec<crate::runtime_api::ChallengeResponse> {
-            let challenger_encoded = challenger.encode();
-            Challenges::<T>::iter()
-                .flat_map(|(block, challenges)| {
-                    let deadline: u32 = block.saturated_into::<u32>();
-                    challenges
-                        .into_iter()
-                        .enumerate()
-                        .map(
-                            move |(idx, challenge)| crate::runtime_api::ChallengeResponse {
-                                bucket_id: challenge.bucket_id,
-                                provider: challenge.provider.encode(),
-                                challenger: challenge.challenger.encode(),
-                                mmr_root: challenge.mmr_root,
-                                start_seq: challenge.start_seq,
-                                leaf_index: challenge.leaf_index,
-                                chunk_index: challenge.chunk_index,
-                                deadline,
-                                index: idx as u16,
-                                deposit: challenge.deposit.saturated_into::<u128>(),
-                            },
-                        )
-                })
-                .filter(|c| c.challenger == challenger_encoded)
-                .collect()
-        }
-
-        /// Check if provider can accept additional bytes.
-        pub fn query_can_accept_bytes(provider: &T::AccountId, additional_bytes: u64) -> bool {
-            if let Some(provider_info) = Providers::<T>::get(provider) {
-                let new_committed_bytes = provider_info
-                    .committed_bytes
-                    .saturating_add(additional_bytes);
-
-                // Check capacity constraint
-                if provider_info.settings.max_capacity > 0
-                    && new_committed_bytes > provider_info.settings.max_capacity
-                {
-                    return false;
-                }
-
-                let bytes_as_balance: BalanceOf<T> = new_committed_bytes.saturated_into();
-
-                if let Some(required_stake) =
-                    T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
-                {
-                    return provider_info.stake >= required_stake;
-                }
-            }
-            false
-        }
-
-        /// Validate provider settings against committed bytes and stake.
-        ///
-        /// Shared by `update_provider_settings` and `register_provider_internal`.
-        fn validate_settings(
-            settings: &ProviderSettings<T>,
-            committed_bytes: u64,
-            stake: BalanceOf<T>,
-        ) -> DispatchResult {
-            ensure!(
-                settings.min_duration <= settings.max_duration,
-                Error::<T>::MinDurationExceedsMaxDuration
-            );
-
-            // Validate max_capacity >= committed_bytes (unless 0 = unlimited)
-            if settings.max_capacity > 0 {
-                ensure!(
-                    settings.max_capacity >= committed_bytes,
-                    Error::<T>::CapacityBelowCommitted
-                );
-
-                // Validate stake backs declared capacity
-                use sp_runtime::traits::SaturatedConversion;
-                let capacity_as_balance: BalanceOf<T> = settings.max_capacity.saturated_into();
-                let required_stake = T::MinStakePerByte::get()
-                    .checked_mul(&capacity_as_balance)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?;
-                ensure!(
-                    stake >= required_stake,
-                    Error::<T>::InsufficientStakeForCapacity
-                );
-            }
-
-            Ok(())
-        }
-
-        /// Register a provider, reserving their stake.
-        ///
-        /// Shared by the `register_provider` extrinsic (which passes
-        /// `ProviderSettings::default()`) and genesis build (which passes the
-        /// full settings, since post-genesis there is no one to call
-        /// `update_provider_settings`).
-        pub(crate) fn register_provider_internal(
-            who: &T::AccountId,
-            multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
-            public_key: BoundedVec<u8, ConstU32<64>>,
-            stake: BalanceOf<T>,
-            settings: ProviderSettings<T>,
-        ) -> DispatchResult {
-            ensure!(
-                !Providers::<T>::contains_key(who),
-                Error::<T>::ProviderAlreadyRegistered
-            );
-            ensure!(
-                stake >= T::MinProviderStake::get(),
-                Error::<T>::InsufficientStake
-            );
-
-            // Validate public key length (32 bytes for Sr25519/Ed25519, 33 for Ecdsa compressed)
-            let key_len = public_key.len();
-            ensure!(
-                key_len == 32 || key_len == 33 || key_len == 64,
-                Error::<T>::InvalidPublicKey
-            );
-
-            Self::validate_settings(&settings, 0, stake)?;
-
-            // Reserve stake
-            T::Currency::reserve(who, stake)?;
-
-            let current_block = frame_system::Pallet::<T>::block_number();
-
-            let provider_info = ProviderInfo {
-                multiaddr,
-                public_key,
-                stake,
-                committed_bytes: 0,
-                settings,
-                stats: ProviderStats {
-                    registered_at: current_block,
-                    ..Default::default()
-                },
-                deregister_at: None,
-            };
-
-            Providers::<T>::insert(who, provider_info);
-            ProviderReplayStates::<T>::insert(who, ReplayWindow::default());
-
-            Self::deposit_event(Event::ProviderRegistered {
-                provider: who.clone(),
-                stake,
-            });
-
-            Ok(())
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Internal Functions for Inter-Pallet Communication (Layer 1 File System)
-        // ─────────────────────────────────────────────────────────────────────────
-
-        /// Create a bucket internally (for use by other pallets like Layer 1 File System).
-        ///
-        /// This bypasses the normal extrinsic flow and creates a bucket directly,
-        /// with the specified account as admin.
-        ///
-        /// Parameters:
-        /// - `admin`: Account that will be the bucket admin.
-        /// - `min_providers`: Minimum number of primary providers required to
-        ///   sign each checkpoint.
-        /// - `initial_primary`: Optional provider to seed as the bucket's
-        ///   first `primary_providers` entry. Used by
-        ///   `establish_storage_agreement_internal` to atomically create the
-        ///   bucket together with its primary agreement; pass `None` for
-        ///   buckets that will register primaries later.
-        ///
-        /// Returns: bucket_id
-        pub fn create_bucket_internal(
-            admin: &T::AccountId,
-            min_providers: u32,
-            initial_primary: Option<&T::AccountId>,
-        ) -> Result<BucketId, DispatchError> {
-            let bucket_id = NextBucketId::<T>::get();
-            NextBucketId::<T>::put(bucket_id.saturating_add(1));
-
-            let admin_member = Member {
-                account: admin.clone(),
-                role: Role::Admin,
-            };
-
-            let mut members = BoundedVec::new();
-            members
-                .try_push(admin_member)
-                .map_err(|_| Error::<T>::MaxMembersReached)?;
-
-            let mut primary_providers = BoundedVec::new();
-            if let Some(p) = initial_primary {
-                primary_providers
-                    .try_push(p.clone())
-                    .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
-            }
-
-            let bucket = Bucket {
-                members,
-                frozen_start_seq: None,
-                min_providers,
-                primary_providers,
-                snapshot: None,
-                historical_roots: [(0, H256::zero()); 6],
-                total_snapshots: 0,
-            };
-
-            Buckets::<T>::insert(bucket_id, bucket);
-
-            // Update reverse index for creator
-            MemberBuckets::<T>::try_mutate(admin, |buckets| {
-                buckets
-                    .try_push(bucket_id)
-                    .map_err(|_| Error::<T>::TooManyBucketsForMember)
-            })?;
-
-            Self::deposit_event(Event::BucketCreated {
-                bucket_id,
-                admin: admin.clone(),
-            });
-
-            Ok(bucket_id)
-        }
-
-        /// Redeem provider-signed terms (used directly by the
-        /// `establish_storage_agreement` extrinsic and by higher-layer pallets that
-        /// fold bucket creation into their own flows).
-        ///
-        /// Verifies the signature, advances the provider's replay window,
-        /// then runs the same provider/capacity/stake checks as
-        /// `create_bucket_with_storage` before creating the bucket + primary
-        /// agreement.
-        pub fn establish_storage_agreement_internal(
-            owner: &T::AccountId,
-            provider: &T::AccountId,
-            terms: AgreementTermsOf<T>,
-            sig: &sp_runtime::MultiSignature,
-        ) -> Result<BucketId, DispatchError> {
-            // Origin must match the owner the provider signed for.
-            ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
-
-            // Primary terms must not be bound to an existing bucket — the
-            // bucket is created at redemption.
-            ensure!(terms.bucket_id.is_none(), Error::<T>::TermsBucketMismatch);
-
-            // Request's terms.max_bytes must greater than 0
-            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
-
-            // Quote must not be stale and must not exceed the chain-enforced window.
-            // `terms.valid_until` must in range [current_block, current_block + RequestTimeout]
-            let current_block = frame_system::Pallet::<T>::block_number();
-            ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
-            ensure!(
-                terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
-                Error::<T>::TermsValidityTooLong
-            );
-
-            // Provider lookup + signature check over
-            // blake2_256(PRIMARY_TERM_CONTEXT | SCALE(terms)).
-            let provider_info =
-                Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::verify_terms_signature(
-                &provider_info,
-                &terms,
-                sig,
-                storage_primitives::PRIMARY_TERM_CONTEXT,
-            )?;
-
-            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
-            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-                window.try_accept(terms.nonce).map_err(|e| match e {
-                    ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                    ReplayError::TooOld => Error::<T>::NonceTooOld,
-                })?;
-                Ok(())
-            })?;
-
-            // Validate on-chain provider's state then create bucket
-            Self::ensure_provider_active(&provider_info)?;
-            ensure!(
-                provider_info.settings.accepting_primary,
-                Error::<T>::ProviderNotAcceptingPrimary
-            );
-            Self::validate_duration(&provider_info.settings, terms.duration)?;
-
-            let new_committed = provider_info
-                .committed_bytes
-                .checked_add(terms.max_bytes)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-            if provider_info.settings.max_capacity > 0 {
-                ensure!(
-                    new_committed <= provider_info.settings.max_capacity,
-                    Error::<T>::CapacityExceeded
-                );
-            }
-
-            {
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                let required_stake = T::MinStakePerByte::get()
-                    .checked_mul(&bytes_as_balance)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?;
-                ensure!(
-                    provider_info.stake >= required_stake,
-                    Error::<T>::InsufficientStakeForBytes
-                );
-            }
-
-            // Pay at the price the provider signed for.
-            let payment =
-                Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-            T::Currency::reserve(owner, payment)?;
-
-            // Bucket creation folded in: owner is sole admin, provider is the
-            // bucket's single primary. `create_bucket_internal` emits
-            // `BucketCreated` for us.
-            let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
-
-            let expires_at = current_block.saturating_add(terms.duration);
-            let agreement = StorageAgreement {
-                owner: owner.clone(),
-                max_bytes: terms.max_bytes,
-                payment_locked: payment,
-                price_per_byte: terms.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Primary,
-                started_at: current_block,
-            };
-
-            Providers::<T>::mutate(provider, |maybe_provider| {
-                if let Some(p) = maybe_provider {
-                    p.committed_bytes = new_committed;
-                    p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
-                    p.stats.total_bytes_committed = p
-                        .stats
-                        .total_bytes_committed
-                        .saturating_add(terms.max_bytes);
-                }
-            });
-            StorageAgreements::<T>::insert(bucket_id, provider, agreement);
-
-            Self::deposit_event(Event::StorageAgreementEstablished {
-                bucket_id,
-                provider: provider.clone(),
-                owner: owner.clone(),
-                terms,
-                expires_at,
-            });
-
-            Ok(bucket_id)
-        }
-
-        /// Redeem provider-signed terms for a replica agreement (used directly
-        /// by the `establish_replica_agreement` extrinsic and by higher-layer
-        /// pallets that fold replica establishment into their own flows).
-        ///
-        /// Verifies the signature, advances the provider's replay window, then
-        /// runs the provider/capacity/stake checks before opening the replica
-        /// agreement on an existing bucket. `terms.replica_params` must be
-        /// `Some(_)`.
-        pub fn establish_replica_agreement_internal(
-            owner: &T::AccountId,
-            bucket_id: BucketId,
-            provider: &T::AccountId,
-            terms: AgreementTermsOf<T>,
-            sig: &sp_runtime::MultiSignature,
-        ) -> DispatchResult {
-            // Origin must match the owner the provider signed for.
-            ensure!(&terms.owner == owner, Error::<T>::TermsOwnerMismatch);
-
-            // The provider's signed quote must be bound to the bucket this
-            // extrinsic targets.
-            ensure!(
-                terms.bucket_id == Some(bucket_id),
-                Error::<T>::TermsBucketMismatch
-            );
-
-            // Request's terms.max_bytes must greater than 0
-            ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
-
-            // Quote must not be stale and must not exceed the chain-enforced window.
-            let current_block = frame_system::Pallet::<T>::block_number();
-            ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
-            ensure!(
-                terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
-                Error::<T>::TermsValidityTooLong
-            );
-
-            // Target bucket must exist.
-            ensure!(
-                Buckets::<T>::contains_key(bucket_id),
-                Error::<T>::BucketNotFound
-            );
-
-            // No existing agreement for (bucket, provider).
-            ensure!(
-                !StorageAgreements::<T>::contains_key(bucket_id, provider),
-                Error::<T>::AgreementAlreadyExists
-            );
-
-            // Replica terms must be present for a replica agreement.
-            let replica_terms = terms
-                .replica_params
-                .as_ref()
-                .ok_or(Error::<T>::MissingReplicaTerms)?
-                .clone();
-
-            // Provider lookup + signature check over
-            // blake2_256(REPLICA_TERM_CONTEXT | SCALE(terms)).
-            let provider_info =
-                Providers::<T>::get(provider).ok_or(Error::<T>::ProviderNotFound)?;
-            Self::verify_terms_signature(
-                &provider_info,
-                &terms,
-                sig,
-                storage_primitives::REPLICA_TERM_CONTEXT,
-            )?;
-
-            // Replay window: at most once per nonce, within the trailing REPLAY_WINDOW_BITS slots.
-            ProviderReplayStates::<T>::try_mutate(provider, |window| -> DispatchResult {
-                window.try_accept(terms.nonce).map_err(|e| match e {
-                    ReplayError::AlreadyUsed => Error::<T>::NonceAlreadyUsed,
-                    ReplayError::TooOld => Error::<T>::NonceTooOld,
-                })?;
-                Ok(())
-            })?;
-
-            // Validate on-chain provider's state.
-            Self::ensure_provider_active(&provider_info)?;
-            // Provider is no longer accept replica node
-            let _ = provider_info
-                .settings
-                .replica_sync_price
-                .ok_or(Error::<T>::ProviderNotAcceptingReplicas)?;
-            Self::validate_duration(&provider_info.settings, terms.duration)?;
-
-            let new_committed = provider_info
-                .committed_bytes
-                .checked_add(terms.max_bytes)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-            if provider_info.settings.max_capacity > 0 {
-                ensure!(
-                    new_committed <= provider_info.settings.max_capacity,
-                    Error::<T>::CapacityExceeded
-                );
-            }
-
-            {
-                let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                let required_stake = T::MinStakePerByte::get()
-                    .checked_mul(&bytes_as_balance)
-                    .ok_or(Error::<T>::ArithmeticOverflow)?;
-                ensure!(
-                    provider_info.stake >= required_stake,
-                    Error::<T>::InsufficientStakeForBytes
-                );
-            }
-
-            // Pay at the price the provider signed for, plus the sync balance.
-            let payment =
-                Self::calculate_payment(terms.price_per_byte, terms.max_bytes, terms.duration)?;
-            let total_lock = payment
-                .checked_add(&replica_terms.sync_balance)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
-            T::Currency::reserve(owner, total_lock)?;
-
-            let expires_at = current_block.saturating_add(terms.duration);
-            let agreement = StorageAgreement {
-                owner: owner.clone(),
-                max_bytes: terms.max_bytes,
-                payment_locked: payment,
-                price_per_byte: terms.price_per_byte,
-                expires_at,
-                extensions_blocked: false,
-                role: ProviderRole::Replica {
-                    sync_balance: replica_terms.sync_balance,
-                    sync_price: replica_terms.sync_price,
-                    min_sync_interval: replica_terms.min_sync_interval,
-                    last_sync: None,
-                },
-                started_at: current_block,
-            };
-
-            Providers::<T>::mutate(provider, |maybe_provider| {
-                if let Some(p) = maybe_provider {
-                    p.committed_bytes = new_committed;
-                    p.stats.agreements_total = p.stats.agreements_total.saturating_add(1);
-                    p.stats.total_bytes_committed = p
-                        .stats
-                        .total_bytes_committed
-                        .saturating_add(terms.max_bytes);
-                }
-            });
-            StorageAgreements::<T>::insert(bucket_id, provider, agreement);
-
-            Self::deposit_event(Event::ReplicaAgreementEstablished {
-                bucket_id,
-                provider: provider.clone(),
-                owner: owner.clone(),
-                terms,
-                expires_at,
-            });
-
-            Ok(())
-        }
-
-        /// Query available providers that can accept storage of given size
-        ///
-        /// This is a helper for Layer 1 to find suitable providers automatically.
-        ///
-        /// Parameters:
-        /// - `max_bytes`: Storage size needed
-        /// - `accepting_primary`: True to filter for primary providers, false for replica providers
-        ///
-        /// Returns: Vec of provider account IDs that can accept the storage
-        pub fn query_available_providers(
-            max_bytes: u64,
-            accepting_primary: bool,
-        ) -> Vec<T::AccountId> {
-            Providers::<T>::iter()
-                .filter_map(|(account, info)| {
-                    // Check if provider is accepting the right type of agreements
-                    let accepts_type = if accepting_primary {
-                        info.settings.accepting_primary
-                    } else {
-                        info.settings.replica_sync_price.is_some()
-                    };
-
-                    if !accepts_type {
-                        return None;
-                    }
-
-                    // Check if provider has capacity
-                    if Self::query_can_accept_bytes(&account, max_bytes) {
-                        Some(account)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Marketplace Query Functions (Provider Discovery)
-        // ─────────────────────────────────────────────────────────────────────────
-
-        /// Find providers matching the given storage requirements.
-        pub fn query_find_matching_providers(
-            requirements: crate::runtime_api::StorageRequirements,
-            limit: u32,
-        ) -> Vec<crate::runtime_api::MatchedProvider> {
-            use crate::runtime_api::{MatchedProvider, PartialMatchReason};
-
-            let mut results: Vec<MatchedProvider> = Vec::new();
-
-            for (account, info) in Providers::<T>::iter() {
-                // Skip providers that have announced deregistration — they are
-                // winding down and must not be offered for new agreements.
-                if info.deregister_at.is_some() {
-                    continue;
-                }
-
-                let max_capacity = info.settings.max_capacity;
-                let available = if max_capacity > 0 {
-                    max_capacity.saturating_sub(info.committed_bytes)
-                } else {
-                    u64::MAX // Unlimited
-                };
-
-                let price: u128 = info.settings.price_per_byte.saturated_into();
-                let min_dur: u32 = info.settings.min_duration.saturated_into();
-                let max_dur: u32 = info.settings.max_duration.saturated_into();
-
-                // Determine match score and partial reason
-                let mut score: u8 = 100;
-                let mut partial_reason: Option<PartialMatchReason> = None;
-
-                // Check accepting status
-                // Primary required: must accept primary
-                // Replica acceptable: must accept primary OR have replica sync price
-                let not_accepting = if requirements.primary_only {
-                    !info.settings.accepting_primary
-                } else {
-                    !info.settings.accepting_primary && info.settings.replica_sync_price.is_none()
-                };
-                if not_accepting {
-                    score = 0;
-                    partial_reason = Some(PartialMatchReason::NotAccepting);
-                }
-
-                // Check capacity
-                if score > 0 && available < requirements.bytes_needed {
-                    score = score.saturating_sub(50);
-                    if partial_reason.is_none() {
-                        partial_reason = Some(PartialMatchReason::InsufficientCapacity);
-                    }
-                }
-
-                // Check price
-                if score > 0 && price > requirements.max_price_per_byte {
-                    score = score.saturating_sub(30);
-                    if partial_reason.is_none() {
-                        partial_reason = Some(PartialMatchReason::PriceTooHigh);
-                    }
-                }
-
-                // Check duration
-                if score > 0
-                    && (requirements.min_duration < min_dur || requirements.min_duration > max_dur)
-                {
-                    score = score.saturating_sub(20);
-                    if partial_reason.is_none() {
-                        partial_reason = Some(PartialMatchReason::DurationMismatch);
-                    }
-                }
-
-                // Build the available_capacity field
-                let available_capacity = if max_capacity > 0 {
-                    Some(available)
-                } else {
-                    None
-                };
-
-                let provider_response = crate::runtime_api::ProviderInfoResponse {
-                    multiaddr: info.multiaddr.to_vec(),
-                    public_key: info.public_key.to_vec(),
-                    stake: info.stake.saturated_into::<u128>(),
-                    committed_bytes: info.committed_bytes,
-                    min_duration: min_dur,
-                    max_duration: max_dur,
-                    price_per_byte: price,
-                    accepting_primary: info.settings.accepting_primary,
-                    replica_sync_price: info
-                        .settings
-                        .replica_sync_price
-                        .map(|p| p.saturated_into::<u128>()),
-                    accepting_extensions: info.settings.accepting_extensions,
-                    registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                    agreements_total: info.stats.agreements_total,
-                    agreements_extended: info.stats.agreements_extended,
-                    agreements_not_extended: info.stats.agreements_not_extended,
-                    agreements_burned: info.stats.agreements_burned,
-                    challenges_received: info.stats.challenges_received,
-                    challenges_failed: info.stats.challenges_failed,
-                    max_capacity,
-                    available_capacity,
-                };
-
-                results.push(MatchedProvider {
-                    account: account.encode(),
-                    info: provider_response,
-                    match_score: score,
-                    available_capacity,
-                    partial_reason,
-                });
-            }
-
-            // Sort by score descending, then by price ascending for ties
-            results.sort_by(|a, b| {
-                b.match_score
-                    .cmp(&a.match_score)
-                    .then(a.info.price_per_byte.cmp(&b.info.price_per_byte))
-            });
-
-            results.truncate(limit as usize);
-            results
-        }
-
-        /// Get providers with sufficient capacity for the given bytes (paginated).
-        pub fn query_providers_with_capacity(
-            bytes_needed: u64,
-            offset: u32,
-            limit: u32,
-        ) -> Vec<(T::AccountId, crate::runtime_api::ProviderInfoResponse)> {
-            Providers::<T>::iter()
-                .filter(|(_, info)| {
-                    // Check accepting status
-                    if !info.settings.accepting_primary
-                        && info.settings.replica_sync_price.is_none()
-                    {
-                        return false;
-                    }
-
-                    // Check capacity
-                    let max_capacity = info.settings.max_capacity;
-                    if max_capacity > 0 {
-                        let available = max_capacity.saturating_sub(info.committed_bytes);
-                        if available < bytes_needed {
-                            return false;
-                        }
-                    }
-
-                    // Check stake (can they back the additional bytes?)
-                    let new_committed = info.committed_bytes.saturating_add(bytes_needed);
-                    let bytes_as_balance: BalanceOf<T> = new_committed.saturated_into();
-                    if let Some(required_stake) =
-                        T::MinStakePerByte::get().checked_mul(&bytes_as_balance)
-                    {
-                        return info.stake >= required_stake;
-                    }
-                    false
-                })
-                .skip(offset as usize)
-                .take(limit as usize)
-                .map(|(account, info)| {
-                    let max_capacity = info.settings.max_capacity;
-                    let available_capacity = if max_capacity > 0 {
-                        Some(max_capacity.saturating_sub(info.committed_bytes))
-                    } else {
-                        None
-                    };
-
-                    (
-                        account,
-                        crate::runtime_api::ProviderInfoResponse {
-                            multiaddr: info.multiaddr.to_vec(),
-                            public_key: info.public_key.to_vec(),
-                            stake: info.stake.saturated_into::<u128>(),
-                            committed_bytes: info.committed_bytes,
-                            min_duration: info.settings.min_duration.saturated_into::<u32>(),
-                            max_duration: info.settings.max_duration.saturated_into::<u32>(),
-                            price_per_byte: info.settings.price_per_byte.saturated_into::<u128>(),
-                            accepting_primary: info.settings.accepting_primary,
-                            replica_sync_price: info
-                                .settings
-                                .replica_sync_price
-                                .map(|p| p.saturated_into::<u128>()),
-                            accepting_extensions: info.settings.accepting_extensions,
-                            registered_at: info.stats.registered_at.saturated_into::<u32>(),
-                            agreements_total: info.stats.agreements_total,
-                            agreements_extended: info.stats.agreements_extended,
-                            agreements_not_extended: info.stats.agreements_not_extended,
-                            agreements_burned: info.stats.agreements_burned,
-                            challenges_received: info.stats.challenges_received,
-                            challenges_failed: info.stats.challenges_failed,
-                            max_capacity,
-                            available_capacity,
-                        },
-                    )
-                })
-                .collect()
         }
     }
 }

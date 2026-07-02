@@ -16,8 +16,9 @@ use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
 };
 use crate::Error;
+use sp_core::crypto::Ss58Codec;
 use storage_client::substrate::{extrinsics, storage, SubstrateClient};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ReplicaSyncRecord};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;
@@ -222,7 +223,12 @@ impl SubxtChainClient {
                 sync_balance: *sync_balance,
                 sync_price: *sync_price,
                 min_sync_interval: *min_sync_interval as u64,
-                last_sync: last_sync.as_ref().map(|(h, b)| (*h, *b as u64)),
+                last_sync: last_sync.as_ref().map(|r| ReplicaSyncRecord {
+                    mmr_root: r.mmr_root,
+                    start_seq: r.start_seq,
+                    leaf_count: r.leaf_count,
+                    block: r.block as u64,
+                }),
             }),
             rt::storage_primitives::ProviderRole::Primary => None,
         }
@@ -369,7 +375,12 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                             sync_balance,
                             sync_price,
                             min_sync_interval: min_sync_interval as u64,
-                            last_sync: last_sync.map(|(h, b)| (h, b as u64)),
+                            last_sync: last_sync.map(|r| ReplicaSyncRecord {
+                                mmr_root: r.mmr_root,
+                                start_seq: r.start_seq,
+                                leaf_count: r.leaf_count,
+                                block: r.block as u64,
+                            }),
                         });
                     }
                 }
@@ -479,8 +490,57 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for SubxtChainClient {
+    /// Poll for active challenges against this provider.
+    ///
+    /// Delegates to the `StorageProviderApi::provider_challenges` runtime API,
+    /// which already scans and filters `StorageProvider::Challenges` on the
+    /// node side and returns only the challenges targeting the given account.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        Ok(vec![])
+        let our_account: AccountId32 = self
+            .client
+            .signer()
+            .map_err(|e| Error::Internal(e.to_string()))?
+            .public_key()
+            .0
+            .into();
+
+        let challenges = self
+            .client
+            .api()
+            .runtime_api()
+            .at_latest()
+            .await
+            .map_err(|e| Error::Internal(format!("runtime api: {e}")))?
+            .call(
+                storage_subxt::api::apis()
+                    .storage_provider_api()
+                    .provider_challenges(our_account),
+            )
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch provider_challenges: {e}")))?;
+
+        tracing::debug!(
+            "Detected {} challenges for current provider",
+            challenges.len()
+        );
+
+        Ok(challenges
+            .into_iter()
+            .map(|c| {
+                let mut challenger = [0u8; 32];
+                challenger.copy_from_slice(&c.challenger);
+                DetectedChallenge {
+                    bucket_id: c.bucket_id,
+                    deadline: c.deadline,
+                    index: c.index,
+                    mmr_root: c.mmr_root,
+                    start_seq: c.start_seq,
+                    leaf_index: c.leaf_index,
+                    chunk_index: c.chunk_index,
+                    challenger: sp_core::crypto::AccountId32::from(challenger).to_ss58check(),
+                }
+            })
+            .collect())
     }
 
     async fn submit_response(

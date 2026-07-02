@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ReplicaSyncRecord};
 use storage_subxt::subxt::utils::H256;
 use tokio::sync::{mpsc, oneshot};
 
@@ -60,8 +60,8 @@ pub struct SyncDuty {
     pub sync_price: u128,
     /// Minimum blocks between syncs.
     pub min_sync_interval: u64,
-    /// Last sync info (root, block) if any.
-    pub last_sync: Option<(H256, u64)>,
+    /// Last confirmed sync, if any.
+    pub last_sync: Option<ReplicaSyncRecord<u64>>,
 }
 
 /// Result of a replica sync operation.
@@ -137,7 +137,7 @@ pub struct ReplicaAgreementInfo {
     pub sync_balance: u128,
     pub sync_price: u128,
     pub min_sync_interval: u64,
-    pub last_sync: Option<(H256, u64)>,
+    pub last_sync: Option<ReplicaSyncRecord<u64>>,
 }
 
 /// Bucket snapshot from chain.
@@ -458,8 +458,8 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some((_, last_block)) = agreement.last_sync {
-                let elapsed = current_block.saturating_sub(last_block);
+            if let Some(record) = &agreement.last_sync {
+                let elapsed = current_block.saturating_sub(record.block);
                 if elapsed < agreement.min_sync_interval {
                     tracing::debug!(
                         "Bucket {} sync interval not elapsed: {} < {}",

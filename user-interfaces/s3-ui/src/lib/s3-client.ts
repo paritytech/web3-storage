@@ -566,32 +566,34 @@ export class S3Client {
 
   async isChallengeActive(deadline: number): Promise<boolean> {
     const api = this.requireApi();
-    const challenges = await api.query.StorageProvider.Challenges.getValue(deadline);
-    return challenges !== undefined && challenges.length > 0;
+    // Challenges is a StorageDoubleMap keyed by (deadline, index); an active
+    // deadline has at least one entry under its prefix.
+    const entries = await api.query.StorageProvider.Challenges.getEntries(deadline);
+    return entries.length > 0;
   }
 
   async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
     const api = this.requireApi();
+    // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry
+    // is a single challenge with keyArgs = [deadline, index] and value = the
+    // Challenge (there is no per-deadline Vec to iterate).
     const entries = await api.query.StorageProvider.Challenges.getEntries();
     const result: OpenChallenge[] = [];
 
     for (const entry of entries) {
-      const deadline = entry.keyArgs[0] as number;
-      const challenges = entry.value;
-      for (let i = 0; i < challenges.length; i++) {
-        const c = challenges[i]!;
-        if (c.bucket_id === bucketId) {
-          result.push({
-            deadline,
-            index: i,
-            bucketId: c.bucket_id,
-            provider: c.provider,
-            challenger: c.challenger,
-            leafIndex: c.leaf_index,
-            chunkIndex: c.chunk_index,
-            deposit: c.deposit,
-          });
-        }
+      const [deadline, index] = entry.keyArgs as [number, number];
+      const c = entry.value;
+      if (c.bucket_id === bucketId) {
+        result.push({
+          deadline,
+          index,
+          bucketId: c.bucket_id,
+          provider: c.provider,
+          challenger: c.challenger,
+          leafIndex: c.leaf_index,
+          chunkIndex: c.chunk_index,
+          deposit: c.deposit,
+        });
       }
     }
 

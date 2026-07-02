@@ -64,6 +64,7 @@ fn freeze_bucket_fails_min_providers_not_met() {
             sp_core::H256::repeat_byte(0xAA),
             0,
             10,
+            0, // nonce
             Default::default(),
         ));
 
@@ -162,6 +163,7 @@ fn freeze_bucket_already_frozen() {
             sp_core::H256::repeat_byte(0xAA),
             0,
             10,
+            0, // nonce
             Default::default(),
         ));
 

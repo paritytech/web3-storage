@@ -32,8 +32,9 @@ use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
+use crate::provider_node_request_scheme::CommitmentResponse;
 use crate::substrate::SubstrateClient;
-use crate::{ClientError, CommitmentResponse};
+use crate::ClientError;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -231,6 +232,8 @@ pub struct CommitmentCollection {
     pub start_seq: u64,
     /// Number of leaves in the MMR.
     pub leaf_count: u64,
+    /// The block at which the provider signed. Recency-checked to prevent replay.
+    pub nonce: u64,
     /// Signatures from agreeing providers: (account_id, signature_bytes).
     pub signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Providers that agreed on the majority root.
@@ -1212,10 +1215,22 @@ impl CheckpointManager {
             )));
         }
 
+        // `nonce` is the recency-checked block providers sign over (see
+        // `CommitmentPayload::new`); it must be shared across every provider
+        // query and the eventual on-chain `checkpoint` submission.
+        let nonce = self
+            .chain_client
+            .api()
+            .blocks()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get latest block: {e}")))?
+            .number() as u64;
+
         // Query all providers in parallel
         let futures: Vec<_> = providers
             .iter()
-            .map(|p| self.query_provider_commitment(p, bucket_id))
+            .map(|p| self.query_provider_commitment(p, bucket_id, nonce))
             .collect();
 
         let results = futures::future::join_all(futures).await;
@@ -1281,6 +1296,7 @@ impl CheckpointManager {
             start_seq,
             leaf_count,
             signatures,
+            nonce,
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
             unreachable_providers: unreachable,
@@ -1292,13 +1308,17 @@ impl CheckpointManager {
         &self,
         provider: &ProviderInfo,
         bucket_id: BucketId,
+        nonce: u64,
     ) -> Result<CommitmentResponse, ClientError> {
         let mut retries = 0;
         let mut delay = self.config.retry_delay;
         let start = Instant::now();
 
         loop {
-            let url = format!("{}/commitment?bucket_id={}", provider.endpoint, bucket_id);
+            let url = format!(
+                "{}/commitment?bucket_id={}&nonce={}",
+                provider.endpoint, bucket_id, nonce
+            );
 
             let result = tokio::time::timeout(self.config.provider_timeout, async {
                 self.http_client.get(&url).send().await
@@ -1439,6 +1459,7 @@ impl CheckpointManager {
             collection.mmr_root,
             collection.start_seq,
             collection.leaf_count,
+            collection.nonce,
             collection.signatures.clone(),
         );
 
@@ -2787,6 +2808,7 @@ mod tests {
             mmr_root: H256::zero(),
             start_seq: 0,
             leaf_count: 10,
+            nonce: 0,
             signatures: vec![],
             agreeing_providers: vec![],
             disagreeing_providers: vec![],

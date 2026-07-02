@@ -45,9 +45,10 @@ use file_system_primitives::{
 use sp_runtime::BoundedVec;
 use std::collections::HashMap;
 use std::sync::Arc;
+use storage_client::storage_user::StorageUserClient;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, ClientConfig, EventParser, StorageUserClient,
+    CheckpointManager, ClientConfig, EventParser,
 };
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;

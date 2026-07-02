@@ -11,6 +11,8 @@ use storage_primitives::BucketId;
 pub struct DeleteRequest {
     pub bucket_id: BucketId,
     pub new_start_seq: u64,
+    /// `CommitmentPayload` nonce for the provider's post-deletion signature.
+    pub nonce: u64,
 }
 
 /// Response from delete operation.
@@ -20,4 +22,5 @@ pub struct DeleteResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+    pub nonce: u64,
 }
