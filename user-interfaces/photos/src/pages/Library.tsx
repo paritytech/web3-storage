@@ -109,7 +109,7 @@ export function Library() {
   // so the displayed on-chain anchor updates after each mutation.
   useEffect(() => {
     if (state.kind !== 'ready' || !state.library.exists || !account) return
-    void initLibrary(state.library.driveId, state.contract, account, () =>
+    void initLibrary(state.library.driveId, state.contract, account, state.library.rootCid, () =>
       setRefresh((n) => n + 1),
     )
   }, [state.kind, account?.address, network.id])

@@ -29,10 +29,12 @@ import {
   putFile,
   recomputeRoot,
   resolveFsContext,
-  type CachedDataRoot,
   type FsContext,
 } from '@/lib/fs-client'
-import { computeDataRoot } from '@web3-storage/sdk'
+import { computeDataRoot, toHex } from '@web3-storage/sdk'
+import { LocalIndex } from '@/lib/local-index'
+import { loadIndex, saveIndex } from '@/lib/index-store'
+import { getParachainWs } from '@/state/network.state'
 import { rootToBytes32, submitSetRoot } from '@/lib/photos-contract-write'
 import { makeThumbnail } from '@/lib/thumbnail'
 
@@ -111,8 +113,17 @@ let signer: InjectedPolkadotAccount['polkadotSigner'] | null = null
 let contractBytes: Uint8Array | null = null
 let currentDriveId: bigint | null = null
 
-/** Per-file content root cache, seeded by `putFile`, so a re-anchor needn't re-download. */
-let dataRootCache = new Map<string, CachedDataRoot>()
+/**
+ * Client-maintained drive index — the source of truth for the anchored metadata
+ * root, updated on every upload/edit/delete. `indexAuthoritative` is true once the
+ * index is known to fully describe the tree (a freshly-created drive, a persisted
+ * snapshot that matched the on-chain anchor, or a completed provider recompute); it
+ * then anchors from `index.root()` with no downloads. `indexKey` is the per-drive
+ * IndexedDB key (`${parachainWs}:${driveId}`) the index persists under.
+ */
+let index = new LocalIndex()
+let indexAuthoritative = false
+let indexKey: string | null = null
 /** Live grid thumbnail object URLs, revoked when the grid reloads or the library resets. */
 let gridUrls: string[] = []
 /** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
@@ -136,6 +147,7 @@ export async function initLibrary(
   driveId: bigint,
   contract: ResolvedContract,
   account: InjectedPolkadotAccount,
+  rootCid: `0x${string}`,
   onAnchored: () => void,
 ): Promise<void> {
   api = getApi()
@@ -155,9 +167,30 @@ export async function initLibrary(
   try {
     const ctx = await resolveFsContext(api, driveId)
     fsContext$.next(ctx)
+    await loadPersistedIndex(driveId, rootCid)
     await loadAlbums()
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not reach the storage provider.')
+  }
+}
+
+/**
+ * Seed the in-memory index for `driveId` from its persisted snapshot, trusting it
+ * only if its root still matches the on-chain anchor. A match ⇒ authoritative:
+ * future roots anchor from `index.root()` with no downloads. A miss or mismatch
+ * (cold cache, a freshly-created drive with no snapshot, or a drive mutated
+ * elsewhere) ⇒ start empty and fall back to a provider recompute on the next
+ * anchor, which repopulates the index and persists it for subsequent reloads.
+ */
+async function loadPersistedIndex(driveId: bigint, rootCid: `0x${string}`): Promise<void> {
+  indexKey = `${getParachainWs()}:${driveId}`
+  const persisted = await loadIndex(indexKey)
+  if (persisted && toHex(persisted.root()).toLowerCase() === rootCid.toLowerCase()) {
+    index = persisted
+    indexAuthoritative = true
+  } else {
+    index = new LocalIndex()
+    indexAuthoritative = false
   }
 }
 
@@ -409,8 +442,8 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
 
     await deleteFile(ctx, item.path)
     await deleteFile(ctx, item.thumbPath).catch(() => {})
-    dataRootCache.delete(item.path)
-    dataRootCache.delete(item.thumbPath)
+    index.remove(item.path)
+    index.remove(item.thumbPath)
 
     await loadGrid()
     scheduleReanchor()
@@ -432,8 +465,8 @@ export async function deletePhoto(item: GridItem): Promise<void> {
   try {
     await deleteFile(ctx, item.path)
     await deleteFile(ctx, item.thumbPath).catch(() => {})
-    dataRootCache.delete(item.path)
-    dataRootCache.delete(item.thumbPath)
+    index.remove(item.path)
+    index.remove(item.thumbPath)
 
     await loadGrid()
     scheduleReanchor()
@@ -500,12 +533,28 @@ async function runReanchor(): Promise<void> {
   const sessionApi = api
   const sessionSigner = signer
   const sessionContract = contractBytes
+  const sessionIndex = index
+  const sessionKey = indexKey
+  const sessionAuthoritative = indexAuthoritative
   if (!ctx || !sessionApi || !sessionSigner || !sessionContract) return
   try {
     anchorStatus$.next({ stage: 'recomputing' })
-    const root = await recomputeRoot(ctx, dataRootCache)
+    // Authoritative ⇒ the index already mirrors the whole tree, so anchor its root
+    // directly (no provider round-trip). Otherwise recompute from the provider,
+    // which repopulates the index — mark it authoritative for the next anchor
+    // (unless a library switch swapped the module index out from under us).
+    let root: Uint8Array
+    if (sessionAuthoritative) {
+      root = sessionIndex.root()
+    } else {
+      root = await recomputeRoot(ctx, sessionIndex)
+      if (index === sessionIndex) indexAuthoritative = true
+    }
     anchorStatus$.next({ stage: 'anchoring' })
     await submitSetRoot(sessionApi, sessionSigner, sessionContract, rootToBytes32(root))
+    // Snapshot the now-anchored index so a reload matches the on-chain root and
+    // skips the recompute. Never throws (see `saveIndex`).
+    if (sessionKey) await saveIndex(sessionKey, sessionIndex)
     anchorStatus$.next({ stage: 'done' })
     anchoredCallback?.()
   } catch (err) {
@@ -517,24 +566,24 @@ async function runReanchor(): Promise<void> {
   }
 }
 
-/** PUT a blob and assert the provider's `data_root` matches our local computation, caching it. */
+/** PUT a blob, assert the provider's `data_root` matches our local computation, and record it in the index. */
 async function putVerified(ctx: FsContext, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
   const res = await putFile(ctx, path, bytes, contentType)
   const localRoot = computeDataRoot(bytes)
   if (rootToBytes32(localRoot).toLowerCase() !== res.dataRoot.toLowerCase()) {
     throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
   }
-  dataRootCache.set(path, { dataRoot: localRoot, size: BigInt(bytes.length) })
+  index.setFile(path, localRoot, BigInt(bytes.length))
 }
 
-/** Create `path` if a directory of that name isn't already present in its parent. */
+/** Create `path` if a directory of that name isn't already present in its parent; record it in the index. */
 async function ensureDir(ctx: FsContext, path: string): Promise<void> {
   const slash = path.lastIndexOf('/')
   const parent = slash <= 0 ? '/' : path.slice(0, slash)
   const name = path.slice(slash + 1)
   const siblings = await listDir(ctx, parent)
-  if (siblings.some((e) => e.entryType === 'directory' && e.name === name)) return
-  await mkdir(ctx, path)
+  if (!siblings.some((e) => e.entryType === 'directory' && e.name === name)) await mkdir(ctx, path)
+  index.setDir(path)
 }
 
 /** Replace the grid, revoking the previous batch's thumbnail object URLs. */
@@ -551,7 +600,9 @@ function revokeLightbox(): void {
 
 /** Clear per-library caches, grid, selection, and any open lightbox. */
 function resetSession(): void {
-  dataRootCache = new Map()
+  index = new LocalIndex()
+  indexAuthoritative = false
+  indexKey = null
   replaceGrid([])
   revokeLightbox()
   lightbox$.next(null)

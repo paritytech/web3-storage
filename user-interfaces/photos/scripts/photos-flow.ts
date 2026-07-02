@@ -27,7 +27,6 @@ import {
   h160ToSubstrate,
   isSameAddress,
   makeSigner,
-  type MerkleEntry,
   metadataMerkleRoot,
   READ_OPTS,
   requireOneEvent,
@@ -46,6 +45,7 @@ import {
 import { negotiatePrecompileTerms } from "./lib/contract.js";
 import { anchorRoot, loadArtifact, readLibraryOf } from "./lib/photos.js";
 import { downloadFile, enumerateEntries, indexRoot, listDir, mkdir, putFile } from "./lib/fs-client.js";
+import { LocalIndex } from "../src/lib/local-index.js";
 
 // pnpm forwards a literal `--` into argv; drop it.
 const args = process.argv.slice(2).filter((a) => a !== "--");
@@ -159,10 +159,16 @@ async function main() {
     assert.ok(lib.exists, "libraryOf.exists is false");
     assert.strictEqual(lib.driveId, driveId, "libraryOf.driveId mismatch");
 
-    // Re-enumerate the drive, recompute the metadata root, read the on-chain
-    // anchor back (retrying while it lags the just-included setRoot, per
-    // `isStale`), and assert recomputed == on-chain rootCid == provider
-    // index_root. Returns the fresh entries + reads for callers that need them.
+    // The client-maintained source of truth for the anchored metadata root:
+    // updated on every mkdir/upload/edit below, so `index.root()` — never a
+    // provider round-trip — is what we anchor and re-anchor. See `local-index.ts`.
+    const index = new LocalIndex();
+
+    // Re-enumerate the drive for integrity, read the on-chain anchor back
+    // (retrying while it lags the just-included setRoot, per `isStale`), and
+    // assert index root == on-chain rootCid == provider index_root. The
+    // enumeration only *verifies* the provider; the root comes from the index.
+    // Returns the fresh entries + reads for callers that need them.
     const verifyAnchor = async ({
       expectedEntries,
       isStale,
@@ -180,7 +186,8 @@ async function main() {
           assert.strictEqual(toHex(entry.dataRoot).toLowerCase(), toHex(u.dataRoot).toLowerCase(), `provider-served content for ${u.path} != the client's uploaded bytes`);
         }
       }
-      const recomputed = (toHex(metadataMerkleRoot(fresh)) as `0x${string}`).toLowerCase();
+      // The root we assert against the chain is the client's, not the provider's.
+      const recomputed = toHex(index.root()).toLowerCase();
       let anchored = await readLibraryOf(api, deployed.addressBytes, substrateToH160(user.publicKey), user.address, abi);
       for (let i = 0; i < ANCHOR_RETRY_BLOCKS && isStale(anchored.rootCid.toLowerCase()); i++) {
         await waitForNextBlock(papi);
@@ -198,9 +205,13 @@ async function main() {
     // ── M2: albums + blobs + thumbnails + client-computed root anchor ──
     console.log("\n=== M2: albums + blobs + root anchor ===");
 
-    // [M2 1/5] Create the album and its parallel thumbnail subtree.
+    // [M2 1/5] Create the album and its parallel thumbnail subtree, recording
+    // each created directory in the index (its dir leaves in the root).
     console.log("\n[M2 1/5] mkdir album + thumbnail subtree…");
-    for (const dir of ALBUM_DIRS) await mkdir(providerUrl, bucketId, dir);
+    for (const dir of ALBUM_DIRS) {
+      await mkdir(providerUrl, bucketId, dir);
+      index.setDir(dir);
+    }
 
     // [M2 2/5] Upload a multi-MB photo (spans several 256 KiB chunks) + a small
     // placeholder thumbnail (real canvas downscaling lands in M6).
@@ -213,15 +224,18 @@ async function main() {
     console.log(`  thumb: data_root=${thumbPut.dataRoot} size=${thumbPut.size}`);
 
     // Per-file cross-check: the data_root we compute locally must match the
-    // provider's (proves our chunk-tree port matches the provider's).
+    // provider's (proves our chunk-tree port matches the provider's). Record the
+    // locally verified leaves in the index — keyed on the byte length we saw.
     assert.strictEqual(toHex(computeDataRoot(photoBytes)).toLowerCase(), photoPut.dataRoot.toLowerCase(), "local photo data_root != provider data_root");
     assert.strictEqual(toHex(computeDataRoot(thumbBytes)).toLowerCase(), thumbPut.dataRoot.toLowerCase(), "local thumb data_root != provider data_root");
+    index.setFile(PHOTO, computeDataRoot(photoBytes), BigInt(photoBytes.length));
+    index.setFile(THUMB, computeDataRoot(thumbBytes), BigInt(thumbBytes.length));
 
-    // [M2 3/5] Build the anchor from the *client's* own state (uploaded bytes +
+    // [M2 3/5] Anchor the root from the *client's* own index (uploaded bytes +
     // created dirs), not a provider round-trip — re-deriving it from the provider
     // would only prove the provider agrees with itself. The listing is used
     // solely to assert the structure matches, never as a source for the root.
-    console.log("\n[M2 3/5] Build root from client state (uploads + mkdirs) → setRoot…");
+    console.log("\n[M2 3/5] Build root from the local index (uploads + mkdirs) → setRoot…");
     const uploaded = [
       { path: PHOTO, bytes: photoBytes, dataRoot: computeDataRoot(photoBytes) },
       { path: THUMB, bytes: thumbBytes, dataRoot: computeDataRoot(thumbBytes) },
@@ -229,13 +243,10 @@ async function main() {
     const listing = await listDir(providerUrl, bucketId, "/", true);
     const providerFilePaths = listing.filter((e) => e.entryType === "file").map((e) => e.path).sort();
     const providerDirPaths = listing.filter((e) => e.entryType !== "file").map((e) => e.path).sort();
-    assert.deepStrictEqual(providerFilePaths, uploaded.map((u) => u.path).sort(), "provider's file set != the client's uploaded set (hidden/extra/renamed files)");
+    assert.deepStrictEqual(providerFilePaths, index.filePaths().sort(), "provider's file set != the client's uploaded set (hidden/extra/renamed files)");
     assert.deepStrictEqual(providerDirPaths, [...ALBUM_DIRS].sort(), "provider's directory set != the client's created set (hidden/extra/renamed dirs)");
-    const dirEntries: MerkleEntry[] = ALBUM_DIRS.map((path) => ({ path, dataRoot: new Uint8Array(32), size: 0n }));
-    const fileEntries: MerkleEntry[] = uploaded.map((u) => ({ path: u.path, dataRoot: u.dataRoot, size: BigInt(u.bytes.length) }));
-    const expected = [...dirEntries, ...fileEntries];
-    console.log(`  entries=${expected.length}`, expected.map((e) => e.path));
-    const localRoot = toHex(metadataMerkleRoot(expected)) as `0x${string}`;
+    const localRoot = toHex(index.root()) as `0x${string}`;
+    console.log(`  entries=${index.entries().length}`, index.entries().map((e) => e.path));
     console.log(`  localRoot=${localRoot}`);
     await anchorRoot(api, user, deployed.addressBytes, localRoot, abi);
 
@@ -264,7 +275,7 @@ async function main() {
 
     // Pre-edit snapshot to prove the edit's effect (and its limits).
     const rootBeforeEdit = anchored.rootCid.toLowerCase();
-    const entriesBeforeEdit = fresh.length;
+    const entriesBeforeEdit = index.entries().length;
     const photoRootBeforeEdit = photoPut.dataRoot.toLowerCase();
 
     // [M3 1/4] Edit in place: re-PUT *different* bytes to the SAME path. Content-
@@ -276,14 +287,16 @@ async function main() {
     console.log(`  edited photo: data_root=${editPut.dataRoot} size=${editPut.size}`);
     assert.strictEqual(toHex(computeDataRoot(editedBytes)).toLowerCase(), editPut.dataRoot.toLowerCase(), "local edited data_root != provider data_root");
     assert.notStrictEqual(editPut.dataRoot.toLowerCase(), photoRootBeforeEdit, "edited data_root unchanged — the COW write did not produce a new blob");
+    // Replace the edited leaf in the index — same path, so the entry set size is
+    // unchanged; only the leaf's data_root/size move.
+    index.setFile(PHOTO, computeDataRoot(editedBytes), BigInt(editedBytes.length));
 
-    // [M3 2/4] Recompute the metadata root over the post-edit tree → re-anchor.
+    // [M3 2/4] Recompute the metadata root from the post-edit index → re-anchor.
     // Same path replaced (not added), so the entry set size is unchanged; only
     // the edited leaf differs, so the root moves.
-    console.log("\n[M3 2/4] Recompute metadata root → setRoot…");
-    const afterEdit = await enumerateEntries(providerUrl, bucketId);
-    assert.strictEqual(afterEdit.length, entriesBeforeEdit, "entry count changed after a same-path edit — expected replace, not add");
-    const editedRoot = toHex(metadataMerkleRoot(afterEdit)) as `0x${string}`;
+    console.log("\n[M3 2/4] Recompute metadata root from the index → setRoot…");
+    assert.strictEqual(index.entries().length, entriesBeforeEdit, "entry count changed after a same-path edit — expected replace, not add");
+    const editedRoot = toHex(index.root()) as `0x${string}`;
     console.log(`  editedRoot=${editedRoot}`);
     assert.notStrictEqual(editedRoot.toLowerCase(), rootBeforeEdit, "metadata root unchanged after edit — the edit was not reflected in the tree");
     await anchorRoot(api, user, deployed.addressBytes, editedRoot, abi);
