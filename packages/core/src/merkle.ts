@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//
+
 // Byte-exact TypeScript port of the provider's drive metadata Merkle root and
 // per-file data root, so a client can compute the on-chain integrity anchor
 // itself and verify a drive without trusting the provider.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//
+
 // Photos-specific contract glue: reshape a provider-signed quote into the
 // drive-registry precompile's `PrimitiveAgreementTerms` ABI struct, and derive
 // the substrate account of a deployed contract from its H160. This is NOT
