@@ -499,6 +499,18 @@ pub struct ChallengeId<BlockNumber> {
     pub index: u16,
 }
 
+/// The `(leaf_index, chunk_index)` pair identifying the exact chunk a challenge
+/// targets: which leaf within the MMR, and which chunk within that leaf's data.
+/// A position (distinct from `Commitment`, which is a range). Lives in
+/// `storage_primitives` alongside `Commitment`; passed as one argument to the
+/// challenge extrinsics and stored in `Challenge` below.
+pub struct ChunkLocation {
+    /// Leaf index within the MMR (relative to start_seq).
+    pub leaf_index: u64,
+    /// Chunk index within the leaf's data.
+    pub chunk_index: u64,
+}
+
 pub struct Challenge<T: Config> {
     /// Bucket containing the challenged data
     pub bucket_id: BucketId,
@@ -508,12 +520,11 @@ pub struct Challenge<T: Config> {
     pub challenger: T::AccountId,
     /// MMR root the provider committed to
     pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + leaf_index)
+    /// Start sequence of the commitment (needed to compute
+    /// challenged_seq = start_seq + location.leaf_index)
     pub start_seq: u64,
-    /// Leaf index within the MMR (relative to start_seq)
-    pub leaf_index: u64,
-    /// Chunk index within the leaf's data
-    pub chunk_index: u64,
+    /// Which leaf + chunk is being challenged.
+    pub location: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
     /// returned with compensation if the provider is slashed.
@@ -1547,8 +1558,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        location: ChunkLocation,
     ) -> DispatchResult;
 
     /// Challenge off-chain commitment (requires provider signature).
@@ -1562,8 +1572,7 @@ impl<T: Config> Pallet<T> {
         provider: T::AccountId,
         mmr_root: H256,
         start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        location: ChunkLocation,
         provider_signature: Signature,
     ) -> DispatchResult;
 
@@ -1574,8 +1583,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        location: ChunkLocation,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -2412,10 +2420,10 @@ fn verify_challenge_response(
             let chunk_hash = blake2_256(chunk_data);
             
             // 2. Verify chunk is in data_root
-            verify_merkle_proof(chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
+            verify_merkle_proof(chunk_hash, challenge.location.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
             
             // 3. Verify data_root is in MMR
-            verify_mmr_proof(&mmr_proof, challenge.leaf_index, &challenge.mmr_root)?;
+            verify_mmr_proof(&mmr_proof, challenge.location.leaf_index, &challenge.mmr_root)?;
             
             Ok(())
         }
@@ -2427,7 +2435,7 @@ fn verify_challenge_response(
             // regardless of freeze state. Off-chain is "messy but functional."
             
             // Challenged seq must be before new start
-            let challenged_seq = challenge.start_seq + challenge.leaf_index;
+            let challenged_seq = challenge.start_seq + challenge.location.leaf_index;
             ensure!(challenged_seq < *new_start_seq, Error::InvalidDeletionProof);
             
             // Verify admin signature on new commitment and that signer is bucket admin
@@ -2462,8 +2470,8 @@ fn verify_challenge_response(
             // something that extends BEYOND canonical, so they must Proof it.
             
             let snapshot = bucket.snapshot.as_ref().ok_or(Error::NoSnapshot)?;
-            let challenged_seq = challenge.start_seq + challenge.leaf_index;
-            let canonical_end = snapshot.start_seq + snapshot.leaf_count;
+            let challenged_seq = challenge.start_seq + challenge.location.leaf_index;
+            let canonical_end = snapshot.commitment.start_seq + snapshot.commitment.leaf_count;
             
             // Superseded is valid if canonical has moved past challenged state:
             // - challenged_seq < snapshot.start_seq: canonical deleted past this
