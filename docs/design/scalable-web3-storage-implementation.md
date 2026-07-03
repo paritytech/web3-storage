@@ -368,12 +368,8 @@ pub struct Bucket<T: Config> {
 }
 
 pub struct BucketSnapshot<BlockNumber> {
-    /// Canonical MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// Number of leaves in the MMR
-    pub leaf_count: u64,
+    /// Canonical MMR commitment: (mmr_root, start_seq, leaf_count).
+    pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
@@ -2274,38 +2270,47 @@ confirm using an older historical root they successfully synced to.
 
 ### Signed Commitment
 
-Both payloads live in `storage_primitives` so the pallet, provider node, and
-client SDK encode/decode identically. They each carry a `version: u8`
-(currently `1`) for forward compatibility.
+The `Commitment` struct and both payloads live in `storage_primitives` so the
+pallet, provider node, and client SDK encode/decode identically. Each payload
+carries a `version: u8` (currently `1`) for forward compatibility.
+
+`Commitment` is the `(mmr_root, start_seq, leaf_count)` triplet that identifies
+an MMR commitment over a contiguous range of leaves. It is the single unit that
+gets embedded in the payloads, snapshot, and events below, and the single
+argument the checkpoint/challenge extrinsics take in place of the three loose
+fields:
 
 ```rust
-pub struct CommitmentPayload {
-    /// Protocol version for future compatibility (CURRENT_VERSION = 1)
-    pub version: u8,
-    /// Reference to on-chain bucket. Mandatory — there is no anonymous /
-    /// "best-effort" commitment mode in the current implementation.
-    pub bucket_id: BucketId,
-    /// Root of MMR containing all data_roots
+pub struct Commitment {
+    /// Root of MMR containing all data_roots.
     pub mmr_root: H256,
-    /// Sequence number of first leaf in this MMR
+    /// Sequence number of the first leaf in this MMR.
     pub start_seq: u64,
     /// Number of leaves in this MMR. Conventionally 0 when the signature is
     /// produced for `challenge_offchain`, so the same signature is reusable
     /// across multiple challenged leaf indices.
     pub leaf_count: u64,
 }
+// Canonical range: [start_seq, start_seq + leaf_count).
+// Helpers: `range_end()` → start_seq + leaf_count; `contains_seq(seq)`.
+
+pub struct CommitmentPayload {
+    /// Protocol version for future compatibility (CURRENT_VERSION = 1)
+    pub version: u8,
+    /// Reference to on-chain bucket. Mandatory — there is no anonymous /
+    /// "best-effort" commitment mode in the current implementation.
+    pub bucket_id: BucketId,
+    /// The signed MMR commitment.
+    pub commitment: Commitment,
+}
 
 pub struct CheckpointProposal {
     pub version: u8,            // CURRENT_VERSION = 1
     pub bucket_id: BucketId,
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_count: u64,
+    pub commitment: Commitment,
     /// Window number this proposal is for — prevents cross-window replay.
     pub window: u64,
 }
-
-// Canonical range for both: [start_seq, start_seq + leaf_count)
 ```
 
 ### MMR Leaf
