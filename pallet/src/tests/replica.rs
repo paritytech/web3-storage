@@ -351,7 +351,7 @@ fn top_up_replica_sync_balance_fails_no_agreement() {
 /// and a replica provider (2) with an accepted replica agreement.
 fn setup_replica_with_snapshot() -> u64 {
     use sp_core::H256;
-    use storage_primitives::BucketSnapshot;
+    use storage_primitives::{BucketSnapshot, Commitment};
 
     // Provider 3 = primary
     register_provider(3, 200);
@@ -365,9 +365,11 @@ fn setup_replica_with_snapshot() -> u64 {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAB),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
                 commitment_nonce: 0,
@@ -425,7 +427,7 @@ fn confirm_replica_sync_happy_path() {
                 assert_eq!(*sync_balance, 490); // 500 - 10
                 assert!(last_sync.is_some());
                 let record = last_sync.unwrap();
-                assert_eq!(record.mmr_root, sp_core::H256::repeat_byte(0xAB));
+                assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xAB));
                 assert_eq!(record.block, 1);
             }
             _ => panic!("expected replica"),
@@ -453,7 +455,7 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
-                    snapshot.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
                 }
             }
         });
@@ -488,9 +490,11 @@ fn confirm_replica_sync_fails_insufficient_balance() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(storage_primitives::BucketSnapshot {
-                    mmr_root: sp_core::H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: storage_primitives::Commitment {
+                        mmr_root: sp_core::H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
                     commitment_nonce: 0,
@@ -630,7 +634,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
-                    snapshot.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
                 }
             }
         });
@@ -658,7 +662,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
             } => {
                 assert_eq!(*sync_balance, 480); // 500 - 10 - 10
                 let record = last_sync.unwrap();
-                assert_eq!(record.mmr_root, sp_core::H256::repeat_byte(0xCD));
+                assert_eq!(record.commitment.mmr_root, sp_core::H256::repeat_byte(0xCD));
                 assert_eq!(record.block, 12);
             }
             _ => panic!("expected replica"),

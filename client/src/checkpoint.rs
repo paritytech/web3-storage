@@ -40,7 +40,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation};
 use subxt::dynamic::Value;
 use tokio::sync::{mpsc, RwLock};
 
@@ -2056,7 +2056,14 @@ impl CheckpointManager {
 
             // Submit the challenge
             match challenger
-                .challenge_checkpoint(bucket_id, provider_ss58, leaf_index, chunk_index)
+                .challenge_checkpoint(
+                    bucket_id,
+                    provider_ss58,
+                    ChunkLocation {
+                        leaf_index,
+                        chunk_index,
+                    },
+                )
                 .await
             {
                 Ok(challenge_id) => {

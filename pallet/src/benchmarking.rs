@@ -13,7 +13,9 @@ use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
-use storage_primitives::{AgreementTerms, BucketId, ProviderRole, ReplicaTerms};
+use storage_primitives::{
+    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+};
 
 const SEED: u32 = 0;
 
@@ -221,8 +223,10 @@ fn insert_challenge<T: Config>(
         challenger: challenger.clone(),
         mmr_root,
         start_seq: 0,
-        leaf_index: 0,
-        chunk_index: 0,
+        target: ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
         deposit: 100u32.into(),
     };
     Challenges::<T>::insert(deadline, 0u16, challenge);
@@ -419,9 +423,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -634,9 +640,12 @@ mod benchmarks {
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
 
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
-        );
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut signatures: BoundedVec<
@@ -653,9 +662,7 @@ mod benchmarks {
         checkpoint(
             RawOrigin::Signed(admin),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            commitment,
             0u64, // nonce
             signatures,
         );
@@ -686,19 +693,20 @@ mod benchmarks {
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            commitment,
             0u64, // nonce
             empty_sigs,
         );
 
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 10, 0u64, /* nonce */
-        );
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut additional_signatures: BoundedVec<
@@ -790,9 +798,11 @@ mod benchmarks {
         provider_checkpoint(
             RawOrigin::Signed(submitter),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             window,
             signatures,
         );
@@ -874,9 +884,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -894,7 +906,15 @@ mod benchmarks {
         });
 
         #[extrinsic_call]
-        challenge_checkpoint(RawOrigin::Signed(admin), bucket_id, provider, 0, 0);
+        challenge_checkpoint(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     #[benchmark]
@@ -914,9 +934,12 @@ mod benchmarks {
 
         // Sign the commitment payload via host function
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, 0, 0, 0u64, /* nonce */
-        );
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 0,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -927,11 +950,11 @@ mod benchmarks {
             RawOrigin::Signed(admin),
             bucket_id,
             provider,
-            mmr_root,
-            0,    // start_seq
-            0,    // leaf_count
-            0,    // leaf_index
-            0,    // chunk_index
+            commitment,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
             0u64, // nonce
             signature,
         );
@@ -958,9 +981,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -980,7 +1005,15 @@ mod benchmarks {
         );
 
         #[extrinsic_call]
-        challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
+        challenge_replica(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            replica_provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
@@ -1063,9 +1096,11 @@ mod benchmarks {
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
         let payload = storage_primitives::CommitmentPayload::new(
             bucket_id,
-            new_mmr_root,
-            new_start_seq,
-            0,
+            Commitment {
+                mmr_root: new_mmr_root,
+                start_seq: new_start_seq,
+                leaf_count: 0,
+            },
             0u64, /* nonce */
         );
         let encoded = codec::Encode::encode(&payload);
@@ -1109,9 +1144,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -1150,9 +1187,11 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0u64, // nonce
             signatures,
         );
@@ -1221,8 +1260,10 @@ mod benchmarks {
                 challenger,
                 mmr_root: H256::zero(),
                 start_seq: 0,
-                leaf_index: 0,
-                chunk_index: 0,
+                target: ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
                 deposit,
             };
             Challenges::<T>::insert(deadline, i as u16, challenge);
