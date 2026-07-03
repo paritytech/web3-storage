@@ -16,7 +16,13 @@ fn sign_checkpoint_proposal(
     window: u64,
 ) -> (u64, sp_runtime::MultiSignature) {
     let proposal = storage_primitives::CheckpointProposal::new(
-        bucket_id, mmr_root, start_seq, leaf_count, window,
+        bucket_id,
+        storage_primitives::Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        window,
     );
     let encoded = proposal.encode();
     let signature = pair.sign(&encoded);

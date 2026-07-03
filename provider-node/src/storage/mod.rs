@@ -54,7 +54,7 @@ impl NonceStore for NullNonceStore {
 use crate::error::Error;
 use crate::types::*;
 use sp_core::H256;
-use storage_primitives::{hash_children, BucketId};
+use storage_primitives::{hash_children, BucketId, Commitment};
 
 /// A stored node (chunk or internal node).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -232,11 +232,7 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Delete data before a sequence number.
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error>;
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error>;
 
     /// Get MMR proof for a leaf.
     fn get_mmr_proof(

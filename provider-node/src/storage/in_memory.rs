@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use sp_core::H256;
 use std::collections::HashMap;
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Bucket state managed by this provider.
 #[derive(Debug, Clone)]
@@ -280,7 +280,7 @@ impl Storage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    ) -> Result<Commitment, Error> {
         let mut buckets = self.buckets.write();
         let bucket = buckets
             .get_mut(&bucket_id)
@@ -300,7 +300,11 @@ impl Storage {
         }
         bucket.mmr_root = bucket.mmr.root();
 
-        Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
+        Ok(Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count(),
+        })
     }
 
     /// Get MMR peaks.
@@ -377,11 +381,7 @@ impl StorageBackend for Storage {
         self.commit(bucket_id, data_roots)
     }
 
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 

@@ -14,7 +14,7 @@ use rocksdb::{Options, DB};
 use sp_core::H256;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use storage_primitives::{blake2_256, BucketId, MmrLeaf};
+use storage_primitives::{blake2_256, BucketId, Commitment, MmrLeaf};
 
 /// Column families for organizing data
 const CF_NODES: &str = "nodes";
@@ -400,7 +400,7 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    ) -> Result<Commitment, Error> {
         let mut bucket = self
             .get_bucket(bucket_id)
             .ok_or(Error::BucketNotFound(bucket_id))?;
@@ -421,7 +421,11 @@ impl DiskStorage {
             self.update_bucket(bucket_id, &bucket)?;
         }
 
-        Ok((bucket.mmr_root, bucket.start_seq, bucket.leaf_count()))
+        Ok(Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count(),
+        })
     }
 
     /// Get MMR proof for a leaf.
@@ -536,11 +540,7 @@ impl StorageBackend for DiskStorage {
         self.commit(bucket_id, data_roots)
     }
 
-    fn delete_before(
-        &self,
-        bucket_id: BucketId,
-        new_start_seq: u64,
-    ) -> Result<(H256, u64, u64), Error> {
+    fn delete_before(&self, bucket_id: BucketId, new_start_seq: u64) -> Result<Commitment, Error> {
         self.delete_before(bucket_id, new_start_seq)
     }
 

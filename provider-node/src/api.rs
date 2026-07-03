@@ -612,26 +612,18 @@ async fn delete_data(
     )
     .await?;
 
-    let (mmr_root, start_seq, leaf_count) = state
+    let commitment = state
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
     // Sign with the real post-delete leaf_count — pallet honours it now.
-    let payload = CommitmentPayload::new(
-        request.bucket_id,
-        Commitment {
-            mmr_root,
-            start_seq,
-            leaf_count,
-        },
-        request.nonce,
-    );
+    let payload = CommitmentPayload::new(request.bucket_id, commitment, request.nonce);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
-        start_seq,
-        leaf_count,
+        mmr_root: format!("0x{}", hex_encode(commitment.mmr_root.as_bytes())),
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
         provider_signature: signature,
         nonce: request.nonce,
     }))
@@ -749,9 +741,11 @@ async fn sign_checkpoint_proposal(
     // Sign the proposal
     let proposal = CheckpointProposal::new(
         request.bucket_id,
-        proposed_root,
-        request.start_seq,
-        request.leaf_count,
+        Commitment {
+            mmr_root: proposed_root,
+            start_seq: request.start_seq,
+            leaf_count: request.leaf_count,
+        },
         request.window,
     );
     let encoded = proposal.encode();

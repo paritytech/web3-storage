@@ -776,8 +776,15 @@ mod benchmarks {
         System::<T>::set_block_number(target_block);
 
         // Sign the CheckpointProposal with all s providers.
-        let proposal =
-            storage_primitives::CheckpointProposal::new(bucket_id, mmr_root, 0, 10, window);
+        let proposal = storage_primitives::CheckpointProposal::new(
+            bucket_id,
+            storage_primitives::Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            window,
+        );
         let encoded_proposal = codec::Encode::encode(&proposal);
 
         let mut signatures: BoundedVec<

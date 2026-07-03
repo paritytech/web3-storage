@@ -2200,7 +2200,7 @@ pub mod pallet {
             let Commitment {
                 mmr_root,
                 start_seq,
-                leaf_count,
+                ..
             } = commitment;
 
             // Get checkpoint config
@@ -2257,9 +2257,8 @@ pub mod pallet {
                 }
 
                 // Verify signatures using CheckpointProposal
-                let proposal = storage_primitives::CheckpointProposal::new(
-                    bucket_id, mmr_root, start_seq, leaf_count, window,
-                );
+                let proposal =
+                    storage_primitives::CheckpointProposal::new(bucket_id, commitment, window);
                 let encoded_proposal = proposal.encode();
 
                 // Create bitfield using Vec<u8>

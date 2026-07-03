@@ -545,21 +545,11 @@ impl CheckpointProposal {
     pub const CURRENT_VERSION: u8 = 1;
 
     /// Create a new checkpoint proposal
-    pub fn new(
-        bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        window: u64,
-    ) -> Self {
+    pub fn new(bucket_id: BucketId, commitment: Commitment, window: u64) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
-            commitment: Commitment {
-                mmr_root,
-                start_seq,
-                leaf_count,
-            },
+            commitment,
             window,
         }
     }

@@ -472,9 +472,9 @@ impl CheckpointChainClient for SubxtChainClient {
         signatures: Vec<(String, String)>,
     ) -> Result<H256, Error> {
         let bucket_id = duty.bucket_id;
-        let mmr_root = duty.mmr_root;
-        let start_seq = duty.start_seq;
-        let leaf_count = duty.leaf_count;
+        let mmr_root = duty.commitment.mmr_root;
+        let start_seq = duty.commitment.start_seq;
+        let leaf_count = duty.commitment.leaf_count;
         let window = duty.window;
 
         // Build signature tuples for the extrinsic

@@ -12,7 +12,7 @@ use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::{BucketId, CheckpointProposal};
+use storage_primitives::{BucketId, CheckpointProposal, Commitment};
 use tokio::sync::mpsc;
 
 /// Configuration for the checkpoint coordinator.
@@ -43,12 +43,8 @@ pub struct CheckpointDuty {
     pub bucket_id: BucketId,
     /// Current checkpoint window number.
     pub window: u64,
-    /// Current MMR root for the bucket.
-    pub mmr_root: H256,
-    /// Start sequence number.
-    pub start_seq: u64,
-    /// Number of leaves in the MMR.
-    pub leaf_count: u64,
+    /// MMR commitment for the bucket (root + covered leaf range).
+    pub commitment: Commitment,
     /// Whether this provider is the leader for this window.
     pub is_leader: bool,
     /// List of peer provider endpoints.
@@ -382,9 +378,11 @@ impl CheckpointCoordinator {
         let duty = CheckpointDuty {
             bucket_id,
             window,
-            mmr_root: bucket.mmr_root,
-            start_seq: bucket.start_seq,
-            leaf_count: bucket.leaf_count,
+            commitment: Commitment {
+                mmr_root: bucket.mmr_root,
+                start_seq: bucket.start_seq,
+                leaf_count: bucket.leaf_count,
+            },
             is_leader: true, // Force checkpoint bypasses leader check
             peer_endpoints: vec![],
             interval,
@@ -403,13 +401,7 @@ impl CheckpointCoordinator {
         );
 
         // Step 1: Create the checkpoint proposal
-        let proposal = CheckpointProposal::new(
-            duty.bucket_id,
-            duty.mmr_root,
-            duty.start_seq,
-            duty.leaf_count,
-            duty.window,
-        );
+        let proposal = CheckpointProposal::new(duty.bucket_id, duty.commitment, duty.window);
 
         // Step 2: Sign the proposal ourselves
         let our_signature = match self.sign_proposal(&proposal) {
@@ -462,7 +454,7 @@ impl CheckpointCoordinator {
             Ok(_) => CheckpointResult::Success {
                 bucket_id: duty.bucket_id,
                 window: duty.window,
-                mmr_root: duty.mmr_root,
+                mmr_root: duty.commitment.mmr_root,
                 signers,
             },
             Err(e) => CheckpointResult::SubmissionFailed {
