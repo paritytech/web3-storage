@@ -875,8 +875,7 @@ impl ChallengeChainClient for SubxtChainClient {
                 index,
                 mmr_root: challenge.mmr_root,
                 start_seq: challenge.start_seq,
-                leaf_index: challenge.leaf_index,
-                chunk_index: challenge.chunk_index,
+                location: challenge.location,
                 challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
             });
         }

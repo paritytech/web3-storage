@@ -11,7 +11,7 @@ use sp_core::H256;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation};
 use tokio::sync::mpsc;
 
 /// Configuration for the challenge responder.
@@ -48,10 +48,8 @@ pub struct DetectedChallenge {
     pub mmr_root: H256,
     /// Start sequence of the commitment.
     pub start_seq: u64,
-    /// Leaf index in the MMR to prove.
-    pub leaf_index: u64,
-    /// Chunk index within the leaf to prove.
-    pub chunk_index: u64,
+    /// Which leaf + chunk is being challenged.
+    pub location: ChunkLocation,
     /// Challenger's account.
     pub challenger: String,
 }
@@ -293,7 +291,7 @@ impl ChallengeResponder {
         let mmr_proof = match self
             .state
             .storage
-            .get_mmr_proof(challenge.bucket_id, challenge.leaf_index)
+            .get_mmr_proof(challenge.bucket_id, challenge.location.leaf_index)
         {
             Ok(proof) => proof,
             Err(e) => {
@@ -310,7 +308,7 @@ impl ChallengeResponder {
         let (chunk_data, chunk_proof) = match self
             .state
             .storage
-            .get_chunk_at_index(data_root, challenge.chunk_index)
+            .get_chunk_at_index(data_root, challenge.location.chunk_index)
         {
             Ok(data) => data,
             Err(e) => {
@@ -318,7 +316,7 @@ impl ChallengeResponder {
                 return ChallengeResponseResult::DataNotFound {
                     challenge_id,
                     bucket_id: challenge.bucket_id,
-                    leaf_index: challenge.leaf_index,
+                    leaf_index: challenge.location.leaf_index,
                 };
             }
         };
@@ -367,8 +365,7 @@ pub struct DecodedChallenge {
     pub challenger: [u8; 32],
     pub mmr_root: H256,
     pub start_seq: u64,
-    pub leaf_index: u64,
-    pub chunk_index: u64,
+    pub location: ChunkLocation,
 }
 
 /// Total SCALE-encoded size of a single `Challenge<T>` value (fixed-width
@@ -425,7 +422,9 @@ pub fn decode_challenge_for_provider(
         challenger,
         mmr_root,
         start_seq,
-        leaf_index,
-        chunk_index,
+        location: ChunkLocation {
+            leaf_index,
+            chunk_index,
+        },
     }))
 }

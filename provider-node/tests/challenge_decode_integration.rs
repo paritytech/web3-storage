@@ -44,8 +44,8 @@ fn decode_single_challenge_matching_provider() {
         .expect("matches our provider");
     assert_eq!(decoded.bucket_id, 42);
     assert_eq!(decoded.start_seq, 100);
-    assert_eq!(decoded.leaf_index, 7);
-    assert_eq!(decoded.chunk_index, 0);
+    assert_eq!(decoded.location.leaf_index, 7);
+    assert_eq!(decoded.location.chunk_index, 0);
     assert_eq!(decoded.challenger, [2u8; 32]);
     assert_eq!(decoded.mmr_root.0, [3u8; 32]);
 }
