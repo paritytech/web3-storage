@@ -40,7 +40,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, ChunkLocation};
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use subxt::dynamic::Value;
 use tokio::sync::{mpsc, RwLock};
 
@@ -225,12 +225,8 @@ impl ProviderHealthHistory {
 pub struct CommitmentCollection {
     /// Bucket ID.
     pub bucket_id: BucketId,
-    /// Majority MMR root (most providers agree on this).
-    pub mmr_root: H256,
-    /// Start sequence number.
-    pub start_seq: u64,
-    /// Number of leaves in the MMR.
-    pub leaf_count: u64,
+    /// Majority MMR commitment (root + covered range) most providers agree on.
+    pub commitment: Commitment,
     /// Signatures from agreeing providers: (account_id, signature_bytes).
     pub signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Providers that agreed on the majority root.
@@ -597,11 +593,11 @@ pub struct ChallengeEvidence {
     /// Bucket ID where conflict occurred.
     pub bucket_id: BucketId,
     /// Majority commitment from agreeing providers.
-    pub majority_commitment: (H256, u64, u64), // (mmr_root, start_seq, leaf_count)
+    pub majority_commitment: Commitment,
     /// Signatures from majority providers.
     pub majority_signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Provider's commitment that conflicts.
-    pub provider_commitment: Option<(H256, u64, u64)>,
+    pub provider_commitment: Option<Commitment>,
     /// Timestamps of conflict observations.
     pub observation_times: Vec<Instant>,
 }
@@ -1277,9 +1273,11 @@ impl CheckpointManager {
 
         Ok(CommitmentCollection {
             bucket_id,
-            mmr_root: majority_root,
-            start_seq,
-            leaf_count,
+            commitment: Commitment {
+                mmr_root: majority_root,
+                start_seq,
+                leaf_count,
+            },
             signatures,
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
@@ -1457,11 +1455,11 @@ impl CheckpointManager {
                 // bucket_id: u64
                 Value::u128(collection.bucket_id as u128),
                 // mmr_root: H256
-                Value::from_bytes(collection.mmr_root.as_bytes()),
+                Value::from_bytes(collection.commitment.mmr_root.as_bytes()),
                 // start_seq: u64
-                Value::u128(collection.start_seq as u128),
+                Value::u128(collection.commitment.start_seq as u128),
                 // leaf_count: u64
-                Value::u128(collection.leaf_count as u128),
+                Value::u128(collection.commitment.leaf_count as u128),
                 // signatures: Vec<(AccountId, MultiSignature)>
                 Value::unnamed_composite(signatures_value),
             ],
@@ -1480,7 +1478,7 @@ impl CheckpointManager {
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
         // Return a success hash (we can't easily get block hash from events in this subxt version)
-        Ok(collection.mmr_root)
+        Ok(collection.commitment.mmr_root)
     }
 
     // ========================================================================
@@ -1588,14 +1586,14 @@ impl CheckpointManager {
             return None;
         }
 
-        let _majority_leaf_count = collection.leaf_count;
+        let _majority_leaf_count = collection.commitment.leaf_count;
         let mut conflicts = Vec::new();
 
         for (account_id, their_root) in &collection.disagreeing_providers {
             // Determine conflict type
             // Note: We don't have their leaf_count directly, so we make assumptions
             // In a full implementation, we'd query each provider for full commitment
-            let conflict_type = if their_root == &collection.mmr_root {
+            let conflict_type = if their_root == &collection.commitment.mmr_root {
                 // Same root - shouldn't be in disagreeing list
                 continue;
             } else {
@@ -1649,7 +1647,7 @@ impl CheckpointManager {
 
         Some(ProviderConflict {
             bucket_id: collection.bucket_id,
-            majority_root: collection.mmr_root,
+            majority_root: collection.commitment.mmr_root,
             majority_count: collection.agreeing_providers.len(),
             conflicts,
             detected_at: Instant::now(),
@@ -1860,17 +1858,17 @@ impl CheckpointManager {
                             occurrence_count: divergence_count as u32,
                             evidence: ChallengeEvidence {
                                 bucket_id,
-                                majority_commitment: (
-                                    latest_conflict.majority_root,
-                                    0, // start_seq not tracked in conflict
-                                    provider_conflict.leaf_count,
-                                ),
+                                majority_commitment: Commitment {
+                                    mmr_root: latest_conflict.majority_root,
+                                    start_seq: 0, // start_seq not tracked in conflict
+                                    leaf_count: provider_conflict.leaf_count,
+                                },
                                 majority_signatures: Vec::new(), // Would need to be collected
-                                provider_commitment: Some((
-                                    provider_conflict.mmr_root,
-                                    0,
-                                    provider_conflict.leaf_count,
-                                )),
+                                provider_commitment: Some(Commitment {
+                                    mmr_root: provider_conflict.mmr_root,
+                                    start_seq: 0,
+                                    leaf_count: provider_conflict.leaf_count,
+                                }),
                                 observation_times: conflicts
                                     .iter()
                                     .map(|c| c.detected_at)
@@ -1907,17 +1905,17 @@ impl CheckpointManager {
                                     occurrence_count: sync_delay_count as u32,
                                     evidence: ChallengeEvidence {
                                         bucket_id,
-                                        majority_commitment: (
-                                            latest_conflict.majority_root,
-                                            0,
-                                            provider_conflict.leaf_count + behind_by,
-                                        ),
+                                        majority_commitment: Commitment {
+                                            mmr_root: latest_conflict.majority_root,
+                                            start_seq: 0,
+                                            leaf_count: provider_conflict.leaf_count + behind_by,
+                                        },
                                         majority_signatures: Vec::new(),
-                                        provider_commitment: Some((
-                                            provider_conflict.mmr_root,
-                                            0,
-                                            provider_conflict.leaf_count,
-                                        )),
+                                        provider_commitment: Some(Commitment {
+                                            mmr_root: provider_conflict.mmr_root,
+                                            start_seq: 0,
+                                            leaf_count: provider_conflict.leaf_count,
+                                        }),
                                         observation_times: conflicts
                                             .iter()
                                             .map(|c| c.detected_at)
@@ -2039,7 +2037,7 @@ impl CheckpointManager {
                 }
                 ChallengeReason::PersistentlySyncing { behind_by, .. } => {
                     // Challenge at the point where they fell behind
-                    let majority_count = recommendation.evidence.majority_commitment.2;
+                    let majority_count = recommendation.evidence.majority_commitment.leaf_count;
                     (majority_count.saturating_sub(*behind_by), 0u64)
                 }
                 ChallengeReason::ClaimingAhead {
@@ -2816,9 +2814,11 @@ mod tests {
     fn test_commitment_collection_clone() {
         let collection = CommitmentCollection {
             bucket_id: 1,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 10,
+            commitment: Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             signatures: vec![],
             agreeing_providers: vec![],
             disagreeing_providers: vec![],
@@ -2827,7 +2827,7 @@ mod tests {
 
         let cloned = collection.clone();
         assert_eq!(cloned.bucket_id, 1);
-        assert_eq!(cloned.leaf_count, 10);
+        assert_eq!(cloned.commitment.leaf_count, 10);
     }
 
     // ========================================================================
@@ -3107,9 +3107,17 @@ mod tests {
     fn test_challenge_evidence() {
         let evidence = ChallengeEvidence {
             bucket_id: 1,
-            majority_commitment: (H256::zero(), 0, 100),
+            majority_commitment: Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_count: 100,
+            },
             majority_signatures: vec![],
-            provider_commitment: Some((H256::repeat_byte(0x11), 0, 100)),
+            provider_commitment: Some(Commitment {
+                mmr_root: H256::repeat_byte(0x11),
+                start_seq: 0,
+                leaf_count: 100,
+            }),
             observation_times: vec![Instant::now()],
         };
 

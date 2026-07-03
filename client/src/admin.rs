@@ -578,9 +578,11 @@ impl AdminClient {
                     .and_then(|v| v.as_u128())
                     .unwrap_or(0) as u32;
                 Some(SnapshotInfo {
-                    mmr_root: H256::from(mmr_root),
-                    start_seq,
-                    leaf_count,
+                    commitment: Commitment {
+                        mmr_root: H256::from(mmr_root),
+                        start_seq,
+                        leaf_count,
+                    },
                     checkpoint_block,
                 })
             }
@@ -772,9 +774,7 @@ pub struct MemberInfo {
 
 #[derive(Debug, Clone)]
 pub struct SnapshotInfo {
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_count: u64,
+    pub commitment: Commitment,
     pub checkpoint_block: u32,
 }
 
