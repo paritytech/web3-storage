@@ -286,6 +286,106 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@types/node@25.9.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))
 
+  user-interfaces/photos:
+    dependencies:
+      '@polkadot-api/descriptors':
+        specifier: workspace:*
+        version: link:../../packages/papi/.papi/descriptors
+      '@polkadot-labs/hdkd':
+        specifier: ^0.0.28
+        version: 0.0.28
+      '@polkadot-labs/hdkd-helpers':
+        specifier: ^0.0.30
+        version: 0.0.30
+      '@radix-ui/react-slot':
+        specifier: ^1.2.5
+        version: 1.2.5(@types/react@19.2.17)(react@19.2.7)
+      '@react-rxjs/core':
+        specifier: ^0.10.8
+        version: 0.10.8(react@19.2.7)(rxjs@7.8.2)
+      '@react-rxjs/utils':
+        specifier: ^0.9.7
+        version: 0.9.7(@react-rxjs/core@0.10.8(react@19.2.7)(rxjs@7.8.2))(react@19.2.7)(rxjs@7.8.2)
+      '@web3-storage/chain-client':
+        specifier: workspace:*
+        version: link:../shared/chain-client
+      '@web3-storage/network-config':
+        specifier: workspace:*
+        version: link:../shared/network-config
+      '@web3-storage/network-picker':
+        specifier: workspace:*
+        version: link:../shared/network-picker
+      '@web3-storage/papi':
+        specifier: workspace:*
+        version: link:../../packages/papi
+      '@web3-storage/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      lucide-react:
+        specifier: ^1.17.0
+        version: 1.18.0(react@19.2.7)
+      polkadot-api:
+        specifier: ^2.1.6
+        version: 2.1.6(esbuild@0.28.0)(rxjs@7.8.2)
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
+      viem:
+        specifier: ^2.21.0
+        version: 2.52.2(typescript@6.0.3)(zod@4.4.3)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.0
+        version: 4.3.1(vite@8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.17
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.2
+        version: 6.0.2(vite@8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))
+      autoprefixer:
+        specifier: ^10.5.0
+        version: 10.5.0(postcss@8.5.15)
+      postcss:
+        specifier: ^8.5.15
+        version: 8.5.15
+      tailwindcss:
+        specifier: ^4.3.0
+        version: 4.3.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.0.16
+        version: 8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)
+
   user-interfaces/provider:
     dependencies:
       '@polkadot-api/descriptors':
@@ -327,6 +427,9 @@ importers:
       '@react-rxjs/utils':
         specifier: ^0.9.7
         version: 0.9.7(@react-rxjs/core@0.10.8(react@19.2.7)(rxjs@7.8.2))(react@19.2.7)(rxjs@7.8.2)
+      '@web3-storage/chain-client':
+        specifier: workspace:*
+        version: link:../shared/chain-client
       '@web3-storage/network-config':
         specifier: workspace:*
         version: link:../shared/network-config
@@ -506,6 +609,21 @@ importers:
       vite:
         specifier: ^8.0.16
         version: 8.0.16(@types/node@25.9.3)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)
+
+  user-interfaces/shared/chain-client:
+    dependencies:
+      '@polkadot-api/descriptors':
+        specifier: workspace:*
+        version: link:../../../packages/papi/.papi/descriptors
+      '@web3-storage/papi':
+        specifier: workspace:*
+        version: link:../../../packages/papi
+      polkadot-api:
+        specifier: ^2.1.6
+        version: 2.1.6(esbuild@0.28.0)(rxjs@7.8.2)
+      rxjs:
+        specifier: ^7.8.2
+        version: 7.8.2
 
   user-interfaces/shared/network-config: {}
 
@@ -4440,7 +4558,7 @@ snapshots:
     dependencies:
       '@polkadot/x-global': 14.0.3
       tslib: 2.8.1
-      ws: 8.20.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5092,6 +5210,13 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.1
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.1
 
+  '@tailwindcss/vite@4.3.1(vite@8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))':
+    dependencies:
+      '@tailwindcss/node': 4.3.1
+      '@tailwindcss/oxide': 4.3.1
+      tailwindcss: 4.3.1
+      vite: 8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)
+
   '@tailwindcss/vite@4.3.1(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))':
     dependencies:
       '@tailwindcss/node': 4.3.1
@@ -5106,7 +5231,7 @@ snapshots:
 
   '@types/bn.js@5.2.0':
     dependencies:
-      '@types/node': 25.9.3
+      '@types/node': 22.19.17
 
   '@types/chai@5.2.3':
     dependencies:
@@ -5233,6 +5358,11 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.61.0
       eslint-visitor-keys: 5.0.1
+
+  '@vitejs/plugin-react@6.0.2(vite@8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))':
+    dependencies:
+      '@rolldown/pluginutils': 1.0.1
+      vite: 8.0.16(@types/node@22.19.17)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)
 
   '@vitejs/plugin-react@6.0.2(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4))':
     dependencies:
@@ -6272,7 +6402,7 @@ snapshots:
 
   smoldot@2.0.26:
     dependencies:
-      ws: 8.20.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -6280,7 +6410,7 @@ snapshots:
 
   smoldot@3.2.0:
     dependencies:
-      ws: 8.20.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
