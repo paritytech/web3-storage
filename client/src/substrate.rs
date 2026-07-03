@@ -301,15 +301,15 @@ pub mod extrinsics {
 
     /// Encode a [`ChunkLocation`](storage_primitives::ChunkLocation) as a subxt
     /// dynamic named composite (`leaf_index`, `chunk_index`).
-    fn dynamic_chunk_location(location: ChunkLocation) -> subxt::dynamic::Value {
+    fn dynamic_chunk_location(target: ChunkLocation) -> subxt::dynamic::Value {
         subxt::dynamic::Value::named_composite([
             (
                 "leaf_index",
-                subxt::dynamic::Value::u128(location.leaf_index as u128),
+                subxt::dynamic::Value::u128(target.leaf_index as u128),
             ),
             (
                 "chunk_index",
-                subxt::dynamic::Value::u128(location.chunk_index as u128),
+                subxt::dynamic::Value::u128(target.chunk_index as u128),
             ),
         ])
     }
@@ -350,7 +350,7 @@ pub mod extrinsics {
     pub fn challenge_checkpoint(
         bucket_id: u64,
         provider: AccountId32,
-        location: ChunkLocation,
+        target: ChunkLocation,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -358,7 +358,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                dynamic_chunk_location(location),
+                dynamic_chunk_location(target),
             ],
         )
     }
@@ -370,7 +370,7 @@ pub mod extrinsics {
         bucket_id: u64,
         provider: AccountId32,
         commitment: Commitment,
-        location: ChunkLocation,
+        target: ChunkLocation,
         nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
@@ -381,7 +381,7 @@ pub mod extrinsics {
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 dynamic_commitment(commitment),
-                dynamic_chunk_location(location),
+                dynamic_chunk_location(target),
                 subxt::dynamic::Value::u128(nonce as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
                 subxt::dynamic::Value::unnamed_variant(
@@ -449,7 +449,7 @@ pub mod extrinsics {
     pub fn challenge_replica(
         bucket_id: u64,
         provider: AccountId32,
-        location: ChunkLocation,
+        target: ChunkLocation,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -457,7 +457,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                dynamic_chunk_location(location),
+                dynamic_chunk_location(target),
             ],
         )
     }

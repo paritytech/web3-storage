@@ -223,7 +223,7 @@ fn insert_challenge<T: Config>(
         challenger: challenger.clone(),
         mmr_root,
         start_seq: 0,
-        location: ChunkLocation {
+        target: ChunkLocation {
             leaf_index: 0,
             chunk_index: 0,
         },
@@ -1260,7 +1260,7 @@ mod benchmarks {
                 challenger,
                 mmr_root: H256::zero(),
                 start_seq: 0,
-                location: ChunkLocation {
+                target: ChunkLocation {
                     leaf_index: 0,
                     chunk_index: 0,
                 },

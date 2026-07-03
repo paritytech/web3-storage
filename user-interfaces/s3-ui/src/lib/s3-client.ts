@@ -530,7 +530,7 @@ export class S3Client {
       api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider,
-        location: { leaf_index: leafIndex, chunk_index: chunkIndex },
+        target: { leaf_index: leafIndex, chunk_index: chunkIndex },
       }),
       this.requireOwner().signer,
       { label: "challenge_checkpoint", mode: "finalized" },
@@ -589,8 +589,8 @@ export class S3Client {
           bucketId: c.bucket_id,
           provider: c.provider,
           challenger: c.challenger,
-          leafIndex: c.location.leaf_index,
-          chunkIndex: c.location.chunk_index,
+          leafIndex: c.target.leaf_index,
+          chunkIndex: c.target.chunk_index,
           deposit: c.deposit,
         });
       }

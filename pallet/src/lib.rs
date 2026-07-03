@@ -648,7 +648,7 @@ pub mod pallet {
         /// Start sequence of the commitment.
         pub start_seq: u64,
         /// Leaf + chunk being challenged.
-        pub location: ChunkLocation,
+        pub target: ChunkLocation,
         /// Deposit locked by challenger.
         pub deposit: BalanceOf<T>,
     }
@@ -2541,14 +2541,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            location: ChunkLocation,
+            target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
             let ChunkLocation {
                 leaf_index,
                 chunk_index,
-            } = location;
+            } = target;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
             let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
@@ -2603,8 +2603,8 @@ pub mod pallet {
             // provider signed. The challenger passes it through so the payload
             // reconstruction matches the signed `CommitmentPayload` exactly.
             commitment: Commitment,
-            // `location` is the leaf+chunk being challenged within `commitment`.
-            location: ChunkLocation,
+            // `target` is the leaf+chunk being challenged within `commitment`.
+            target: ChunkLocation,
             // `nonce` is the `CommitmentPayload` nonce — the block at which
             // the provider signed. Recency-checked to prevent replay.
             nonce: u64,
@@ -2617,7 +2617,7 @@ pub mod pallet {
             let ChunkLocation {
                 leaf_index,
                 chunk_index,
-            } = location;
+            } = target;
 
             // Verify the bucket exists
             ensure!(
@@ -2666,14 +2666,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            location: ChunkLocation,
+            target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
             let ChunkLocation {
                 leaf_index,
                 chunk_index,
-            } = location;
+            } = target;
 
             // Get the agreement and verify it's a replica
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
@@ -2766,7 +2766,7 @@ pub mod pallet {
                     let chunk_hash = storage_primitives::blake2_256(chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
-                        challenge.location.chunk_index,
+                        challenge.target.chunk_index,
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
@@ -2790,7 +2790,7 @@ pub mod pallet {
 
                     let challenged_seq = challenge
                         .start_seq
-                        .saturating_add(challenge.location.leaf_index);
+                        .saturating_add(challenge.target.leaf_index);
                     if challenged_seq >= *new_start_seq {
                         // Provider claims data was purged before the
                         // challenged leaf, but the new start_seq doesn't
@@ -2824,7 +2824,7 @@ pub mod pallet {
                         Some(snapshot) => {
                             let challenged_seq = challenge
                                 .start_seq
-                                .saturating_add(challenge.location.leaf_index);
+                                .saturating_add(challenge.target.leaf_index);
                             // (a) The challenged root must NOT be the current
                             // canonical root — if it still is, the data is live
                             // and the provider must answer with a `Proof`.

@@ -368,12 +368,8 @@ pub struct Bucket<T: Config> {
 }
 
 pub struct BucketSnapshot<BlockNumber> {
-    /// Canonical MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// Number of leaves in the MMR
-    pub leaf_count: u64,
+    /// Canonical MMR commitment at this checkpoint
+    pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
@@ -512,12 +508,10 @@ pub struct Challenge<T: Config> {
     pub challenger: T::AccountId,
     /// MMR root the provider committed to
     pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + leaf_index)
+    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
     pub start_seq: u64,
-    /// Leaf index within the MMR (relative to start_seq)
-    pub leaf_index: u64,
-    /// Chunk index within the leaf's data
-    pub chunk_index: u64,
+    /// Leaf + chunk being challenged (see `ChunkLocation`)
+    pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
     /// returned with compensation if the provider is slashed.
@@ -594,11 +588,13 @@ provider can use any of the supported schemes.
 Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
 
-- `CommitmentPayload { version, bucket_id, mmr_root, start_seq, leaf_count }` —
-  what providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
-  `challenge_offchain`. For `challenge_offchain` the provider signs with
-  `leaf_count = 0` so the signature is reusable as the off-chain commitment.
-- `CheckpointProposal { version, bucket_id, mmr_root, start_seq, leaf_count, window }` —
+- `CommitmentPayload { version, bucket_id, commitment, nonce }` — what
+  providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
+  `challenge_offchain` (`commitment: Commitment` is defined in [Data
+  Structures](#data-structures)). For `challenge_offchain` the provider signs
+  with `leaf_count = 0` so the signature is reusable as the off-chain
+  commitment.
+- `CheckpointProposal { version, bucket_id, commitment, window }` —
   what providers sign for `provider_checkpoint`. The `window` field prevents
   cross-window replay.
 - The replica sync `roots` array (`[Option<H256>; 7]`) — signed for
@@ -1362,15 +1358,14 @@ impl<T: Config> Pallet<T> {
 
     /// Submit a new checkpoint with provider signatures (writers/admin only).
     /// 
-    /// Creates a new canonical state (new mmr_root, start_seq, leaf_count).
+    /// Creates a new canonical state (new `Commitment`).
     /// Requires at least min_providers signatures from providers in bucket.primary_providers.
     /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
     pub fn checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
+        nonce: u64,
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
@@ -1422,9 +1417,7 @@ impl<T: Config> Pallet<T> {
     pub fn provider_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         window: u64,
         signatures: BoundedVec<
             (T::AccountId, MultiSignature),
@@ -1551,8 +1544,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> DispatchResult;
 
     /// Challenge off-chain commitment (requires provider signature).
@@ -1564,10 +1556,9 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
+        nonce: u64,
         provider_signature: Signature,
     ) -> DispatchResult;
 
@@ -1578,8 +1569,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -2272,40 +2262,67 @@ confirm using an older historical root they successfully synced to.
 
 ## Data Structures
 
+### Commitment & ChunkLocation
+
+`Commitment` groups the `(mmr_root, start_seq, leaf_count)` triplet that
+identifies an MMR commitment over a contiguous range of leaves. It is a field
+group inside `CommitmentPayload`, `CheckpointProposal`, and `BucketSnapshot`,
+and the single argument the checkpoint/challenge extrinsics take in place of
+three loose fields.
+
+```rust
+pub struct Commitment {
+    /// Root of MMR containing all data_roots
+    pub mmr_root: H256,
+    /// Sequence number of the first leaf covered by this commitment
+    pub start_seq: u64,
+    /// Number of leaves covered by this commitment
+    pub leaf_count: u64,
+}
+
+// Canonical range: [start_seq, start_seq + leaf_count)
+```
+
+`ChunkLocation` is the companion *position* type (`Commitment` is a *range*):
+the exact chunk a challenge targets.
+
+```rust
+pub struct ChunkLocation {
+    /// Index of the challenged leaf within the MMR
+    pub leaf_index: u64,
+    /// Index of the challenged chunk within the leaf's data
+    pub chunk_index: u64,
+}
+```
+
 ### Signed Commitment
 
 Both payloads live in `storage_primitives` so the pallet, provider node, and
-client SDK encode/decode identically. They each carry a `version: u8`
-(currently `1`) for forward compatibility.
+client SDK encode/decode identically. They each carry a `version: u8` for
+forward compatibility.
 
 ```rust
 pub struct CommitmentPayload {
-    /// Protocol version for future compatibility (CURRENT_VERSION = 1)
+    /// Protocol version for future compatibility (CURRENT_VERSION = 2)
     pub version: u8,
     /// Reference to on-chain bucket. Mandatory — there is no anonymous /
     /// "best-effort" commitment mode in the current implementation.
     pub bucket_id: BucketId,
-    /// Root of MMR containing all data_roots
-    pub mmr_root: H256,
-    /// Sequence number of first leaf in this MMR
-    pub start_seq: u64,
-    /// Number of leaves in this MMR. Conventionally 0 when the signature is
-    /// produced for `challenge_offchain`, so the same signature is reusable
-    /// across multiple challenged leaf indices.
-    pub leaf_count: u64,
+    /// MMR commitment being signed over. `leaf_count` is conventionally 0
+    /// when the signature is produced for `challenge_offchain`, so the same
+    /// signature is reusable across multiple challenged leaf indices.
+    pub commitment: Commitment,
+    /// Replay-protection nonce — block number at the time the signer signed.
+    pub nonce: u64,
 }
 
 pub struct CheckpointProposal {
     pub version: u8,            // CURRENT_VERSION = 1
     pub bucket_id: BucketId,
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_count: u64,
+    pub commitment: Commitment,
     /// Window number this proposal is for — prevents cross-window replay.
     pub window: u64,
 }
-
-// Canonical range for both: [start_seq, start_seq + leaf_count)
 ```
 
 ### MMR Leaf

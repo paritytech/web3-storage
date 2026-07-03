@@ -35,7 +35,7 @@ impl<T: Config> Pallet<T> {
             challenger: challenger.clone(),
             mmr_root,
             start_seq,
-            location: ChunkLocation {
+            target: ChunkLocation {
                 leaf_index,
                 chunk_index,
             },

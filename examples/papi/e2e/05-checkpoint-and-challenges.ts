@@ -192,7 +192,7 @@ async function main() {
       const tx = api.tx.StorageProvider.challenge_checkpoint({
         bucket_id: bucketId,
         provider: client.address, // not in the snapshot's primary_providers
-        location: { leaf_index: 0n, chunk_index: 0n },
+        target: { leaf_index: 0n, chunk_index: 0n },
       });
       await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "5.6");
     },

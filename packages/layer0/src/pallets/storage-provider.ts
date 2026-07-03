@@ -329,8 +329,8 @@ export async function challengeOffchain(
         start_seq: BigInt(upload.startSeq),
         leaf_count: BigInt(upload.leafCount),
       },
-      // `location` is the leaf+chunk being challenged within that commitment.
-      location: {
+      // `target` is the leaf+chunk being challenged within that commitment.
+      target: {
         leaf_index: BigInt(upload.leafIndex),
         chunk_index: 0n,
       },
@@ -360,7 +360,7 @@ export async function challengeCheckpoint(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
       provider: provider.address,
-      location: {
+      target: {
         leaf_index: BigInt(leafIndex),
         chunk_index: 0n,
       },
