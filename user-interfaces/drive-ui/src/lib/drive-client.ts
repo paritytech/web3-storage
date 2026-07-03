@@ -451,9 +451,9 @@ export class DriveClient {
     if (!snapshot) return null;
 
     return {
-      mmrRoot: snapshot.mmr_root,
-      startSeq: snapshot.start_seq,
-      leafCount: snapshot.leaf_count,
+      mmrRoot: snapshot.commitment.mmr_root,
+      startSeq: snapshot.commitment.start_seq,
+      leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
   }

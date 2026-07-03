@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use storage_primitives::{ChunkLocation, Commitment};
 
 #[test]
 fn update_provider_multiaddr_works() {
@@ -241,9 +242,11 @@ fn challenge_checkpoint_emits_event() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(storage_primitives::BucketSnapshot {
-                    mmr_root: sp_core::H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: storage_primitives::Commitment {
+                        mmr_root: sp_core::H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
                     commitment_nonce: 0,
@@ -255,8 +258,10 @@ fn challenge_checkpoint_emits_event() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::ChallengeCreated {
@@ -284,18 +289,61 @@ fn checkpoint_emits_event() {
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            sp_core::H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             1, // nonce
             Default::default(),
         ));
 
         let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
             bucket_id,
+            commitment: Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            providers: vec![],
+        });
+        assert!(frame_system::Pallet::<Test>::events()
+            .iter()
+            .any(|r| r.event == expected));
+    });
+}
+
+#[test]
+fn extend_checkpoint_emits_event() {
+    new_test_ext().execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+        let bucket_id = create_bucket(1, 0);
+
+        let commitment = Commitment {
             mmr_root: sp_core::H256::repeat_byte(0xAA),
             start_seq: 0,
             leaf_count: 10,
+        };
+
+        assert_ok!(StorageProvider::checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            commitment,
+            1, // nonce
+            Default::default(),
+        ));
+
+        assert_ok!(StorageProvider::extend_checkpoint(
+            RuntimeOrigin::signed(1),
+            bucket_id,
+            Default::default(),
+        ));
+
+        // `extend_checkpoint` only adds signatures — it must re-emit the same
+        // commitment the initial checkpoint carried, not a stale or default one.
+        let expected = RuntimeEvent::StorageProvider(crate::Event::BucketCheckpointed {
+            bucket_id,
+            commitment,
             providers: vec![],
         });
         assert!(frame_system::Pallet::<Test>::events()

@@ -15,7 +15,7 @@ use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventP
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
 use sp_runtime::MultiSignature;
-use storage_primitives::{BucketId, EndAction, Role};
+use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
@@ -447,9 +447,8 @@ impl AdminClient {
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
+        nonce: u64, // nonce the providers signed over (echoed from their commitment)
         signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
@@ -464,7 +463,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, mmr_root, start_seq, leaf_count, parsed_sigs);
+        let tx = extrinsics::checkpoint(bucket_id, commitment, nonce, parsed_sigs);
 
         let tx_progress = chain
             .api()
@@ -481,7 +480,7 @@ impl AdminClient {
         tracing::info!(
             "Checkpoint submitted for bucket {} with MMR root 0x{}",
             bucket_id,
-            hex::encode(mmr_root.as_bytes())
+            hex::encode(commitment.mmr_root.as_bytes())
         );
         Ok(())
     }

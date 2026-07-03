@@ -2,7 +2,7 @@
 
 use super::*;
 use sp_core::H256;
-use storage_primitives::{BucketSnapshot, ChallengeId};
+use storage_primitives::{BucketSnapshot, ChallengeId, ChunkLocation, Commitment};
 
 /// Setup: register provider, create agreement, and insert a snapshot with provider signed.
 fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
@@ -13,9 +13,11 @@ fn setup_with_snapshot(provider: u64, client: u64) -> u64 {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAB),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01], // bit 0 set = provider at index 0 signed
                 commitment_nonce: 0,
@@ -35,9 +37,11 @@ fn advance_snapshot_root(bucket_id: u64) {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         let bucket = maybe_bucket.as_mut().expect("bucket exists");
         bucket.snapshot = Some(BucketSnapshot {
-            mmr_root: H256::repeat_byte(0xCD),
-            start_seq: 0,
-            leaf_count: 10,
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0xCD),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             checkpoint_block: 1,
             primary_signers: vec![0x01],
             commitment_nonce: 1,
@@ -57,8 +61,10 @@ fn challenge_checkpoint_works() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0, // leaf_index
-            0, // chunk_index
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         // Challenge deposit (100) should be reserved
@@ -85,7 +91,15 @@ fn challenge_checkpoint_fails_expired_agreement() {
         // challenged.
         frame_system::Pallet::<Test>::set_block_number(202);
         assert_noop!(
-            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0
+                }
+            ),
             Error::<Test>::AgreementExpired
         );
     });
@@ -99,7 +113,15 @@ fn challenge_checkpoint_fails_no_snapshot() {
 
         // No snapshot inserted
         assert_noop!(
-            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0
+                }
+            ),
             Error::<Test>::NoSnapshot
         );
     });
@@ -121,9 +143,11 @@ fn challenge_checkpoint_fails_provider_not_signed() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01], // only bit 0 set
                     commitment_nonce: 0,
@@ -133,7 +157,15 @@ fn challenge_checkpoint_fails_provider_not_signed() {
 
         // Challenge provider 3 (at index 1, not signed) should fail
         assert_noop!(
-            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(4), bucket_id, 3, 0, 0),
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(4),
+                bucket_id,
+                3,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0
+                }
+            ),
             Error::<Test>::ProviderNotInSnapshot
         );
     });
@@ -150,12 +182,16 @@ fn challenge_offchain_fails_no_agreement() {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                H256::repeat_byte(0xAB),
-                0, // start_seq
-                0, // leaf_count
-                0, // leaf_index
-                0, // chunk_index
-                0, // nonce
+                Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 0,
+                },
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+                0,
                 sp_runtime::MultiSignature::Sr25519([0u8; 64].into()),
             ),
             Error::<Test>::AgreementNotFound
@@ -171,7 +207,15 @@ fn challenge_replica_fails_not_replica() {
 
         // Provider 2 has a Primary agreement, not Replica
         assert_noop!(
-            StorageProvider::challenge_replica(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0
+                }
+            ),
             Error::<Test>::NotReplica
         );
     });
@@ -187,8 +231,10 @@ fn respond_to_challenge_fails_not_provider() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -219,8 +265,10 @@ fn respond_to_challenge_superseded_works() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0, // leaf_index
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -235,9 +283,11 @@ fn respond_to_challenge_superseded_works() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             let bucket = maybe_bucket.as_mut().unwrap();
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCD),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
                 commitment_nonce: 1,
@@ -267,8 +317,10 @@ fn challenge_slashes_provider_on_timeout() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         // Challenge deadline = block 1 + ChallengeTimeout(100) = 101
@@ -307,8 +359,10 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -368,8 +422,10 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -409,8 +465,10 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -450,8 +508,10 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -492,8 +552,10 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -546,9 +608,11 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03], // bits 0 and 1 set
                     commitment_nonce: 0,
@@ -561,15 +625,19 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
             RuntimeOrigin::signed(4),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(5),
             bucket_id,
             3,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         // Both challenges at deadline 101, at stable indices 0 and 1.
@@ -613,9 +681,11 @@ fn responding_to_sibling_preserves_other_challenge_index() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x03],
                     commitment_nonce: 0,
@@ -629,15 +699,19 @@ fn responding_to_sibling_preserves_other_challenge_index() {
             RuntimeOrigin::signed(4),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(5),
             bucket_id,
             3,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
         assert_eq!(NextChallengeIndex::<Test>::get(101), 2);
         assert_eq!(Challenges::<Test>::get(101, 0).unwrap().provider, 2);
@@ -648,9 +722,11 @@ fn responding_to_sibling_preserves_other_challenge_index() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             let bucket = maybe_bucket.as_mut().unwrap();
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCD),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x03],
                 commitment_nonce: 1,
@@ -712,8 +788,10 @@ fn challenge_slashes_routes_full_slash_to_treasury() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         // Challenger deposit (100) was reserved
@@ -764,8 +842,10 @@ fn respond_to_challenge_superseded_emits_defended_event() {
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
         let challenge_id = ChallengeId {
@@ -783,9 +863,11 @@ fn respond_to_challenge_superseded_emits_defended_event() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             let bucket = maybe_bucket.as_mut().unwrap();
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xCD),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
                 commitment_nonce: 1,
@@ -842,9 +924,11 @@ fn setup_three_primaries_snapshot() -> u64 {
         // Sanity: ordering is exactly [2, 3, 4].
         assert_eq!(bucket.primary_providers.to_vec(), vec![2, 3, 4]);
         bucket.snapshot = Some(BucketSnapshot {
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 0,
-            leaf_count: 10,
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0xAB),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             checkpoint_block: 1,
             // bits {0, 2} set: provider 2 (idx 0) and 4 (idx 2) signed.
             primary_signers: vec![0b0000_0101],
@@ -875,15 +959,25 @@ fn assert_reindexed_after_removing_lead(bucket_id: u64) {
     // And the challenge gate now resolves correctly for the new ordering:
     // provider 3 (unsigned) cannot be challenged, provider 4 (signed) can.
     assert_noop!(
-        StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(5), bucket_id, 3, 0, 0),
+        StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            3,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0
+            }
+        ),
         Error::<Test>::ProviderNotInSnapshot
     );
     assert_ok!(StorageProvider::challenge_checkpoint(
         RuntimeOrigin::signed(5),
         bucket_id,
         4,
-        0,
-        0,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
     ));
 }
 
@@ -958,8 +1052,10 @@ fn challenge_count_per_deadline_is_capped() {
                 RuntimeOrigin::signed(3),
                 bucket_id,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
         }
         assert_eq!(Challenges::<Test>::iter_prefix(101).count(), cap as usize);
@@ -967,7 +1063,15 @@ fn challenge_count_per_deadline_is_capped() {
 
         // The next challenge for the same deadline is rejected.
         assert_noop!(
-            StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+            StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                bucket_id,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0
+                }
+            ),
             Error::<Test>::TooManyChallengesThisBlock
         );
         // The rejection left the count untouched.
@@ -990,8 +1094,8 @@ mod challenge_tests {
     use frame_support::{traits::Hooks, BoundedVec};
     use sp_core::{Pair, H256};
     use storage_primitives::{
-        blake2_256, BucketSnapshot, ChallengeId, ChallengerStatRecord, EndAction, MerkleProof,
-        MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
+        blake2_256, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
+        EndAction, MerkleProof, MmrLeaf, MmrProof, ProviderRole, ReplicaSyncRecord,
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1062,9 +1166,11 @@ mod challenge_tests {
         // Inject a snapshot directly. Provider 2 is at index 0 in the primaries
         // BoundedVec (only provider in bucket), so bit 0 is set.
         let snapshot = BucketSnapshot {
-            mmr_root,
-            start_seq,
-            leaf_count,
+            commitment: Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
             checkpoint_block: System::block_number(),
             primary_signers: vec![0b0000_0001],
             commitment_nonce: System::block_number(),
@@ -1088,10 +1194,12 @@ mod challenge_tests {
 
             assert_ok!(StorageProvider::challenge_checkpoint(
                 RuntimeOrigin::signed(3),
-                0, // bucket_id
-                2, // provider
-                0, // leaf_index
-                0, // chunk_index
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Challenge stored at deadline = block(1) + ChallengeTimeout(100) = 101, index 0.
@@ -1118,7 +1226,15 @@ mod challenge_tests {
             let bucket_id = setup_agreement(2, 1, 100, 100);
 
             assert_noop!(
-                StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), bucket_id, 2, 0, 0),
+                StorageProvider::challenge_checkpoint(
+                    RuntimeOrigin::signed(3),
+                    bucket_id,
+                    2,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0
+                    }
+                ),
                 Error::<Test>::NoSnapshot
             );
         });
@@ -1133,7 +1249,15 @@ mod challenge_tests {
 
             // Provider 5 is not registered / not in the bucket.
             assert_noop!(
-                StorageProvider::challenge_checkpoint(RuntimeOrigin::signed(3), 0, 5, 0, 0),
+                StorageProvider::challenge_checkpoint(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    5,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0
+                    }
+                ),
                 Error::<Test>::ProviderNotInSnapshot
             );
         });
@@ -1155,8 +1279,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             let challenge_id = ChallengeId {
                 deadline: 101u64,
@@ -1219,8 +1345,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Account 4 is not the challenged provider.
@@ -1256,8 +1384,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Bogus chunk proof — extra sibling won't recombine to the data root.
@@ -1298,8 +1428,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Construct an MMR proof for a different leaf — its bagged root
@@ -1349,8 +1481,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                5,
-                0,
+                ChunkLocation {
+                    leaf_index: 5,
+                    chunk_index: 0,
+                },
             ));
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
@@ -1378,8 +1512,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Bump snapshot to cover seq 0..10 — the challenged seq 0 is now
@@ -1387,9 +1523,11 @@ mod challenge_tests {
             Buckets::<Test>::mutate(0u64, |bucket| {
                 let bucket = bucket.as_mut().unwrap();
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0x77),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0x77),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
                     commitment_nonce: 1,
@@ -1427,8 +1565,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
@@ -1459,8 +1599,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Advance the snapshot: new root (so (a) passes) but start_seq
@@ -1469,9 +1611,11 @@ mod challenge_tests {
             Buckets::<Test>::mutate(0u64, |bucket| {
                 let bucket = bucket.as_mut().unwrap();
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0x77),
-                    start_seq: 5,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0x77),
+                        start_seq: 5,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0b0000_0001],
                     commitment_nonce: 1,
@@ -1503,8 +1647,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Walk forward one block past the deadline. (Don't invoke pallet
@@ -1547,8 +1693,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(Balances::reserved_balance(3), 100);
 
@@ -1632,9 +1780,12 @@ mod challenge_tests {
                     sync_price: 1,
                     min_sync_interval: 0,
                     last_sync: Some(ReplicaSyncRecord {
-                        mmr_root: last_root,
-                        start_seq: 7, // commit 4: replica's challenge_replica now uses this
-                        leaf_count: 3,
+                        // commit 4: replica's challenge_replica now uses start_seq
+                        commitment: Commitment {
+                            mmr_root: last_root,
+                            start_seq: 7,
+                            leaf_count: 3,
+                        },
                         block: 1,
                     }),
                 },
@@ -1651,10 +1802,12 @@ mod challenge_tests {
 
             assert_ok!(StorageProvider::challenge_replica(
                 RuntimeOrigin::signed(3),
-                0, // bucket
-                4, // replica provider
-                0, // leaf
-                0, // chunk
+                0,
+                4,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             let challenge = Challenges::<Test>::get(101, 0).expect("created");
@@ -1675,9 +1828,11 @@ mod challenge_tests {
                 StorageProvider::challenge_replica(
                     RuntimeOrigin::signed(3),
                     0,
-                    2, // primary
-                    0,
-                    0,
+                    2,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0,
+                    },
                 ),
                 Error::<Test>::NotReplica
             );
@@ -1706,14 +1861,18 @@ mod challenge_tests {
             assert_noop!(
                 StorageProvider::challenge_offchain(
                     RuntimeOrigin::signed(3),
-                    0, // bucket_id
-                    2, // provider
-                    mmr_root,
-                    0, // start_seq
-                    1, // leaf_count
-                    0, // leaf_index
-                    0, // chunk_index
-                    1, // nonce — block 1 is 499 blocks behind, > MaxNonceAge=200
+                    0,
+                    2,
+                    Commitment {
+                        mmr_root,
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0,
+                    },
+                    1,
                     dummy_sig,
                 ),
                 Error::<Test>::CommitmentNonceTooOld
@@ -1737,12 +1896,16 @@ mod challenge_tests {
                     RuntimeOrigin::signed(3),
                     0,
                     2,
-                    mmr_root,
-                    0,
-                    1,
-                    0,
-                    0,
-                    9999, // nonce in the future
+                    Commitment {
+                        mmr_root,
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0,
+                    },
+                    9999,
                     dummy_sig,
                 ),
                 Error::<Test>::CommitmentNonceTooOld
@@ -1769,11 +1932,13 @@ mod challenge_tests {
             assert_noop!(
                 StorageProvider::checkpoint(
                     RuntimeOrigin::signed(1),
-                    0, // bucket
-                    H256::zero(),
-                    0, // start_seq
-                    0, // leaf_count
-                    1, // stale nonce
+                    0,
+                    Commitment {
+                        mmr_root: H256::zero(),
+                        start_seq: 0,
+                        leaf_count: 0,
+                    },
+                    1,
                     sigs,
                 ),
                 Error::<Test>::CommitmentNonceTooOld
@@ -1814,7 +1979,15 @@ mod challenge_tests {
             StorageAgreements::<Test>::insert(bucket_id, 4u64, replica_agreement);
 
             assert_noop!(
-                StorageProvider::challenge_replica(RuntimeOrigin::signed(3), bucket_id, 4, 0, 0,),
+                StorageProvider::challenge_replica(
+                    RuntimeOrigin::signed(3),
+                    bucket_id,
+                    4,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0
+                    }
+                ),
                 Error::<Test>::InvalidSyncRoot
             );
         });
@@ -1839,8 +2012,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             let stats = ChallengerStats::<Test>::get(3);
             assert_eq!(stats.total_challenges, 1);
@@ -1860,8 +2035,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
@@ -1892,8 +2069,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             advance_to(102);
             let stats = ChallengerStats::<Test>::get(3);
@@ -1914,8 +2093,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             let bad_proof = MerkleProof {
                 siblings: vec![H256::repeat_byte(0xab)],
@@ -1954,7 +2135,13 @@ mod challenge_tests {
     ) -> sp_runtime::MultiSignature {
         let pair = provider_signer(provider);
         let payload = storage_primitives::CommitmentPayload::new(
-            bucket_id, mmr_root, start_seq, leaf_count, nonce,
+            bucket_id,
+            Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
+            nonce,
         );
         // `verify_signature` checks the raw encoded payload (sr25519 hashes
         // internally), so sign the encoding directly — no extra blake2 round.
@@ -1977,8 +2164,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
@@ -2014,8 +2203,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
@@ -2056,8 +2247,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
@@ -2093,12 +2286,16 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                mmr_root,
-                0, // start_seq
-                1, // leaf_count
-                0, // leaf_index
-                0, // chunk_index
-                5, // nonce
+                Commitment {
+                    mmr_root,
+                    start_seq: 0,
+                    leaf_count: 1,
+                },
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+                5,
                 sig,
             ));
 
@@ -2112,11 +2309,15 @@ mod challenge_tests {
                     RuntimeOrigin::signed(3),
                     0,
                     2,
-                    mmr_root,
-                    0,
-                    1,
-                    0,
-                    0,
+                    Commitment {
+                        mmr_root,
+                        start_seq: 0,
+                        leaf_count: 1,
+                    },
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0,
+                    },
                     101,
                     dummy,
                 ),
@@ -2153,9 +2354,11 @@ mod challenge_tests {
                     sync_price: 1,
                     min_sync_interval: 0,
                     last_sync: Some(ReplicaSyncRecord {
-                        mmr_root: H256::repeat_byte(0xAB),
-                        start_seq: 0,
-                        leaf_count: 10,
+                        commitment: Commitment {
+                            mmr_root: H256::repeat_byte(0xAB),
+                            start_seq: 0,
+                            leaf_count: 10,
+                        },
                         block: 1u64,
                     }),
                 },
@@ -2169,14 +2372,24 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 bucket_id,
                 4,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // At expiry (block 50 == expires_at): rejected.
             System::set_block_number(50);
             assert_noop!(
-                StorageProvider::challenge_replica(RuntimeOrigin::signed(3), bucket_id, 4, 0, 0),
+                StorageProvider::challenge_replica(
+                    RuntimeOrigin::signed(3),
+                    bucket_id,
+                    4,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0
+                    }
+                ),
                 Error::<Test>::AgreementExpired
             );
         });
@@ -2199,8 +2412,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Early termination by admin while the challenge is pending: blocked.
@@ -2250,8 +2465,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
 
             // Move past expiry (101) + SettlementTimeout (50) = 151 so the
@@ -2285,8 +2502,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
@@ -2326,8 +2545,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
 
@@ -2368,8 +2589,10 @@ mod challenge_tests {
                 RuntimeOrigin::signed(3),
                 0,
                 2,
-                0,
-                0,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
             ));
             assert_eq!(PendingChallenges::<Test>::get(2), 1);
 
