@@ -33,3 +33,8 @@ resolc --combined-json abi,bin -O3 --overwrite -o "$BUILD_DIR" \
 
 node "$SCRIPT_DIR/extract.mjs" "$BUILD_DIR/combined.json" "Photos.sol:Photos" "$OUT"
 echo "Wrote $OUT"
+
+# Regenerate the tracked, viem-typed ABI the UI imports from the compiled artifact.
+ABI_TS="$APP_DIR/src/contract/photos-abi.ts"
+node "$SCRIPT_DIR/gen-abi-ts.mjs" "$OUT" "$ABI_TS"
+echo "Wrote $ABI_TS"
