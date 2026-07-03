@@ -380,6 +380,11 @@ pub struct BucketSnapshot<BlockNumber> {
     /// indices are stable within a checkpoint; if it changes between checkpoints
     /// the bitfield is regenerated at the next checkpoint.
     pub primary_signers: Vec<u8>,
+    /// The `nonce` value from the `CommitmentPayload` that the original
+    /// signers signed. Required by `extend_checkpoint` so a late-arriving
+    /// signature can be verified against the same payload the initial
+    /// signers committed to.
+    pub commitment_nonce: u64,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // Destructive writes (new MMR that allows pruning old) must set start_seq >= old_start_seq + old_leaf_count
@@ -591,9 +596,9 @@ Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 - `CommitmentPayload { version, bucket_id, commitment, nonce }` — what
   providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
   `challenge_offchain` (`commitment: Commitment` is defined in [Data
-  Structures](#data-structures)). For `challenge_offchain` the provider signs
-  with `leaf_count = 0` so the signature is reusable as the off-chain
-  commitment.
+  Structures](#data-structures)). For `challenge_offchain` the challenger
+  passes the signed `commitment` through unchanged so the pallet's payload
+  reconstruction matches the signature.
 - `CheckpointProposal { version, bucket_id, commitment, window }` —
   what providers sign for `provider_checkpoint`. The `window` field prevents
   cross-window replay.
@@ -1381,7 +1386,7 @@ impl<T: Config> Pallet<T> {
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
+        additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -1696,6 +1701,10 @@ pub enum ChallengeResponse<T: Config> {
     Deleted {
         new_mmr_root: H256,
         new_start_seq: u64,
+        /// Block at which the admin signed the deletion commitment. Used as
+        /// the `nonce` in `CommitmentPayload` and recency-checked by the
+        /// pallet to prevent signature replay.
+        nonce: u64,
         admin: T::AccountId,
         admin_signature: Signature,
     },
@@ -1821,15 +1830,18 @@ POST /commit
 Request:
 {
   "bucket_id": "0x1234...",
-  "data_roots": ["0xroot1...", "0xroot2..."]  // roots to add to MMR
+  "data_roots": ["0xroot1...", "0xroot2..."],  // roots to add to MMR
+  "nonce": 12345  // CommitmentPayload nonce (block at expected submission)
 }
 
 Response (200 OK):
 {
   "mmr_root": "0xfed...",
   "start_seq": 0,
+  "leaf_count": 7,  // number of leaves after the commit
   "leaf_indices": [5, 6],  // indices assigned to each data_root
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345  // echo of the nonce the provider signed over
 }
 
 Response (400 Bad Request):
@@ -1885,7 +1897,7 @@ Response (404 Not Found):
 
 Get Commitment (for challenge_offchain)
 ───────────────────────────────────────
-GET /commitment?bucket_id=1234
+GET /commitment?bucket_id=1234&nonce=12345
 
 Response:
 {
@@ -1893,17 +1905,18 @@ Response:
   "mmr_root": "0xfed...",
   "start_seq": 0,
   "leaf_count": 42,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
-Note: The returned signature covers a `CommitmentPayload` where `leaf_count`
-is set to 0, matching the pallet's `challenge_offchain` verification. Use
-`/checkpoint-signature` if you need a signature over the real `leaf_count`
-for the on-chain `checkpoint` extrinsic.
+Note: The returned signature covers a `CommitmentPayload` with the real
+`leaf_count`; `challenge_offchain` reconstructs the payload from the
+`commitment` the challenger passes, so the same values returned here must be
+passed on-chain unchanged.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
-GET /checkpoint-signature?bucket_id=1234
+GET /checkpoint-signature?bucket_id=1234&nonce=12345
 
 Response:
 {
@@ -1911,11 +1924,12 @@ Response:
   "mmr_root": "0xfed...",
   "start_seq": 0,
   "leaf_count": 42,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
-Note: Unlike `/commitment`, this signs the payload with the real
-`leaf_count` so the signature can be used as part of the
+Note: Signs the same payload as `/commitment`; kept as a separate endpoint
+for the checkpoint workflow, where the signature goes into the
 `checkpoint`/`extend_checkpoint` signatures BoundedVec.
 
 Get MMR Proof
@@ -1951,7 +1965,8 @@ Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
 Request:
 {
   "bucket_id": "0x1234...",
-  "new_start_seq": 10
+  "new_start_seq": 10,
+  "nonce": 12345  // CommitmentPayload nonce for the post-deletion signature
 }
 
 Response (200 OK):
@@ -1959,7 +1974,8 @@ Response (200 OK):
   "mmr_root": "0xnew...",
   "start_seq": 10,
   "leaf_count": 5,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
 Response (400 Bad Request):
@@ -2308,9 +2324,7 @@ pub struct CommitmentPayload {
     /// Reference to on-chain bucket. Mandatory — there is no anonymous /
     /// "best-effort" commitment mode in the current implementation.
     pub bucket_id: BucketId,
-    /// MMR commitment being signed over. `leaf_count` is conventionally 0
-    /// when the signature is produced for `challenge_offchain`, so the same
-    /// signature is reusable across multiple challenged leaf indices.
+    /// MMR commitment being signed over
     pub commitment: Commitment,
     /// Replay-protection nonce — block number at the time the signer signed.
     pub nonce: u64,

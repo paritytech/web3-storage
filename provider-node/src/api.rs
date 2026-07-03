@@ -487,9 +487,9 @@ async fn get_commitment(
 
 /// Return a checkpoint-compatible signature (signs with real leaf_count).
 ///
-/// Unlike `/commitment` which signs with leaf_count=0 for challenge_offchain,
-/// this endpoint signs with the actual leaf_count so the signature can be used
-/// in the on-chain `checkpoint` extrinsic.
+/// Signs the same payload as `/commitment` (both use the real leaf_count now
+/// that the pallet honours it); kept as a separate endpoint for the checkpoint
+/// workflow, where the signature goes into the on-chain `checkpoint` call.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
