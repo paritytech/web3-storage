@@ -123,7 +123,7 @@ jobs:
         run: cargo install just --locked || true
 
       - name: Cache Polkadot SDK binaries
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         id: sdk-cache
         with:
           path: |
@@ -139,7 +139,7 @@ jobs:
         run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
 
       - name: Cache zombienet
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         id: zombienet-cache
         with:
           path: .bin/zombienet
@@ -269,7 +269,7 @@ jobs:
         run: cargo install just --locked || true
 
       - name: Cache Polkadot SDK binaries
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         id: sdk-cache
         with:
           path: |
@@ -391,7 +391,7 @@ jobs:
 
       - name: Cache JS coverage baseline (main/dev only)
         if: always() && github.event_name == 'push'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: /tmp/coverage/report/coverage-summary.json
           key: coverage-baseline-${{ github.sha }}
@@ -405,7 +405,7 @@ jobs:
 
       - name: Save latest JS coverage baseline (main/dev only)
         if: always() && github.event_name == 'push'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: /tmp/coverage/report/coverage-summary.json
           key: coverage-baseline-latest
@@ -458,7 +458,7 @@ jobs:
         run: cargo install just --locked || true
 
       - name: Cache Polkadot SDK binaries
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         id: sdk-cache
         with:
           path: |
@@ -625,7 +625,7 @@ jobs:
         run: cargo install just --locked || true
 
       - name: Cache Polkadot SDK binaries
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         id: sdk-cache
         with:
           path: |
@@ -738,7 +738,7 @@ jobs:
     steps:
       - name: Restore coverage baseline
         id: baseline
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: /tmp/coverage/report/coverage-summary.json
           key: coverage-baseline-latest

@@ -8,7 +8,7 @@ use frame_support::{
 use frame_system::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{Saturating, Zero};
-use storage_primitives::{BucketId, ChallengeId, SlashReason};
+use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn create_challenge(
@@ -37,8 +37,10 @@ impl<T: Config> Pallet<T> {
             challenger: challenger.clone(),
             mmr_root,
             start_seq,
-            leaf_index,
-            chunk_index,
+            target: ChunkLocation {
+                leaf_index,
+                chunk_index,
+            },
             deposit,
         };
 

@@ -29,7 +29,7 @@ impl<T: Config> Pallet<T> {
     ) -> Result<(u8, H256), DispatchError> {
         // Check current snapshot first
         if let (Some(snapshot), Some(root)) = (&bucket.snapshot, roots[0]) {
-            if snapshot.mmr_root == root {
+            if snapshot.commitment.mmr_root == root {
                 return Ok((0, root));
             }
         }

@@ -11,6 +11,7 @@
 
 use sp_core::H256;
 use sp_runtime::AccountId32;
+use storage_primitives::Commitment;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef};
 
 /// Read a named field as a `u64` (decoded from the underlying `u128`).
@@ -36,6 +37,23 @@ pub fn field_account(fields: &Composite<u32>, name: &str) -> Option<AccountId32>
 /// Read a named field and decode it as an [`H256`].
 pub fn field_h256(fields: &Composite<u32>, name: &str) -> Option<H256> {
     decode_h256(fields.at(name)?)
+}
+
+/// Read a named field and decode it as a [`Commitment`].
+///
+/// `Commitment` is a named-struct field (`mmr_root`/`start_seq`/`leaf_count`),
+/// so subxt decodes it as a nested `Composite::Named` — pull that inner
+/// composite out and reuse the flat-field decoders on it.
+pub fn field_commitment(fields: &Composite<u32>, name: &str) -> Option<Commitment> {
+    let inner = match &fields.at(name)?.value {
+        ValueDef::Composite(c) => c,
+        _ => return None,
+    };
+    Some(Commitment {
+        mmr_root: field_h256(inner, "mmr_root")?,
+        start_seq: field_u64(inner, "start_seq")?,
+        leaf_count: field_u64(inner, "leaf_count")?,
+    })
 }
 
 /// Read a named field as a `Vec<AccountId32>`. Missing or unparseable fields yield an
@@ -145,5 +163,85 @@ pub fn collect_le_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> us
             pos
         }
         _ => offset,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn u64_leaf(n: u64) -> Value<u32> {
+        Value {
+            value: ValueDef::Primitive(Primitive::u128(n as u128)),
+            context: 0,
+        }
+    }
+
+    /// `H256`/`AccountId32` decode as a newtype wrapping a fixed-size byte array,
+    /// i.e. `Composite::Unnamed([Composite::Unnamed([byte × 32])])` — see
+    /// `decode_h256`'s doc comment.
+    fn h256_leaf(byte: u8) -> Value<u32> {
+        let bytes = Composite::Unnamed((0..32).map(|_| u64_leaf(byte as u64)).collect());
+        Value {
+            value: ValueDef::Composite(Composite::Unnamed(vec![Value {
+                value: ValueDef::Composite(bytes),
+                context: 0,
+            }])),
+            context: 0,
+        }
+    }
+
+    fn commitment_leaf(mmr_root_byte: u8, start_seq: u64, leaf_count: u64) -> Value<u32> {
+        Value {
+            value: ValueDef::Composite(Composite::named([
+                ("mmr_root", h256_leaf(mmr_root_byte)),
+                ("start_seq", u64_leaf(start_seq)),
+                ("leaf_count", u64_leaf(leaf_count)),
+            ])),
+            context: 0,
+        }
+    }
+
+    #[test]
+    fn field_commitment_decodes_nested_named_composite() {
+        let fields = Composite::named([("commitment", commitment_leaf(0xAB, 10, 5))]);
+
+        let commitment = field_commitment(&fields, "commitment").expect("decodes");
+
+        assert_eq!(commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(commitment.start_seq, 10);
+        assert_eq!(commitment.leaf_count, 5);
+    }
+
+    #[test]
+    fn field_commitment_none_when_field_missing() {
+        let fields: Composite<u32> = Composite::named(Vec::<(String, Value<u32>)>::new());
+
+        assert!(field_commitment(&fields, "commitment").is_none());
+    }
+
+    #[test]
+    fn field_commitment_none_when_not_a_composite() {
+        // A same-named field that isn't a composite (e.g. a bare primitive)
+        // must not be mistaken for a `Commitment`.
+        let fields = Composite::named([("commitment", u64_leaf(42))]);
+
+        assert!(field_commitment(&fields, "commitment").is_none());
+    }
+
+    #[test]
+    fn field_commitment_none_when_inner_field_missing() {
+        // A commitment composite missing one of the three expected fields
+        // (here: no `leaf_count`) must fail closed, not default to 0.
+        let incomplete = Value {
+            value: ValueDef::Composite(Composite::named([
+                ("mmr_root", h256_leaf(0xAB)),
+                ("start_seq", u64_leaf(10)),
+            ])),
+            context: 0,
+        };
+        let fields = Composite::named([("commitment", incomplete)]);
+
+        assert!(field_commitment(&fields, "commitment").is_none());
     }
 }

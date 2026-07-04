@@ -18,8 +18,8 @@ fn challenge_to_response<T: Config>(
         challenger: c.challenger.encode(),
         mmr_root: c.mmr_root,
         start_seq: c.start_seq,
-        leaf_index: c.leaf_index,
-        chunk_index: c.chunk_index,
+        leaf_index: c.target.leaf_index,
+        chunk_index: c.target.chunk_index,
         deadline: deadline.saturated_into(),
         index,
         deposit: c.deposit.saturated_into::<u128>(),
@@ -52,9 +52,7 @@ fn agreement_to_response<T: Config>(
                 sync_price: sync_price.saturated_into::<u128>(),
                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
                 last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                    mmr_root: r.mmr_root,
-                    start_seq: r.start_seq,
-                    leaf_count: r.leaf_count,
+                    commitment: r.commitment,
                     block: r.block.saturated_into::<u32>(),
                 }),
             },
@@ -170,9 +168,7 @@ impl<T: Config> Pallet<T> {
                 .map(|p| p.encode())
                 .collect(),
             snapshot: bucket.snapshot.map(|s| BucketSnapshot {
-                mmr_root: s.mmr_root,
-                start_seq: s.start_seq,
-                leaf_count: s.leaf_count,
+                commitment: s.commitment,
                 checkpoint_block: s.checkpoint_block.saturated_into::<u32>(),
                 primary_signers: s.primary_signers.clone(),
                 commitment_nonce: s.commitment_nonce,

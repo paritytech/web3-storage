@@ -108,12 +108,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReplicaSyncRecord<BlockNumber> {
-    /// MMR root the replica confirmed sync to.
-    pub mmr_root: H256,
-    /// First sequence number covered by that root.
-    pub start_seq: u64,
-    /// Number of leaves under that root.
-    pub leaf_count: u64,
+    /// MMR commitment the replica confirmed sync to (root + covered range).
+    pub commitment: Commitment,
     /// Block at which `confirm_replica_sync` was executed.
     pub block: BlockNumber,
 }
@@ -300,6 +296,75 @@ pub struct MmrProof {
 // Commitment Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The `(mmr_root, start_seq, leaf_count)` triplet that identifies an MMR
+/// commitment over a contiguous range of leaves.
+///
+/// One reusable type instead of three loose fields: it is a field group inside
+/// [`CommitmentPayload`], [`BucketSnapshot`], and [`ReplicaSyncRecord`], and it
+/// is the single argument the checkpoint/challenge extrinsics take in place of
+/// passing `mmr_root`, `start_seq`, and `leaf_count` separately.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+    Default,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Commitment {
+    /// Root of the MMR containing all data_roots.
+    pub mmr_root: H256,
+    /// Sequence number of the first leaf covered by this commitment.
+    pub start_seq: u64,
+    /// Number of leaves covered by this commitment.
+    pub leaf_count: u64,
+}
+
+impl Commitment {
+    /// Get the canonical range end (exclusive).
+    pub fn range_end(&self) -> u64 {
+        self.start_seq.saturating_add(self.leaf_count)
+    }
+
+    /// Check if a sequence number is within this commitment's range.
+    pub fn contains_seq(&self, seq: u64) -> bool {
+        seq >= self.start_seq && seq < self.range_end()
+    }
+}
+
+/// The `(leaf_index, chunk_index)` pair identifying the exact chunk a challenge
+/// targets: which leaf within the MMR, and which chunk within that leaf's data.
+///
+/// A position, distinct from [`Commitment`] (which is a *range*) — grouped so
+/// the challenge extrinsics and the stored `Challenge` pass one value instead
+/// of two loose `u64`s.
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    TypeInfo,
+    MaxEncodedLen,
+    Debug,
+    Default,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ChunkLocation {
+    /// Index of the challenged leaf within the MMR.
+    pub leaf_index: u64,
+    /// Index of the challenged chunk within the leaf's data.
+    pub chunk_index: u64,
+}
+
 /// Payload that providers sign to commit to bucket state.
 ///
 /// The `nonce` field binds each signature to a specific moment in time —
@@ -316,12 +381,8 @@ pub struct CommitmentPayload {
     pub version: u8,
     /// Reference to on-chain bucket
     pub bucket_id: BucketId,
-    /// Root of MMR containing all data_roots
-    pub mmr_root: H256,
-    /// Sequence number of first leaf in this MMR
-    pub start_seq: u64,
-    /// Number of leaves in this MMR
-    pub leaf_count: u64,
+    /// MMR commitment being signed over (root + covered leaf range).
+    pub commitment: Commitment,
     /// Replay-protection nonce — block number at the time the signer signed.
     pub nonce: u64,
 }
@@ -333,31 +394,23 @@ impl CommitmentPayload {
     pub const CURRENT_VERSION: u8 = 2;
 
     /// Create a new commitment payload
-    pub fn new(
-        bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        nonce: u64,
-    ) -> Self {
+    pub fn new(bucket_id: BucketId, commitment: Commitment, nonce: u64) -> Self {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
-            mmr_root,
-            start_seq,
-            leaf_count,
+            commitment,
             nonce,
         }
     }
 
     /// Get the canonical range end (exclusive)
     pub fn range_end(&self) -> u64 {
-        self.start_seq.saturating_add(self.leaf_count)
+        self.commitment.range_end()
     }
 
     /// Check if a sequence number is within this commitment's range
     pub fn contains_seq(&self, seq: u64) -> bool {
-        seq >= self.start_seq && seq < self.range_end()
+        self.commitment.contains_seq(seq)
     }
 }
 
@@ -369,12 +422,8 @@ impl CommitmentPayload {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BucketSnapshot<BlockNumber> {
-    /// Canonical MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// Number of leaves in the MMR
-    pub leaf_count: u64,
+    /// Canonical MMR commitment at this checkpoint (root + covered range).
+    pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
@@ -391,12 +440,12 @@ pub struct BucketSnapshot<BlockNumber> {
 impl<BlockNumber> BucketSnapshot<BlockNumber> {
     /// Get the canonical range end (exclusive)
     pub fn range_end(&self) -> u64 {
-        self.start_seq.saturating_add(self.leaf_count)
+        self.commitment.range_end()
     }
 
     /// Check if a sequence number is within this snapshot's range
     pub fn contains_seq(&self, seq: u64) -> bool {
-        seq >= self.start_seq && seq < self.range_end()
+        self.commitment.contains_seq(seq)
     }
 
     /// Check if a provider at the given index has signed this snapshot
@@ -485,12 +534,8 @@ pub struct CheckpointProposal {
     pub version: u8,
     /// Reference to on-chain bucket
     pub bucket_id: BucketId,
-    /// Root of MMR containing all data_roots
-    pub mmr_root: H256,
-    /// Sequence number of first leaf in this MMR
-    pub start_seq: u64,
-    /// Number of leaves in this MMR
-    pub leaf_count: u64,
+    /// MMR commitment being proposed (root + covered leaf range).
+    pub commitment: Commitment,
     /// Window number this proposal is for (prevents replay)
     pub window: u64,
 }
@@ -510,21 +555,23 @@ impl CheckpointProposal {
         Self {
             version: Self::CURRENT_VERSION,
             bucket_id,
-            mmr_root,
-            start_seq,
-            leaf_count,
+            commitment: Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            },
             window,
         }
     }
 
     /// Get the canonical range end (exclusive)
     pub fn range_end(&self) -> u64 {
-        self.start_seq.saturating_add(self.leaf_count)
+        self.commitment.range_end()
     }
 
     /// Check if a sequence number is within this proposal's range
     pub fn contains_seq(&self, seq: u64) -> bool {
-        seq >= self.start_seq && seq < self.range_end()
+        self.commitment.contains_seq(seq)
     }
 }
 
@@ -623,7 +670,15 @@ mod tests {
 
     #[test]
     fn test_commitment_payload_range() {
-        let payload = CommitmentPayload::new(1, H256::zero(), 10, 5, 42);
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 10,
+                leaf_count: 5,
+            },
+            42,
+        );
 
         assert_eq!(payload.range_end(), 15);
         assert!(!payload.contains_seq(9));
@@ -632,11 +687,35 @@ mod tests {
         assert!(!payload.contains_seq(15));
     }
 
+    /// Embedding `Commitment` in place of the loose
+    /// `(mmr_root, start_seq, leaf_count)` triplet must be byte-identical to
+    /// the previous flat layout, so existing signatures still verify and stored
+    /// values need no migration. Pin the exact encoding to guard that.
+    #[test]
+    fn commitment_payload_encoding_is_byte_identical() {
+        let payload = CommitmentPayload::new(
+            1,
+            Commitment {
+                mmr_root: H256::zero(),
+                start_seq: 10,
+                leaf_count: 5,
+            },
+            42,
+        );
+
+        let mut expected = alloc::vec![CommitmentPayload::CURRENT_VERSION]; // version: u8
+        expected.extend_from_slice(&1u64.to_le_bytes()); // bucket_id
+        expected.extend_from_slice(&[0u8; 32]); // mmr_root (H256::zero)
+        expected.extend_from_slice(&10u64.to_le_bytes()); // start_seq
+        expected.extend_from_slice(&5u64.to_le_bytes()); // leaf_count
+        expected.extend_from_slice(&42u64.to_le_bytes()); // nonce
+
+        assert_eq!(payload.encode(), expected);
+    }
+
     fn snapshot_with_signers(primary_signers: Vec<u8>) -> BucketSnapshot<u32> {
         BucketSnapshot {
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
+            commitment: Commitment::default(),
             checkpoint_block: 0,
             primary_signers,
             commitment_nonce: 0,

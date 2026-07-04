@@ -214,13 +214,13 @@ export async function fetchChallengeProof(
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      leaf_index: challenge.leaf_index,
+      leaf_index: challenge.target.leaf_index,
     },
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
-      chunk_index: challenge.chunk_index,
+      chunk_index: challenge.target.chunk_index,
     },
   });
 
