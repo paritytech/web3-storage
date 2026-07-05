@@ -14,7 +14,7 @@ use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventP
 use crate::provider_node_request_scheme::AgreementTermsOf;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::Bucket;
-use storage_primitives::{BucketId, EndAction, Role};
+use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::runtime_types::pallet_storage_provider::runtime_api as rt_api;
 use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
@@ -451,10 +451,8 @@ impl AdminClient {
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        nonce: u64,
+        commitment: Commitment,
+        nonce: u64, // nonce the providers signed over (echoed from their commitment)
         signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
         // TODO: replace `nonce`, `signatures` with API call
@@ -471,14 +469,7 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(
-            bucket_id,
-            mmr_root,
-            start_seq,
-            leaf_count,
-            nonce,
-            parsed_sigs,
-        );
+        let tx = extrinsics::checkpoint(bucket_id, commitment, nonce, parsed_sigs);
 
         let tx_progress = chain
             .api()
@@ -495,7 +486,7 @@ impl AdminClient {
         tracing::info!(
             "Checkpoint submitted for bucket {} with MMR root 0x{}",
             bucket_id,
-            hex::encode(mmr_root.as_bytes())
+            hex::encode(commitment.mmr_root.as_bytes())
         );
         Ok(())
     }

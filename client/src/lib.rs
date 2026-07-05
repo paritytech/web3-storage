@@ -84,7 +84,7 @@
 //! ### For Data Integrity Monitors
 //! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
 //! ```no_run
-//! use storage_client::{ChallengerClient, ClientConfig};
+//! use storage_client::{ChallengerClient, ChunkLocation, ClientConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
@@ -93,8 +93,7 @@
 //! let challenge_id = client.challenge_checkpoint(
 //!     1, // bucket_id
 //!     "5FHneW46...".to_string(), // provider
-//!     5, // leaf_index
-//!     123, // chunk_index
+//!     ChunkLocation { leaf_index: 5, chunk_index: 123 },
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -146,6 +145,11 @@ pub use provider_node_request_scheme::{
 };
 pub use storage_user::StorageUserClient;
 pub use verification::ClientVerifier;
+
+// Commitment / ChunkLocation appear in the public challenge & checkpoint method
+// signatures, so re-export them rather than make callers depend on
+// storage_primitives directly.
+pub use storage_primitives::{ChunkLocation, Commitment};
 
 // Encryption re-exports
 pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};

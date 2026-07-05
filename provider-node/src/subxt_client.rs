@@ -18,7 +18,7 @@ use crate::replica_sync_coordinator::{
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
 use storage_client::substrate::{extrinsics, storage, SubstrateClient};
-use storage_primitives::{BucketId, ReplicaSyncRecord};
+use storage_primitives::{BucketId, Commitment, ReplicaSyncRecord};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;
@@ -224,9 +224,11 @@ impl SubxtChainClient {
                 sync_price: *sync_price,
                 min_sync_interval: *min_sync_interval as u64,
                 last_sync: last_sync.as_ref().map(|r| ReplicaSyncRecord {
-                    mmr_root: r.mmr_root,
-                    start_seq: r.start_seq,
-                    leaf_count: r.leaf_count,
+                    commitment: storage_primitives::Commitment {
+                        mmr_root: r.commitment.mmr_root,
+                        start_seq: r.commitment.start_seq,
+                        leaf_count: r.commitment.leaf_count,
+                    },
                     block: r.block as u64,
                 }),
             }),
@@ -277,14 +279,12 @@ impl CheckpointChainClient for SubxtChainClient {
             sig_vec.push((account_id, sig_bytes));
         }
 
-        let tx = extrinsics::provider_checkpoint(
-            duty.bucket_id,
-            duty.mmr_root,
-            duty.start_seq,
-            duty.leaf_count,
-            duty.window,
-            sig_vec,
-        );
+        let commitment = Commitment {
+            mmr_root: duty.mmr_root,
+            start_seq: duty.start_seq,
+            leaf_count: duty.leaf_count,
+        };
+        let tx = extrinsics::provider_checkpoint(duty.bucket_id, commitment, duty.window, sig_vec);
 
         let signer = self
             .client
@@ -376,9 +376,11 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                             sync_price,
                             min_sync_interval: min_sync_interval as u64,
                             last_sync: last_sync.map(|r| ReplicaSyncRecord {
-                                mmr_root: r.mmr_root,
-                                start_seq: r.start_seq,
-                                leaf_count: r.leaf_count,
+                                commitment: storage_primitives::Commitment {
+                                    mmr_root: r.commitment.mmr_root,
+                                    start_seq: r.commitment.start_seq,
+                                    leaf_count: r.commitment.leaf_count,
+                                },
                                 block: r.block as u64,
                             }),
                         });
@@ -405,8 +407,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         match storage_api.fetch(&storage::bucket_info(bucket_id)).await {
             Ok(Some(bucket)) => match bucket.snapshot {
                 Some(snap) => Ok(BucketSnapshot {
-                    mmr_root: snap.mmr_root,
-                    leaf_count: snap.leaf_count,
+                    mmr_root: snap.commitment.mmr_root,
+                    leaf_count: snap.commitment.leaf_count,
                 }),
                 None => Ok(BucketSnapshot {
                     mmr_root: H256::zero(),

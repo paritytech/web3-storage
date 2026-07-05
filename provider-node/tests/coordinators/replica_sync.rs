@@ -6,7 +6,7 @@ use super::{test_state, ALICE_SS58};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{BucketId, ReplicaSyncRecord};
+use storage_primitives::{BucketId, Commitment, ReplicaSyncRecord};
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
     Error, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
@@ -302,9 +302,11 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
         sync_price: 100,
         min_sync_interval: 200,
         last_sync: Some(ReplicaSyncRecord {
-            mmr_root: H256::repeat_byte(0xBB),
-            start_seq: 0,
-            leaf_count: 5,
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0xBB),
+                start_seq: 0,
+                leaf_count: 5,
+            },
             block: 50,
         }),
     };

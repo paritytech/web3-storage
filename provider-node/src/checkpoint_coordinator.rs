@@ -491,9 +491,9 @@ impl CheckpointCoordinator {
 
         let request = SignProposalRequest {
             bucket_id: proposal.bucket_id,
-            mmr_root: format!("0x{}", hex::encode(proposal.mmr_root.as_bytes())),
-            start_seq: proposal.start_seq,
-            leaf_count: proposal.leaf_count,
+            mmr_root: format!("0x{}", hex::encode(proposal.commitment.mmr_root.as_bytes())),
+            start_seq: proposal.commitment.start_seq,
+            leaf_count: proposal.commitment.leaf_count,
             window: proposal.window,
         };
 

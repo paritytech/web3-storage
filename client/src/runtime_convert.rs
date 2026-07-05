@@ -7,7 +7,7 @@
 //! rather than going through string formatting or re-encoding.
 
 use crate::provider_node_request_scheme::AgreementTermsOf;
-use storage_primitives::{EndAction, MerkleProof, MmrProof, Role};
+use storage_primitives::{ChunkLocation, Commitment, EndAction, MerkleProof, MmrProof, Role};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;
 
@@ -21,6 +21,8 @@ pub type RtChallengeId = rt::storage_primitives::ChallengeId<u32>;
 pub type RtChallengeResponse = rt::pallet_storage_provider::pallet::ChallengeResponse;
 pub type RtMmrProof = rt::storage_primitives::MmrProof;
 pub type RtMerkleProof = rt::storage_primitives::MerkleProof;
+pub type RtChunkLocation = rt::storage_primitives::ChunkLocation;
+pub type RtCommitment = rt::storage_primitives::Commitment;
 pub type BoundedVec<T> = rt::bounded_collections::bounded_vec::BoundedVec<T>;
 
 // ── Client domain → generated runtime_types ────────────────────────────────
@@ -87,6 +89,29 @@ pub fn to_end_action(action: EndAction) -> RtEndAction {
 
 pub fn to_challenge_id(deadline: u32, index: u16) -> RtChallengeId {
     rt::storage_primitives::ChallengeId { deadline, index }
+}
+
+pub fn to_chunk_location(location: ChunkLocation) -> RtChunkLocation {
+    rt::storage_primitives::ChunkLocation {
+        leaf_index: location.leaf_index,
+        chunk_index: location.chunk_index,
+    }
+}
+
+pub fn to_commitment(commitment: &Commitment) -> RtCommitment {
+    rt::storage_primitives::Commitment {
+        mmr_root: commitment.mmr_root,
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
+    }
+}
+
+pub fn from_commitment(commitment: RtCommitment) -> Commitment {
+    Commitment {
+        mmr_root: commitment.mmr_root,
+        start_seq: commitment.start_seq,
+        leaf_count: commitment.leaf_count,
+    }
 }
 
 fn to_merkle_proof_inner(proof: &MerkleProof) -> RtMerkleProof {

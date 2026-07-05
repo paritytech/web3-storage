@@ -1596,10 +1596,9 @@ pub mod api {
                         "bucket_info",
                         types::BucketInfo { bucket_id },
                         [
-                            169u8, 75u8, 220u8, 104u8, 249u8, 62u8, 17u8, 206u8, 182u8, 178u8,
-                            51u8, 162u8, 83u8, 138u8, 155u8, 166u8, 65u8, 99u8, 211u8, 166u8, 43u8,
-                            152u8, 66u8, 145u8, 110u8, 29u8, 227u8, 111u8, 78u8, 104u8, 46u8,
-                            240u8,
+                            108u8, 252u8, 24u8, 93u8, 83u8, 38u8, 147u8, 72u8, 205u8, 95u8, 5u8,
+                            175u8, 95u8, 175u8, 181u8, 1u8, 136u8, 254u8, 161u8, 175u8, 43u8, 5u8,
+                            236u8, 161u8, 5u8, 221u8, 137u8, 21u8, 13u8, 152u8, 74u8, 228u8,
                         ],
                     )
                 }
@@ -1660,10 +1659,9 @@ pub mod api {
                             provider,
                         },
                         [
-                            238u8, 158u8, 59u8, 165u8, 54u8, 170u8, 133u8, 101u8, 56u8, 95u8,
-                            247u8, 77u8, 13u8, 109u8, 83u8, 197u8, 79u8, 215u8, 171u8, 133u8,
-                            219u8, 106u8, 240u8, 94u8, 173u8, 124u8, 173u8, 96u8, 13u8, 195u8,
-                            160u8, 4u8,
+                            54u8, 115u8, 72u8, 52u8, 77u8, 212u8, 24u8, 77u8, 31u8, 216u8, 163u8,
+                            8u8, 223u8, 185u8, 26u8, 78u8, 110u8, 203u8, 140u8, 2u8, 11u8, 135u8,
+                            60u8, 202u8, 238u8, 132u8, 127u8, 103u8, 228u8, 217u8, 232u8, 118u8,
                         ],
                     )
                 }
@@ -1680,10 +1678,9 @@ pub mod api {
                         "bucket_agreements",
                         types::BucketAgreements { bucket_id },
                         [
-                            23u8, 144u8, 46u8, 157u8, 237u8, 122u8, 105u8, 111u8, 67u8, 182u8,
-                            91u8, 52u8, 34u8, 151u8, 57u8, 249u8, 62u8, 39u8, 36u8, 102u8, 147u8,
-                            209u8, 173u8, 98u8, 104u8, 173u8, 8u8, 168u8, 221u8, 172u8, 198u8,
-                            172u8,
+                            39u8, 164u8, 145u8, 254u8, 45u8, 99u8, 175u8, 198u8, 122u8, 211u8, 8u8,
+                            234u8, 91u8, 215u8, 146u8, 220u8, 4u8, 65u8, 100u8, 10u8, 160u8, 58u8,
+                            139u8, 203u8, 220u8, 45u8, 184u8, 150u8, 132u8, 206u8, 195u8, 125u8,
                         ],
                     )
                 }
@@ -1700,9 +1697,9 @@ pub mod api {
                         "provider_agreements",
                         types::ProviderAgreements { provider },
                         [
-                            153u8, 21u8, 190u8, 62u8, 10u8, 103u8, 17u8, 164u8, 125u8, 40u8, 30u8,
-                            9u8, 175u8, 139u8, 178u8, 119u8, 163u8, 37u8, 47u8, 189u8, 139u8, 19u8,
-                            152u8, 210u8, 149u8, 86u8, 196u8, 170u8, 95u8, 90u8, 236u8, 120u8,
+                            196u8, 169u8, 194u8, 163u8, 31u8, 208u8, 207u8, 98u8, 75u8, 88u8, 73u8,
+                            247u8, 32u8, 137u8, 47u8, 133u8, 27u8, 90u8, 189u8, 151u8, 193u8, 64u8,
+                            210u8, 154u8, 210u8, 149u8, 228u8, 25u8, 52u8, 124u8, 25u8, 222u8,
                         ],
                     )
                 }
@@ -2473,9 +2470,10 @@ pub mod api {
                             result_xcms_version,
                         },
                         [
-                            9u8, 40u8, 247u8, 230u8, 149u8, 54u8, 172u8, 51u8, 77u8, 150u8, 103u8,
-                            33u8, 171u8, 193u8, 155u8, 156u8, 51u8, 218u8, 216u8, 0u8, 234u8,
-                            173u8, 214u8, 16u8, 5u8, 38u8, 247u8, 146u8, 18u8, 108u8, 32u8, 119u8,
+                            246u8, 144u8, 31u8, 59u8, 168u8, 201u8, 183u8, 35u8, 156u8, 156u8,
+                            137u8, 127u8, 181u8, 89u8, 232u8, 249u8, 54u8, 30u8, 159u8, 34u8,
+                            195u8, 80u8, 66u8, 191u8, 54u8, 30u8, 249u8, 161u8, 74u8, 85u8, 135u8,
+                            169u8,
                         ],
                     )
                 }
@@ -2496,10 +2494,9 @@ pub mod api {
                             xcm,
                         },
                         [
-                            248u8, 203u8, 115u8, 121u8, 63u8, 205u8, 127u8, 224u8, 123u8, 133u8,
-                            222u8, 38u8, 149u8, 31u8, 164u8, 249u8, 190u8, 99u8, 175u8, 142u8,
-                            220u8, 250u8, 35u8, 158u8, 213u8, 170u8, 132u8, 167u8, 243u8, 220u8,
-                            155u8, 71u8,
+                            27u8, 184u8, 255u8, 67u8, 207u8, 149u8, 14u8, 64u8, 9u8, 89u8, 109u8,
+                            255u8, 60u8, 219u8, 0u8, 154u8, 220u8, 4u8, 48u8, 110u8, 163u8, 219u8,
+                            1u8, 2u8, 164u8, 17u8, 187u8, 103u8, 36u8, 200u8, 99u8, 183u8,
                         ],
                     )
                 }
@@ -4110,9 +4107,9 @@ pub mod api {
             .hash();
         runtime_metadata_hash
             == [
-                197u8, 56u8, 131u8, 110u8, 68u8, 220u8, 13u8, 87u8, 93u8, 187u8, 35u8, 95u8, 196u8,
-                180u8, 182u8, 220u8, 219u8, 167u8, 117u8, 51u8, 216u8, 63u8, 85u8, 114u8, 163u8,
-                232u8, 138u8, 108u8, 192u8, 218u8, 73u8, 236u8,
+                119u8, 245u8, 108u8, 92u8, 5u8, 180u8, 32u8, 70u8, 31u8, 3u8, 203u8, 238u8, 205u8,
+                53u8, 101u8, 61u8, 193u8, 220u8, 73u8, 142u8, 115u8, 107u8, 38u8, 123u8, 121u8,
+                245u8, 69u8, 189u8, 15u8, 96u8, 247u8, 17u8,
             ]
     }
     pub mod system {
@@ -5217,10 +5214,9 @@ pub mod api {
                         "Events",
                         (),
                         [
-                            24u8, 52u8, 49u8, 148u8, 165u8, 32u8, 212u8, 79u8, 160u8, 42u8, 207u8,
-                            63u8, 84u8, 165u8, 231u8, 112u8, 64u8, 162u8, 95u8, 125u8, 249u8,
-                            201u8, 227u8, 55u8, 155u8, 155u8, 35u8, 165u8, 248u8, 213u8, 134u8,
-                            223u8,
+                            38u8, 5u8, 88u8, 184u8, 221u8, 56u8, 133u8, 214u8, 164u8, 23u8, 74u8,
+                            137u8, 97u8, 117u8, 156u8, 98u8, 94u8, 227u8, 11u8, 13u8, 53u8, 238u8,
+                            12u8, 62u8, 58u8, 175u8, 243u8, 239u8, 235u8, 2u8, 68u8, 7u8,
                         ],
                     )
                 }
@@ -8972,10 +8968,9 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            80u8, 206u8, 247u8, 167u8, 176u8, 121u8, 6u8, 159u8, 188u8, 243u8,
-                            229u8, 109u8, 158u8, 92u8, 221u8, 41u8, 73u8, 211u8, 203u8, 165u8,
-                            64u8, 143u8, 43u8, 180u8, 124u8, 57u8, 121u8, 25u8, 193u8, 198u8,
-                            128u8, 93u8,
+                            210u8, 157u8, 95u8, 197u8, 59u8, 38u8, 228u8, 214u8, 99u8, 234u8,
+                            246u8, 190u8, 12u8, 223u8, 38u8, 78u8, 112u8, 161u8, 55u8, 105u8, 14u8,
+                            116u8, 116u8, 206u8, 43u8, 53u8, 92u8, 154u8, 3u8, 100u8, 6u8, 171u8,
                         ],
                     )
                 }
@@ -8998,9 +8993,9 @@ pub mod api {
                             weight,
                         },
                         [
-                            212u8, 7u8, 118u8, 125u8, 200u8, 29u8, 154u8, 31u8, 63u8, 172u8, 51u8,
-                            183u8, 100u8, 184u8, 24u8, 117u8, 153u8, 105u8, 192u8, 197u8, 129u8,
-                            42u8, 73u8, 50u8, 65u8, 72u8, 80u8, 97u8, 22u8, 243u8, 141u8, 142u8,
+                            176u8, 134u8, 83u8, 185u8, 53u8, 177u8, 16u8, 124u8, 58u8, 241u8, 16u8,
+                            250u8, 146u8, 133u8, 62u8, 30u8, 148u8, 115u8, 107u8, 115u8, 101u8,
+                            190u8, 167u8, 193u8, 45u8, 10u8, 15u8, 139u8, 2u8, 9u8, 195u8, 102u8,
                         ],
                     )
                 }
@@ -9038,9 +9033,9 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            119u8, 209u8, 245u8, 36u8, 134u8, 126u8, 95u8, 172u8, 115u8, 168u8,
-                            151u8, 38u8, 56u8, 56u8, 61u8, 68u8, 148u8, 243u8, 169u8, 128u8, 124u8,
-                            249u8, 210u8, 84u8, 67u8, 219u8, 3u8, 205u8, 51u8, 22u8, 222u8, 19u8,
+                            141u8, 10u8, 101u8, 211u8, 149u8, 132u8, 101u8, 156u8, 97u8, 241u8,
+                            138u8, 124u8, 128u8, 156u8, 174u8, 176u8, 5u8, 18u8, 43u8, 237u8, 51u8,
+                            51u8, 100u8, 252u8, 20u8, 46u8, 132u8, 128u8, 231u8, 81u8, 84u8, 1u8,
                         ],
                     )
                 }
@@ -15437,10 +15432,9 @@ pub mod api {
                         "batch",
                         types::Batch { calls },
                         [
-                            3u8, 0u8, 68u8, 233u8, 117u8, 114u8, 180u8, 22u8, 3u8, 245u8, 50u8,
-                            196u8, 74u8, 102u8, 109u8, 185u8, 205u8, 59u8, 142u8, 63u8, 87u8,
-                            121u8, 209u8, 236u8, 120u8, 163u8, 154u8, 119u8, 153u8, 127u8, 197u8,
-                            216u8,
+                            188u8, 179u8, 46u8, 25u8, 239u8, 225u8, 241u8, 55u8, 177u8, 254u8,
+                            131u8, 234u8, 228u8, 120u8, 0u8, 2u8, 107u8, 29u8, 29u8, 154u8, 181u8,
+                            73u8, 23u8, 66u8, 35u8, 53u8, 238u8, 69u8, 139u8, 200u8, 41u8, 207u8,
                         ],
                     )
                 }
@@ -15470,10 +15464,9 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            178u8, 70u8, 47u8, 86u8, 19u8, 56u8, 85u8, 38u8, 133u8, 66u8, 91u8,
-                            178u8, 147u8, 207u8, 78u8, 114u8, 165u8, 233u8, 65u8, 28u8, 78u8,
-                            127u8, 250u8, 152u8, 53u8, 69u8, 249u8, 11u8, 223u8, 201u8, 196u8,
-                            54u8,
+                            240u8, 225u8, 57u8, 6u8, 63u8, 195u8, 4u8, 201u8, 78u8, 116u8, 109u8,
+                            109u8, 109u8, 235u8, 216u8, 198u8, 210u8, 173u8, 32u8, 19u8, 188u8,
+                            67u8, 81u8, 105u8, 169u8, 251u8, 43u8, 109u8, 170u8, 9u8, 86u8, 9u8,
                         ],
                     )
                 }
@@ -15499,10 +15492,10 @@ pub mod api {
                         "batch_all",
                         types::BatchAll { calls },
                         [
-                            43u8, 246u8, 77u8, 152u8, 67u8, 81u8, 160u8, 174u8, 244u8, 120u8,
-                            142u8, 30u8, 57u8, 59u8, 187u8, 163u8, 29u8, 202u8, 201u8, 234u8,
-                            101u8, 122u8, 144u8, 77u8, 69u8, 217u8, 251u8, 12u8, 196u8, 179u8,
-                            60u8, 251u8,
+                            127u8, 81u8, 243u8, 28u8, 199u8, 180u8, 205u8, 250u8, 127u8, 67u8,
+                            125u8, 175u8, 78u8, 248u8, 32u8, 120u8, 115u8, 104u8, 113u8, 70u8,
+                            120u8, 239u8, 2u8, 61u8, 168u8, 110u8, 253u8, 247u8, 248u8, 5u8, 218u8,
+                            142u8,
                         ],
                     )
                 }
@@ -15525,9 +15518,10 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            123u8, 152u8, 39u8, 49u8, 115u8, 244u8, 157u8, 74u8, 209u8, 172u8,
-                            72u8, 176u8, 87u8, 122u8, 0u8, 88u8, 124u8, 195u8, 179u8, 3u8, 215u8,
-                            90u8, 190u8, 126u8, 168u8, 5u8, 216u8, 3u8, 26u8, 62u8, 53u8, 11u8,
+                            159u8, 48u8, 140u8, 134u8, 91u8, 247u8, 245u8, 98u8, 141u8, 115u8,
+                            18u8, 4u8, 34u8, 92u8, 52u8, 119u8, 233u8, 161u8, 234u8, 99u8, 138u8,
+                            211u8, 254u8, 13u8, 240u8, 13u8, 108u8, 255u8, 128u8, 121u8, 20u8,
+                            214u8,
                         ],
                     )
                 }
@@ -15553,9 +15547,10 @@ pub mod api {
                         "force_batch",
                         types::ForceBatch { calls },
                         [
-                            14u8, 107u8, 5u8, 7u8, 205u8, 115u8, 132u8, 117u8, 253u8, 95u8, 31u8,
-                            52u8, 62u8, 130u8, 91u8, 193u8, 237u8, 204u8, 207u8, 223u8, 172u8,
-                            86u8, 24u8, 242u8, 251u8, 248u8, 189u8, 49u8, 2u8, 254u8, 229u8, 10u8,
+                            24u8, 145u8, 42u8, 162u8, 212u8, 153u8, 185u8, 18u8, 200u8, 186u8,
+                            241u8, 9u8, 194u8, 65u8, 222u8, 251u8, 247u8, 241u8, 70u8, 119u8,
+                            253u8, 103u8, 140u8, 101u8, 201u8, 138u8, 198u8, 164u8, 251u8, 253u8,
+                            65u8, 191u8,
                         ],
                     )
                 }
@@ -15578,9 +15573,9 @@ pub mod api {
                             weight,
                         },
                         [
-                            7u8, 76u8, 9u8, 56u8, 38u8, 253u8, 16u8, 127u8, 234u8, 98u8, 63u8,
-                            41u8, 123u8, 187u8, 12u8, 72u8, 117u8, 199u8, 135u8, 174u8, 231u8,
-                            50u8, 246u8, 84u8, 179u8, 155u8, 49u8, 121u8, 95u8, 113u8, 81u8, 108u8,
+                            21u8, 57u8, 88u8, 159u8, 227u8, 67u8, 215u8, 149u8, 22u8, 8u8, 47u8,
+                            116u8, 37u8, 229u8, 169u8, 32u8, 22u8, 21u8, 184u8, 97u8, 199u8, 96u8,
+                            96u8, 116u8, 42u8, 223u8, 148u8, 170u8, 220u8, 0u8, 26u8, 81u8,
                         ],
                     )
                 }
@@ -15620,10 +15615,10 @@ pub mod api {
                             fallback: ::subxt_core::alloc::boxed::Box::new(fallback),
                         },
                         [
-                            146u8, 100u8, 111u8, 228u8, 176u8, 207u8, 147u8, 228u8, 17u8, 210u8,
-                            6u8, 42u8, 27u8, 216u8, 2u8, 81u8, 53u8, 43u8, 68u8, 63u8, 164u8,
-                            180u8, 183u8, 247u8, 103u8, 142u8, 13u8, 237u8, 146u8, 4u8, 124u8,
-                            50u8,
+                            47u8, 161u8, 224u8, 182u8, 119u8, 247u8, 150u8, 216u8, 60u8, 239u8,
+                            131u8, 156u8, 89u8, 85u8, 126u8, 142u8, 100u8, 195u8, 148u8, 55u8,
+                            166u8, 98u8, 142u8, 15u8, 86u8, 197u8, 66u8, 237u8, 165u8, 176u8, 62u8,
+                            122u8,
                         ],
                     )
                 }
@@ -15646,9 +15641,9 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            84u8, 84u8, 158u8, 226u8, 176u8, 206u8, 130u8, 15u8, 103u8, 111u8,
-                            84u8, 140u8, 29u8, 208u8, 34u8, 167u8, 95u8, 119u8, 76u8, 147u8, 52u8,
-                            118u8, 95u8, 228u8, 94u8, 169u8, 90u8, 186u8, 10u8, 29u8, 125u8, 161u8,
+                            63u8, 40u8, 208u8, 222u8, 8u8, 160u8, 133u8, 218u8, 91u8, 56u8, 132u8,
+                            10u8, 124u8, 231u8, 223u8, 216u8, 35u8, 229u8, 9u8, 60u8, 44u8, 240u8,
+                            178u8, 67u8, 79u8, 188u8, 128u8, 87u8, 124u8, 177u8, 117u8, 91u8,
                         ],
                     )
                 }
@@ -16402,18 +16397,14 @@ pub mod api {
                 #[doc = "Submit a new checkpoint with provider signatures."]
                 pub struct Checkpoint {
                     pub bucket_id: checkpoint::BucketId,
-                    pub mmr_root: checkpoint::MmrRoot,
-                    pub start_seq: checkpoint::StartSeq,
-                    pub leaf_count: checkpoint::LeafCount,
+                    pub commitment: checkpoint::Commitment,
                     pub nonce: checkpoint::Nonce,
                     pub signatures: checkpoint::Signatures,
                 }
                 pub mod checkpoint {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
-                    pub type MmrRoot = ::subxt_core::utils::H256;
-                    pub type StartSeq = ::core::primitive::u64;
-                    pub type LeafCount = ::core::primitive::u64;
+                    pub type Commitment = runtime_types::storage_primitives::Commitment;
                     pub type Nonce = ::core::primitive::u64;
                     pub type Signatures =
                         runtime_types::bounded_collections::bounded_vec::BoundedVec<(
@@ -16481,18 +16472,14 @@ pub mod api {
                 #[doc = "- `signatures`: Provider signatures over the checkpoint proposal"]
                 pub struct ProviderCheckpoint {
                     pub bucket_id: provider_checkpoint::BucketId,
-                    pub mmr_root: provider_checkpoint::MmrRoot,
-                    pub start_seq: provider_checkpoint::StartSeq,
-                    pub leaf_count: provider_checkpoint::LeafCount,
+                    pub commitment: provider_checkpoint::Commitment,
                     pub window: provider_checkpoint::Window,
                     pub signatures: provider_checkpoint::Signatures,
                 }
                 pub mod provider_checkpoint {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
-                    pub type MmrRoot = ::subxt_core::utils::H256;
-                    pub type StartSeq = ::core::primitive::u64;
-                    pub type LeafCount = ::core::primitive::u64;
+                    pub type Commitment = runtime_types::storage_primitives::Commitment;
                     pub type Window = ::core::primitive::u64;
                     pub type Signatures =
                         runtime_types::bounded_collections::bounded_vec::BoundedVec<(
@@ -16635,15 +16622,13 @@ pub mod api {
                 pub struct ChallengeCheckpoint {
                     pub bucket_id: challenge_checkpoint::BucketId,
                     pub provider: challenge_checkpoint::Provider,
-                    pub leaf_index: challenge_checkpoint::LeafIndex,
-                    pub chunk_index: challenge_checkpoint::ChunkIndex,
+                    pub target: challenge_checkpoint::Target,
                 }
                 pub mod challenge_checkpoint {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
                     pub type Provider = ::subxt_core::utils::AccountId32;
-                    pub type LeafIndex = ::core::primitive::u64;
-                    pub type ChunkIndex = ::core::primitive::u64;
+                    pub type Target = runtime_types::storage_primitives::ChunkLocation;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for ChallengeCheckpoint {
                     const PALLET: &'static str = "StorageProvider";
@@ -16668,11 +16653,8 @@ pub mod api {
                 pub struct ChallengeOffchain {
                     pub bucket_id: challenge_offchain::BucketId,
                     pub provider: challenge_offchain::Provider,
-                    pub mmr_root: challenge_offchain::MmrRoot,
-                    pub start_seq: challenge_offchain::StartSeq,
-                    pub leaf_count: challenge_offchain::LeafCount,
-                    pub leaf_index: challenge_offchain::LeafIndex,
-                    pub chunk_index: challenge_offchain::ChunkIndex,
+                    pub commitment: challenge_offchain::Commitment,
+                    pub target: challenge_offchain::Target,
                     pub nonce: challenge_offchain::Nonce,
                     pub provider_signature: challenge_offchain::ProviderSignature,
                 }
@@ -16680,11 +16662,8 @@ pub mod api {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
                     pub type Provider = ::subxt_core::utils::AccountId32;
-                    pub type MmrRoot = ::subxt_core::utils::H256;
-                    pub type StartSeq = ::core::primitive::u64;
-                    pub type LeafCount = ::core::primitive::u64;
-                    pub type LeafIndex = ::core::primitive::u64;
-                    pub type ChunkIndex = ::core::primitive::u64;
+                    pub type Commitment = runtime_types::storage_primitives::Commitment;
+                    pub type Target = runtime_types::storage_primitives::ChunkLocation;
                     pub type Nonce = ::core::primitive::u64;
                     pub type ProviderSignature = runtime_types::sp_runtime::MultiSignature;
                 }
@@ -16709,15 +16688,13 @@ pub mod api {
                 pub struct ChallengeReplica {
                     pub bucket_id: challenge_replica::BucketId,
                     pub provider: challenge_replica::Provider,
-                    pub leaf_index: challenge_replica::LeafIndex,
-                    pub chunk_index: challenge_replica::ChunkIndex,
+                    pub target: challenge_replica::Target,
                 }
                 pub mod challenge_replica {
                     use super::runtime_types;
                     pub type BucketId = ::core::primitive::u64;
                     pub type Provider = ::subxt_core::utils::AccountId32;
-                    pub type LeafIndex = ::core::primitive::u64;
-                    pub type ChunkIndex = ::core::primitive::u64;
+                    pub type Target = runtime_types::storage_primitives::ChunkLocation;
                 }
                 impl ::subxt_core::blocks::StaticExtrinsic for ChallengeReplica {
                     const PALLET: &'static str = "StorageProvider";
@@ -17264,9 +17241,7 @@ pub mod api {
                 pub fn checkpoint(
                     &self,
                     bucket_id: types::checkpoint::BucketId,
-                    mmr_root: types::checkpoint::MmrRoot,
-                    start_seq: types::checkpoint::StartSeq,
-                    leaf_count: types::checkpoint::LeafCount,
+                    commitment: types::checkpoint::Commitment,
                     nonce: types::checkpoint::Nonce,
                     signatures: types::checkpoint::Signatures,
                 ) -> ::subxt_core::tx::payload::StaticPayload<types::Checkpoint> {
@@ -17275,17 +17250,15 @@ pub mod api {
                         "checkpoint",
                         types::Checkpoint {
                             bucket_id,
-                            mmr_root,
-                            start_seq,
-                            leaf_count,
+                            commitment,
                             nonce,
                             signatures,
                         },
                         [
-                            70u8, 254u8, 33u8, 149u8, 250u8, 52u8, 170u8, 185u8, 137u8, 217u8,
-                            201u8, 92u8, 253u8, 123u8, 54u8, 45u8, 244u8, 247u8, 8u8, 185u8, 40u8,
-                            190u8, 192u8, 221u8, 132u8, 25u8, 173u8, 82u8, 139u8, 130u8, 111u8,
-                            38u8,
+                            135u8, 160u8, 81u8, 16u8, 171u8, 245u8, 13u8, 226u8, 125u8, 87u8,
+                            144u8, 202u8, 117u8, 175u8, 62u8, 198u8, 178u8, 210u8, 161u8, 129u8,
+                            36u8, 7u8, 226u8, 28u8, 214u8, 121u8, 158u8, 248u8, 187u8, 188u8,
+                            136u8, 229u8,
                         ],
                     )
                 }
@@ -17330,9 +17303,7 @@ pub mod api {
                 pub fn provider_checkpoint(
                     &self,
                     bucket_id: types::provider_checkpoint::BucketId,
-                    mmr_root: types::provider_checkpoint::MmrRoot,
-                    start_seq: types::provider_checkpoint::StartSeq,
-                    leaf_count: types::provider_checkpoint::LeafCount,
+                    commitment: types::provider_checkpoint::Commitment,
                     window: types::provider_checkpoint::Window,
                     signatures: types::provider_checkpoint::Signatures,
                 ) -> ::subxt_core::tx::payload::StaticPayload<types::ProviderCheckpoint>
@@ -17342,16 +17313,14 @@ pub mod api {
                         "provider_checkpoint",
                         types::ProviderCheckpoint {
                             bucket_id,
-                            mmr_root,
-                            start_seq,
-                            leaf_count,
+                            commitment,
                             window,
                             signatures,
                         },
                         [
-                            254u8, 184u8, 65u8, 189u8, 3u8, 253u8, 200u8, 3u8, 36u8, 246u8, 157u8,
-                            154u8, 239u8, 65u8, 51u8, 173u8, 66u8, 240u8, 1u8, 88u8, 0u8, 84u8,
-                            0u8, 136u8, 61u8, 131u8, 34u8, 111u8, 21u8, 50u8, 96u8, 174u8,
+                            72u8, 81u8, 224u8, 202u8, 178u8, 15u8, 123u8, 164u8, 78u8, 35u8, 134u8,
+                            90u8, 164u8, 2u8, 55u8, 31u8, 154u8, 50u8, 44u8, 101u8, 231u8, 65u8,
+                            63u8, 18u8, 19u8, 50u8, 140u8, 107u8, 6u8, 146u8, 2u8, 231u8,
                         ],
                     )
                 }
@@ -17460,8 +17429,7 @@ pub mod api {
                     &self,
                     bucket_id: types::challenge_checkpoint::BucketId,
                     provider: types::challenge_checkpoint::Provider,
-                    leaf_index: types::challenge_checkpoint::LeafIndex,
-                    chunk_index: types::challenge_checkpoint::ChunkIndex,
+                    target: types::challenge_checkpoint::Target,
                 ) -> ::subxt_core::tx::payload::StaticPayload<types::ChallengeCheckpoint>
                 {
                     ::subxt_core::tx::payload::StaticPayload::new_static(
@@ -17470,14 +17438,12 @@ pub mod api {
                         types::ChallengeCheckpoint {
                             bucket_id,
                             provider,
-                            leaf_index,
-                            chunk_index,
+                            target,
                         },
                         [
-                            174u8, 17u8, 223u8, 142u8, 128u8, 172u8, 118u8, 187u8, 238u8, 133u8,
-                            179u8, 24u8, 138u8, 48u8, 182u8, 179u8, 115u8, 151u8, 243u8, 194u8,
-                            249u8, 71u8, 90u8, 127u8, 150u8, 72u8, 137u8, 87u8, 46u8, 67u8, 218u8,
-                            179u8,
+                            159u8, 60u8, 255u8, 131u8, 48u8, 206u8, 255u8, 206u8, 152u8, 58u8,
+                            174u8, 69u8, 122u8, 2u8, 84u8, 74u8, 80u8, 243u8, 103u8, 3u8, 172u8,
+                            161u8, 121u8, 101u8, 76u8, 21u8, 8u8, 217u8, 56u8, 220u8, 250u8, 110u8,
                         ],
                     )
                 }
@@ -17491,11 +17457,8 @@ pub mod api {
                     &self,
                     bucket_id: types::challenge_offchain::BucketId,
                     provider: types::challenge_offchain::Provider,
-                    mmr_root: types::challenge_offchain::MmrRoot,
-                    start_seq: types::challenge_offchain::StartSeq,
-                    leaf_count: types::challenge_offchain::LeafCount,
-                    leaf_index: types::challenge_offchain::LeafIndex,
-                    chunk_index: types::challenge_offchain::ChunkIndex,
+                    commitment: types::challenge_offchain::Commitment,
+                    target: types::challenge_offchain::Target,
                     nonce: types::challenge_offchain::Nonce,
                     provider_signature: types::challenge_offchain::ProviderSignature,
                 ) -> ::subxt_core::tx::payload::StaticPayload<types::ChallengeOffchain>
@@ -17506,18 +17469,16 @@ pub mod api {
                         types::ChallengeOffchain {
                             bucket_id,
                             provider,
-                            mmr_root,
-                            start_seq,
-                            leaf_count,
-                            leaf_index,
-                            chunk_index,
+                            commitment,
+                            target,
                             nonce,
                             provider_signature,
                         },
                         [
-                            22u8, 225u8, 253u8, 14u8, 254u8, 225u8, 57u8, 36u8, 90u8, 228u8, 16u8,
-                            223u8, 189u8, 232u8, 18u8, 31u8, 137u8, 228u8, 98u8, 164u8, 57u8,
-                            161u8, 56u8, 247u8, 50u8, 127u8, 94u8, 20u8, 188u8, 243u8, 224u8, 84u8,
+                            183u8, 129u8, 166u8, 48u8, 241u8, 79u8, 112u8, 157u8, 81u8, 184u8,
+                            176u8, 17u8, 167u8, 102u8, 50u8, 60u8, 75u8, 107u8, 224u8, 118u8,
+                            192u8, 116u8, 48u8, 231u8, 136u8, 195u8, 76u8, 186u8, 113u8, 44u8,
+                            255u8, 215u8,
                         ],
                     )
                 }
@@ -17529,8 +17490,7 @@ pub mod api {
                     &self,
                     bucket_id: types::challenge_replica::BucketId,
                     provider: types::challenge_replica::Provider,
-                    leaf_index: types::challenge_replica::LeafIndex,
-                    chunk_index: types::challenge_replica::ChunkIndex,
+                    target: types::challenge_replica::Target,
                 ) -> ::subxt_core::tx::payload::StaticPayload<types::ChallengeReplica>
                 {
                     ::subxt_core::tx::payload::StaticPayload::new_static(
@@ -17539,13 +17499,13 @@ pub mod api {
                         types::ChallengeReplica {
                             bucket_id,
                             provider,
-                            leaf_index,
-                            chunk_index,
+                            target,
                         },
                         [
-                            202u8, 247u8, 124u8, 80u8, 136u8, 180u8, 184u8, 120u8, 145u8, 163u8,
-                            61u8, 214u8, 31u8, 46u8, 181u8, 234u8, 141u8, 180u8, 156u8, 172u8, 0u8,
-                            116u8, 198u8, 43u8, 202u8, 21u8, 168u8, 253u8, 104u8, 55u8, 107u8, 1u8,
+                            122u8, 208u8, 245u8, 140u8, 32u8, 197u8, 217u8, 185u8, 97u8, 2u8,
+                            255u8, 134u8, 210u8, 168u8, 112u8, 139u8, 209u8, 169u8, 110u8, 55u8,
+                            82u8, 123u8, 230u8, 206u8, 71u8, 68u8, 108u8, 192u8, 65u8, 226u8,
+                            253u8, 145u8,
                         ],
                     )
                 }
@@ -17943,17 +17903,13 @@ pub mod api {
             #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
             pub struct BucketCheckpointed {
                 pub bucket_id: bucket_checkpointed::BucketId,
-                pub mmr_root: bucket_checkpointed::MmrRoot,
-                pub start_seq: bucket_checkpointed::StartSeq,
-                pub leaf_count: bucket_checkpointed::LeafCount,
+                pub commitment: bucket_checkpointed::Commitment,
                 pub providers: bucket_checkpointed::Providers,
             }
             pub mod bucket_checkpointed {
                 use super::runtime_types;
                 pub type BucketId = ::core::primitive::u64;
-                pub type MmrRoot = ::subxt_core::utils::H256;
-                pub type StartSeq = ::core::primitive::u64;
-                pub type LeafCount = ::core::primitive::u64;
+                pub type Commitment = runtime_types::storage_primitives::Commitment;
                 pub type Providers =
                     ::subxt_core::alloc::vec::Vec<::subxt_core::utils::AccountId32>;
             }
@@ -18794,10 +18750,9 @@ pub mod api {
                         "Buckets",
                         (),
                         [
-                            109u8, 239u8, 100u8, 53u8, 26u8, 173u8, 184u8, 97u8, 48u8, 194u8, 32u8,
-                            190u8, 228u8, 30u8, 208u8, 171u8, 216u8, 97u8, 165u8, 223u8, 147u8,
-                            108u8, 194u8, 223u8, 53u8, 24u8, 11u8, 141u8, 140u8, 97u8, 128u8,
-                            220u8,
+                            141u8, 66u8, 126u8, 76u8, 114u8, 190u8, 139u8, 13u8, 151u8, 248u8,
+                            255u8, 164u8, 54u8, 223u8, 60u8, 166u8, 100u8, 9u8, 38u8, 70u8, 30u8,
+                            230u8, 221u8, 14u8, 74u8, 168u8, 96u8, 9u8, 179u8, 177u8, 224u8, 24u8,
                         ],
                     )
                 }
@@ -18817,10 +18772,9 @@ pub mod api {
                         "Buckets",
                         ::subxt_core::storage::address::StaticStorageKey::new(_0),
                         [
-                            109u8, 239u8, 100u8, 53u8, 26u8, 173u8, 184u8, 97u8, 48u8, 194u8, 32u8,
-                            190u8, 228u8, 30u8, 208u8, 171u8, 216u8, 97u8, 165u8, 223u8, 147u8,
-                            108u8, 194u8, 223u8, 53u8, 24u8, 11u8, 141u8, 140u8, 97u8, 128u8,
-                            220u8,
+                            141u8, 66u8, 126u8, 76u8, 114u8, 190u8, 139u8, 13u8, 151u8, 248u8,
+                            255u8, 164u8, 54u8, 223u8, 60u8, 166u8, 100u8, 9u8, 38u8, 70u8, 30u8,
+                            230u8, 221u8, 14u8, 74u8, 168u8, 96u8, 9u8, 179u8, 177u8, 224u8, 24u8,
                         ],
                     )
                 }
@@ -18839,9 +18793,9 @@ pub mod api {
                         "StorageAgreements",
                         (),
                         [
-                            46u8, 66u8, 4u8, 222u8, 179u8, 102u8, 44u8, 76u8, 121u8, 210u8, 125u8,
-                            61u8, 117u8, 244u8, 78u8, 137u8, 72u8, 151u8, 162u8, 92u8, 74u8, 207u8,
-                            241u8, 86u8, 123u8, 13u8, 219u8, 172u8, 150u8, 108u8, 19u8, 173u8,
+                            91u8, 109u8, 228u8, 172u8, 227u8, 76u8, 50u8, 8u8, 111u8, 236u8, 198u8,
+                            26u8, 62u8, 89u8, 61u8, 201u8, 245u8, 17u8, 24u8, 144u8, 50u8, 245u8,
+                            67u8, 145u8, 72u8, 79u8, 1u8, 176u8, 106u8, 12u8, 142u8, 136u8,
                         ],
                     )
                 }
@@ -18863,9 +18817,9 @@ pub mod api {
                         "StorageAgreements",
                         ::subxt_core::storage::address::StaticStorageKey::new(_0),
                         [
-                            46u8, 66u8, 4u8, 222u8, 179u8, 102u8, 44u8, 76u8, 121u8, 210u8, 125u8,
-                            61u8, 117u8, 244u8, 78u8, 137u8, 72u8, 151u8, 162u8, 92u8, 74u8, 207u8,
-                            241u8, 86u8, 123u8, 13u8, 219u8, 172u8, 150u8, 108u8, 19u8, 173u8,
+                            91u8, 109u8, 228u8, 172u8, 227u8, 76u8, 50u8, 8u8, 111u8, 236u8, 198u8,
+                            26u8, 62u8, 89u8, 61u8, 201u8, 245u8, 17u8, 24u8, 144u8, 50u8, 245u8,
+                            67u8, 145u8, 72u8, 79u8, 1u8, 176u8, 106u8, 12u8, 142u8, 136u8,
                         ],
                     )
                 }
@@ -18896,9 +18850,9 @@ pub mod api {
                             ::subxt_core::storage::address::StaticStorageKey::new(_1),
                         ),
                         [
-                            46u8, 66u8, 4u8, 222u8, 179u8, 102u8, 44u8, 76u8, 121u8, 210u8, 125u8,
-                            61u8, 117u8, 244u8, 78u8, 137u8, 72u8, 151u8, 162u8, 92u8, 74u8, 207u8,
-                            241u8, 86u8, 123u8, 13u8, 219u8, 172u8, 150u8, 108u8, 19u8, 173u8,
+                            91u8, 109u8, 228u8, 172u8, 227u8, 76u8, 50u8, 8u8, 111u8, 236u8, 198u8,
+                            26u8, 62u8, 89u8, 61u8, 201u8, 245u8, 17u8, 24u8, 144u8, 50u8, 245u8,
+                            67u8, 145u8, 72u8, 79u8, 1u8, 176u8, 106u8, 12u8, 142u8, 136u8,
                         ],
                     )
                 }
@@ -18922,9 +18876,9 @@ pub mod api {
                         "Challenges",
                         (),
                         [
-                            200u8, 178u8, 249u8, 121u8, 106u8, 64u8, 10u8, 6u8, 8u8, 89u8, 180u8,
-                            144u8, 248u8, 184u8, 107u8, 34u8, 126u8, 221u8, 17u8, 180u8, 94u8,
-                            32u8, 25u8, 235u8, 153u8, 39u8, 21u8, 136u8, 220u8, 118u8, 148u8, 38u8,
+                            195u8, 168u8, 198u8, 200u8, 61u8, 124u8, 8u8, 12u8, 161u8, 226u8, 34u8,
+                            18u8, 158u8, 204u8, 141u8, 0u8, 37u8, 130u8, 5u8, 141u8, 244u8, 190u8,
+                            253u8, 23u8, 228u8, 63u8, 222u8, 144u8, 26u8, 124u8, 50u8, 244u8,
                         ],
                     )
                 }
@@ -18949,9 +18903,9 @@ pub mod api {
                         "Challenges",
                         ::subxt_core::storage::address::StaticStorageKey::new(_0),
                         [
-                            200u8, 178u8, 249u8, 121u8, 106u8, 64u8, 10u8, 6u8, 8u8, 89u8, 180u8,
-                            144u8, 248u8, 184u8, 107u8, 34u8, 126u8, 221u8, 17u8, 180u8, 94u8,
-                            32u8, 25u8, 235u8, 153u8, 39u8, 21u8, 136u8, 220u8, 118u8, 148u8, 38u8,
+                            195u8, 168u8, 198u8, 200u8, 61u8, 124u8, 8u8, 12u8, 161u8, 226u8, 34u8,
+                            18u8, 158u8, 204u8, 141u8, 0u8, 37u8, 130u8, 5u8, 141u8, 244u8, 190u8,
+                            253u8, 23u8, 228u8, 63u8, 222u8, 144u8, 26u8, 124u8, 50u8, 244u8,
                         ],
                     )
                 }
@@ -18983,9 +18937,9 @@ pub mod api {
                             ::subxt_core::storage::address::StaticStorageKey::new(_1),
                         ),
                         [
-                            200u8, 178u8, 249u8, 121u8, 106u8, 64u8, 10u8, 6u8, 8u8, 89u8, 180u8,
-                            144u8, 248u8, 184u8, 107u8, 34u8, 126u8, 221u8, 17u8, 180u8, 94u8,
-                            32u8, 25u8, 235u8, 153u8, 39u8, 21u8, 136u8, 220u8, 118u8, 148u8, 38u8,
+                            195u8, 168u8, 198u8, 200u8, 61u8, 124u8, 8u8, 12u8, 161u8, 226u8, 34u8,
+                            18u8, 158u8, 204u8, 141u8, 0u8, 37u8, 130u8, 5u8, 141u8, 244u8, 190u8,
+                            253u8, 23u8, 228u8, 63u8, 222u8, 144u8, 26u8, 124u8, 50u8, 244u8,
                         ],
                     )
                 }
@@ -21962,9 +21916,9 @@ pub mod api {
                             transaction_encoded,
                         },
                         [
-                            143u8, 219u8, 228u8, 1u8, 191u8, 56u8, 233u8, 81u8, 8u8, 84u8, 148u8,
-                            165u8, 54u8, 12u8, 120u8, 227u8, 249u8, 96u8, 132u8, 140u8, 4u8, 238u8,
-                            201u8, 183u8, 23u8, 195u8, 108u8, 228u8, 208u8, 53u8, 15u8, 150u8,
+                            88u8, 99u8, 10u8, 165u8, 109u8, 99u8, 79u8, 179u8, 17u8, 183u8, 144u8,
+                            218u8, 193u8, 191u8, 150u8, 78u8, 146u8, 109u8, 73u8, 6u8, 15u8, 185u8,
+                            253u8, 5u8, 33u8, 112u8, 177u8, 63u8, 24u8, 137u8, 153u8, 25u8,
                         ],
                     )
                 }
@@ -22100,9 +22054,9 @@ pub mod api {
                             call: ::subxt_core::alloc::boxed::Box::new(call),
                         },
                         [
-                            93u8, 188u8, 252u8, 71u8, 195u8, 26u8, 174u8, 255u8, 5u8, 203u8, 175u8,
-                            166u8, 51u8, 193u8, 129u8, 108u8, 63u8, 229u8, 125u8, 6u8, 130u8,
-                            167u8, 130u8, 69u8, 240u8, 88u8, 120u8, 42u8, 3u8, 189u8, 244u8, 205u8,
+                            65u8, 37u8, 143u8, 233u8, 70u8, 66u8, 49u8, 11u8, 108u8, 89u8, 245u8,
+                            50u8, 26u8, 201u8, 191u8, 132u8, 104u8, 20u8, 133u8, 153u8, 5u8, 210u8,
+                            217u8, 20u8, 233u8, 228u8, 37u8, 109u8, 246u8, 148u8, 94u8, 3u8,
                         ],
                     )
                 }
@@ -27427,9 +27381,7 @@ pub mod api {
                     #[doc = "Submit a new checkpoint with provider signatures."]
                     checkpoint {
                         bucket_id: ::core::primitive::u64,
-                        mmr_root: ::subxt_core::utils::H256,
-                        start_seq: ::core::primitive::u64,
-                        leaf_count: ::core::primitive::u64,
+                        commitment: runtime_types::storage_primitives::Commitment,
                         nonce: ::core::primitive::u64,
                         signatures: runtime_types::bounded_collections::bounded_vec::BoundedVec<(
                             ::subxt_core::utils::AccountId32,
@@ -27465,9 +27417,7 @@ pub mod api {
                     #[doc = "- `signatures`: Provider signatures over the checkpoint proposal"]
                     provider_checkpoint {
                         bucket_id: ::core::primitive::u64,
-                        mmr_root: ::subxt_core::utils::H256,
-                        start_seq: ::core::primitive::u64,
-                        leaf_count: ::core::primitive::u64,
+                        commitment: runtime_types::storage_primitives::Commitment,
                         window: ::core::primitive::u64,
                         signatures: runtime_types::bounded_collections::bounded_vec::BoundedVec<(
                             ::subxt_core::utils::AccountId32,
@@ -27521,8 +27471,7 @@ pub mod api {
                     challenge_checkpoint {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt_core::utils::AccountId32,
-                        leaf_index: ::core::primitive::u64,
-                        chunk_index: ::core::primitive::u64,
+                        target: runtime_types::storage_primitives::ChunkLocation,
                     },
                     #[codec(index = 42)]
                     #[doc = "Challenge off-chain commitment (requires provider signature)."]
@@ -27534,11 +27483,8 @@ pub mod api {
                     challenge_offchain {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt_core::utils::AccountId32,
-                        mmr_root: ::subxt_core::utils::H256,
-                        start_seq: ::core::primitive::u64,
-                        leaf_count: ::core::primitive::u64,
-                        leaf_index: ::core::primitive::u64,
-                        chunk_index: ::core::primitive::u64,
+                        commitment: runtime_types::storage_primitives::Commitment,
+                        target: runtime_types::storage_primitives::ChunkLocation,
                         nonce: ::core::primitive::u64,
                         provider_signature: runtime_types::sp_runtime::MultiSignature,
                     },
@@ -27550,8 +27496,7 @@ pub mod api {
                     challenge_replica {
                         bucket_id: ::core::primitive::u64,
                         provider: ::subxt_core::utils::AccountId32,
-                        leaf_index: ::core::primitive::u64,
-                        chunk_index: ::core::primitive::u64,
+                        target: runtime_types::storage_primitives::ChunkLocation,
                     },
                     #[codec(index = 41)]
                     #[doc = "Respond to a challenge."]
@@ -27591,8 +27536,7 @@ pub mod api {
                     pub challenger: ::subxt_core::utils::AccountId32,
                     pub mmr_root: ::subxt_core::utils::H256,
                     pub start_seq: ::core::primitive::u64,
-                    pub leaf_index: ::core::primitive::u64,
-                    pub chunk_index: ::core::primitive::u64,
+                    pub target: runtime_types::storage_primitives::ChunkLocation,
                     pub deposit: ::core::primitive::u128,
                 }
                 #[derive(
@@ -27932,9 +27876,7 @@ pub mod api {
                     #[codec(index = 13)]
                     BucketCheckpointed {
                         bucket_id: ::core::primitive::u64,
-                        mmr_root: ::subxt_core::utils::H256,
-                        start_seq: ::core::primitive::u64,
-                        leaf_count: ::core::primitive::u64,
+                        commitment: runtime_types::storage_primitives::Commitment,
                         providers: ::subxt_core::alloc::vec::Vec<::subxt_core::utils::AccountId32>,
                     },
                     #[codec(index = 14)]
@@ -32656,9 +32598,7 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
             pub struct BucketSnapshot<_0> {
-                pub mmr_root: ::subxt_core::utils::H256,
-                pub start_seq: ::core::primitive::u64,
-                pub leaf_count: ::core::primitive::u64,
+                pub commitment: runtime_types::storage_primitives::Commitment,
                 pub checkpoint_block: _0,
                 pub primary_signers: ::subxt_core::alloc::vec::Vec<::core::primitive::u8>,
                 pub commitment_nonce: ::core::primitive::u64,
@@ -32706,6 +32646,35 @@ pub mod api {
                 pub interval: _0,
                 pub grace_period: _0,
                 pub enabled: ::core::primitive::bool,
+            }
+            #[derive(
+                :: subxt_core :: ext :: scale_decode :: DecodeAsType,
+                :: subxt_core :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
+            pub struct ChunkLocation {
+                pub leaf_index: ::core::primitive::u64,
+                pub chunk_index: ::core::primitive::u64,
+            }
+            #[derive(
+                :: subxt_core :: ext :: scale_decode :: DecodeAsType,
+                :: subxt_core :: ext :: scale_encode :: EncodeAsType,
+                Clone,
+                Debug,
+                Eq,
+                PartialEq,
+            )]
+            #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
+            #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
+            pub struct Commitment {
+                pub mmr_root: ::subxt_core::utils::H256,
+                pub start_seq: ::core::primitive::u64,
+                pub leaf_count: ::core::primitive::u64,
             }
             #[derive(
                 :: subxt_core :: ext :: scale_decode :: DecodeAsType,
@@ -32819,9 +32788,7 @@ pub mod api {
             #[decode_as_type(crate_path = ":: subxt_core :: ext :: scale_decode")]
             #[encode_as_type(crate_path = ":: subxt_core :: ext :: scale_encode")]
             pub struct ReplicaSyncRecord<_0> {
-                pub mmr_root: ::subxt_core::utils::H256,
-                pub start_seq: ::core::primitive::u64,
-                pub leaf_count: ::core::primitive::u64,
+                pub commitment: runtime_types::storage_primitives::Commitment,
                 pub block: _0,
             }
             #[derive(

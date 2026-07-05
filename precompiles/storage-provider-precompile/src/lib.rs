@@ -306,8 +306,10 @@ where
                     frame_origin,
                     *bucketId,
                     provider,
-                    *leafIndex,
-                    *chunkIndex,
+                    storage_primitives::ChunkLocation {
+                        leaf_index: *leafIndex,
+                        chunk_index: *chunkIndex,
+                    },
                 )
                 .map_err(|e| revert(&e, "challengeCheckpoint failed"))?;
                 Ok(Vec::new())

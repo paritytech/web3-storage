@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation};
 use storage_subxt::subxt::utils::AccountId32;
 use storage_subxt::subxt::utils::H256;
 use storage_subxt::subxt_signer;
@@ -1454,11 +1454,14 @@ impl CheckpointManager {
         let api = self.chain_client.api();
         let signer = self.chain_client.signer()?;
 
+        let commitment = storage_primitives::Commitment {
+            mmr_root: collection.mmr_root,
+            start_seq: collection.start_seq,
+            leaf_count: collection.leaf_count,
+        };
         let tx = crate::substrate::extrinsics::checkpoint(
             collection.bucket_id,
-            collection.mmr_root,
-            collection.start_seq,
-            collection.leaf_count,
+            commitment,
             collection.nonce,
             collection.signatures.clone(),
         );
@@ -2052,7 +2055,14 @@ impl CheckpointManager {
 
             // Submit the challenge
             match challenger
-                .challenge_checkpoint(bucket_id, provider_ss58, leaf_index, chunk_index)
+                .challenge_checkpoint(
+                    bucket_id,
+                    provider_ss58,
+                    ChunkLocation {
+                        leaf_index,
+                        chunk_index,
+                    },
+                )
                 .await
             {
                 Ok(challenge_id) => {

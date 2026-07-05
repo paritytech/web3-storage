@@ -10,10 +10,7 @@ use crate::provider_node_request_scheme::AgreementTermsOf;
 use futures::StreamExt;
 use std::str::FromStr;
 use std::sync::Arc;
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
-use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
-use storage_subxt::subxt::utils::AccountId32;
-use storage_subxt::subxt::utils::H256;
+use storage_subxt::subxt::utils::{AccountId32, H256};
 use storage_subxt::subxt::{OnlineClient, PolkadotConfig};
 use storage_subxt::subxt_signer::sr25519::{dev, Keypair};
 
@@ -114,7 +111,10 @@ impl SubstrateClient {
 pub mod extrinsics {
     use super::*;
     use crate::runtime_convert as rc;
+    use storage_primitives::{ChunkLocation, Commitment};
     use storage_subxt::api as runtime;
+    use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+    use storage_subxt::api::runtime_types::sp_runtime::MultiSignature;
     use storage_subxt::subxt::tx::Payload;
 
     pub fn register_provider(multiaddr: Vec<u8>, public_key: Vec<u8>, stake: u128) -> impl Payload {
@@ -136,24 +136,23 @@ pub mod extrinsics {
         terms: &AgreementTermsOf,
         sig: MultiSignature,
     ) -> impl Payload {
-        runtime::tx()
-            .storage_provider()
-            .establish_storage_agreement(provider, rc::to_agreement_terms(terms), sig)
+        runtime::tx().storage_provider().establish_storage_agreement(
+            provider,
+            rc::to_agreement_terms(terms),
+            sig,
+        )
     }
 
+    /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
     pub fn checkpoint(
         bucket_id: u64,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         runtime::tx().storage_provider().checkpoint(
             bucket_id,
-            mmr_root,
-            start_seq,
-            leaf_count,
+            rc::to_commitment(&commitment),
             nonce,
             rc::to_signatures(signatures),
         )
@@ -162,14 +161,12 @@ pub mod extrinsics {
     pub fn challenge_checkpoint(
         bucket_id: u64,
         provider: AccountId32,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_checkpoint(
             bucket_id,
             provider,
-            leaf_index,
-            chunk_index,
+            rc::to_chunk_location(target),
         )
     }
 
@@ -177,22 +174,16 @@ pub mod extrinsics {
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
         nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_offchain(
             bucket_id,
             provider,
-            mmr_root,
-            start_seq,
-            leaf_count,
-            leaf_index,
-            chunk_index,
+            rc::to_commitment(&commitment),
+            rc::to_chunk_location(target),
             nonce,
             rc::raw_sr25519_to_multi_sig(provider_signature),
         )
@@ -221,14 +212,12 @@ pub mod extrinsics {
     pub fn challenge_replica(
         bucket_id: u64,
         provider: AccountId32,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> impl Payload {
         runtime::tx().storage_provider().challenge_replica(
             bucket_id,
             provider,
-            leaf_index,
-            chunk_index,
+            rc::to_chunk_location(target),
         )
     }
 
@@ -318,17 +307,13 @@ pub mod extrinsics {
 
     pub fn provider_checkpoint(
         bucket_id: u64,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         window: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         runtime::tx().storage_provider().provider_checkpoint(
             bucket_id,
-            mmr_root,
-            start_seq,
-            leaf_count,
+            rc::to_commitment(&commitment),
             window,
             rc::to_signatures(signatures),
         )

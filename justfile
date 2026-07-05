@@ -130,6 +130,33 @@ setup: download-binaries build
     @echo ""
     @echo "Setup complete! Run 'just start-chain' and 'just start-provider' to start the local network."
 
+# Generate subxt code from runtime metadata (paseo runtime).
+# Requires a running node (`just start-paseo-chain` in another terminal) and
+# the `subxt` CLI (`cargo install subxt-cli --force --locked`) + `rustfmt` on PATH.
+subxt-codegen URL=CHAIN_WS OUTPUT="storage-subxt/src/storage_paseo_runtime.rs":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Downloading metadata from {{ URL }}..."
+    subxt metadata -f bytes --url "{{ URL }}" > storage-subxt/metadata/storage_paseo_runtime.scale
+    echo "Generating subxt code..."
+    subxt codegen --file storage-subxt/metadata/storage_paseo_runtime.scale \
+        --crate "::subxt_core" \
+        --derive Clone \
+        --derive Eq \
+        --derive PartialEq \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
+        | rustfmt --edition=2021 --emit=stdout > "{{ OUTPUT }}"
+    echo "Generated {{ OUTPUT }}"
+
 # Start the blockchain (relay chain + parachain)
 start-chain: check build-runtime
     #!/usr/bin/env bash

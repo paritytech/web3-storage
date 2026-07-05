@@ -20,8 +20,8 @@
 //! // Process events
 //! while let Some(event) = subscriber.next_event().await {
 //!     match event {
-//!         StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => {
-//!             println!("Checkpoint for bucket {}: {:?}", bucket_id, mmr_root);
+//!         StorageEvent::BucketCheckpointed { bucket_id, commitment, .. } => {
+//!             println!("Checkpoint for bucket {}: {:?}", bucket_id, commitment.mmr_root);
 //!         }
 //!         StorageEvent::ChallengeCreated { challenge_id, provider, .. } => {
 //!             println!("New challenge {} for provider {:?}", challenge_id.1, provider);
@@ -33,6 +33,7 @@
 //! # }
 //! ```
 
+use crate::runtime_convert as rc;
 use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
@@ -42,7 +43,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, Commitment};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::api::storage_provider::events as ev;
 use storage_subxt::subxt;
@@ -67,9 +68,7 @@ pub enum StorageEvent {
     /// A bucket checkpoint was submitted successfully.
     BucketCheckpointed {
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         providers: Vec<AccountId32>,
         block_hash: H256,
         block_number: u32,
@@ -961,9 +960,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 let e = event.as_event::<ev::BucketCheckpointed>().ok()??;
                 Some(StorageEvent::BucketCheckpointed {
                     bucket_id: e.bucket_id,
-                    mmr_root: e.mmr_root,
-                    start_seq: e.start_seq,
-                    leaf_count: e.leaf_count,
+                    commitment: rc::from_commitment(e.commitment),
                     providers: e.providers.into_iter().collect(),
                     block_hash,
                     block_number,
@@ -1227,9 +1224,7 @@ mod tests {
 
         let event1 = StorageEvent::BucketCheckpointed {
             bucket_id: 1,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
+            commitment: Commitment::default(),
             providers: vec![],
             block_hash: H256::zero(),
             block_number: 0,
@@ -1237,9 +1232,7 @@ mod tests {
 
         let event2 = StorageEvent::BucketCheckpointed {
             bucket_id: 2,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
+            commitment: Commitment::default(),
             providers: vec![],
             block_hash: H256::zero(),
             block_number: 0,
@@ -1255,9 +1248,7 @@ mod tests {
 
         let checkpoint_event = StorageEvent::BucketCheckpointed {
             bucket_id: 1,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
+            commitment: Commitment::default(),
             providers: vec![],
             block_hash: H256::zero(),
             block_number: 0,
@@ -1281,10 +1272,12 @@ mod tests {
     fn test_event_helpers() {
         let event = StorageEvent::BucketCheckpointed {
             bucket_id: 42,
-            mmr_root: H256::repeat_byte(0xAB),
-            start_seq: 100,
-            leaf_count: 50,
-            providers: vec![AccountId32([1u8; 32])],
+            commitment: Commitment {
+                mmr_root: H256::repeat_byte(0xAB),
+                start_seq: 100,
+                leaf_count: 50,
+            },
+            providers: vec![AccountId32::from([1u8; 32])],
             block_hash: H256::repeat_byte(0xCD),
             block_number: 12345,
         };
