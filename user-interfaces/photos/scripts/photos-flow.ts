@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//
+
 // Headless M1+M2+M3 flow:
 //   M1 — deploy Photos → negotiate terms → createLibrary → assert.
 //   M2 — mkdir album → PUT photo + thumbnail → track every op in a client-side

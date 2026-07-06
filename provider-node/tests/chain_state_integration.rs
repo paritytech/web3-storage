@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the chain-state coordinator that need no blockchain.
 //!
 //! The chain reads the coordinator performs sit behind the
