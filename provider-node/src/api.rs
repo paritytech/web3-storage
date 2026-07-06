@@ -28,7 +28,7 @@ use storage_client::provider_node_request_scheme::{
     AgreementTermsOf, NegotiateRequest, SignedTerms,
 };
 use storage_primitives::AgreementTerms;
-use storage_primitives::{CheckpointProposal, CommitmentPayload, Commitment};
+use storage_primitives::{CheckpointProposal, Commitment, CommitmentPayload};
 use storage_subxt::subxt::utils::H256;
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;

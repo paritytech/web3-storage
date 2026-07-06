@@ -136,11 +136,9 @@ pub mod extrinsics {
         terms: &AgreementTermsOf,
         sig: MultiSignature,
     ) -> impl Payload {
-        runtime::tx().storage_provider().establish_storage_agreement(
-            provider,
-            rc::to_agreement_terms(terms),
-            sig,
-        )
+        runtime::tx()
+            .storage_provider()
+            .establish_storage_agreement(provider, rc::to_agreement_terms(terms), sig)
     }
 
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
