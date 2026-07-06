@@ -14,7 +14,7 @@
 //! - Version `0x01`: XChaCha20-Poly1305 (Rust native)
 //! - Version `0x02`: AES-256-GCM (browser WebCrypto, 12-byte IV)
 
-use crate::base::ClientError;
+use crate::error::ClientError;
 use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,

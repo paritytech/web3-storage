@@ -9,9 +9,11 @@
 //! - Challenging providers for data integrity
 //! - Monitoring storage health
 
-use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
-use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
-use crate::verification::ClientVerifier;
+use crate::config::{ChunkingStrategy, ClientConfig};
+use crate::error::{ClientError, ClientResult};
+use crate::primitives::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
+use crate::primitives::verification::ClientVerifier;
+use crate::roles::base::BaseClient;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
@@ -462,7 +464,7 @@ impl StorageUserClient {
     pub fn get_provider_stats(
         &self,
         provider_url: &str,
-    ) -> Option<&crate::verification::ProviderStats> {
+    ) -> Option<&crate::primitives::verification::ProviderStats> {
         self.verifier.get_stats(provider_url)
     }
 
@@ -659,7 +661,7 @@ impl StorageUserClient {
 
 // Implement ProviderReadAccess for verification
 #[async_trait::async_trait]
-impl crate::verification::ProviderReadAccess for StorageUserClient {
+impl crate::primitives::verification::ProviderReadAccess for StorageUserClient {
     async fn read_data(
         &self,
         data_root: &H256,

@@ -9,7 +9,7 @@
 //! The SDK provides specialized clients for different user roles:
 //!
 //! ### For Storage Users
-//! [`StorageUserClient`](storage_user::StorageUserClient) - Upload, download, and verify data
+//! [`StorageUserClient`] - Upload, download, and verify data
 //! ```no_run
 //! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy};
 //!
@@ -31,7 +31,7 @@
 //! ```
 //!
 //! ### For Storage Providers
-//! [`ProviderClient`](provider::ProviderClient) - Manage provider operations
+//! [`ProviderClient`] - Manage provider operations
 //! ```no_run
 //! use storage_client::{ProviderClient, ClientConfig};
 //!
@@ -49,7 +49,7 @@
 //! ```
 //!
 //! ### For Bucket Administrators
-//! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
+//! [`AdminClient`] - Manage buckets and agreements
 //! ```no_run
 //! use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
 //!
@@ -82,7 +82,7 @@
 //! ```
 //!
 //! ### For Data Integrity Monitors
-//! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
+//! [`ChallengerClient`] - Challenge providers
 //! ```no_run
 //! use storage_client::{ChallengerClient, ChunkLocation, ClientConfig};
 //!
@@ -100,28 +100,25 @@
 //! ```
 
 // Re-export main types
-pub mod admin;
-pub mod agreement;
-pub mod base;
-pub mod block_subscription;
-pub mod challenger;
+pub mod chain;
 pub mod checkpoint;
-pub mod checkpoint_persistence;
-pub mod discovery;
-pub mod encryption;
-pub mod event_subscription;
-pub mod provider;
-pub mod scale_decode;
-pub mod storage_user;
-pub mod substrate;
-pub mod verification;
+pub mod config;
+pub mod error;
+pub mod primitives;
+pub mod roles;
 
 // Re-export commonly used types
-pub use admin::AdminClient;
-pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
-pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
-pub use block_subscription::BlockSubscriberStream;
-pub use challenger::ChallengerClient;
+pub use chain::blocks::BlockSubscriberStream;
+pub use chain::events::{
+    subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
+    EventCallback, EventFilter, EventParser, EventStream, EventSubscriber, StorageEvent,
+    StorageProviderEventParser, SubscriptionHandle,
+};
+pub use chain::{scale_decode, substrate};
+pub use checkpoint::persistence::{
+    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
+    PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
+};
 pub use checkpoint::{
     AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
     BucketCheckpointStatus, ChallengeEvidence, ChallengeReason, ChallengeRecommendation,
@@ -130,24 +127,25 @@ pub use checkpoint::{
     ConflictResolution, ConflictType, ConflictingProvider, FailedChallenge, ProviderConflict,
     ProviderHealthHistory, ProviderInfo, ProviderStatus, SubmittedChallenge,
 };
-pub use checkpoint_persistence::{
-    CheckpointPersistence, PersistedBucketStatus, PersistedCheckpointState, PersistedConflict,
-    PersistedHealthHistory, PersistedMetrics, PersistenceConfig, StateBuilder,
+pub use config::{ChunkingStrategy, ClientConfig};
+pub use error::{ClientError, ClientResult};
+pub use primitives::agreement;
+pub use primitives::agreement::{
+    sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms,
 };
-pub use discovery::{
+pub use primitives::verification::ClientVerifier;
+pub use roles::admin::AdminClient;
+pub use roles::challenger;
+pub use roles::challenger::ChallengerClient;
+pub use roles::discovery;
+pub use roles::discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
 };
-pub use event_subscription::{
-    subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
-    EventCallback, EventFilter, EventParser, EventStream, EventSubscriber, StorageEvent,
-    StorageProviderEventParser, SubscriptionHandle,
-};
-pub use provider::{ProviderClient, ProviderSettings};
-pub use storage_user::{
+pub use roles::provider::{ProviderClient, ProviderSettings};
+pub use roles::user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,
 };
-pub use verification::ClientVerifier;
 
 // Commitment / ChunkLocation appear in the public challenge & checkpoint method
 // signatures, so re-export them rather than make callers depend on
@@ -155,4 +153,6 @@ pub use verification::ClientVerifier;
 pub use storage_primitives::{ChunkLocation, Commitment};
 
 // Encryption re-exports
-pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};
+pub use primitives::encryption::{
+    Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD,
+};

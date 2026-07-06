@@ -24,7 +24,7 @@ type FinalizedBlock = Block<PolkadotConfig, OnlineClient<PolkadotConfig>>;
 /// # Example
 ///
 /// ```no_run
-/// use storage_client::block_subscription::BlockSubscriberStream;
+/// use storage_client::BlockSubscriberStream;
 /// use futures::StreamExt;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {

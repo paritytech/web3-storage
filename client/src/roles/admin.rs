@@ -9,10 +9,12 @@
 //! - Freezing buckets
 //! - Deleting old data
 
-use crate::agreement::AgreementTermsOf;
-use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
-use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::chain::events::{EventParser, StorageEvent, StorageProviderEventParser};
+use crate::chain::substrate::{extrinsics, storage, SubstrateClient};
+use crate::config::ClientConfig;
+use crate::error::{ClientError, ClientResult};
+use crate::primitives::agreement::AgreementTermsOf;
+use crate::roles::base::BaseClient;
 use sp_core::H256;
 use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
@@ -63,7 +65,7 @@ impl AdminClient {
     /// atomically.
     ///
     /// `terms` and `sig` come from the provider — typically via
-    /// [`ProviderClient::negotiate_terms`](crate::provider::ProviderClient::negotiate_terms),
+    /// [`ProviderClient::negotiate_terms`](crate::roles::provider::ProviderClient::negotiate_terms),
     /// but any source that produces a valid signature works.
     ///
     /// # Example

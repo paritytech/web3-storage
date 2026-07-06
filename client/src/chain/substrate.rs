@@ -5,7 +5,7 @@
 //! This module provides a wrapper around subxt for interacting with
 //! the storage parachain.
 
-use crate::base::ClientError;
+use crate::error::ClientError;
 use codec::Encode;
 use futures::StreamExt;
 use sp_core::H256;
@@ -188,10 +188,10 @@ pub mod extrinsics {
         )
     }
 
-    /// Encode an [`AgreementTermsOf`](crate::agreement::AgreementTermsOf) as
+    /// Encode an [`AgreementTermsOf`](crate::primitives::agreement::AgreementTermsOf) as
     /// a subxt dynamic value matching the on-chain composite.
     pub fn dynamic_agreement_terms(
-        terms: &crate::agreement::AgreementTermsOf,
+        terms: &crate::primitives::agreement::AgreementTermsOf,
     ) -> subxt::dynamic::Value {
         let replica_params_value = match &terms.replica_params {
             None => subxt::dynamic::Value::unnamed_variant("None", vec![]),
@@ -266,7 +266,7 @@ pub mod extrinsics {
     /// signature against the provider's registered public key.
     pub fn establish_storage_agreement(
         provider: AccountId32,
-        terms: &crate::agreement::AgreementTermsOf,
+        terms: &crate::primitives::agreement::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
         subxt::dynamic::tx(

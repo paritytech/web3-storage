@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use storage_client::event_subscription::{EventSubscriber, EventFilter, StorageEvent};
+//! use storage_client::{EventSubscriber, EventFilter, StorageEvent};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create subscriber
@@ -33,8 +33,8 @@
 //! # }
 //! ```
 
-use crate::scale_decode;
-use crate::substrate::PALLET_NAME;
+use crate::chain::scale_decode;
+use crate::chain::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
 use sp_core::H256;
@@ -794,7 +794,7 @@ impl SubscriptionHandle {
 /// # Example
 ///
 /// ```no_run
-/// use storage_client::event_subscription::{subscribe_with_callback, EventFilter, StorageEvent};
+/// use storage_client::{subscribe_with_callback, EventFilter, StorageEvent};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let handle = subscribe_with_callback(
@@ -922,7 +922,7 @@ pub trait EventParser<EventType> {
 ///
 /// ```no_run
 /// # use sp_core::H256;
-/// # use storage_client::event_subscription::{EventParser, StorageProviderEventParser};
+/// # use storage_client::{EventParser, StorageProviderEventParser};
 /// # use subxt::blocks::ExtrinsicEvents;
 /// # use subxt::PolkadotConfig;
 /// # async fn example(events: ExtrinsicEvents<PolkadotConfig>, block_hash: H256, block_number: u32) {
@@ -1149,7 +1149,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 
 // Parser-specific field helpers — these encode shapes from the StorageProvider pallet
 // (the `ChallengeId` struct and `RemovalReason` enum) and so stay alongside the parser
-// rather than in [`crate::scale_decode`].
+// rather than in [`crate::chain::scale_decode`].
 
 /// Read `max_bytes`, `duration`, and `price_per_byte` from a nested `AgreementTerms`
 /// composite. Returns `(0, 0, 0)` if the composite is absent; individual scalars default

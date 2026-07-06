@@ -5,67 +5,15 @@
 //! Provides common functionality shared across all client types:
 //! - Substrate connection management
 //! - HTTP client for provider nodes
-//! - Error handling
 //! - Utility functions
 
-use crate::substrate::SubstrateClient;
+use crate::chain::substrate::SubstrateClient;
+use crate::config::ClientConfig;
+use crate::error::ClientError;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use subxt_signer::sr25519::Keypair;
-use thiserror::Error;
-
-/// Client errors.
-#[derive(Error, Debug)]
-pub enum ClientError {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-
-    #[error("API error: {0}")]
-    Api(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Data verification failed")]
-    VerificationFailed,
-
-    #[error("Provider unavailable: {0}")]
-    ProviderUnavailable(String),
-
-    #[error("Chain error: {0}")]
-    Chain(String),
-
-    #[error("Configuration error: {0}")]
-    Config(String),
-
-    #[error("Storage error: {0}")]
-    Storage(String),
-}
-
-/// Configuration for connecting to the storage system.
-#[derive(Debug, Clone)]
-pub struct ClientConfig {
-    /// WebSocket URL for the substrate node (e.g., "ws://localhost:2222")
-    pub chain_ws_url: String,
-    /// Default provider node URLs
-    pub provider_urls: Vec<String>,
-    /// Request timeout in seconds
-    pub timeout_secs: u64,
-    /// Enable automatic retries
-    pub enable_retries: bool,
-}
-
-impl Default for ClientConfig {
-    fn default() -> Self {
-        Self {
-            chain_ws_url: "ws://localhost:2222".to_string(),
-            provider_urls: vec!["http://localhost:3333".to_string()],
-            timeout_secs: 30,
-            enable_retries: true,
-        }
-    }
-}
 
 /// Base client for interacting with the storage system.
 ///
@@ -209,27 +157,3 @@ pub struct AgreementInfo {
     pub expires_at: u32,
     pub is_primary: bool,
 }
-
-/// Chunking strategy for data upload.
-#[derive(Debug, Clone, Copy)]
-pub enum ChunkingStrategy {
-    /// Fixed-size chunks (default: 256 KiB)
-    Fixed(usize),
-    /// TODO: Content-defined chunking (not yet implemented)
-    ///
-    /// ContentDefined {
-    ///     min_size: usize,
-    ///     target_size: usize,
-    ///     max_size: usize,
-    /// },
-    ContentDefined,
-}
-
-impl Default for ChunkingStrategy {
-    fn default() -> Self {
-        Self::Fixed(256 * 1024)
-    }
-}
-
-/// Result type for client operations.
-pub type ClientResult<T> = Result<T, ClientError>;

@@ -7,8 +7,10 @@
 //! - Querying provider capacity and availability
 //! - Getting recommendations for provider selection
 
-use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{storage, SubstrateClient};
+use crate::chain::substrate::{storage, SubstrateClient};
+use crate::config::ClientConfig;
+use crate::error::{ClientError, ClientResult};
+use crate::roles::base::BaseClient;
 use sp_core::crypto::Ss58Codec;
 use sp_runtime::AccountId32;
 use subxt::ext::scale_value::{Composite, Primitive, ValueDef, Variant};

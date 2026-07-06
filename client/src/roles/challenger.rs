@@ -8,8 +8,10 @@
 //! - Collecting rewards from successful challenges
 //! - Automated challenge strategies
 
-use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::chain::substrate::{extrinsics, storage, SubstrateClient};
+use crate::config::ClientConfig;
+use crate::error::{ClientError, ClientResult};
+use crate::roles::base::BaseClient;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use subxt::blocks::ExtrinsicEvents;

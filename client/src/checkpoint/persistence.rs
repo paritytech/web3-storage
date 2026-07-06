@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use storage_client::checkpoint_persistence::{CheckpointPersistence, PersistenceConfig};
+//! use storage_client::{CheckpointPersistence, PersistenceConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = PersistenceConfig::new("/var/lib/storage/checkpoints.json");
