@@ -125,7 +125,7 @@ async fn test_list_active_agreements() {
             hex::encode(&a.agreement.owner),
             a.agreement.max_bytes,
             a.agreement.expires_at,
-            a.is_primary()
+            a.agreement.is_primary()
         );
     }
 }

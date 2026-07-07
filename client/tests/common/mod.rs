@@ -3,10 +3,9 @@
 //! Shared test helpers for integration tests.
 
 use std::sync::{Arc, OnceLock};
-use storage_client::storage_user::StorageUserClient;
 use storage_client::{
-    provider_node_request_scheme::{sign_terms, AgreementTermsOf},
-    AdminClient, ChallengerClient, ClientConfig, DiscoveryClient, ProviderClient,
+    sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
+    ProviderClient, StorageUserClient,
 };
 use storage_primitives::AgreementTerms;
 use storage_provider_node::{create_router, ProviderState, Storage};

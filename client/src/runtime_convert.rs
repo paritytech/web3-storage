@@ -6,7 +6,7 @@
 //! All conversions are byte-exact — they extract inner bytes directly
 //! rather than going through string formatting or re-encoding.
 
-use crate::provider_node_request_scheme::AgreementTermsOf;
+use crate::AgreementTermsOf;
 use storage_primitives::{ChunkLocation, Commitment, EndAction, MerkleProof, MmrProof, Role};
 use storage_subxt::api::runtime_types as rt;
 use storage_subxt::subxt::utils::AccountId32;

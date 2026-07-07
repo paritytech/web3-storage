@@ -6,7 +6,7 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
-use crate::provider_node_request_scheme::AgreementTermsOf;
+use crate::AgreementTermsOf;
 use futures::StreamExt;
 use std::str::FromStr;
 use std::sync::Arc;

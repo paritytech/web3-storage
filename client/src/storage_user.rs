@@ -11,15 +11,10 @@
 
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
-use crate::provider_node_request_scheme::{
-    CheckpointSignatureResponse, CommitRequest, CommitResponse, CommitmentResponse,
-    DownloadNodeResponse, ExistsRequest, ExistsResponse, HealthResponse, ReadResponse,
-    UploadNodeRequest,
-};
 use crate::verification::ClientVerifier;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
-use storage_subxt::subxt::utils::H256;
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
@@ -160,7 +155,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use storage_subxt::subxt::utils::H256;
+    /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let data = client.download(&data_root, 0, 1024).await?;
@@ -243,7 +238,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use storage_subxt::subxt::utils::H256;
+    /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let (data, children) = client.read_node(&hash).await?;
@@ -270,7 +265,7 @@ impl StorageUserClient {
             )));
         }
 
-        let node_response: DownloadNodeResponse = response
+        let node_response: NodeResponse = response
             .json()
             .await
             .map_err(|e| ClientError::Serialization(e.to_string()))?;
@@ -322,7 +317,7 @@ impl StorageUserClient {
     /// # Example
     /// ```no_run
     /// # use storage_client::StorageUserClient;
-    /// # use storage_subxt::subxt::utils::H256;
+    /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
     /// let commitment = client.commit(1, vec![data_root], 0u64).await?;
@@ -677,4 +672,95 @@ impl crate::verification::ProviderReadAccess for StorageUserClient {
     fn provider_url(&self) -> &str {
         self.base.get_provider_url().unwrap_or("unknown")
     }
+}
+
+// API types
+
+#[derive(serde::Serialize)]
+struct UploadNodeRequest {
+    bucket_id: u64,
+    hash: String,
+    data: String,
+    children: Option<Vec<String>>,
+}
+
+#[derive(serde::Serialize)]
+struct CommitRequest {
+    bucket_id: u64,
+    data_roots: Vec<String>,
+    /// Block number the caller intends to submit the resulting signature at.
+    /// The provider signs over this so the pallet's recency check passes.
+    nonce: u64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CommitResponse {
+    pub mmr_root: String,
+    pub start_seq: u64,
+    /// Leaves in the MMR after this commit. Needed when the resulting
+    /// signature is submitted via `challenge_offchain`.
+    pub leaf_count: u64,
+    pub leaf_indices: Vec<u64>,
+    pub provider_signature: String,
+    /// Echo of the nonce the provider signed over.
+    pub nonce: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct ReadResponse {
+    chunks: Vec<ChunkWithProof>,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct ChunkWithProof {
+    hash: String,
+    data: String,
+    proof: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct NodeResponse {
+    hash: String,
+    data: String,
+    children: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CheckpointSignatureResponse {
+    pub bucket_id: u64,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
+    pub nonce: u64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct CommitmentResponse {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    pub provider_signature: String,
+    pub nonce: u64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ExistsResponse {
+    pub exists: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct ExistsRequest {
+    bucket_id: BucketId,
+    hashes: Vec<String>,
 }

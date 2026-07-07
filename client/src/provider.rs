@@ -10,7 +10,6 @@
 //! - Monitoring earnings and performance
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::provider_node_request_scheme::{NegotiateRequest, SignedTerms};
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::ProviderInfo;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
@@ -268,12 +267,12 @@ impl ProviderClient {
     /// Negotiate provider-signed agreement terms over HTTP.
     ///
     /// Owner posts the proposed shape; the provider node allocates nonce + validity window from
-    /// its own state, signs, returns a [`SignedTerms`](crate::provider_node_request_scheme::SignedTerms) ready for
+    /// its own state, signs, returns a [`SignedTerms`](crate::agreement::SignedTerms) ready for
     /// [`AdminClient::establish_storage_agreement`](crate::admin::AdminClient::establish_storage_agreement).
     pub async fn negotiate_terms(
         provider_url: &str,
-        req: &NegotiateRequest,
-    ) -> ClientResult<SignedTerms> {
+        req: &crate::agreement::NegotiateRequest,
+    ) -> ClientResult<crate::agreement::SignedTerms> {
         let url = format!("{}/negotiate", provider_url.trim_end_matches('/'));
         let response = reqwest::Client::new()
             .post(&url)
@@ -290,7 +289,7 @@ impl ProviderClient {
         }
 
         response
-            .json::<SignedTerms>()
+            .json::<crate::agreement::SignedTerms>()
             .await
             .map_err(ClientError::Http)
     }
@@ -565,15 +564,6 @@ impl ProviderClient {
 pub struct ActiveAgreement {
     pub bucket_id: BucketId,
     pub agreement: rt_api::AgreementResponse,
-}
-
-impl ActiveAgreement {
-    pub fn is_primary(&self) -> bool {
-        matches!(
-            self.agreement.role,
-            rt::storage_primitives::ProviderRole::Primary
-        )
-    }
 }
 
 #[derive(Debug, Clone)]

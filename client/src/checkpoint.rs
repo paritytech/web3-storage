@@ -32,9 +32,8 @@ use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
-use crate::provider_node_request_scheme::CommitmentResponse;
 use crate::substrate::SubstrateClient;
-use crate::ClientError;
+use crate::{ClientError, CommitmentResponse};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -704,11 +703,20 @@ pub struct CheckpointManager {
     /// Cached provider info per bucket.
     provider_cache: Arc<RwLock<HashMap<BucketId, CachedProviders>>>,
     /// Provider health history tracking.
-    health_history: Arc<RwLock<BTreeMap<AccountId32, ProviderHealthHistory>>>,
+    ///
+    /// Keyed by the raw `[u8; 32]` account bytes (`AccountId32.0`) rather than
+    /// `AccountId32` itself: `subxt`'s `AccountId32` does not implement `Hash`
+    /// (only `Eq`/`Ord`), so it cannot be used directly as a `HashMap` key.
+    /// `[u8; 32]` has the same identity and already implements `Hash`, keeping
+    /// O(1) lookups instead of falling back to a `BTreeMap`.
+    health_history: Arc<RwLock<HashMap<[u8; 32], ProviderHealthHistory>>>,
     /// Metrics tracking.
     metrics: Arc<RwLock<CheckpointMetrics>>,
     /// Conflict history for auto-challenge analysis.
-    conflict_history: Arc<RwLock<BTreeMap<(BucketId, AccountId32), Vec<ProviderConflict>>>>,
+    ///
+    /// See `health_history` above for why the key is `[u8; 32]` instead of
+    /// `AccountId32`.
+    conflict_history: Arc<RwLock<HashMap<(BucketId, [u8; 32]), Vec<ProviderConflict>>>>,
     /// Auto-challenge configuration.
     auto_challenge_config: AutoChallengeConfig,
 }
@@ -734,9 +742,9 @@ impl CheckpointManager {
             http_client: reqwest::Client::new(),
             provider_endpoints: Vec::new(),
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
-            health_history: Arc::new(RwLock::new(BTreeMap::new())),
+            health_history: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(BTreeMap::new())),
+            conflict_history: Arc::new(RwLock::new(HashMap::new())),
             auto_challenge_config: AutoChallengeConfig::default(),
         })
     }
@@ -749,9 +757,9 @@ impl CheckpointManager {
             http_client: reqwest::Client::new(),
             provider_endpoints: Vec::new(),
             provider_cache: Arc::new(RwLock::new(HashMap::new())),
-            health_history: Arc::new(RwLock::new(BTreeMap::new())),
+            health_history: Arc::new(RwLock::new(HashMap::new())),
             metrics: Arc::new(RwLock::new(CheckpointMetrics::default())),
-            conflict_history: Arc::new(RwLock::new(BTreeMap::new())),
+            conflict_history: Arc::new(RwLock::new(HashMap::new())),
             auto_challenge_config: AutoChallengeConfig::default(),
         }
     }
@@ -1674,7 +1682,7 @@ impl CheckpointManager {
     async fn record_provider_success(&self, account_id: &AccountId32, response_time_ms: u64) {
         let mut history = self.health_history.write().await;
         let entry = history
-            .entry(account_id.clone())
+            .entry(account_id.0)
             .or_insert_with(|| ProviderHealthHistory::new(account_id.clone()));
         entry.record_success(response_time_ms);
     }
@@ -1683,7 +1691,7 @@ impl CheckpointManager {
     async fn record_provider_failure(&self, account_id: &AccountId32, error: String) {
         let mut history = self.health_history.write().await;
         let entry = history
-            .entry(account_id.clone())
+            .entry(account_id.0)
             .or_insert_with(|| ProviderHealthHistory::new(account_id.clone()));
         entry.record_failure(error);
     }
@@ -1694,7 +1702,7 @@ impl CheckpointManager {
         account_id: &AccountId32,
     ) -> Option<ProviderHealthHistory> {
         let history = self.health_history.read().await;
-        history.get(account_id).cloned()
+        history.get(&account_id.0).cloned()
     }
 
     /// Get health history for all known providers.
@@ -1715,7 +1723,7 @@ impl CheckpointManager {
             .into_iter()
             .map(|p| {
                 let score = history
-                    .get(&p.account_id)
+                    .get(&p.account_id.0)
                     .map(|h| h.success_rate())
                     .unwrap_or(0.5); // Unknown providers get neutral score
                 (p, score)
@@ -1740,7 +1748,7 @@ impl CheckpointManager {
             .iter()
             .filter(|p| {
                 history
-                    .get(&p.account_id)
+                    .get(&p.account_id.0)
                     .map(|h| h.is_healthy())
                     .unwrap_or(true) // Unknown is considered potentially healthy
             })
@@ -1789,7 +1797,7 @@ impl CheckpointManager {
         // Store in conflict history for auto-challenge analysis
         let mut history = self.conflict_history.write().await;
         for conflicting in &conflict.conflicts {
-            let key = (bucket_id, conflicting.account_id.clone());
+            let key = (bucket_id, conflicting.account_id.0);
             history
                 .entry(key)
                 .or_insert_with(Vec::new)
@@ -1819,6 +1827,10 @@ impl CheckpointManager {
             .collect();
 
         for ((_, provider), conflicts) in bucket_conflicts {
+            // Reconstruct `AccountId32` from the raw bytes used as the map
+            // key (see `conflict_history` field doc).
+            let provider = AccountId32(*provider);
+
             // Check if enough conflicts to consider challenge
             if conflicts.len() < self.auto_challenge_config.min_conflict_count as usize {
                 continue;
@@ -1828,14 +1840,14 @@ impl CheckpointManager {
             let divergence_count = conflicts
                 .iter()
                 .flat_map(|c| &c.conflicts)
-                .filter(|c| c.account_id == *provider)
+                .filter(|c| c.account_id == provider)
                 .filter(|c| matches!(c.conflict_type, ConflictType::DataDivergence))
                 .count();
 
             let sync_delay_count = conflicts
                 .iter()
                 .flat_map(|c| &c.conflicts)
-                .filter(|c| c.account_id == *provider)
+                .filter(|c| c.account_id == provider)
                 .filter(|c| matches!(c.conflict_type, ConflictType::SyncDelay { .. }))
                 .count();
 
@@ -1846,7 +1858,7 @@ impl CheckpointManager {
                     if let Some(provider_conflict) = latest_conflict
                         .conflicts
                         .iter()
-                        .find(|c| c.account_id == *provider)
+                        .find(|c| c.account_id == provider)
                     {
                         recommendations.push(ChallengeRecommendation {
                             provider: provider.clone(),
@@ -1884,7 +1896,7 @@ impl CheckpointManager {
                     if let Some(provider_conflict) = latest_conflict
                         .conflicts
                         .iter()
-                        .find(|c| c.account_id == *provider)
+                        .find(|c| c.account_id == provider)
                     {
                         if let ConflictType::SyncDelay { behind_by } =
                             provider_conflict.conflict_type
@@ -1960,7 +1972,7 @@ impl CheckpointManager {
     pub async fn get_conflict_count(&self, bucket_id: BucketId, provider: &AccountId32) -> usize {
         let history = self.conflict_history.read().await;
         history
-            .get(&(bucket_id, provider.clone()))
+            .get(&(bucket_id, provider.0))
             .map(|v| v.len())
             .unwrap_or(0)
     }
@@ -2082,7 +2094,7 @@ impl CheckpointManager {
 
                     // Clear conflict history for this provider since we've challenged them
                     let mut history = self.conflict_history.write().await;
-                    history.remove(&(bucket_id, recommendation.provider.clone()));
+                    history.remove(&(bucket_id, recommendation.provider.0));
 
                     // Update metrics
                     let mut metrics = self.metrics.write().await;
@@ -2404,7 +2416,15 @@ impl CheckpointManager {
     ///
     /// Useful for custom persistence implementations or debugging.
     pub async fn export_state(&self) -> PersistedCheckpointState {
-        let health_histories = self.health_history.read().await;
+        // `with_health_histories` takes a `BTreeMap<AccountId32, _>`; re-key
+        // from our `[u8; 32]`-keyed storage (see `health_history` field doc).
+        let health_histories: BTreeMap<AccountId32, ProviderHealthHistory> = self
+            .health_history
+            .read()
+            .await
+            .values()
+            .map(|history| (history.account_id.clone(), history.clone()))
+            .collect();
         let metrics = self.metrics.read().await;
 
         StateBuilder::new()
@@ -2422,7 +2442,7 @@ impl CheckpointManager {
             let mut health_histories = self.health_history.write().await;
             for persisted in state.health_histories.values() {
                 let history = persisted.to_health_history()?;
-                health_histories.insert(history.account_id.clone(), history);
+                health_histories.insert(history.account_id.0, history);
             }
         }
 
@@ -2444,7 +2464,7 @@ impl CheckpointManager {
     /// Get a copy of all provider health histories.
     ///
     /// Useful for monitoring and diagnostics.
-    pub async fn get_health_histories(&self) -> BTreeMap<AccountId32, ProviderHealthHistory> {
+    pub async fn get_health_histories(&self) -> HashMap<[u8; 32], ProviderHealthHistory> {
         self.health_history.read().await.clone()
     }
 
@@ -2453,7 +2473,7 @@ impl CheckpointManager {
         &self,
         provider: &AccountId32,
     ) -> Option<ProviderHealthHistory> {
-        self.health_history.read().await.get(provider).cloned()
+        self.health_history.read().await.get(&provider.0).cloned()
     }
 
     /// Clear all conflict history for all buckets.

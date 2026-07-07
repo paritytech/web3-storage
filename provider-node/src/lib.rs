@@ -28,7 +28,9 @@ pub mod s3_api;
 pub mod s3_index;
 pub mod storage;
 pub(crate) mod subxt_client;
+pub mod types;
 
+pub use crate::types::*;
 pub use api::create_router;
 pub use chain_state_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
@@ -45,7 +47,7 @@ pub use checkpoint_coordinator::{
 };
 pub use error::Error;
 pub use fs_index::FsIndexManager;
-pub use negotiate::NonceCounter;
+pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use replica_sync::ReplicaSync;
 pub use replica_sync_coordinator::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
@@ -56,7 +58,6 @@ pub use storage::{
     build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo,
     DiskNonceStore, DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend, StoredNode,
 };
-pub use storage_client::provider_node_request_scheme::*;
 
 use std::str::FromStr;
 use std::sync::Arc;

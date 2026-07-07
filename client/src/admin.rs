@@ -9,9 +9,9 @@
 //! - Freezing buckets
 //! - Deleting old data
 
+use crate::agreement::AgreementTermsOf;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
-use crate::provider_node_request_scheme::AgreementTermsOf;
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use rt::pallet_storage_provider::pallet::Bucket;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};

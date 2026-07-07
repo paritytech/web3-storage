@@ -21,10 +21,9 @@
 //!   user_seed     - Seed of the paying user          (default: //Bob)
 
 use std::env;
-use storage_client::storage_user::StorageUserClient;
 use storage_client::{
-    provider_node_request_scheme::{NegotiateRequest, SignedTerms},
-    AdminClient, ChunkingStrategy, ClientConfig, ProviderClient,
+    AdminClient, ChunkingStrategy, ClientConfig, NegotiateRequest, ProviderClient, SignedTerms,
+    StorageUserClient,
 };
 use storage_subxt::subxt_signer::{sr25519::Keypair, SecretUri};
 
