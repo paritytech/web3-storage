@@ -2,13 +2,13 @@
 
 //! Subxt-based production chain client shared by all coordinators.
 //!
-//! A single [`SubxtChainClient`] holds one [`SubstrateClient`] connection
+//! A single [`SubxtChainClient`] holds one [`subxt::OnlineClient`] connection
 //! and one signing key, and implements every coordinator's chain-client trait
 //! (`CheckpointChainClient`, `ReplicaSyncChainClient`,
 //! `ChallengeChainClient`). Coordinators still depend on the narrow trait they
 //! need, so per-trait mocks keep working; the production wiring just hands each
-//! one a clone of the same client (a cheap `SubstrateClient` clone that shares
-//! the underlying WebSocket connection).
+//! one a clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
+//! shares the underlying WebSocket connection).
 
 use crate::challenge_responder::{ChallengeChainClient, DetectedChallenge};
 use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
@@ -17,51 +17,57 @@ use crate::replica_sync_coordinator::{
 };
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
-use storage_client::substrate::{extrinsics, storage, SubstrateClient};
+use std::str::FromStr;
+use storage_client::substrate::{extrinsics, storage};
 use storage_primitives::{BucketId, Commitment, ReplicaSyncRecord};
 use storage_subxt::api::runtime_types as rt;
-use storage_subxt::subxt::utils::AccountId32;
-use storage_subxt::subxt::utils::H256;
+use storage_subxt::subxt;
+use storage_subxt::subxt::utils::{AccountId32, H256};
 use storage_subxt::subxt_signer;
 
-/// Production implementation that talks to the chain via typed storage_client bindings.
+/// Production implementation that talks to the chain via subxt.
 ///
-/// Cloning is cheap: `SubstrateClient` shares one connection behind an `Arc`, and
+/// Cloning is cheap: `OnlineClient` shares one connection behind an `Arc`, andAdd a comment on  line L29Add diff commentMarkdown input:  edit mode selected.WritePreviewHeadingBoldItalicQuoteCodeLinkUnordered listNumbered listTask listMentionReferenceMore Formatting tools items 0Saved repliesAdd FilesPaste, drop, or click to add filesCancelCommentStart a review
 /// the `Keypair` clone is a key copy. This lets a single instance be shared
 /// across every background coordinator.
 #[derive(Clone)]
 pub struct SubxtChainClient {
-    client: SubstrateClient,
+    api: subxt::OnlineClient<subxt::PolkadotConfig>,
+    signer: subxt_signer::sr25519::Keypair,
 }
 
 impl SubxtChainClient {
     /// Connect to the chain and create a signer from the seed URI.
+    ///
+    /// The signer is derived from `seed` (e.g. `//Alice` or a mnemonic), which
+    /// reproduces the provider's registered account — the identity every
+    /// on-chain action must be signed by.
     pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {
+        let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+
         let uri: subxt_signer::SecretUri = seed
             .parse()
             .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
-        let keypair = subxt_signer::sr25519::Keypair::from_uri(&uri)
+        let signer = subxt_signer::sr25519::Keypair::from_uri(&uri)
             .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
 
         tracing::info!(
             "Chain client connected to {} as {}",
             chain_ws_url,
-            AccountId32::from(keypair.public_key().0).to_string()
+            sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
         );
 
-        let client = SubstrateClient::connect(chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?
-            .with_signer(keypair);
-
-        Ok(Self { client })
+        Ok(Self { api, signer })
     }
 
     /// Get the current (latest) block number.
+    ///
+    /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
     async fn current_block(&self) -> Result<u64, Error> {
         let block = self
-            .client
-            .api()
+            .api
             .blocks()
             .at_latest()
             .await
@@ -121,6 +127,7 @@ impl SubxtChainClient {
         } else {
             ("127.0.0.1", "3333")
         };
+        // 0.0.0.0 isn't useful as a client-facing address
         let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
         format!("/ip4/{host}/tcp/{port}")
     }
@@ -137,7 +144,7 @@ impl SubxtChainClient {
             None => Self::bind_addr_to_multiaddr(bind_addr),
         };
 
-        let account = match SubstrateClient::parse_account(provider_id) {
+        let account = match Self::parse_account(provider_id) {
             Ok(a) => a,
             Err(_) => {
                 tracing::warn!("Invalid provider SS58 address, skipping multiaddr sync");
@@ -145,7 +152,7 @@ impl SubxtChainClient {
             }
         };
 
-        let storage_api = match self.client.api().storage().at_latest().await {
+        let storage_api = match self.api.storage().at_latest().await {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
@@ -181,18 +188,10 @@ impl SubxtChainClient {
         );
 
         let tx = extrinsics::update_provider_multiaddr(expected_multiaddr.as_bytes().to_vec());
-        let signer = match self.client.signer() {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("No signer available for multiaddr update: {}", e);
-                return;
-            }
-        };
         match self
-            .client
-            .api()
+            .api
             .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
         {
             Ok(progress) => match progress.wait_for_finalized_success().await {
@@ -235,6 +234,12 @@ impl SubxtChainClient {
             rt::storage_primitives::ProviderRole::Primary => None,
         }
     }
+
+    /// Parse an SS58 account ID string into AccountId32.
+    pub fn parse_account(account: &str) -> Result<AccountId32, Error> {
+        AccountId32::from_str(account)
+            .map_err(|e| Error::Internal(format!("Invalid SS58 account '{account}': {e}")))
+    }
 }
 
 #[async_trait::async_trait]
@@ -248,8 +253,7 @@ impl CheckpointChainClient for SubxtChainClient {
         bucket_id: BucketId,
     ) -> Result<Option<(u32, u32)>, Error> {
         let storage_api = self
-            .client
-            .api()
+            .api
             .storage()
             .at_latest()
             .await
@@ -272,8 +276,7 @@ impl CheckpointChainClient for SubxtChainClient {
     ) -> Result<H256, Error> {
         let mut sig_vec = Vec::with_capacity(signatures.len());
         for (account, sig) in &signatures {
-            let account_id = SubstrateClient::parse_account(account)
-                .map_err(|e| Error::Internal(format!("Invalid SS58 account '{account}': {e}")))?;
+            let account_id = Self::parse_account(account)?;
             let sig_bytes = hex::decode(sig.trim_start_matches("0x"))
                 .map_err(|e| Error::Internal(format!("Invalid signature hex: {e}")))?;
             sig_vec.push((account_id, sig_bytes));
@@ -286,15 +289,10 @@ impl CheckpointChainClient for SubxtChainClient {
         };
         let tx = extrinsics::provider_checkpoint(duty.bucket_id, commitment, duty.window, sig_vec);
 
-        let signer = self
-            .client
-            .signer()
-            .map_err(|e| Error::Internal(e.to_string()))?;
         let tx_progress = self
-            .client
-            .api()
+            .api
             .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 
@@ -318,14 +316,12 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         provider_account: &str,
         local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
-        let account = SubstrateClient::parse_account(provider_account)
-            .map_err(|e| Error::Internal(format!("Invalid provider account: {e}")))?;
+        let account = Self::parse_account(provider_account)?;
 
         let mut agreements = Vec::new();
 
         let storage_api = self
-            .client
-            .api()
+            .api
             .storage()
             .at_latest()
             .await
@@ -345,8 +341,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         // Chain-wide scan via runtime API to discover agreements for buckets we don't have locally
         match self
-            .client
-            .api()
+            .api
             .runtime_api()
             .at_latest()
             .await
@@ -397,8 +392,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
     async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
         let storage_api = self
-            .client
-            .api()
+            .api
             .storage()
             .at_latest()
             .await
@@ -424,8 +418,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
         let storage_api = self
-            .client
-            .api()
+            .api
             .storage()
             .at_latest()
             .await
@@ -464,15 +457,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             hex::encode(target_mmr_root.as_bytes())
         );
 
-        let signer = self
-            .client
-            .signer()
-            .map_err(|e| Error::Internal(e.to_string()))?;
         let tx_progress = self
-            .client
-            .api()
+            .api
             .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 
@@ -498,17 +486,10 @@ impl ChallengeChainClient for SubxtChainClient {
     /// which already scans and filters `StorageProvider::Challenges` on the
     /// node side and returns only the challenges targeting the given account.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        let our_account: AccountId32 = self
-            .client
-            .signer()
-            .map_err(|e| Error::Internal(e.to_string()))?
-            .public_key()
-            .0
-            .into();
+        let our_account: AccountId32 = self.signer.public_key().0.into();
 
         let challenges = self
-            .client
-            .api()
+            .api
             .runtime_api()
             .at_latest()
             .await
@@ -559,15 +540,10 @@ impl ChallengeChainClient for SubxtChainClient {
             &chunk_proof,
         );
 
-        let signer = self
-            .client
-            .signer()
-            .map_err(|e| Error::Internal(e.to_string()))?;
         let tx_progress = self
-            .client
-            .api()
+            .api
             .tx()
-            .sign_and_submit_then_watch_default(&tx, signer)
+            .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
 

@@ -38,7 +38,7 @@ use crate::substrate::PALLET_NAME;
 use crate::ClientError;
 use futures::Stream;
 use rt::pallet_storage_provider::pallet::ProviderSettings;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -410,7 +410,9 @@ pub struct EventFilter {
     /// Only include events for these bucket IDs (empty = all buckets).
     pub bucket_ids: HashSet<BucketId>,
     /// Only include events for these providers (empty = all providers).
-    pub providers: BTreeSet<AccountId32>,
+    ///
+    /// Stored as raw bytes because `AccountId32` doesn't implement `Hash`.
+    pub providers: HashSet<[u8; 32]>,
     /// Include checkpoint events.
     pub include_checkpoints: bool,
     /// Include challenge events.
@@ -432,7 +434,7 @@ impl EventFilter {
     pub fn all() -> Self {
         Self {
             bucket_ids: HashSet::new(),
-            providers: BTreeSet::new(),
+            providers: HashSet::new(),
             include_checkpoints: true,
             include_challenges: true,
             include_agreements: true,
@@ -453,7 +455,7 @@ impl EventFilter {
     /// Create a filter for a specific provider.
     pub fn provider(provider: AccountId32) -> Self {
         let mut filter = Self::all();
-        filter.providers.insert(provider);
+        filter.providers.insert(provider.0);
         filter
     }
 
@@ -481,7 +483,7 @@ impl EventFilter {
 
     /// Add a provider to the filter.
     pub fn with_provider(mut self, provider: AccountId32) -> Self {
-        self.providers.insert(provider);
+        self.providers.insert(provider.0);
         self
     }
 
@@ -499,7 +501,7 @@ impl EventFilter {
         // Check provider filter
         if !self.providers.is_empty() {
             if let Some(provider) = event.provider() {
-                if !self.providers.contains(provider) {
+                if !self.providers.contains(&provider.0) {
                     return false;
                 }
             }

@@ -78,6 +78,16 @@ pub struct SignedTerms {
     pub signature: MultiSignature,
 }
 
+/// Sign already-built terms with a provider keypair.
+pub fn sign_terms(
+    keypair: &subxt_signer::sr25519::Keypair,
+    terms: &AgreementTermsOf,
+) -> MultiSignature {
+    let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
+    let raw = keypair.sign(&hash);
+    MultiSignature::Sr25519(raw.0)
+}
+
 /// Hex-bytes serde adapter for [`MultiSignature`] — SCALE-encode then hex.
 mod hex_multi_signature {
     use super::MultiSignature;
@@ -93,14 +103,4 @@ mod hex_multi_signature {
         let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
         MultiSignature::decode(&mut &bytes[..]).map_err(serde::de::Error::custom)
     }
-}
-
-/// Sign already-built terms with a provider keypair.
-pub fn sign_terms(
-    keypair: &subxt_signer::sr25519::Keypair,
-    terms: &AgreementTermsOf,
-) -> MultiSignature {
-    let hash = sp_core::hashing::blake2_256(&terms.signing_payload());
-    let raw = keypair.sign(&hash);
-    MultiSignature::Sr25519(raw.0)
 }
