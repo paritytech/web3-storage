@@ -381,7 +381,7 @@ papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_
 e2e PROVIDER_URL=PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
         --include="examples/papi/**" --include="packages/sdk/src/**" \
-        node --import tsx examples/papi/e2e/runner.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+        node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
 e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
