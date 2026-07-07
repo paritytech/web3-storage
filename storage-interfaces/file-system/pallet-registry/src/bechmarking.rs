@@ -107,7 +107,7 @@ fn make_primary_terms<T: Config>(owner: &T::AccountId, nonce: u64) -> AgreementT
         max_bytes: 1_000u64,
         duration: 100u32.into(),
         price_per_byte: 1u32.into(),
-        valid_until: frame_system::Pallet::<T>::block_number()
+        valid_until: pallet_storage_provider::Pallet::<T>::current_block()
             .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
         nonce,
         bucket_id: None,

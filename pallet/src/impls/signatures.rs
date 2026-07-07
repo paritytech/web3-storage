@@ -17,7 +17,7 @@ impl<T: Config> Pallet<T> {
     /// of) the current block. This prevents an attacker who captures one
     /// signed commitment from replaying it forever.
     pub(crate) fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
-        let current: u64 = frame_system::Pallet::<T>::block_number().saturated_into();
+        let current: u64 = Self::current_block().saturated_into();
         let max_age: u64 = T::MaxNonceAge::get().saturated_into();
         // Future-dated nonces are nonsensical — the signer can only know
         // the current block at sign-time. Allow exact equality.

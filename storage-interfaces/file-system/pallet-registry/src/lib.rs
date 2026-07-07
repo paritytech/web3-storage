@@ -237,7 +237,7 @@ pub mod pallet {
             let next_id = drive_id.checked_add(1).ok_or(Error::<T>::DriveIdOverflow)?;
 
             // Calculate expiry block
-            let current_block = <frame_system::Pallet<T>>::block_number();
+            let current_block = pallet_storage_provider::Pallet::<T>::current_block();
             let expires_at = current_block + storage_period;
 
             // Create drive info

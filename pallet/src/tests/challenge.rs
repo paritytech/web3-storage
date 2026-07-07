@@ -1031,10 +1031,10 @@ fn remove_slashed_reindexes_snapshot_bitfield() {
 }
 
 /// The per-deadline challenge count is capped by `MaxChallengesPerDeadline`
-/// (5 in this mock) so the `on_finalize` slash sweep stays bounded. All
-/// challenges created in the same block share a deadline, so once the cap is
-/// reached in block 1 the next `challenge_checkpoint` for that deadline must be
-/// rejected with `TooManyChallengesThisBlock`.
+/// (5 in this mock) so the `on_initialize` slash sweep stays bounded. All
+/// challenges created at the same clock reading share a deadline, so once the
+/// cap is reached in block 1 the next `challenge_checkpoint` for that deadline
+/// must be rejected with `TooManyChallengesThisBlock`.
 #[test]
 fn challenge_count_per_deadline_is_capped() {
     new_test_ext().execute_with(|| {
@@ -1718,6 +1718,216 @@ mod challenge_tests {
 
             // Challenge cleared from storage.
             assert!(Challenges::<Test>::get(101, 0).is_none());
+        });
+    }
+
+    /// The sweep drains a range of deadline keys, so a deadline skipped over
+    /// by a block-number jump (relay numbers can advance by more than one
+    /// between parachain blocks) is still slashed.
+    #[test]
+    fn challenge_timeout_sweep_catches_skipped_deadlines() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            // Walk close to the deadline (101), then jump well past it in a
+            // single step and run one on_initialize.
+            advance_to(100);
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                0
+            );
+            System::set_block_number(110);
+            <StorageProvider as Hooks<u64>>::on_initialize(110);
+
+            // Deadline 101 was never the "current" block, yet the range sweep
+            // (cursor 99 → 109) drained and slashed it.
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stats.challenges_failed, 1);
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(109));
+        });
+    }
+
+    /// A single sweep drains at most `MAX_SWEEP_SPAN` (32) keys; the
+    /// remainder carries over via the cursor and drains on later blocks, so
+    /// a huge gap cannot blow one block but slashes still land.
+    #[test]
+    fn challenge_timeout_sweep_is_capped_and_carries_over() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            // Anchor the cursor at 1, then jump far past the deadline (101).
+            advance_to(2);
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(1));
+            System::set_block_number(500);
+
+            // Each sweep advances the cursor by at most 32 keys: 33, 65, 97 —
+            // deadline 101 still pending after three sweeps.
+            for expected_cursor in [33, 65, 97] {
+                <StorageProvider as Hooks<u64>>::on_initialize(500);
+                assert_eq!(
+                    LastSweptChallengeBlock::<Test>::get(),
+                    Some(expected_cursor)
+                );
+            }
+            assert!(Challenges::<Test>::get(101, 0).is_some());
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                0
+            );
+
+            // Fourth sweep covers 98..=129 and slashes.
+            <StorageProvider as Hooks<u64>>::on_initialize(500);
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(129));
+            assert!(Challenges::<Test>::get(101, 0).is_none());
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                1
+            );
+        });
+    }
+
+    /// The sweep never slashes more than `MaxChallengesPerDeadline` (5 in
+    /// this mock) challenges per block even when a gap matured several
+    /// populated deadlines at once; on exhaustion it parks the cursor below
+    /// the partially drained key and finishes on the next block.
+    #[test]
+    fn challenge_timeout_sweep_budget_carries_over_mid_key() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+
+            let challenge = || {
+                assert_ok!(StorageProvider::challenge_checkpoint(
+                    RuntimeOrigin::signed(3),
+                    0,
+                    2,
+                    ChunkLocation {
+                        leaf_index: 0,
+                        chunk_index: 0,
+                    },
+                ));
+            };
+
+            // Load two consecutive deadlines with 3 challenges each: 199
+            // (created at block 99) and 200 (created at block 100).
+            run_to_block(99);
+            for _ in 0..3 {
+                challenge();
+            }
+            run_to_block(100);
+            for _ in 0..3 {
+                challenge();
+            }
+            assert_eq!(PendingChallenges::<Test>::get(2), 6);
+
+            // Jump far past both deadlines. The span cap (32 keys/sweep)
+            // takes three sweeps to walk the empty range up to key 195.
+            System::set_block_number(300);
+            for _ in 0..3 {
+                <StorageProvider as Hooks<u64>>::on_initialize(300);
+            }
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(195));
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                0
+            );
+
+            // Fourth sweep reaches the loaded keys: drains all 3 at 199,
+            // then only 2 of 3 at 200 before the budget (5) is exhausted —
+            // cursor parks below the partially drained key, whose index
+            // allocator survives for the carry-over.
+            <StorageProvider as Hooks<u64>>::on_initialize(300);
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                5
+            );
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(199));
+            assert_eq!(Challenges::<Test>::iter_prefix(200).count(), 1);
+            assert_eq!(NextChallengeIndex::<Test>::get(200), 3);
+            assert_eq!(PendingChallenges::<Test>::get(2), 1);
+
+            // Fifth sweep finishes the key and cleans up its allocator.
+            <StorageProvider as Hooks<u64>>::on_initialize(300);
+            assert_eq!(
+                Providers::<Test>::get(2).unwrap().stats.challenges_failed,
+                6
+            );
+            assert_eq!(Challenges::<Test>::iter_prefix(200).count(), 0);
+            assert_eq!(NextChallengeIndex::<Test>::get(200), 0);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(231));
+        });
+    }
+
+    /// Re-running the sweep at an unchanged block number (several parachain
+    /// blocks can share one relay parent) is a no-op: no double slash, no
+    /// counter underflow.
+    #[test]
+    fn challenge_timeout_sweep_idempotent_at_same_block() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1);
+            let (mmr_root, _, _) = single_chunk_proof(b"chunk-0");
+            setup_primary_with_snapshot(mmr_root, 0, 1);
+            assert_ok!(StorageProvider::challenge_checkpoint(
+                RuntimeOrigin::signed(3),
+                0,
+                2,
+                ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ));
+
+            advance_to(102);
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            let cursor = LastSweptChallengeBlock::<Test>::get();
+
+            <StorageProvider as Hooks<u64>>::on_initialize(102);
+
+            let provider = Providers::<Test>::get(2).unwrap();
+            assert_eq!(provider.stats.challenges_failed, 1);
+            assert_eq!(PendingChallenges::<Test>::get(2), 0);
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), cursor);
+        });
+    }
+
+    /// The very first sweep anchors the cursor at the current clock instead
+    /// of scanning up from zero (live relay numbers start in the millions).
+    #[test]
+    fn challenge_timeout_sweep_anchors_cursor_on_first_run() {
+        new_test_ext().execute_with(|| {
+            System::set_block_number(1_000_000);
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), None);
+
+            <StorageProvider as Hooks<u64>>::on_initialize(1_000_000);
+
+            assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(999_999));
         });
     }
 

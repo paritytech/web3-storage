@@ -62,6 +62,16 @@ fn agreement_to_response<T: Config>(
 }
 
 impl<T: Config> Pallet<T> {
+    /// Current block number on the clock all pallet durations are measured
+    /// in: the relay chain in production, `System` in tests.
+    ///
+    /// During `on_initialize` this returns the *previous* block's relay
+    /// parent (the validation-data inherent has not run yet); everywhere
+    /// else it is the current block's relay parent.
+    pub fn current_block() -> BlockNumberFor<T> {
+        <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
+    }
+
     /// Query provider information.
     pub fn query_provider_info(
         provider: &T::AccountId,

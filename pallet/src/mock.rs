@@ -103,6 +103,7 @@ impl pallet_storage_provider::Config for Test {
     // Small cap so the cap-enforcement test can hit it without creating
     // thousands of challenges.
     type MaxChallengesPerDeadline = ConstU16<5>;
+    type BlockNumberProvider = System;
     type WeightInfo = ();
 }
 
@@ -184,12 +185,10 @@ pub fn new_test_ext_with_genesis_providers(
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         let current = System::block_number();
-        if current > 1 {
-            <StorageProvider as Hooks<u64>>::on_finalize(current);
-        }
         <System as Hooks<u64>>::on_finalize(current);
         System::set_block_number(current + 1);
         <System as Hooks<u64>>::on_initialize(current + 1);
+        <StorageProvider as Hooks<u64>>::on_initialize(current + 1);
     }
 }
 

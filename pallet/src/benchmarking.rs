@@ -19,6 +19,15 @@ use storage_primitives::{
 
 const SEED: u32 = 0;
 
+/// Advance the clock the pallet logic reads. `System` and the configured
+/// [`Config::BlockNumberProvider`] are distinct clocks in a real runtime, so
+/// benchmarks must advance both.
+fn set_block_number<T: Config>(n: BlockNumberFor<T>) {
+    use sp_runtime::traits::BlockNumberProvider;
+    System::<T>::set_block_number(n);
+    T::BlockNumberProvider::set_block_number(n);
+}
+
 /// Key type used by the benchmarking keystore for provider signing material.
 const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"bnch");
 
@@ -79,7 +88,7 @@ fn build_primary_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
@@ -99,7 +108,7 @@ fn build_replica_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
@@ -176,7 +185,7 @@ fn add_primary_to_bucket<T: Config>(
     bucket_id: BucketId,
     max_bytes: u64,
 ) {
-    let current_block = System::<T>::block_number();
+    let current_block = StorageProvider::<T>::current_block();
     let duration: BlockNumberFor<T> = 100u32.into();
     let expires_at = current_block.saturating_add(duration);
 
@@ -322,9 +331,9 @@ mod benchmarks {
         let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
-        let announce_block = System::<T>::block_number();
+        let announce_block = StorageProvider::<T>::current_block();
         let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
-        System::<T>::set_block_number(complete_after);
+        set_block_number::<T>(complete_after);
 
         #[extrinsic_call]
         complete_deregister(RawOrigin::Signed(provider));
@@ -602,13 +611,13 @@ mod benchmarks {
 
         // Advance block past agreement expiry + settlement timeout
         let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
-        let current_block = System::<T>::block_number();
+        let current_block = StorageProvider::<T>::current_block();
         let target_block: BlockNumberFor<T> = agreement
             .expires_at
             .saturating_add(T::SettlementTimeout::get())
             .saturating_add(current_block)
             .saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         #[extrinsic_call]
         claim_expired_agreement(RawOrigin::Signed(provider), bucket_id);
@@ -773,7 +782,7 @@ mod benchmarks {
         let target_block: BlockNumberFor<T> = window_start
             .saturating_add(grace_period)
             .saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         // Sign the CheckpointProposal with all s providers.
         let proposal =
@@ -838,7 +847,7 @@ mod benchmarks {
         let interval = T::DefaultCheckpointInterval::get();
         let next_window_start = interval.saturating_mul((window + 1).saturated_into());
         let target_block: BlockNumberFor<T> = next_window_start.saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         #[extrinsic_call]
         report_missed_checkpoint(RawOrigin::Signed(admin), bucket_id, window);
