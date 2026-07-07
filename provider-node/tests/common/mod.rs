@@ -6,6 +6,10 @@
 //! ([`with_admin_member`]) and use [`SignedClient`] to sign every request as
 //! `//Alice`.
 
+// Each integration suite (`api_`/`auth_`/`s3_`/`fs_`/`disk_integration`) compiles this
+// module in its own test crate and exercises only a subset of these helpers, so per-crate
+// dead-code analysis flags the rest.
+#![allow(dead_code)]
 
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
