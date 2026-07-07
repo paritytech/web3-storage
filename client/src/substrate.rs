@@ -897,6 +897,40 @@ pub mod storage {
             vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
     }
+
+    /// Query `ParachainSystem::LastRelayChainBlockNumber` — the relay-chain
+    /// block anchored to the queried parachain block. This is the clock every
+    /// storage-pallet duration (timeouts, expiries, `valid_until`, nonces) is
+    /// measured against, so off-chain actors must read it, not the parachain
+    /// block height.
+    pub fn last_relay_block_number() -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage("ParachainSystem", "LastRelayChainBlockNumber", vec![])
+    }
+}
+
+/// Fetch and decode `ParachainSystem::LastRelayChainBlockNumber` from a
+/// storage view (`api.storage().at_latest()` or `block.storage()`).
+pub async fn fetch_last_relay_block_number(
+    storage: &subxt::storage::Storage<PolkadotConfig, OnlineClient<PolkadotConfig>>,
+) -> Result<u32, ClientError> {
+    let thunk = storage
+        .fetch(&storage::last_relay_block_number())
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch relay block number: {e}")))?
+        .ok_or_else(|| ClientError::Chain("LastRelayChainBlockNumber not found".to_string()))?;
+    let value = thunk
+        .to_value()
+        .map_err(|e| ClientError::Chain(format!("Failed to decode relay block number: {e}")))?;
+    value
+        .as_u128()
+        .map(|v| v as u32)
+        .ok_or_else(|| ClientError::Chain("relay block number is not an integer".to_string()))
 }
 
 // Helper functions for common operations

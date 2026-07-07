@@ -61,17 +61,22 @@ impl SubxtChainClient {
         Ok(Self { api, signer })
     }
 
-    /// Get the current (latest) block number.
+    /// Get the current relay-chain block number (the clock all on-chain
+    /// durations, in particular checkpoint windows, are measured against),
+    /// read at the latest parachain block.
     ///
     /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
     async fn current_block(&self) -> Result<u64, Error> {
-        let block = self
+        let storage = self
             .api
-            .blocks()
+            .storage()
             .at_latest()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-        Ok(block.number() as u64)
+            .map_err(|e| Error::Internal(format!("Failed to get latest storage: {e}")))?;
+        storage_client::substrate::fetch_last_relay_block_number(&storage)
+            .await
+            .map(u64::from)
+            .map_err(|e| Error::Internal(e.to_string()))
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
