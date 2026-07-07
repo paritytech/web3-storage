@@ -105,16 +105,15 @@ export interface PutChunkResult {
  * the CID itself and no Layer 0 checkpoint follows immediately.
  *
  * `signer` authenticates the `PUT /node` request; it must hold a Writer/Admin
- * role on `bucketId` (the provider always enforces this). A signer without a
- * raw keypair (e.g. a wallet-extension signer) cannot sign and the upload is
- * rejected.
+ * role on `bucketId` (the provider always enforces this).
  */
 export async function putChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
-  signer?: ChainSigner,
+  signer: ChainSigner,
 ): Promise<PutChunkResult> {
+  const sign = { keypair: signer.keypair, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const cid = blake2b256(bytes);
   const hash = toHex(cid);
@@ -126,7 +125,7 @@ export async function putChunk(
       data: bytesToBase64(bytes),
       children: null,
     },
-    sign: signer?.keypair ? { keypair: signer.keypair, bucketId } : undefined,
+    sign,
   });
   return { hash, cid, size: BigInt(bytes.length), data: bytes };
 }
@@ -145,11 +144,11 @@ export async function uploadChunk(
   bucketId: bigint | number,
   data: Uint8Array | string,
   nonce: bigint | number,
-  signer?: ChainSigner,
+  signer: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
+  const sign = { keypair: signer.keypair, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
-  const sign = signer?.keypair ? { keypair: signer.keypair, bucketId } : undefined;
   await providerFetch(providerUrl, "/node", {
     method: "PUT",
     body: {

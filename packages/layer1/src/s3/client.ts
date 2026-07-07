@@ -109,8 +109,7 @@ export class S3Client {
   }
 
   private authHeaders(method: string, layer0BucketId: bigint): Record<string, string> {
-    const kp = this.signer?.keypair;
-    return kp ? signProviderRequest(kp, method, layer0BucketId) : {};
+    return signProviderRequest(this.requireSigner().keypair, method, layer0BucketId);
   }
 
   // ── Validation (S3 conventions, lifted from the original SDK stub) ──────

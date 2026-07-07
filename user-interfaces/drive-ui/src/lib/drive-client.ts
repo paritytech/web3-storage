@@ -11,7 +11,6 @@
 
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import {
   buildSignedTermsArgs,
   createDrive as createDriveTx,
@@ -121,16 +120,12 @@ export class DriveClient {
       return;
     }
     let chainSigner: ChainSigner | null = null;
-    if (this.signer && this.signerAddress) {
-      // drive-ui derives raw dev-account keypairs, so provider requests are
-      // signed (FileSystemClient reads `signer.keypair`). Fall back to the
-      // address-recovered public key if only a wallet signer is present.
-      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
+    if (this.signer && this.signerAddress && this.keypair) {
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
-        keypair: this.keypair ?? undefined,
+        publicKey: this.keypair.publicKey,
+        keypair: this.keypair,
       };
     }
     this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
@@ -360,12 +355,14 @@ export class DriveClient {
     signed: SignedTerms,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
-    const [publicKey] = ss58Decode(this.signerAddress);
+    if (!this.signer || !this.signerAddress || !this.keypair) {
+      throw new Error("Signer not set");
+    }
     const owner: ChainSigner = {
       signer: this.signer,
       address: this.signerAddress,
-      publicKey,
+      publicKey: this.keypair.publicKey,
+      keypair: this.keypair,
     };
 
     // Finalize: the state layer reads the drive list back at the finalized

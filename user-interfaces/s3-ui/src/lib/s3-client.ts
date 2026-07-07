@@ -15,7 +15,6 @@
 import { Subscription } from "rxjs";
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
@@ -187,16 +186,12 @@ export class S3Client {
       return;
     }
     let chainSigner: ChainSigner | null = null;
-    if (this.signer && this.signerAddress) {
-      // s3-ui derives raw dev-account keypairs, so provider requests are
-      // signed (the SDK's S3Client reads `signer.keypair`). Fall back to the
-      // address-recovered public key if only a wallet signer is present.
-      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
+    if (this.signer && this.signerAddress && this.keypair) {
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
-        keypair: this.keypair ?? undefined,
+        publicKey: this.keypair.publicKey,
+        keypair: this.keypair,
       };
     }
     this.owner = chainSigner;

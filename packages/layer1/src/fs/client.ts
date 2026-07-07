@@ -119,8 +119,7 @@ export class FileSystemClient {
   }
 
   private authHeaders(method: string, bucketId: bigint): Record<string, string> {
-    const kp = this.signer?.keypair;
-    return kp ? signProviderRequest(kp, method, bucketId) : {};
+    return signProviderRequest(this.requireSigner().keypair, method, bucketId);
   }
 
   // ── Drive chain ops ─────────────────────────────────────────────────────
