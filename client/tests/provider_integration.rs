@@ -14,7 +14,14 @@
 mod common;
 
 use common::{alice_provider, chain_guard, chain_setup, dev_account};
-use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::ProviderSettings;
+use storage_subxt::api::runtime_types::{
+    pallet_storage_provider::{pallet::ProviderSettings, runtime_api::AgreementResponse},
+    storage_primitives::ProviderRole,
+};
+
+pub fn is_primary(agreement: &AgreementResponse) -> bool {
+    matches!(agreement.role, ProviderRole::Primary,)
+}
 
 /// After `chain_setup`, Alice is a registered provider, so `get_provider_info`
 /// returns `Some(info)` with the settings established by setup.
@@ -125,7 +132,7 @@ async fn test_list_active_agreements() {
             hex::encode(&a.agreement.owner),
             a.agreement.max_bytes,
             a.agreement.expires_at,
-            a.agreement.is_primary()
+            is_primary(&a.agreement),
         );
     }
 }
