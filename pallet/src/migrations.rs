@@ -17,7 +17,7 @@ extern crate alloc;
 /// `0` (harmless: the nonce only matters to late-signature verification for a
 /// checkpoint still accepting signers, which no pre-existing snapshot has).
 pub mod v1 {
-    use crate::{Bucket, Config, Member, Pallet};
+    use crate::{Bucket, Buckets, Config, Member, Pallet};
     use frame_support::{pallet_prelude::*, traits::UncheckedOnRuntimeUpgrade, weights::Weight};
     use frame_system::pallet_prelude::BlockNumberFor;
     use sp_core::H256;
@@ -53,8 +53,9 @@ pub mod v1 {
 
     impl<T: Config> UncheckedOnRuntimeUpgrade for InnerMigrateV0ToV1<T> {
         fn on_runtime_upgrade() -> Weight {
+            let total = Buckets::<T>::iter_keys().count() as u64;
             let mut translated = 0u64;
-            crate::Buckets::<T>::translate::<old::Bucket<T>, _>(|_bucket_id, old| {
+            Buckets::<T>::translate::<old::Bucket<T>, _>(|_bucket_id, old| {
                 translated = translated.saturating_add(1);
                 Some(Bucket {
                     members: old.members,
@@ -71,27 +72,37 @@ pub mod v1 {
                     total_snapshots: old.total_snapshots,
                 })
             });
-            // One read + one write per migrated entry.
-            T::DbWeight::get().reads_writes(translated, translated)
+            // `translate` reads every key in the map (whether or not it
+            // decodes under the old layout) but only rewrites the ones that
+            // do, so `total` reads and `translated` writes is the true upper
+            // bound rather than under-counting reads on decode failures.
+            T::DbWeight::get().reads_writes(total, translated)
         }
 
         #[cfg(feature = "try-runtime")]
         fn pre_upgrade() -> Result<alloc::vec::Vec<u8>, sp_runtime::TryRuntimeError> {
-            // Count entries decoded with the OLD layout so post_upgrade can
-            // confirm none were dropped.
-            let count = crate::Buckets::<T>::iter_keys().count() as u64;
+            // Count existing keys before migration so post_upgrade can confirm
+            // none were dropped.
+            let count = Buckets::<T>::iter_keys().count() as u64;
             Ok(count.encode())
         }
 
         #[cfg(feature = "try-runtime")]
         fn post_upgrade(state: alloc::vec::Vec<u8>) -> Result<(), sp_runtime::TryRuntimeError> {
             let before = u64::decode(&mut &state[..]).map_err(|_| "invalid pre_upgrade state")?;
-            // `iter()` fully decodes values under the NEW layout; if any entry
-            // still failed to decode this count would be short.
-            let after = crate::Buckets::<T>::iter().count() as u64;
+            // `iter_keys()` only enumerates keys; `iter()` fully decodes every
+            // value under the NEW layout. If any entry still failed to decode,
+            // `translate` would have left it as a raw, undecodable blob that
+            // `iter()` silently skips, so the two counts would diverge.
+            let after_keys = Buckets::<T>::iter_keys().count() as u64;
+            let after_values = Buckets::<T>::iter().count() as u64;
             ensure!(
-                before == after,
+                before == after_keys,
                 "Buckets entry count changed during migration"
+            );
+            ensure!(
+                after_keys == after_values,
+                "some Buckets entry failed to decode under the new layout"
             );
             Ok(())
         }
