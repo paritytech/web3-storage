@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Content-addressing verification. CIDs in this system are blake2b-256 over

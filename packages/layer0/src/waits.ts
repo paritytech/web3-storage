@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Chain-state waits built on PAPI's `watchValue` instead of polling.
@@ -11,7 +11,7 @@
  */
 
 import type { PolkadotClient } from "polkadot-api";
-import { filter, firstValueFrom, map, timeout, TimeoutError } from "rxjs";
+import { filter, firstValueFrom, map, switchMap, timeout, TimeoutError } from "rxjs";
 import type { Observable } from "rxjs";
 
 import type { ParachainApi } from "./address.js";
@@ -127,5 +127,50 @@ export async function waitForBlock(
     (n) => n > target,
     // No default timeout: waiting out a long block window is the point here.
     { timeoutMs: timeoutMs ?? null, description: `best block > ${target}` },
+  );
+}
+
+/**
+ * Current relay-chain block number, read from
+ * `ParachainSystem.LastRelayChainBlockNumber` at the best block.
+ *
+ * Every on-chain duration (timeouts, checkpoint windows, `valid_until`,
+ * `CommitmentPayload.nonce` recency) is measured in relay-chain blocks, not
+ * parachain blocks — snapshot this, never `System.Number`, when building a
+ * nonce or window-timed extrinsic.
+ */
+export async function currentRelayBlock(api: ParachainApi): Promise<number> {
+  return Number(
+    await api.query.ParachainSystem.LastRelayChainBlockNumber.getValue(READ_OPTS),
+  );
+}
+
+/**
+ * Wait until the relay-chain block anchored to the parachain's best head is
+ * strictly greater than `target`.
+ *
+ * The relay-block counterpart of [`waitForBlock`]: checkpoint windows and
+ * timeouts elapse on the relay clock, so window-timed extrinsics must wait on
+ * this one.
+ */
+export async function waitForRelayBlock(
+  papi: PolkadotClient,
+  api: ParachainApi,
+  target: number,
+  { logEvery = 5, timeoutMs }: { logEvery?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  await firstMatch(
+    papi.bestBlocks$.pipe(
+      switchMap(() => currentRelayBlock(api)),
+      map((n) => {
+        if (logEvery > 0 && n % logEvery === 0) {
+          console.log("    relay=#%d (target > %d)", n, target);
+        }
+        return n;
+      }),
+    ),
+    (n) => n > target,
+    // No default timeout: waiting out a long block window is the point here.
+    { timeoutMs: timeoutMs ?? null, description: `relay block > ${target}` },
   );
 }

@@ -12,6 +12,7 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
 use std::sync::Arc;
+use storage_primitives::{ChunkLocation, Commitment};
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::{dev, Keypair};
 
@@ -279,12 +280,45 @@ pub mod extrinsics {
         )
     }
 
+    /// Encode a [`Commitment`](storage_primitives::Commitment) as a subxt
+    /// dynamic named composite (`mmr_root`, `start_seq`, `leaf_count`).
+    fn dynamic_commitment(commitment: Commitment) -> subxt::dynamic::Value {
+        subxt::dynamic::Value::named_composite([
+            (
+                "mmr_root",
+                subxt::dynamic::Value::from_bytes(commitment.mmr_root.as_bytes()),
+            ),
+            (
+                "start_seq",
+                subxt::dynamic::Value::u128(commitment.start_seq as u128),
+            ),
+            (
+                "leaf_count",
+                subxt::dynamic::Value::u128(commitment.leaf_count as u128),
+            ),
+        ])
+    }
+
+    /// Encode a [`ChunkLocation`](storage_primitives::ChunkLocation) as a subxt
+    /// dynamic named composite (`leaf_index`, `chunk_index`).
+    fn dynamic_chunk_location(target: ChunkLocation) -> subxt::dynamic::Value {
+        subxt::dynamic::Value::named_composite([
+            (
+                "leaf_index",
+                subxt::dynamic::Value::u128(target.leaf_index as u128),
+            ),
+            (
+                "chunk_index",
+                subxt::dynamic::Value::u128(target.chunk_index as u128),
+            ),
+        ])
+    }
+
     /// Create a checkpoint extrinsic payload to submit an on-chain snapshot.
     pub fn checkpoint(
         bucket_id: u64,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
+        nonce: u64,
         signatures: Vec<(AccountId32, Vec<u8>)>,
     ) -> impl Payload {
         let sigs: Vec<subxt::dynamic::Value> = signatures
@@ -305,9 +339,8 @@ pub mod extrinsics {
             "checkpoint",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_count as u128),
+                dynamic_commitment(commitment),
+                subxt::dynamic::Value::u128(nonce as u128),
                 subxt::dynamic::Value::unnamed_composite(sigs),
             ],
         )
@@ -317,8 +350,7 @@ pub mod extrinsics {
     pub fn challenge_checkpoint(
         bucket_id: u64,
         provider: AccountId32,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -326,8 +358,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_chunk_location(target),
             ],
         )
     }
@@ -338,23 +369,20 @@ pub mod extrinsics {
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
+        nonce: u64,
         provider_signature: Vec<u8>,
     ) -> impl Payload {
-        // MultiSignature::Sr25519 variant index is 0
         subxt::dynamic::tx(
             PALLET_NAME,
             "challenge_offchain",
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
-                subxt::dynamic::Value::u128(start_seq as u128),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_commitment(commitment),
+                dynamic_chunk_location(target),
+                subxt::dynamic::Value::u128(nonce as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2
                 subxt::dynamic::Value::unnamed_variant(
                     "Sr25519",
@@ -421,8 +449,7 @@ pub mod extrinsics {
     pub fn challenge_replica(
         bucket_id: u64,
         provider: AccountId32,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> impl Payload {
         subxt::dynamic::tx(
             PALLET_NAME,
@@ -430,8 +457,7 @@ pub mod extrinsics {
             vec![
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-                subxt::dynamic::Value::u128(leaf_index as u128),
-                subxt::dynamic::Value::u128(chunk_index as u128),
+                dynamic_chunk_location(target),
             ],
         )
     }
@@ -871,6 +897,40 @@ pub mod storage {
             vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
         )
     }
+
+    /// Query `ParachainSystem::LastRelayChainBlockNumber` — the relay-chain
+    /// block anchored to the queried parachain block. This is the clock every
+    /// storage-pallet duration (timeouts, expiries, `valid_until`, nonces) is
+    /// measured against, so off-chain actors must read it, not the parachain
+    /// block height.
+    pub fn last_relay_block_number() -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage("ParachainSystem", "LastRelayChainBlockNumber", vec![])
+    }
+}
+
+/// Fetch and decode `ParachainSystem::LastRelayChainBlockNumber` from a
+/// storage view (`api.storage().at_latest()` or `block.storage()`).
+pub async fn fetch_last_relay_block_number(
+    storage: &subxt::storage::Storage<PolkadotConfig, OnlineClient<PolkadotConfig>>,
+) -> Result<u32, ClientError> {
+    let thunk = storage
+        .fetch(&storage::last_relay_block_number())
+        .await
+        .map_err(|e| ClientError::Chain(format!("Failed to fetch relay block number: {e}")))?
+        .ok_or_else(|| ClientError::Chain("LastRelayChainBlockNumber not found".to_string()))?;
+    let value = thunk
+        .to_value()
+        .map_err(|e| ClientError::Chain(format!("Failed to decode relay block number: {e}")))?;
+    value
+        .as_u128()
+        .map(|v| v as u32)
+        .ok_or_else(|| ClientError::Chain("relay block number is not an integer".to_string()))
 }
 
 // Helper functions for common operations

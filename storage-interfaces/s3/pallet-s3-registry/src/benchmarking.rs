@@ -182,7 +182,7 @@ fn insert_s3_bucket<T: Config>(
         name: bounded_name.clone(),
         layer0_bucket_id: 0,
         owner: owner.clone(),
-        created_at: frame_system::Pallet::<T>::block_number(),
+        created_at: pallet_storage_provider::Pallet::<T>::current_block(),
         object_count,
         total_size: 0,
     };
@@ -230,7 +230,7 @@ mod benchmarks {
             max_bytes,
             duration,
             price_per_byte: 1u32.into(),
-            valid_until: frame_system::Pallet::<T>::block_number()
+            valid_until: pallet_storage_provider::Pallet::<T>::current_block()
                 .saturating_add(<T as pallet_storage_provider::Config>::RequestTimeout::get()),
             nonce: 1,
             bucket_id: None,

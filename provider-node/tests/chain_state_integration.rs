@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Integration tests for the chain-state coordinator that need no blockchain.
 //!
 //! The chain reads the coordinator performs sit behind the
@@ -27,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use storage_client::discovery::ProviderInfo;
 use storage_client::{ClientError, ProviderSettings, StorageEvent};
+use storage_primitives::Commitment;
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
@@ -493,9 +496,7 @@ fn non_lifecycle_event_is_irrelevant() {
     // a provider-state refresh.
     let event = StorageEvent::BucketCheckpointed {
         bucket_id: 1,
-        mmr_root: H256::zero(),
-        start_seq: 0,
-        leaf_count: 0,
+        commitment: Commitment::default(),
         providers: vec![provider_account()],
         block_hash: H256::zero(),
         block_number: 1,
@@ -548,9 +549,7 @@ async fn irrelevant_block_events_do_not_refresh() {
         registered_event(provider_account_2()),
         StorageEvent::BucketCheckpointed {
             bucket_id: 1,
-            mmr_root: H256::zero(),
-            start_seq: 0,
-            leaf_count: 0,
+            commitment: Commitment::default(),
             providers: vec![provider_account()],
             block_hash: H256::zero(),
             block_number: 1,

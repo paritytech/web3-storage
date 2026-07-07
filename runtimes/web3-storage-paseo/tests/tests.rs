@@ -1,5 +1,6 @@
-#![cfg(test)]
 // SPDX-License-Identifier: GPL-3.0-only
+
+#![cfg(test)]
 
 use frame_support::{
     assert_ok, dispatch::GetDispatchInfo, pallet_prelude::Hooks, traits::Currency,
@@ -14,9 +15,9 @@ use sp_keyring::Sr25519Keyring;
 use sp_runtime::{transaction_validity, ApplyExtrinsicResult, BuildStorage};
 use storage_paseo_runtime::{
     paseo_constants::currency::UNIT, xcm_config::LocationToAccountId, AllPalletsWithoutSystem,
-    Balance, Balances, Block, Runtime, RuntimeCall, RuntimeEvent, RuntimeGenesisConfig,
-    RuntimeOrigin, S3Registry, SessionKeys, StorageProvider, System, TxExtension,
-    UncheckedExtrinsic, WeightToFee,
+    Balance, Balances, Block, BlockNumber, Runtime, RuntimeCall, RuntimeEvent,
+    RuntimeGenesisConfig, RuntimeOrigin, S3Registry, SessionKeys, StorageProvider, System,
+    TxExtension, UncheckedExtrinsic, WeightToFee,
 };
 use storage_primitives::AgreementTerms;
 use xcm::latest::prelude::*;
@@ -28,6 +29,15 @@ use xcm_runtime_apis::conversions::LocationToAccountHelper;
 
 const ALICE: [u8; 32] = [1u8; 32];
 
+/// Set both clocks the runtime reads: `System` (parachain height) and the
+/// relay-chain number served by `RelaychainDataProvider`, which the storage
+/// pallets measure all durations against. Kept in lockstep for simplicity.
+fn set_clocks(n: BlockNumber) {
+    use sp_runtime::traits::BlockNumberProvider;
+    System::set_block_number(n);
+    cumulus_pallet_parachain_system::RelaychainDataProvider::<Runtime>::set_block_number(n);
+}
+
 /// Advance to the next block for testing transaction storage.
 fn advance_block() {
     let current = frame_system::Pallet::<Runtime>::block_number();
@@ -36,12 +46,13 @@ fn advance_block() {
     <System as Hooks<_>>::on_finalize(current);
 
     let next = current + 1;
-    System::set_block_number(next);
+    set_clocks(next);
 
     frame_system::BlockWeight::<Runtime>::kill();
     frame_system::BlockSize::<Runtime>::kill();
 
     <System as Hooks<_>>::on_initialize(next);
+    <StorageProvider as Hooks<_>>::on_initialize(next);
 }
 
 fn construct_extrinsic(
@@ -154,7 +165,9 @@ fn primary_terms(
         max_bytes,
         duration,
         price_per_byte: 0,
-        valid_until: frame_system::Pallet::<Runtime>::block_number()
+        // `valid_until` is checked against the pallet's relay-chain clock,
+        // not the parachain height.
+        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_block()
             + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
         nonce,
         bucket_id: None,
@@ -493,11 +506,11 @@ fn should_deregister_provider() {
         );
 
         // Step 3: fast-forward through the announcement period. Jump close to
-        // the boundary with `set_block_number` (the period is `48 * HOURS`
+        // the boundary with `set_clocks` (the period is `48 * HOURS`
         // ≈ 28,800 blocks, far too many to iterate one-by-one) then cross it
         // via `advance_block` so the `on_finalize` / `on_initialize` hooks
         // fire at the maturing block.
-        System::set_block_number(deregister_at.saturating_sub(1));
+        set_clocks(deregister_at.saturating_sub(1));
         advance_block();
         assert!(frame_system::Pallet::<Runtime>::block_number() >= deregister_at);
 

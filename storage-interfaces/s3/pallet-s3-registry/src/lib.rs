@@ -228,7 +228,7 @@ pub mod pallet {
                 name: bounded_name.clone(),
                 layer0_bucket_id,
                 owner: who.clone(),
-                created_at: frame_system::Pallet::<T>::block_number(),
+                created_at: pallet_storage_provider::Pallet::<T>::current_block(),
                 object_count: 0,
                 total_size: 0,
             };
@@ -333,7 +333,8 @@ pub mod pallet {
                 .unwrap_or_default();
 
             // Get current timestamp
-            let timestamp = frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+            let timestamp =
+                pallet_storage_provider::Pallet::<T>::current_block().saturated_into::<u64>();
 
             // Check if this is an update or new object
             match Objects::<T>::get(s3_bucket_id, &bounded_key) {
@@ -450,7 +451,7 @@ pub mod pallet {
 
             // Update last modified
             metadata.last_modified =
-                frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+                pallet_storage_provider::Pallet::<T>::current_block().saturated_into::<u64>();
 
             // Update destination bucket stats (re-read if same bucket since src was read separately)
             let mut dst_bucket =

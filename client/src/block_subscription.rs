@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Finalized-block subscription.
 //!
 //! Provides [`BlockSubscriberStream`], a [`Stream`] of finalized blocks: a

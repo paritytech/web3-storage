@@ -15,6 +15,7 @@ import { Enum } from "polkadot-api";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import {
   endAgreement,
+  currentRelayBlock,
   ensureProviderRegistered,
   fetchCheckpointSignature,
   freezeBucket,
@@ -24,7 +25,7 @@ import {
   submitClientCheckpoint,
   toHex,
   uploadChunk,
-  waitForBlock,
+  waitForRelayBlock,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
 import {
@@ -108,7 +109,7 @@ async function main() {
         provider.address,
         READ_OPTS
       ))!;
-      await waitForBlock(papi, Number(agreement.expires_at));
+      await waitForRelayBlock(papi, api, Number(agreement.expires_at));
       await endAgreement(api, bob, provider, bucketId, "Pay");
       const infoAfter = (await api.query.StorageProvider.Providers.getValue(
         provider.address,
@@ -131,8 +132,9 @@ async function main() {
         duration: 100,
       });
       // freeze_bucket requires a snapshot (checkpoint) to exist.
-      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot");
-      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const nonce = await currentRelayBlock(api);
+      await uploadChunk(PROVIDER_URL, bucketId, "data for snapshot", nonce);
+      const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck);
       await freezeBucket(api, bob, bucketId);
       const bucket = (await api.query.StorageProvider.Buckets.getValue(bucketId, READ_OPTS))!;
@@ -152,16 +154,18 @@ async function main() {
         duration: 100,
       });
       // Upload some data.
-      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data");
+      const nonce1 = await currentRelayBlock(api);
+      await uploadChunk(PROVIDER_URL, bucketId, "pre-freeze data", nonce1);
       // Checkpoint before freeze.
-      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck1 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce1);
       await submitClientCheckpoint(api, bob, provider, bucketId, ck1);
       // Freeze.
       await freezeBucket(api, bob, bucketId);
       // Upload more data.
-      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data");
+      const nonce2 = await currentRelayBlock(api);
+      await uploadChunk(PROVIDER_URL, bucketId, "post-freeze data", nonce2);
       // Checkpoint after freeze — should still work (captures frozen_start_seq).
-      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId);
+      const ck2 = await fetchCheckpointSignature(PROVIDER_URL, bucketId, nonce2);
       const result = await submitClientCheckpoint(api, bob, provider, bucketId, ck2);
       const events = api.event.StorageProvider.BucketCheckpointed.filter(result.events as never);
       assert.strictEqual(events.length, 1, "Checkpoint after freeze should emit event");
@@ -210,7 +214,8 @@ async function main() {
       const data = "integrity check data for blake2-256";
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = await currentRelayBlock(api);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
     },
   });
@@ -223,8 +228,9 @@ async function main() {
         duration: 100,
       });
       const data = "identical content for dedup test";
-      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data);
-      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data);
+      const nonce = await currentRelayBlock(api);
+      const r1 = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const r2 = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
       assert.strictEqual(r1.hash, r2.hash, "Hashes should match for identical content");
       assert.notStrictEqual(
         r1.commit.leaf_indices[0],

@@ -72,6 +72,18 @@ pub mod time {
     pub const HOURS: BlockNumber = MINUTES * 60;
 }
 
+/// Durations measured in RELAY chain blocks (6s), independent of the
+/// parachain block time. All storage-pallet timeouts are denominated in relay
+/// blocks (via `pallet_storage_provider::Config::BlockNumberProvider`) so
+/// they keep their wall-clock meaning when the parachain block time changes.
+pub mod relay_time {
+    use crate::BlockNumber;
+
+    pub const MINUTES: BlockNumber =
+        60_000 / (super::consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS as BlockNumber);
+    pub const HOURS: BlockNumber = MINUTES * 60;
+}
+
 /// Constants relating to the native token.
 pub mod currency {
     use crate::Balance;

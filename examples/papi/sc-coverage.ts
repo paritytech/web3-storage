@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   connect,
+  currentRelayBlock,
   ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointSignature,
@@ -265,8 +266,10 @@ async function main() {
     console.log("  bucketC =", bucketC.toString());
 
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");
-    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test");
-    const ck = await fetchCheckpointSignature(providerUrl, bucketC);
+    const uploadNonce = await currentRelayBlock(api);
+    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", uploadNonce);
+    const ckNonce = await currentRelayBlock(api);
+    const ck = await fetchCheckpointSignature(providerUrl, bucketC, ckNonce);
     await submitClientCheckpoint(api, client, provider, bucketC, ck);
 
     console.log("\n[9a] IWeb3Storage.challengeCheckpoint(bucketC, provider, leafIdx, chunkIdx=0)");

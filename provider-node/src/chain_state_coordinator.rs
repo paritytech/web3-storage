@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! Chain-state coordinator: keeps the provider node's view of the runtime in
 //! sync via a finalized-block subscription.
 //!
 //! [`ChainState`] is the single source of truth for all on-chain state the
 //! provider node needs at runtime:
-//! - [`ChainState::current_block`] — latest finalized block height.
+//! - [`ChainState::current_block`] — relay-chain block anchored to the latest
+//!   finalized parachain block (the clock all on-chain durations use).
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
 //! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
@@ -39,7 +42,9 @@ use tokio::task::JoinHandle;
 /// Held behind `Arc` inside [`crate::ProviderState`] so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
 pub struct ChainState {
-    /// Latest finalized block height. `0` means not yet known.
+    /// Relay-chain block anchored to the latest finalized parachain block —
+    /// the clock all on-chain durations (timeouts, `valid_until`, nonce age)
+    /// are measured against. `0` means not yet known.
     pub current_block: AtomicU32,
     /// Pallet constants fetched once per connection. `None` until the first
     /// successful fetch; `/negotiate` returns 503 until this is `Some`.
@@ -220,9 +225,21 @@ impl ChainStateCoordinator {
             let block_number = block.number();
 
             tracing::debug!("Finalized block: {}", block_number);
-            self.chain_state
-                .current_block
-                .store(block_number, std::sync::atomic::Ordering::Relaxed);
+            // All on-chain durations (RequestTimeout, MaxNonceAge, expiries)
+            // are denominated in relay-chain blocks, so `current_block` must
+            // track the relay block anchored to this finalized block — not
+            // its parachain height.
+            match storage_client::substrate::fetch_last_relay_block_number(&block.storage()).await {
+                Ok(relay_block) => {
+                    self.chain_state
+                        .current_block
+                        .store(relay_block, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => tracing::warn!(
+                    "chain-state coordinator: failed to fetch relay block for block \
+                     {block_number}: {e}; keeping previous value"
+                ),
+            }
 
             let parsed = match block.events().await {
                 Ok(events) => parse_pallet_events::<StorageEvent, StorageProviderEventParser>(

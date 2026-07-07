@@ -1,0 +1,28 @@
+# License header config for library/SDK crates: pallets, primitives, client
+# SDKs, precompiles, examples, and the published TypeScript packages. These
+# are meant to be freely reused, so they carry the permissive Apache-2.0
+# license (matching the wider Polkadot SDK convention for pallets/primitives).
+inlineHeader = "SPDX-License-Identifier: Apache-2.0"
+keywords = ["SPDX-License-Identifier"]
+
+includes = [
+	"client/**/*.rs",
+	"examples/contracts/**/*.sol",
+	"examples/papi/**/*.ts",
+	"packages/**/*.js",
+	"packages/**/*.ts",
+	"packages/**/*.tsx",
+	"pallet/**/*.rs",
+	"precompiles/**/*.rs",
+	"precompiles/**/*.sol",
+	"primitives/**/*.rs",
+	"storage-interfaces/**/*.rs",
+	"user-interfaces/photos/contracts/**/*.sol",
+]
+excludes = [
+	"**/*.bin.ts",
+	"runtimes/*/src/weights/**",
+]
+
+[mapping.DOUBLESLASH_STYLE]
+extensions = ["js", "sol", "ts", "tsx"]

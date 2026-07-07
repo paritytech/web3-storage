@@ -1,0 +1,51 @@
+{
+  "name": "@web3-storage/photos",
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "description": "Photos — decentralized photo storage dApp (Layer 1 drive registry + custom Photos contract)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "build:contract": "bash scripts/build.sh",
+    "deploy-contract": "tsx --tsconfig tsconfig.scripts.json scripts/deploy-contract.ts",
+    "photos-flow": "tsx --tsconfig tsconfig.scripts.json scripts/photos-flow.ts"
+  },
+  "dependencies": {
+    "@polkadot-api/descriptors": "workspace:*",
+    "@polkadot-labs/hdkd": "^0.0.28",
+    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@radix-ui/react-slot": "^1.3.0",
+    "@react-rxjs/core": "^0.10.8",
+    "@react-rxjs/utils": "^0.9.7",
+    "@web3-storage/chain-client": "workspace:*",
+    "@web3-storage/network-config": "workspace:*",
+    "@web3-storage/network-picker": "workspace:*",
+    "@web3-storage/papi": "workspace:*",
+    "@web3-storage/sdk": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.21.0",
+    "polkadot-api": "^2.1.7",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "rxjs": "^7.8.2",
+    "tailwind-merge": "^3.6.0",
+    "viem": "^2.53.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^26.0.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}

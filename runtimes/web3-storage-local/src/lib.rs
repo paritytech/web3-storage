@@ -174,7 +174,9 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: Cow::Borrowed("web3-storage-parachain"),
     impl_name: Cow::Borrowed("web3-storage-parachain"),
     authoring_version: 1,
-    spec_version: 2,
+    // 3 on dev (relay-clock migration lineage); 4 for 2 s blocks / 3 cores
+    // (slot-based authoring, RelayParentOffset = 1).
+    spec_version: 4,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -801,6 +803,18 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
         fn challenges_at(block: BlockNumber) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_challenges_at(block)
+        }
+
+        fn bucket_challenges(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_bucket_challenges(bucket_id)
+        }
+
+        fn provider_challenges(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_provider_challenges(&provider)
+        }
+
+        fn challenger_challenges(challenger: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_challenger_challenges(&challenger)
         }
 
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool {

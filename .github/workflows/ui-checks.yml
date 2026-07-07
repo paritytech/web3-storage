@@ -25,7 +25,7 @@ jobs:
     outputs:
       ui: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.ui == 'true' }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
@@ -50,7 +50,7 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -83,8 +83,10 @@ jobs:
             filter: "@web3-storage/s3-ui"
           - ui: provider
             filter: provider-dashboard
+          - ui: photos
+            filter: "@web3-storage/photos"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 
@@ -109,7 +111,7 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
           persist-credentials: false
 

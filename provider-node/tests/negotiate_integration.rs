@@ -169,6 +169,75 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
 }
 
 #[tokio::test]
+async fn negotiate_valid_until_is_relay_block_plus_request_timeout() {
+    // `current_block` is the relay-chain block number — the clock the pallet
+    // checks `valid_until` against. Seed a Paseo-scale value to prove the
+    // validity window is anchored to it (a parachain-height-based window
+    // would be rejected on-chain as already expired).
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(29_123_456, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 3_600,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let signed: SignedTerms = resp.json().await.unwrap();
+    assert_eq!(signed.terms.valid_until, 29_123_456 + 3_600);
+}
+
+#[tokio::test]
+async fn negotiate_503_when_current_block_unknown() {
+    // Everything ready except the relay-block clock (`current_block == 0`,
+    // i.e. the chain-state coordinator has not processed a finalized block
+    // yet): signing would emit terms whose `valid_until` is meaningless on
+    // the pallet's clock, so the handler must refuse.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "chain_state_not_ready");
+}
+
+#[tokio::test]
+async fn negotiate_503_when_request_timeout_unknown() {
+    // The mirror case: clock known but the RequestTimeout constant not yet
+    // fetched — an unbounded validity window must not be signed either.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "chain_state_not_ready");
+}
+
+#[tokio::test]
 async fn negotiate_pins_listed_price_when_client_overpays() {
     let server = TestServer::ready(provider_info()).await;
 

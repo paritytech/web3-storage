@@ -40,7 +40,7 @@ jobs:
     outputs:
       runtime: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event_name == 'merge_group' || steps.filter.outputs.runtime == 'true' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
@@ -68,7 +68,7 @@ jobs:
       runtime: ${{ steps.runtime.outputs.runtime }}
     name: Extract tasks from matrix
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - id: runtime
@@ -102,7 +102,7 @@ jobs:
         runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -118,7 +118,7 @@ jobs:
       - name: Check if snapshot exists in cache
         id: cache-restore
         if: github.event_name != 'schedule'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           lookup-only: true
           path: snapshot.raw
@@ -134,7 +134,7 @@ jobs:
       - name: Cache try-runtime binary
         if: steps.cache-restore.outputs.cache-matched-key == ''
         id: try-runtime-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: .bin/try-runtime
           key: try-runtime-cli-${{ env.TRY_RUNTIME_VERSION }}
@@ -183,7 +183,7 @@ jobs:
 
       - name: Save snapshot to cache
         if: steps.cache-restore.outputs.cache-matched-key == ''
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: snapshot.raw
           key: try-runtime-snapshot-${{ matrix.runtime.name }}-${{ steps.get-date.outputs.today }}
@@ -204,7 +204,7 @@ jobs:
         runtime: ${{ fromJSON(needs.runtime-matrix.outputs.runtime) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -222,7 +222,7 @@ jobs:
 
       - name: Cache try-runtime binary
         id: try-runtime-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: .bin/try-runtime
           key: try-runtime-cli-${{ env.TRY_RUNTIME_VERSION }}
@@ -232,7 +232,7 @@ jobs:
         run: just download-try-runtime
 
       - name: Restore snapshot from cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: snapshot.raw
           key: try-runtime-snapshot-${{ matrix.runtime.name }}-

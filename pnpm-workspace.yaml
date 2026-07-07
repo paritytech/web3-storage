@@ -8,6 +8,7 @@ packages:
   - "user-interfaces/provider"
   - "user-interfaces/drive-ui"
   - "user-interfaces/s3-ui"
+  - "user-interfaces/photos"
   - "packages/*"
   - "examples/papi"
 
@@ -15,3 +16,13 @@ packages:
 # postinstall to place the platform binary.
 allowBuilds:
   esbuild: true
+
+# pnpm quarantines packages published less than minimumReleaseAge minutes ago
+# (supply-chain protection). Dependabot ignores this policy when resolving
+# lockfiles, so exempt the browser-data packages that publish near-daily;
+# their releases are machine-generated data tables, not code.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - baseline-browser-mapping
+  - caniuse-lite
+  - electron-to-chromium

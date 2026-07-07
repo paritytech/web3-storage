@@ -113,7 +113,7 @@ fn deregister_provider_full_flow_announce_then_complete() {
         let provider = Providers::<Test>::get(1).unwrap();
         assert_eq!(
             provider.deregister_at,
-            Some(System::block_number() + 100) // DeregisterAnnouncementPeriod in mock
+            Some(System::block_number() + 150) // DeregisterAnnouncementPeriod in mock
         );
         assert!(!provider.settings.accepting_primary);
         assert!(!provider.settings.accepting_extensions);

@@ -21,7 +21,7 @@
 //! let data_root = client.upload(1, data, ChunkingStrategy::default()).await?;
 //!
 //! // Commit to chain
-//! let commitment = client.commit(1, vec![data_root]).await?;
+//! let commitment = client.commit(1, vec![data_root], 0u64).await?;
 //!
 //! // Download and verify
 //! let retrieved = client.download(&data_root, 0, data.len() as u64).await?;
@@ -84,7 +84,7 @@
 //! ### For Data Integrity Monitors
 //! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
 //! ```no_run
-//! use storage_client::{ChallengerClient, ClientConfig};
+//! use storage_client::{ChallengerClient, ChunkLocation, ClientConfig};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
@@ -93,8 +93,7 @@
 //! let challenge_id = client.challenge_checkpoint(
 //!     1, // bucket_id
 //!     "5FHneW46...".to_string(), // provider
-//!     5, // leaf_index
-//!     123, // chunk_index
+//!     ChunkLocation { leaf_index: 5, chunk_index: 123 },
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -149,6 +148,11 @@ pub use storage_user::{
     HealthResponse, StorageUserClient,
 };
 pub use verification::ClientVerifier;
+
+// Commitment / ChunkLocation appear in the public challenge & checkpoint method
+// signatures, so re-export them rather than make callers depend on
+// storage_primitives directly.
+pub use storage_primitives::{ChunkLocation, Commitment};
 
 // Encryption re-exports
 pub use encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher, ENCRYPTION_OVERHEAD};
