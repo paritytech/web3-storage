@@ -6,11 +6,13 @@
  * The chain nodes already expose standard Substrate Prometheus metrics (block
  * time, weight, txpool). What no metric covers is the pallet's own domain
  * state: provider balances and stake, agreement counts, pending challenges,
- * checkpoint accruals. This sidecar polls that state per finalized block and
- * exports it as Prometheus gauges, plus counters accumulated from lifecycle
- * events, so a stress run (see `challenge-saturation.ts`) is observable on a
- * dashboard. It is the first consumer of the telemetry work in #214 and the
- * scrape target the `monitoring/` stack (a follow-up) will chart.
+ * checkpoint accruals, and per-class block weight (the on_finalize sweep spike
+ * that Substrate's own Prometheus does not expose). This sidecar polls that
+ * state per finalized block and exports it as Prometheus gauges, plus counters
+ * accumulated from lifecycle events, so a stress run (see
+ * `challenge-saturation.ts`) is observable on a dashboard. It is the first
+ * consumer of the telemetry work in #214 and the scrape target the
+ * `monitoring/` stack (a follow-up) will chart.
  *
  * Per-provider metrics are labelled; their cardinality is bounded by the small
  * `MaxPrimaryProviders` / `MaxMembers`. Aggregate counts (agreements,
@@ -137,6 +139,8 @@ const GAUGE_HELP: Record<string, string> = {
   challenges_pending_total: "Unresolved challenges across all deadlines",
   checkpoint_rewards_pending_total: "Sum of unclaimed checkpoint rewards (planck)",
   checkpoint_pool_total: "Sum of checkpoint pool balances (planck)",
+  block_weight_ref_time: "Latest finalized block ref_time by dispatch class (picoseconds)",
+  block_weight_proof_size: "Latest finalized block proof_size (PoV) by dispatch class (bytes)",
   provider_stake: "Provider bonded stake (planck)",
   provider_committed_bytes: "Provider committed bytes",
   provider_free_balance: "Provider free balance (planck)",
@@ -179,14 +183,16 @@ async function scrapeGauges(
   at: string,
   blockNumber: number,
 ): Promise<void> {
-  const [providers, agreements, challenges, buckets, rewards, pools] = await Promise.all([
-    api.query.StorageProvider.Providers.getEntries({ at }),
-    api.query.StorageProvider.StorageAgreements.getEntries({ at }),
-    api.query.StorageProvider.Challenges.getEntries({ at }),
-    api.query.StorageProvider.Buckets.getEntries({ at }),
-    api.query.StorageProvider.CheckpointRewards.getEntries({ at }),
-    api.query.StorageProvider.CheckpointPool.getEntries({ at }),
-  ]);
+  const [providers, agreements, challenges, buckets, rewards, pools, blockWeight] =
+    await Promise.all([
+      api.query.StorageProvider.Providers.getEntries({ at }),
+      api.query.StorageProvider.StorageAgreements.getEntries({ at }),
+      api.query.StorageProvider.Challenges.getEntries({ at }),
+      api.query.StorageProvider.Buckets.getEntries({ at }),
+      api.query.StorageProvider.CheckpointRewards.getEntries({ at }),
+      api.query.StorageProvider.CheckpointPool.getEntries({ at }),
+      api.query.System.BlockWeight.getValue({ at }),
+    ]);
 
   for (const name of PER_PROVIDER_GAUGES) reg.clearGauge(name);
   for (const { keyArgs, value } of providers) {
@@ -231,6 +237,17 @@ async function scrapeGauges(
   reg.setGauge("checkpoint_rewards_pending_total", num(rewardsTotal));
   reg.clearGauge("checkpoint_pool_total");
   reg.setGauge("checkpoint_pool_total", num(poolTotal));
+
+  // Per-class weight of the latest finalized block. Substrate's own Prometheus
+  // does not expose this; it is the signal that spikes at a challenge-deadline
+  // block (the on_finalize slash sweep is charged to the mandatory class). See
+  // challenge-saturation.ts.
+  reg.clearGauge("block_weight_ref_time");
+  reg.clearGauge("block_weight_proof_size");
+  for (const cls of ["normal", "operational", "mandatory"] as const) {
+    reg.setGauge("block_weight_ref_time", num(blockWeight[cls].ref_time), { class: cls });
+    reg.setGauge("block_weight_proof_size", num(blockWeight[cls].proof_size), { class: cls });
+  }
 }
 
 const PER_PROVIDER_GAUGES = [
