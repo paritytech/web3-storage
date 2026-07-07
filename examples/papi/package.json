@@ -11,6 +11,7 @@
     "demo:sc-flow": "node --import tsx sc-flow.ts",
     "e2e": "node --import tsx e2e/runner.bin.ts",
     "lower-timeouts": "node --import tsx lower-timeouts.ts",
+    "challenge-saturation": "node --import tsx challenge-saturation.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
