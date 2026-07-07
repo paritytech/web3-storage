@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//
+
 // A client-maintained mirror of a drive's entry set: the source of truth for the
 // anchored metadata Merkle root, updated on upload/edit/delete so the root never
 // needs a full re-download. File leaves are keyed on locally verified byte length,

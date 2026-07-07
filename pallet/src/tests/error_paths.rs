@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use storage_primitives::Role;
+use storage_primitives::{Commitment, Role};
 
 #[test]
 fn create_bucket_fails_too_many_buckets() {
@@ -61,9 +61,11 @@ fn freeze_bucket_fails_min_providers_not_met() {
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             bucket_id,
-            sp_core::H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0, // nonce
             Default::default(),
         ));
@@ -160,9 +162,11 @@ fn freeze_bucket_already_frozen() {
         assert_ok!(StorageProvider::checkpoint(
             RuntimeOrigin::signed(1),
             0,
-            sp_core::H256::repeat_byte(0xAA),
-            0,
-            10,
+            Commitment {
+                mmr_root: sp_core::H256::repeat_byte(0xAA),
+                start_seq: 0,
+                leaf_count: 10,
+            },
             0, // nonce
             Default::default(),
         ));

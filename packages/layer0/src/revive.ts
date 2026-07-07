@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,

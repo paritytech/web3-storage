@@ -55,9 +55,9 @@ pub mod pallet {
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     use storage_primitives::{
-        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, CommitmentPayload, EndAction,
-        MerkleProof, MmrProof, ProviderRole, RemovalReason, ReplayWindow, ReplicaSyncRecord, Role,
-        SlashReason,
+        BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
+        CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
+        ReplayWindow, ReplicaSyncRecord, Role, SlashReason,
     };
 
     pub type BalanceOf<T> =
@@ -647,10 +647,8 @@ pub mod pallet {
         pub mmr_root: H256,
         /// Start sequence of the commitment.
         pub start_seq: u64,
-        /// Leaf index within the MMR.
-        pub leaf_index: u64,
-        /// Chunk index within the leaf's data.
-        pub chunk_index: u64,
+        /// Leaf + chunk being challenged.
+        pub target: ChunkLocation,
         /// Deposit locked by challenger.
         pub deposit: BalanceOf<T>,
     }
@@ -758,9 +756,7 @@ pub mod pallet {
         },
         BucketCheckpointed {
             bucket_id: BucketId,
-            mmr_root: H256,
-            start_seq: u64,
-            leaf_count: u64,
+            commitment: Commitment,
             providers: Vec<T::AccountId>,
         },
         ProviderAddedToBucket {
@@ -1460,11 +1456,11 @@ pub mod pallet {
                     Error::<T>::MinProvidersNotMet
                 );
 
-                bucket.frozen_start_seq = Some(snapshot.start_seq);
+                bucket.frozen_start_seq = Some(snapshot.commitment.start_seq);
 
                 Self::deposit_event(Event::BucketFrozen {
                     bucket_id,
-                    frozen_start_seq: snapshot.start_seq,
+                    frozen_start_seq: snapshot.commitment.start_seq,
                 });
 
                 Ok(())
@@ -2002,13 +1998,10 @@ pub mod pallet {
         /// Submit a new checkpoint with provider signatures.
         #[pallet::call_index(30)]
         #[pallet::weight(T::WeightInfo::checkpoint())]
-        #[allow(clippy::too_many_arguments)]
         pub fn checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
-            mmr_root: H256,
-            start_seq: u64,
-            leaf_count: u64,
+            commitment: Commitment,
             // `nonce` is the `CommitmentPayload` nonce — the block at which
             // all `signatures` signed. Recency-checked to prevent replay.
             nonce: u64,
@@ -2030,14 +2023,13 @@ pub mod pallet {
                 // Check frozen constraint
                 if let Some(frozen_start) = bucket.frozen_start_seq {
                     ensure!(
-                        start_seq >= frozen_start,
+                        commitment.start_seq >= frozen_start,
                         Error::<T>::SnapshotViolatesFrozen
                     );
                 }
 
                 // Verify signatures and build signer bitfield
-                let payload =
-                    CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+                let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
                 let encoded_payload = payload.encode();
 
                 // Create bitfield using Vec<u8>
@@ -2075,12 +2067,10 @@ pub mod pallet {
                 let current_block = frame_system::Pallet::<T>::block_number();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, current_block, mmr_root);
+                Self::update_historical_roots(bucket, current_block, commitment.mmr_root);
 
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root,
-                    start_seq,
-                    leaf_count,
+                    commitment,
                     checkpoint_block: current_block,
                     primary_signers,
                     commitment_nonce: nonce,
@@ -2090,9 +2080,7 @@ pub mod pallet {
 
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
-                    mmr_root,
-                    start_seq,
-                    leaf_count,
+                    commitment,
                     providers: signing_providers,
                 });
 
@@ -2130,9 +2118,7 @@ pub mod pallet {
                 // captured in the snapshot.
                 let payload = CommitmentPayload::new(
                     bucket_id,
-                    snapshot.mmr_root,
-                    snapshot.start_seq,
-                    snapshot.leaf_count,
+                    snapshot.commitment,
                     snapshot.commitment_nonce,
                 );
                 let encoded_payload = payload.encode();
@@ -2172,9 +2158,7 @@ pub mod pallet {
 
                 Self::deposit_event(Event::BucketCheckpointed {
                     bucket_id,
-                    mmr_root: snapshot.mmr_root,
-                    start_seq: snapshot.start_seq,
-                    leaf_count: snapshot.leaf_count,
+                    commitment: snapshot.commitment,
                     providers: added_providers,
                 });
 
@@ -2204,9 +2188,7 @@ pub mod pallet {
         pub fn provider_checkpoint(
             origin: OriginFor<T>,
             bucket_id: BucketId,
-            mmr_root: H256,
-            start_seq: u64,
-            leaf_count: u64,
+            commitment: Commitment,
             window: u64,
             signatures: BoundedVec<
                 (T::AccountId, sp_runtime::MultiSignature),
@@ -2214,6 +2196,12 @@ pub mod pallet {
             >,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            let Commitment {
+                mmr_root,
+                start_seq,
+                leaf_count,
+            } = commitment;
 
             // Get checkpoint config
             let config = Self::get_checkpoint_config(bucket_id);
@@ -2319,9 +2307,7 @@ pub mod pallet {
                 // at zero rather than smuggling in `window` and confusing the
                 // two schemes.
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root,
-                    start_seq,
-                    leaf_count,
+                    commitment,
                     checkpoint_block: current_block,
                     primary_signers,
                     commitment_nonce: 0,
@@ -2555,10 +2541,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            leaf_index: u64,
-            chunk_index: u64,
+            target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            let ChunkLocation {
+                leaf_index,
+                chunk_index,
+            } = target;
 
             let bucket = Buckets::<T>::get(bucket_id).ok_or(Error::<T>::BucketNotFound)?;
             let snapshot = bucket.snapshot.as_ref().ok_or(Error::<T>::NoSnapshot)?;
@@ -2590,8 +2580,8 @@ pub mod pallet {
                 who,
                 bucket_id,
                 provider,
-                snapshot.mmr_root,
-                snapshot.start_seq,
+                snapshot.commitment.mmr_root,
+                snapshot.commitment.start_seq,
                 leaf_index,
                 chunk_index,
             )
@@ -2605,21 +2595,16 @@ pub mod pallet {
         /// Preferred for hot buckets where snapshots change frequently.
         #[pallet::call_index(42)]
         #[pallet::weight(T::WeightInfo::challenge_off_chain())]
-        #[allow(clippy::too_many_arguments)]
         pub fn challenge_offchain(
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            mmr_root: H256,
-            start_seq: u64,
-            // `leaf_count` is the value the provider included in the signed
-            // `CommitmentPayload`. The challenger passes it through so the
-            // payload reconstruction matches exactly. (Previously the pallet
-            // used a hardcoded `0u64` placeholder which would mismatch any
-            // provider that signed with a real leaf_count.)
-            leaf_count: u64,
-            leaf_index: u64,
-            chunk_index: u64,
+            // `commitment` carries the `(mmr_root, start_seq, leaf_count)` the
+            // provider signed. The challenger passes it through so the payload
+            // reconstruction matches the signed `CommitmentPayload` exactly.
+            commitment: Commitment,
+            // `target` is the leaf+chunk being challenged within `commitment`.
+            target: ChunkLocation,
             // `nonce` is the `CommitmentPayload` nonce — the block at which
             // the provider signed. Recency-checked to prevent replay.
             nonce: u64,
@@ -2628,6 +2613,11 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             Self::ensure_recent_nonce(nonce)?;
+
+            let ChunkLocation {
+                leaf_index,
+                chunk_index,
+            } = target;
 
             // Verify the bucket exists
             ensure!(
@@ -2648,7 +2638,7 @@ pub mod pallet {
             );
 
             // Build the commitment payload that the provider signed.
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+            let payload = CommitmentPayload::new(bucket_id, commitment, nonce);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2659,8 +2649,8 @@ pub mod pallet {
                 who,
                 bucket_id,
                 provider,
-                mmr_root,
-                start_seq,
+                commitment.mmr_root,
+                commitment.start_seq,
                 leaf_index,
                 chunk_index,
             )
@@ -2676,10 +2666,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             bucket_id: BucketId,
             provider: T::AccountId,
-            leaf_index: u64,
-            chunk_index: u64,
+            target: ChunkLocation,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            let ChunkLocation {
+                leaf_index,
+                chunk_index,
+            } = target;
 
             // Get the agreement and verify it's a replica
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
@@ -2695,7 +2689,7 @@ pub mod pallet {
             let (mmr_root, start_seq) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
                     let record = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    (record.mmr_root, record.start_seq)
+                    (record.commitment.mmr_root, record.commitment.start_seq)
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
@@ -2772,7 +2766,7 @@ pub mod pallet {
                     let chunk_hash = storage_primitives::blake2_256(chunk_data);
                     let chunk_ok = storage_primitives::verify_merkle_proof(
                         chunk_hash,
-                        challenge.chunk_index,
+                        challenge.target.chunk_index,
                         chunk_proof,
                         &mmr_proof.leaf.data_root,
                     );
@@ -2794,7 +2788,9 @@ pub mod pallet {
                     Self::ensure_recent_nonce(*nonce)?;
                     Self::ensure_admin(admin, &bucket)?;
 
-                    let challenged_seq = challenge.start_seq.saturating_add(challenge.leaf_index);
+                    let challenged_seq = challenge
+                        .start_seq
+                        .saturating_add(challenge.target.leaf_index);
                     if challenged_seq >= *new_start_seq {
                         // Provider claims data was purged before the
                         // challenged leaf, but the new start_seq doesn't
@@ -2803,9 +2799,11 @@ pub mod pallet {
                     } else {
                         let deletion_payload = CommitmentPayload::new(
                             challenge.bucket_id,
-                            *new_mmr_root,
-                            *new_start_seq,
-                            0, // leaf_count not needed for deletion proof
+                            Commitment {
+                                mmr_root: *new_mmr_root,
+                                start_seq: *new_start_seq,
+                                leaf_count: 0, // not needed for deletion proof
+                            },
                             *nonce,
                         );
                         let encoded = deletion_payload.encode();
@@ -2824,15 +2822,16 @@ pub mod pallet {
                     match bucket.snapshot.as_ref() {
                         None => Err(SlashReason::InvalidSupersededClaim),
                         Some(snapshot) => {
-                            let challenged_seq =
-                                challenge.start_seq.saturating_add(challenge.leaf_index);
+                            let challenged_seq = challenge
+                                .start_seq
+                                .saturating_add(challenge.target.leaf_index);
                             // (a) The challenged root must NOT be the current
                             // canonical root — if it still is, the data is live
                             // and the provider must answer with a `Proof`.
                             // (b)+(c) The challenged seq must still sit inside
                             // the canonical range; front-rolled/deleted data
                             // has to go through the admin-signed `Deleted` path.
-                            if challenge.mmr_root != snapshot.mmr_root
+                            if challenge.mmr_root != snapshot.commitment.mmr_root
                                 && snapshot.contains_seq(challenged_seq)
                             {
                                 Ok(())
@@ -2992,7 +2991,10 @@ pub mod pallet {
 
                     // Check it's a new root
                     if let Some(record) = last_sync {
-                        ensure!(matched_root != record.mmr_root, Error::<T>::InvalidSyncRoot);
+                        ensure!(
+                            matched_root != record.commitment.mmr_root,
+                            Error::<T>::InvalidSyncRoot
+                        );
                     }
 
                     // Pay for sync
@@ -3015,7 +3017,7 @@ pub mod pallet {
                         bucket
                             .snapshot
                             .as_ref()
-                            .map(|s| (s.start_seq, s.leaf_count))
+                            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count))
                             .unwrap_or((0, 0))
                     } else {
                         (0u64, 0u64)
@@ -3023,9 +3025,11 @@ pub mod pallet {
 
                     // Update last sync
                     *last_sync = Some(ReplicaSyncRecord {
-                        mmr_root: matched_root,
-                        start_seq,
-                        leaf_count,
+                        commitment: Commitment {
+                            mmr_root: matched_root,
+                            start_seq,
+                            leaf_count,
+                        },
                         block: current_block,
                     });
 

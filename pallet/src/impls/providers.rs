@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::*;
 use frame_support::{pallet_prelude::*, traits::ReservableCurrency};
 use sp_runtime::traits::CheckedMul;

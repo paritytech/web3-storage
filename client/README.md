@@ -173,8 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let challenge_id = client.challenge_checkpoint(
             1,                          // bucket_id
             "5FHneW46...".to_string(),  // provider
-            5,                          // leaf_index
-            123,                        // chunk_index
+            ChunkLocation { leaf_index: 5, chunk_index: 123 },
         ).await?;
 
         println!("Challenge created: {:?}", challenge_id);

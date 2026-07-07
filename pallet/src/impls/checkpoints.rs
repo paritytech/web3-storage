@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::*;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
@@ -27,7 +29,7 @@ impl<T: Config> Pallet<T> {
     ) -> Result<(u8, H256), DispatchError> {
         // Check current snapshot first
         if let (Some(snapshot), Some(root)) = (&bucket.snapshot, roots[0]) {
-            if snapshot.mmr_root == root {
+            if snapshot.commitment.mmr_root == root {
                 return Ok((0, root));
             }
         }

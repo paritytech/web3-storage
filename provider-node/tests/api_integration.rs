@@ -16,7 +16,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::CommitmentPayload;
+use storage_primitives::{Commitment, CommitmentPayload};
 use storage_provider_node::{ProviderState, Storage};
 
 /// Test server helper that starts the provider node on a random port.
@@ -503,7 +503,15 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
     let leaf_count = body["leaf_count"]
         .as_u64()
         .expect("leaf_count present in /commit response");
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let encoded = payload.encode();
 
     let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
@@ -543,7 +551,15 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
     let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
     assert_ne!(sig_bytes, vec![0u8; 64]);
 
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count, nonce);
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
     assert!(sr25519::Pair::verify(
         &sig,
@@ -567,7 +583,16 @@ async fn commitment_signature_does_not_verify_under_a_different_key() {
     )
     .unwrap();
     let nonce = body["nonce"].as_u64().unwrap();
-    let encoded = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0, nonce).encode();
+    let encoded = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count: 0,
+        },
+        nonce,
+    )
+    .encode();
 
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap().public();
     assert!(
