@@ -153,8 +153,8 @@ impl S3Client {
             .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
         // Reuse the same key to authenticate bucket-scoped provider requests.
-        if let Ok(keypair) = substrate_client.signer_keypair() {
-            storage_client.set_auth_signer(keypair);
+        if let Ok(keypair) = substrate_client.signer() {
+            storage_client.set_auth_signer(keypair.clone());
         }
 
         Ok(Self {

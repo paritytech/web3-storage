@@ -89,19 +89,10 @@ impl SubstrateClient {
     }
 
     /// Get the signer keypair.
-    fn signer(&self) -> std::result::Result<&Keypair, String> {
+    pub(crate) fn signer(&self) -> std::result::Result<&Keypair, String> {
         self.signer
             .as_ref()
             .map(|s| s.as_ref())
-            .ok_or_else(|| "No signer configured".to_string())
-    }
-
-    /// Get the signer keypair (cloned), for reuse by other components such as
-    /// the Layer 0 client's provider-request authentication.
-    pub fn signer_keypair(&self) -> std::result::Result<Keypair, String> {
-        self.signer
-            .as_ref()
-            .map(|s| (**s).clone())
             .ok_or_else(|| "No signer configured".to_string())
     }
 
