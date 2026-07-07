@@ -1,0 +1,25 @@
+# Scrape config for the local stress/soak stack. Targets are on the host
+# (zombienet native + the PAPI exporter), reached via host.docker.internal.
+# For a remote target (e.g. PreviewNet), replace the target addresses below.
+global:
+  scrape_interval: 6s # one parachain block
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Domain-state exporter (examples/papi/chain-exporter.ts): provider balances,
+  # agreements, challenges, checkpoints, per-class block weight.
+  - job_name: web3-storage-chain
+    static_configs:
+      - targets: ["host.docker.internal:9700"]
+
+  # Parachain collator's built-in Substrate metrics: block height, finality,
+  # txpool, peers. Port pinned in zombienet.toml.
+  - job_name: parachain-node
+    static_configs:
+      - targets: ["host.docker.internal:9615"]
+
+  # Relay validator's Substrate metrics (optional). Pin its prometheus_port in
+  # zombienet.toml to enable; harmless to leave down otherwise.
+  - job_name: relay-node
+    static_configs:
+      - targets: ["host.docker.internal:9616"]

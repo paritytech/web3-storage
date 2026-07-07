@@ -12,6 +12,8 @@ default_args = ["-lruntime=info"]
 name = "alice"
 validator = true
 rpc_port = 9900
+# Pinned so the monitoring/ stack can scrape relay metrics at a fixed address.
+prometheus_port = 9616
 
 [[relaychain.nodes]]
 name = "bob"
@@ -28,4 +30,7 @@ name = "alice"
 validator = true
 command = "{{PROJECT_ROOT}}/.bin/polkadot-omni-node"
 rpc_port = 2222
+# Pin the collator's Prometheus port so the monitoring/ stack can scrape it at a
+# fixed address (zombienet otherwise assigns a random port each run).
+prometheus_port = 9615
 args = ["--collator", "-lruntime=info"]

@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: web3-storage
+    orgId: 1
+    folder: Web3 Storage
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

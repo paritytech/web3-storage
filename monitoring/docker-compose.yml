@@ -1,0 +1,47 @@
+# Ephemeral monitoring stack for local stress/soak runs (paritytech/web3-storage#267).
+#
+# Prometheus + Grafana that scrape three targets on the host:
+#   - the parachain collator's Substrate Prometheus endpoint (pinned to :9615
+#     in zombienet.toml)
+#   - the relay validator's endpoint (:9616, optional)
+#   - the domain-state exporter (examples/papi/chain-exporter.ts, :9700)
+#
+# The nodes and the exporter run on the host (zombienet native), so the
+# containers reach them via host.docker.internal; the extra_hosts mapping makes
+# that resolve on Linux too. To point at a different target (e.g. PreviewNet),
+# edit prometheus/prometheus.yml.
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: w3s-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: w3s-grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  grafana-data:
