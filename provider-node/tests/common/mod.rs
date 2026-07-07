@@ -6,7 +6,6 @@
 //! ([`with_admin_member`]) and use [`SignedClient`] to sign every request as
 //! `//Alice`.
 
-#![allow(dead_code)]
 
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
