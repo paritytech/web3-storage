@@ -10,6 +10,7 @@
     "demo:checkpoint-missed": "node --import tsx checkpoint-missed.ts",
     "demo:sc-flow": "node --import tsx sc-flow.ts",
     "e2e": "node --import tsx e2e/runner.bin.ts",
+    "chain-exporter": "node --import tsx chain-exporter.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
