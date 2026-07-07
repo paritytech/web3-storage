@@ -112,7 +112,7 @@ cargo run -p file-system-client --example basic_usage
 ### Rust SDK Usage
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 use file_system_primitives::CommitStrategy;
 
 #[tokio::main]
@@ -121,9 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = FileSystemClient::new(
         "ws://127.0.0.1:2222",    // Parachain WebSocket
         "http://127.0.0.1:3333",  // Provider HTTP
-    ).await?
-    .with_dev_signer("alice")     // Use Alice for testing
-    .await?;
+        Signer::dev("alice")?,    // Use Alice for testing
+    ).await?;
 
     // Create a drive (like a mounted filesystem)
     let drive_id = client.create_drive(
@@ -195,15 +194,15 @@ cargo run -p s3-client --example basic_usage
 ### Rust SDK Usage
 
 ```rust
-use s3_client::{S3Client, PutObjectOptions};
+use s3_client::{PutObjectOptions, S3Client, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create S3 client
     let client = S3Client::new(
-        "ws://127.0.0.1:2222",    // Parachain WebSocket
-        "http://127.0.0.1:3333",  // Provider HTTP
-        "//Alice",                 // Seed phrase
+        "ws://127.0.0.1:2222",         // Parachain WebSocket
+        "http://127.0.0.1:3333",       // Provider HTTP
+        Signer::from_seed("//Alice")?, // Signer
     ).await?;
 
     // Create a bucket

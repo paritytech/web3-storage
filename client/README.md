@@ -35,16 +35,16 @@ tokio = { version = "1", features = ["full"] }
 All clients that need on-chain access must connect to the chain and set a signer:
 
 ```rust
-use storage_client::{AdminClient, ClientConfig};
+use storage_client::{AdminClient, ClientConfig, Signer};
 
 let config = ClientConfig::default(); // ws://localhost:2222
 let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
 
 // Connect to chain
-client.base.connect_chain().await?;
+client.connect().await?;
 
-// Set signer (for testing - use proper keypairs in production!)
-client.base = client.base.with_dev_signer("alice")?;
+// Set signer (dev account for testing — use a real keypair in production!)
+client.set_signer(Signer::dev("alice")?)?;
 
 // Now ready for on-chain operations
 ```
@@ -60,12 +60,8 @@ use storage_client::{StorageUserClient, ChunkingStrategy};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client
-    let mut client = StorageUserClient::with_defaults()?;
-
-    // Connect to chain for commit operations
-    client.base.connect_chain().await?;
-    client.base = client.base.with_dev_signer("alice")?;
+    // Create client (default config, dev Alice signer)
+    let client = StorageUserClient::with_defaults()?;
 
     // Upload data
     let data = b"My important data";
@@ -253,7 +249,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 All clients can be configured with custom settings:
 
 ```rust
-use storage_client::ClientConfig;
+use storage_client::{ClientConfig, Signer};
 
 let config = ClientConfig {
     chain_ws_url: "ws://localhost:2222".to_string(),
@@ -262,7 +258,7 @@ let config = ClientConfig {
     enable_retries: true,
 };
 
-let client = StorageUserClient::new(config)?;
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 ```
 
 ### Error Handling

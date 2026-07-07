@@ -22,7 +22,6 @@ tokio = { workspace = true }
 
 # Subxt for chain interaction
 subxt = { workspace = true }
-subxt-signer = { workspace = true }
 
 # Utilities
 hex = { workspace = true, features = ["std"] }
@@ -31,6 +30,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+subxt-signer = { workspace = true }
 tokio = { workspace = true }
 
 [[example]]

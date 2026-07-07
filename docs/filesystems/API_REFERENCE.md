@@ -326,12 +326,17 @@ High-level client for file system operations with blockchain integration using `
 pub async fn new(
     chain_endpoint: &str,
     provider_endpoint: &str,
+    signer: Signer,
 ) -> Result<Self>
 ```
 
 **Parameters:**
 - `chain_endpoint`: Parachain WebSocket endpoint (e.g., `"ws://127.0.0.1:2222"`)
 - `provider_endpoint`: Storage provider HTTP endpoint (e.g., `"http://127.0.0.1:3333"`)
+- `signer`: Signs on-chain extrinsics and provider HTTP requests (the provider
+  always enforces auth). Build with `Signer::dev("alice")` for testing, or
+  `Signer::from_seed(...)` / `Signer::from_keypair(...)` for real keys —
+  never use dev accounts in production.
 
 **Returns:**
 - `Ok(FileSystemClient)`: Client connected to blockchain and provider
@@ -339,67 +344,14 @@ pub async fn new(
 
 **Example:**
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 
 let mut fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",
     "http://127.0.0.1:3333",
+    Signer::dev("alice")?,
 ).await?;
 ```
-
-**Note:** After creating the client, you must set a signer using `with_dev_signer()` or `with_signer()`.
-
----
-
-#### `with_dev_signer`
-
-Set up a development signer for testing.
-
-```rust
-pub async fn with_dev_signer(self, name: &str) -> Result<Self>
-```
-
-**Parameters:**
-- `name`: Dev account name (`"alice"`, `"bob"`, `"charlie"`, `"dave"`, `"eve"`, `"ferdie"`)
-
-**Returns:**
-- `Ok(FileSystemClient)`: Client with dev signer configured
-- `Err(FsClientError)`: Invalid account name
-
-**Example:**
-```rust
-let fs_client = fs_client
-    .with_dev_signer("alice")
-    .await?;
-```
-
-**Use Case:** Testing and development only. Never use dev accounts in production!
-
----
-
-#### `with_signer`
-
-Set up a production signer.
-
-```rust
-pub fn with_signer(self, signer: Keypair) -> Self
-```
-
-**Parameters:**
-- `signer`: SR25519 keypair for signing transactions
-
-**Returns:**
-- `FileSystemClient`: Client with production signer configured
-
-**Example:**
-```rust
-use subxt_signer::sr25519::Keypair;
-
-let keypair = Keypair::from_seed("your secure seed phrase")?;
-let fs_client = fs_client.with_signer(keypair);
-```
-
-**Use Case:** Production deployments with secure key management.
 
 ---
 
@@ -1332,7 +1284,7 @@ let node = DirectoryNode::decode(&bytes[..])?;
 ## Complete Example
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 use file_system_primitives::CommitStrategy;
 
 #[tokio::main]
@@ -1341,7 +1293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fs_client = FileSystemClient::new(
         "ws://127.0.0.1:2222",
         "http://127.0.0.1:3333",
-        keypair,
+        Signer::dev("alice")?,
     ).await?;
 
     // 2. Create drive

@@ -5,7 +5,8 @@
  *
  * Tests: balance accounting, capacity tracking, frozen buckets,
  * concurrent operations, data integrity, and access-control rejections
- * (non-admin writes, freeze without a checkpoint).
+ * (non-admin writes, freeze without a checkpoint, unsigned/non-member
+ * provider uploads).
  *
  * Usage: node e2e/10-edge-cases-and-adversarial.js [chain_ws] [provider_url]
  */
@@ -21,6 +22,7 @@ import {
   makeSigner,
   READ_OPTS,
   setMember,
+  signProviderRequest,
   submitClientCheckpoint,
   toHex,
   uploadChunk,
@@ -298,6 +300,46 @@ async function main() {
       // Bob is the admin (passes ensure_admin); freeze then trips NoSnapshot.
       const tx = api.tx.StorageProvider.freeze_bucket({ bucket_id: bucketId });
       await submitTxExpectFailure(tx, bob.signer, "NoSnapshot", "10.12");
+    },
+  });
+
+  tests.push({
+    name: "10.13 Provider rejects unsigned and non-member uploads",
+    fn: async () => {
+      const { bucketId } = await negotiateAndEstablish(
+        api,
+        PROVIDER_URL,
+        bob,
+        provider,
+        { maxBytes, duration: 100 },
+        true, // finalize: the provider resolves membership from finalized state
+      );
+      const bytes = new TextEncoder().encode("must not land");
+      const body = JSON.stringify({
+        bucket_id: Number(bucketId),
+        hash: toHex(blake2b256(bytes)),
+        data: Buffer.from(bytes).toString("base64"),
+        children: null,
+      });
+
+      // No Authorization header at all → 401.
+      const unsigned = await fetch(`${PROVIDER_URL}/node`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      assert.strictEqual(unsigned.status, 401, "unsigned upload must be rejected with 401");
+
+      // Valid signature from Eve, who holds no role on the bucket → 403.
+      const eveSigned = await fetch(`${PROVIDER_URL}/node`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...signProviderRequest(eve.keypair, "PUT", bucketId),
+        },
+        body,
+      });
+      assert.strictEqual(eveSigned.status, 403, "non-member upload must be rejected with 403");
     },
   });
 

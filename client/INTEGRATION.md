@@ -48,10 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create client and connect to chain
     let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
-    client.base.connect_chain().await?;
+    client.connect().await?;
 
-    // Set signer (for testing)
-    client.base = client.base.with_dev_signer("alice")?;
+    // Set signer (dev account for testing)
+    client.set_signer(Signer::dev("alice")?)?;
 
     // Now you can make on-chain calls
     let bucket_id = client.create_bucket(2).await?;
@@ -222,8 +222,8 @@ mod tests {
         };
 
         let mut client = ProviderClient::new(config, "5FHne...".to_string())?;
-        client.base.connect_chain().await?;
-        client.base = client.base.with_dev_signer("bob")?;
+        client.connect().await?;
+        client.set_signer(Signer::dev("bob")?)?;
 
         let result = client.register(
             "/ip4/127.0.0.1/tcp/3333".to_string(),
@@ -254,10 +254,10 @@ cargo test --features integration-tests
 
 ### "Not connected to chain" Error
 
-Ensure you call `connect_chain()` before making on-chain calls:
+Ensure you call `connect()` before making on-chain calls:
 
 ```rust
-client.base.connect_chain().await?;
+client.connect().await?;
 ```
 
 ### "No signer configured" Error
@@ -265,7 +265,7 @@ client.base.connect_chain().await?;
 Set a signer before submitting extrinsics:
 
 ```rust
-client.base = client.base.with_dev_signer("alice")?;
+client.set_signer(Signer::dev("alice")?)?;
 ```
 
 ### Transaction Fails
