@@ -108,6 +108,12 @@ pub struct OpSummary {
     pub lat_avg: Duration,
     /// Maximum latency over successful operations.
     pub lat_max: Duration,
+    /// 50th-percentile (median) latency over successful operations.
+    pub lat_p50: Duration,
+    /// 95th-percentile latency over successful operations.
+    pub lat_p95: Duration,
+    /// 99th-percentile latency over successful operations.
+    pub lat_p99: Duration,
     /// Up to [`MAX_SAMPLE_ERRORS`] sample messages from failed operations.
     pub sample_errors: Vec<String>,
 }
@@ -134,6 +140,17 @@ impl OpSummary {
     }
 }
 
+/// Nearest-rank percentile (`p` in `[0, 100]`) over an already-sorted slice of
+/// durations. `Duration::ZERO` on an empty slice.
+fn percentile(sorted: &[Duration], p: f64) -> Duration {
+    if sorted.is_empty() {
+        return Duration::ZERO;
+    }
+    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(sorted.len() - 1);
+    sorted[idx]
+}
+
 /// Aggregate per-operation outcomes against the elapsed duration of the run.
 pub fn summarize(
     operation: impl Operation,
@@ -144,18 +161,20 @@ pub fn summarize(
     let ok = outcomes.iter().filter(|o| o.ok).count();
     let bytes_ok = outcomes.iter().filter(|o| o.ok).map(|o| o.bytes).sum();
 
-    let mut lat_min = Duration::MAX;
-    let mut lat_max = Duration::ZERO;
-    let mut lat_sum = Duration::ZERO;
-    for o in outcomes.iter().filter(|o| o.ok) {
-        lat_min = lat_min.min(o.elapsed);
-        lat_max = lat_max.max(o.elapsed);
-        lat_sum += o.elapsed;
-    }
+    let mut ok_latencies: Vec<Duration> = outcomes
+        .iter()
+        .filter(|o| o.ok)
+        .map(|o| o.elapsed)
+        .collect();
+    ok_latencies.sort_unstable();
+
+    let lat_min = ok_latencies.first().copied().unwrap_or(Duration::ZERO);
+    let lat_max = ok_latencies.last().copied().unwrap_or(Duration::ZERO);
+    let lat_sum: Duration = ok_latencies.iter().sum();
     let lat_avg = lat_sum.checked_div(ok as u32).unwrap_or(Duration::ZERO);
-    if ok == 0 {
-        lat_min = Duration::ZERO;
-    }
+    let lat_p50 = percentile(&ok_latencies, 50.0);
+    let lat_p95 = percentile(&ok_latencies, 95.0);
+    let lat_p99 = percentile(&ok_latencies, 99.0);
 
     let sample_errors = outcomes
         .iter()
@@ -173,6 +192,9 @@ pub fn summarize(
         lat_min,
         lat_avg,
         lat_max,
+        lat_p50,
+        lat_p95,
+        lat_p99,
         sample_errors,
     }
 }
@@ -193,6 +215,9 @@ struct OpSummaryJson<'a> {
     latency_min_secs: f64,
     latency_avg_secs: f64,
     latency_max_secs: f64,
+    latency_p50_secs: f64,
+    latency_p95_secs: f64,
+    latency_p99_secs: f64,
     sample_errors: &'a [String],
 }
 
@@ -210,6 +235,9 @@ impl OpSummary {
             latency_min_secs: self.lat_min.as_secs_f64(),
             latency_avg_secs: self.lat_avg.as_secs_f64(),
             latency_max_secs: self.lat_max.as_secs_f64(),
+            latency_p50_secs: self.lat_p50.as_secs_f64(),
+            latency_p95_secs: self.lat_p95.as_secs_f64(),
+            latency_p99_secs: self.lat_p99.as_secs_f64(),
             sample_errors: &self.sample_errors,
         }
     }
@@ -259,6 +287,13 @@ impl fmt::Display for OpSummary {
             self.lat_avg.as_secs_f64(),
             self.lat_max.as_secs_f64(),
         )?;
+        writeln!(
+            f,
+            "  percentile: p50 {:.3}s / p95 {:.3}s / p99 {:.3}s",
+            self.lat_p50.as_secs_f64(),
+            self.lat_p95.as_secs_f64(),
+            self.lat_p99.as_secs_f64(),
+        )?;
         if !self.sample_errors.is_empty() {
             writeln!(f, "  sample errors:")?;
             for e in &self.sample_errors {
@@ -302,6 +337,9 @@ mod tests {
         assert_eq!(m.lat_min, Duration::from_millis(10));
         assert_eq!(m.lat_max, Duration::from_millis(30));
         assert_eq!(m.lat_avg, Duration::from_millis(20));
+        assert_eq!(m.lat_p50, Duration::from_millis(10));
+        assert_eq!(m.lat_p95, Duration::from_millis(30));
+        assert_eq!(m.lat_p99, Duration::from_millis(30));
         assert_eq!(m.ops_per_sec(), 2.0);
         assert_eq!(m.sample_errors, vec!["boom".to_string()]);
     }
@@ -319,6 +357,22 @@ mod tests {
         assert_eq!(m.lat_min, Duration::ZERO);
         assert_eq!(m.lat_avg, Duration::ZERO);
         assert_eq!(m.lat_max, Duration::ZERO);
+        assert_eq!(m.lat_p50, Duration::ZERO);
+        assert_eq!(m.lat_p95, Duration::ZERO);
+        assert_eq!(m.lat_p99, Duration::ZERO);
+    }
+
+    #[test]
+    fn percentile_uses_nearest_rank() {
+        let durations: Vec<Duration> = (1..=100).map(Duration::from_millis).collect();
+        assert_eq!(percentile(&durations, 50.0), Duration::from_millis(50));
+        assert_eq!(percentile(&durations, 95.0), Duration::from_millis(95));
+        assert_eq!(percentile(&durations, 99.0), Duration::from_millis(99));
+    }
+
+    #[test]
+    fn percentile_of_empty_is_zero() {
+        assert_eq!(percentile(&[], 50.0), Duration::ZERO);
     }
 
     #[test]
@@ -339,6 +393,9 @@ mod tests {
         assert_eq!(entry["elapsed_secs"], 2.0);
         assert_eq!(entry["throughput_ops_per_sec"], 0.5);
         assert_eq!(entry["latency_avg_secs"], 0.01);
+        assert_eq!(entry["latency_p50_secs"], 0.01);
+        assert_eq!(entry["latency_p95_secs"], 0.01);
+        assert_eq!(entry["latency_p99_secs"], 0.01);
         assert_eq!(entry["sample_errors"][0], "boom");
     }
 }
