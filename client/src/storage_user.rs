@@ -12,58 +12,46 @@
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
+use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
 use storage_primitives::{blake2_256, build_auth_header, BucketId};
-use subxt_signer::sr25519::Keypair;
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
     base: BaseClient,
     verifier: ClientVerifier,
     cipher: Option<Box<dyn Cipher>>,
-    /// Keypair used to sign bucket-scoped provider requests.
-    auth_signer: Option<Keypair>,
+    auth_signer: Signer,
 }
 
 impl StorageUserClient {
     /// Create a new storage user client.
-    pub fn new(config: ClientConfig) -> ClientResult<Self> {
+    ///
+    /// `auth_signer` authenticates every bucket-scoped provider request; the
+    /// provider always enforces auth, so it is mandatory.
+    pub fn new(config: ClientConfig, auth_signer: Signer) -> ClientResult<Self> {
         Ok(Self {
             base: BaseClient::new(config)?,
             verifier: ClientVerifier::new(),
             cipher: None,
-            auth_signer: None,
+            auth_signer,
         })
     }
 
-    /// Create with default configuration.
+    /// Create with default configuration and a dev **Alice** signer.
     pub fn with_defaults() -> ClientResult<Self> {
-        Self::new(ClientConfig::default())
+        Self::new(ClientConfig::default(), Signer::default())
     }
 
-    /// Set the keypair that signs bucket-scoped provider requests.
-    pub fn with_auth_signer(mut self, signer: Keypair) -> Self {
-        self.auth_signer = Some(signer);
-        self
-    }
-
-    /// [`with_auth_signer`](Self::with_auth_signer) by mutable reference.
-    pub fn set_auth_signer(&mut self, signer: Keypair) {
-        self.auth_signer = Some(signer);
-    }
-
-    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb)
-    /// when an auth signer is configured; otherwise leave the request unchanged.
+    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
     fn sign(
         &self,
         req: reqwest::RequestBuilder,
         method: &str,
         bucket_id: BucketId,
     ) -> reqwest::RequestBuilder {
-        let Some(signer) = self.auth_signer.as_ref() else {
-            return req;
-        };
+        let signer = self.auth_signer.keypair();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())

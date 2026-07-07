@@ -23,7 +23,6 @@ tokio = { workspace = true }
 # Subxt for chain interaction
 subxt = { workspace = true }
 subxt-signer = { workspace = true }
-bip39 = { workspace = true }
 
 # Utilities
 hex = { workspace = true, features = ["std"] }

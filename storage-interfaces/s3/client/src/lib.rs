@@ -6,6 +6,7 @@
 
 mod substrate;
 
+pub use storage_client::Signer;
 pub use substrate::SubstrateClient;
 
 use s3_primitives::{
@@ -134,7 +135,7 @@ pub struct S3Client {
 
 impl S3Client {
     /// Create a new S3 client.
-    pub async fn new(chain_url: &str, provider_url: &str, seed_phrase: &str) -> Result<Self> {
+    pub async fn new(chain_url: &str, provider_url: &str, signer: Signer) -> Result<Self> {
         info!(
             "Creating S3 client with chain={}, provider={}",
             chain_url, provider_url
@@ -145,17 +146,12 @@ impl S3Client {
             provider_urls: vec![provider_url.to_string()],
             ..Default::default()
         };
-        let mut storage_client = storage_client::StorageUserClient::new(config)
+        let storage_client = storage_client::StorageUserClient::new(config, signer.clone())
             .map_err(|e| S3ClientError::ProviderError(e.to_string()))?;
 
-        let substrate_client = SubstrateClient::new(chain_url, seed_phrase)
+        let substrate_client = SubstrateClient::new(chain_url, signer)
             .await
             .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
-
-        // Reuse the same key to authenticate bucket-scoped provider requests.
-        if let Ok(keypair) = substrate_client.signer() {
-            storage_client.set_auth_signer(keypair.clone());
-        }
 
         Ok(Self {
             storage_client,

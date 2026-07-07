@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use storage_client::{
     sign_terms, AdminClient, AgreementTermsOf, ChallengerClient, ClientConfig, DiscoveryClient,
-    ProviderClient, ProviderSettings, StorageUserClient,
+    ProviderClient, ProviderSettings, Signer, StorageUserClient,
 };
 use storage_primitives::{AgreementTerms, Role};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
@@ -47,8 +47,8 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 
 /// Derive the SS58 address for a dev account by name ("alice", "bob", …).
 ///
-/// Avoids hardcoding addresses in tests. Uses the same derivation path that
-/// `set_dev_signer` uses internally, so the account and signer always match.
+/// Avoids hardcoding addresses in tests. Uses the same derivation path as
+/// `Signer::dev`, so the account and signer always match.
 #[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
     dev_account(name).to_ss58check()
@@ -118,7 +118,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     if provider.connect().await.is_err() {
         return None;
     }
-    provider.set_dev_signer("alice").ok()?;
+    provider.set_signer(Signer::dev("alice").ok()?).ok()?;
 
     let already_registered = matches!(
         provider.get_provider_info(&dev_account("alice")).await,
@@ -159,7 +159,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     if admin.connect().await.is_err() {
         return None;
     }
-    admin.set_dev_signer("alice").ok()?;
+    admin.set_signer(Signer::dev("alice").ok()?).ok()?;
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -198,7 +198,7 @@ pub async fn alice_admin() -> Option<AdminClient> {
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_dev_signer("alice").ok()?;
+    client.set_signer(Signer::dev("alice").ok()?).ok()?;
     Some(client)
 }
 
@@ -209,7 +209,7 @@ pub async fn alice_challenger() -> Option<ChallengerClient> {
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_dev_signer("alice").ok()?;
+    client.set_signer(Signer::dev("alice").ok()?).ok()?;
     Some(client)
 }
 
@@ -220,7 +220,7 @@ pub async fn alice_provider() -> Option<ProviderClient> {
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_dev_signer("alice").ok()?;
+    client.set_signer(Signer::dev("alice").ok()?).ok()?;
     Some(client)
 }
 
@@ -282,12 +282,14 @@ pub async fn start_providers(n: usize) -> Vec<String> {
 /// [`start_test_provider`], so uploads/commits are authorized.
 #[allow(dead_code)]
 pub fn make_client(provider_url: String) -> StorageUserClient {
-    StorageUserClient::new(ClientConfig {
-        chain_ws_url: CHAIN_WS.to_string(),
-        provider_urls: vec![provider_url],
-        timeout_secs: 10,
-        enable_retries: false,
-    })
+    StorageUserClient::new(
+        ClientConfig {
+            chain_ws_url: CHAIN_WS.to_string(),
+            provider_urls: vec![provider_url],
+            timeout_secs: 10,
+            enable_retries: false,
+        },
+        subxt_signer::sr25519::dev::alice().into(),
+    )
     .expect("ClientConfig should be valid")
-    .with_auth_signer(subxt_signer::sr25519::dev::alice())
 }

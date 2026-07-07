@@ -21,7 +21,7 @@
 //! cargo run --example basic_usage [chain_ws] [provider_url]
 //! ```
 
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 use sp_runtime::AccountId32;
 use std::env;
 use storage_client::{NegotiateRequest, ProviderClient};
@@ -49,10 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === STEP 1: Create the client ===
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
-    let mut fs_client = FileSystemClient::new(chain_ws, provider_url)
-        .await?
-        .with_dev_signer("alice") // Use Alice for testing
-        .await?;
+    let mut fs_client =
+        FileSystemClient::new(chain_ws, provider_url, Signer::dev("alice")?).await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;

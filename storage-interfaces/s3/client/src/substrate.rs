@@ -6,11 +6,9 @@ use crate::{BucketInfo, S3ClientError};
 use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use std::sync::Arc;
-use storage_client::{scale_decode, EventParser};
+use storage_client::{scale_decode, EventParser, Signer};
 use subxt::ext::scale_value::{At, Composite, Value, ValueDef};
 use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::Keypair;
 use tracing::{debug, info};
 
 /// Pallet name in the runtime configuration.
@@ -39,8 +37,8 @@ pub struct MetadataEntry {
 pub struct SubstrateClient {
     /// Subxt online client.
     client: OnlineClient<PolkadotConfig>,
-    /// Signer for transactions.
-    signer: Option<Arc<Keypair>>,
+    /// Signer for extrinsics and provider auth.
+    signer: Signer,
     /// Account ID (32 bytes).
     account_id: [u8; 32],
     /// Endpoint URL.
@@ -50,50 +48,22 @@ pub struct SubstrateClient {
 
 impl SubstrateClient {
     /// Create a new substrate client.
-    pub async fn new(chain_url: &str, seed_phrase: &str) -> std::result::Result<Self, String> {
+    pub async fn new(chain_url: &str, signer: Signer) -> std::result::Result<Self, String> {
         info!("Connecting to chain at {}", chain_url);
 
         let client = OnlineClient::<PolkadotConfig>::from_url(chain_url)
             .await
             .map_err(|e| format!("Failed to connect to chain: {e}"))?;
 
-        let keypair = if seed_phrase.starts_with("//") {
-            // Dev account like //Alice
-            match seed_phrase {
-                "//Alice" => subxt_signer::sr25519::dev::alice(),
-                "//Bob" => subxt_signer::sr25519::dev::bob(),
-                "//Charlie" => subxt_signer::sr25519::dev::charlie(),
-                "//Dave" => subxt_signer::sr25519::dev::dave(),
-                "//Eve" => subxt_signer::sr25519::dev::eve(),
-                "//Ferdie" => subxt_signer::sr25519::dev::ferdie(),
-                _ => return Err(format!("Unknown dev account: {seed_phrase}")),
-            }
-        } else {
-            // Mnemonic phrase - parse and create keypair
-            let mnemonic = bip39::Mnemonic::parse(seed_phrase)
-                .map_err(|e| format!("Invalid mnemonic: {e:?}"))?;
-            subxt_signer::sr25519::Keypair::from_phrase(&mnemonic, None)
-                .map_err(|e| format!("Failed to create keypair: {e:?}"))?
-        };
-
-        let public_key = keypair.public_key();
-        let account_id: [u8; 32] = public_key.0;
+        let account_id: [u8; 32] = signer.keypair().public_key().0;
         info!("Connected to chain, account: 0x{}", hex::encode(account_id));
 
         Ok(Self {
             client,
-            signer: Some(Arc::new(keypair)),
+            signer,
             account_id,
             endpoint: chain_url.to_string(),
         })
-    }
-
-    /// Get the signer keypair.
-    pub(crate) fn signer(&self) -> std::result::Result<&Keypair, String> {
-        self.signer
-            .as_ref()
-            .map(|s| s.as_ref())
-            .ok_or_else(|| "No signer configured".to_string())
     }
 
     /// Sign, submit, and wait for a transaction to finalize successfully.
@@ -105,14 +75,12 @@ impl SubstrateClient {
         &self,
         tx: subxt::tx::DefaultPayload<Composite<()>>,
     ) -> std::result::Result<subxt::blocks::ExtrinsicEvents<PolkadotConfig>, String> {
-        let signer = self.signer()?;
-
         let mut last_err = String::new();
         for attempt in 0..3u32 {
             match self
                 .client
                 .tx()
-                .sign_and_submit_then_watch_default(&tx, signer)
+                .sign_and_submit_then_watch_default(&tx, &self.signer)
                 .await
             {
                 Ok(progress) => {

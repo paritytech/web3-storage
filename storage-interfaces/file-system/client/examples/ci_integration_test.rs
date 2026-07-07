@@ -15,7 +15,7 @@
 //!
 //! Run via justfile (recommended): just fs-demo-ci
 
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 use file_system_primitives::DirectoryEntry;
 use sp_runtime::AccountId32;
 use std::env;
@@ -65,10 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 1: Create the client
     println!("Step 1: Creating file system client...");
-    let mut fs_client = FileSystemClient::new(chain_ws, provider_url)
-        .await?
-        .with_dev_signer("alice")
-        .await?;
+    let mut fs_client =
+        FileSystemClient::new(chain_ws, provider_url, Signer::dev("alice")?).await?;
     println!("  Client connected successfully");
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();

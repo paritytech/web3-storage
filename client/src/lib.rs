@@ -112,6 +112,7 @@ pub mod encryption;
 pub mod event_subscription;
 pub mod provider;
 pub mod scale_decode;
+pub mod signer;
 pub mod storage_user;
 pub mod substrate;
 pub mod verification;
@@ -143,6 +144,7 @@ pub use event_subscription::{
     StorageProviderEventParser, SubscriptionHandle,
 };
 pub use provider::{ProviderClient, ProviderSettings};
+pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,

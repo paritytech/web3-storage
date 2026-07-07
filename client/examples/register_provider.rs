@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut provider_client = ProviderClient::new(config, ss58_address.clone())?;
     provider_client.connect().await?;
-    provider_client.set_signer(keypair.clone())?;
+    provider_client.set_signer(keypair.clone().into())?;
 
     // Step 1: Register (idempotent — skip if already registered).
     const STAKE: u128 = 1_000_000_000_000_000; // 1000 tokens (MinProviderStake, 12 decimals)

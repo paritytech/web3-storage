@@ -42,15 +42,8 @@ impl ProviderClient {
         self.base.connect_chain().await
     }
 
-    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
-    /// Must be called after connect().
-    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
-        self.base.set_dev_signer(name)
-    }
-
-    /// Set a custom keypair signer loaded from a keyfile or seed.
-    /// Must be called after connect().
-    pub fn set_signer(&mut self, signer: subxt_signer::sr25519::Keypair) -> ClientResult<()> {
+    /// Set the signer for submitting extrinsics. Must be called after connect().
+    pub fn set_signer(&mut self, signer: crate::Signer) -> ClientResult<()> {
         self.base.set_signer(signer)
     }
 

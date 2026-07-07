@@ -42,10 +42,9 @@ impl ChallengerClient {
         self.base.connect_chain().await
     }
 
-    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
-    /// Must be called after connect().
-    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
-        self.base.set_dev_signer(name)
+    /// Set the signer for submitting extrinsics. Must be called after connect().
+    pub fn set_signer(&mut self, signer: crate::Signer) -> ClientResult<()> {
+        self.base.set_signer(signer)
     }
 
     // ═════════════════════════════════════════════════════════════════════════

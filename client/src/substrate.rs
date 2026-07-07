@@ -6,15 +6,14 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
+use crate::Signer;
 use codec::Encode;
 use futures::StreamExt;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
-use std::sync::Arc;
 use storage_primitives::{ChunkLocation, Commitment};
 use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::{dev, Keypair};
 
 pub const PALLET_NAME: &str = "StorageProvider";
 
@@ -22,7 +21,7 @@ pub const PALLET_NAME: &str = "StorageProvider";
 #[derive(Clone)]
 pub struct SubstrateClient {
     api: OnlineClient<PolkadotConfig>,
-    signer: Option<Arc<Keypair>>,
+    signer: Option<Signer>,
 }
 
 impl SubstrateClient {
@@ -36,24 +35,9 @@ impl SubstrateClient {
     }
 
     /// Set the signer for this client (for submitting extrinsics).
-    pub fn with_signer(mut self, signer: Keypair) -> Self {
-        self.signer = Some(Arc::new(signer));
+    pub fn with_signer(mut self, signer: Signer) -> Self {
+        self.signer = Some(signer);
         self
-    }
-
-    /// Create a client with a development keypair (for testing).
-    pub fn with_dev_signer(mut self, name: &str) -> Result<Self, ClientError> {
-        let keypair = match name {
-            "alice" => dev::alice(),
-            "bob" => dev::bob(),
-            "charlie" => dev::charlie(),
-            "dave" => dev::dave(),
-            "eve" => dev::eve(),
-            "ferdie" => dev::ferdie(),
-            _ => return Err(ClientError::Config(format!("Unknown dev account: {name}"))),
-        };
-        self.signer = Some(Arc::new(keypair));
-        Ok(self)
     }
 
     /// Get the API client.
@@ -62,10 +46,9 @@ impl SubstrateClient {
     }
 
     /// Get the signer if available.
-    pub fn signer(&self) -> Result<&Keypair, ClientError> {
+    pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
             .as_ref()
-            .map(|s| s.as_ref())
             .ok_or_else(|| ClientError::Config("No signer configured".to_string()))
     }
 
