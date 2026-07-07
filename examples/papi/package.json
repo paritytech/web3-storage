@@ -10,10 +10,12 @@
     "demo:checkpoint-missed": "node --import tsx checkpoint-missed.ts",
     "demo:sc-flow": "node --import tsx sc-flow.ts",
     "e2e": "node --import tsx e2e/runner.bin.ts",
+    "lower-timeouts": "node --import tsx lower-timeouts.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
+    "@polkadot-api/substrate-bindings": "^0.20.3",
     "@polkadot-labs/hdkd": "^0.0.28",
     "@polkadot-labs/hdkd-helpers": "^0.0.30",
     "@web3-storage/sdk": "workspace:*",
