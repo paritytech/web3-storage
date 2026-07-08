@@ -21,9 +21,9 @@
 
 use crate::error::Error;
 use crate::storage::{NonceStore, NullNonceStore};
+use crate::types::ProviderInfo;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
 pub use provider_negotiation::{AgreementTermsOf, NegotiateRequest, SignedTerms};

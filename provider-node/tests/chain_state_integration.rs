@@ -13,8 +13,8 @@
 //!    we assert the resulting [`ChainState`].
 //!
 //! 2. **Event relevance.** [`is_relevant_provider_event`] decides which block
-//!    events trigger a refresh; tested across the provider lifecycle variants,
-//!    wrong-account events, and unrelated events.
+//!    events trigger a refresh; tested across the provider lifecycle variants
+//!    and wrong-account events.
 //!
 //! 3. **Resilience.** [`ChainStateCoordinator::start`] drives a reconnect loop.
 //!    Pointed at an unreachable chain it must stay up, never panic, leave
@@ -22,18 +22,14 @@
 //!    shut down cleanly when stopped.
 
 use async_trait::async_trait;
-use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use storage_client::discovery::ProviderInfo;
-use storage_client::{ClientError, ProviderSettings, StorageEvent};
-use storage_primitives::Commitment;
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, NonceCounter, NonceStore,
-    PalletConstants,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, NonceStore,
+    PalletConstants, ProviderInfo, ProviderLifecycleEvent,
 };
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
@@ -177,7 +173,7 @@ async fn coordinator_releases_shared_state_after_stop() {
 
 /// Canned [`ChainStateChainClient`] for driving the synchronisation logic
 /// without a chain. Each read is either `Ok(value)` or, when its `*_err` flag is
-/// set, a `ClientError` — so every branch of `sync_constants` /
+/// set, an `Error` — so every branch of `sync_constants` /
 /// `refresh_provider_state` is reachable.
 #[derive(Default)]
 struct MockChainClient {
@@ -191,28 +187,23 @@ struct MockChainClient {
 
 #[async_trait]
 impl ChainStateChainClient for MockChainClient {
-    async fn get_provider_info(
-        &self,
-        _who: &AccountId32,
-    ) -> Result<Option<ProviderInfo>, ClientError> {
+    async fn get_provider_info(&self, _who: &AccountId32) -> Result<Option<ProviderInfo>, Error> {
         if self.info_err {
-            return Err(ClientError::Chain("mock get_provider_info failure".into()));
+            return Err(Error::Internal("mock get_provider_info failure".into()));
         }
         Ok(self.info.clone())
     }
 
-    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, ClientError> {
+    async fn fetch_replay_hsn(&self, _who: &AccountId32) -> Result<Option<u64>, Error> {
         if self.hsn_err {
-            return Err(ClientError::Chain("mock fetch_replay_hsn failure".into()));
+            return Err(Error::Internal("mock fetch_replay_hsn failure".into()));
         }
         Ok(self.hsn)
     }
 
-    async fn fetch_request_timeout(&self) -> Result<Option<u32>, ClientError> {
+    async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
         if self.request_timeout_err {
-            return Err(ClientError::Chain(
-                "mock fetch_request_timeout failure".into(),
-            ));
+            return Err(Error::Internal("mock fetch_request_timeout failure".into()));
         }
         Ok(self.request_timeout)
     }
@@ -423,50 +414,12 @@ async fn refresh_completes_pending_bootstrap_when_replay_state_appears() {
 #[test]
 fn lifecycle_events_for_self_are_relevant() {
     let me = provider_account();
-    let bh = H256::zero();
     let events = [
-        StorageEvent::ProviderRegistered {
+        ProviderLifecycleEvent::Updated {
             provider: me.clone(),
-            stake: 0,
-            block_hash: bh,
-            block_number: 1,
         },
-        StorageEvent::ProviderSettingsUpdated {
+        ProviderLifecycleEvent::Deregistered {
             provider: me.clone(),
-            block_hash: bh,
-            block_number: 1,
-            provider_settings: ProviderSettings {
-                price_per_byte: 5,
-                min_duration: 10,
-                max_duration: 100,
-                accepting_primary: true,
-                replica_sync_price: None,
-                accepting_extensions: true,
-                max_capacity: 0,
-            },
-        },
-        StorageEvent::ProviderMultiaddrUpdated {
-            provider: me.clone(),
-            multiaddr: "/ip4/1.2.3.4/tcp/3333".to_string(),
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::DeregisterAnnounced {
-            provider: me.clone(),
-            complete_after: 10,
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::ProviderDeregistered {
-            provider: me.clone(),
-            stake_returned: 0,
-            block_hash: bh,
-            block_number: 1,
-        },
-        StorageEvent::DeregisterCancelled {
-            provider: me.clone(),
-            block_hash: bh,
-            block_number: 1,
         },
     ];
 
@@ -480,39 +433,17 @@ fn lifecycle_events_for_self_are_relevant() {
 
 #[test]
 fn lifecycle_event_for_other_provider_is_irrelevant() {
-    let event = StorageEvent::ProviderRegistered {
+    let event = ProviderLifecycleEvent::Updated {
         provider: provider_account_2(),
-        stake: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
     };
     // Same event shape, different account → not ours, ignore it.
     assert!(!is_relevant_provider_event(&event, &provider_account()));
 }
 
-#[test]
-fn non_lifecycle_event_is_irrelevant() {
-    // A checkpoint event names no `provider` we filter on; it must never trigger
-    // a provider-state refresh.
-    let event = StorageEvent::BucketCheckpointed {
-        bucket_id: 1,
-        commitment: Commitment::default(),
-        providers: vec![provider_account()],
-        block_hash: H256::zero(),
-        block_number: 1,
-    };
-    assert!(!is_relevant_provider_event(&event, &provider_account()));
-}
-
 // ── refresh_if_relevant_event (block-event dispatch) ──────────────────────────
 
-fn registered_event(provider: AccountId32) -> StorageEvent {
-    StorageEvent::ProviderRegistered {
-        provider,
-        stake: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
-    }
+fn registered_event(provider: AccountId32) -> ProviderLifecycleEvent {
+    ProviderLifecycleEvent::Updated { provider }
 }
 
 #[tokio::test]
@@ -547,12 +478,8 @@ async fn irrelevant_block_events_do_not_refresh() {
     };
     let events = [
         registered_event(provider_account_2()),
-        StorageEvent::BucketCheckpointed {
-            bucket_id: 1,
-            commitment: Commitment::default(),
-            providers: vec![provider_account()],
-            block_hash: H256::zero(),
-            block_number: 1,
+        ProviderLifecycleEvent::Deregistered {
+            provider: provider_account_2(),
         },
     ];
 
@@ -651,11 +578,8 @@ async fn deregister_event_resets_persisted_nonce_store() {
         ..Default::default()
     };
 
-    let deregister_event = StorageEvent::ProviderDeregistered {
+    let deregister_event = ProviderLifecycleEvent::Deregistered {
         provider: provider_account(),
-        stake_returned: 0,
-        block_hash: H256::zero(),
-        block_number: 1,
     };
     // Chain reports provider not registered (after the event).
     let chain = MockChainClient::default(); // info=None
