@@ -147,7 +147,7 @@ impl ChainStateChainClient for RealChainStateClient {
 
     async fn fetch_replay_hsn(&self, who: &AccountId32) -> Result<Option<u64>, Error> {
         Ok(self
-            .fetch_value("ProviderReplayState", who)
+            .fetch_value("ProviderReplayStates", who)
             .await?
             .as_ref()
             .and_then(|value| named_field(value, "hsn"))
@@ -745,5 +745,124 @@ mod tests {
         let theirs = ProviderLifecycleEvent::Deregistered { provider: other };
         assert!(is_relevant_provider_event(&mine, &me));
         assert!(!is_relevant_provider_event(&theirs, &me));
+    }
+
+    // ── dynamic-value decoders ────────────────────────────────────────────
+
+    /// Build a `Providers`-storage-shaped value the way subxt surfaces it:
+    /// a named composite with nested `settings`/`stats` composites, `Option`
+    /// fields as `Some`/`None` variants, and the `multiaddr` `BoundedVec<u8>`
+    /// wrapped in the single-field unnamed composite scale_value produces.
+    fn provider_info_value(
+        replica_sync_price: Option<u128>,
+        deregister_at: Option<u32>,
+    ) -> Value<u32> {
+        let opt = |val: Option<u128>| match val {
+            Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
+            None => Value::unnamed_variant("None", Vec::<Value<()>>::new()),
+        };
+        let settings = Value::named_composite([
+            ("max_capacity", Value::u128(10_000)),
+            ("min_duration", Value::u128(10)),
+            ("max_duration", Value::u128(100)),
+            ("price_per_byte", Value::u128(5)),
+            ("accepting_primary", Value::bool(true)),
+            ("accepting_extensions", Value::bool(true)),
+            ("replica_sync_price", opt(replica_sync_price)),
+        ]);
+        let stats = Value::named_composite([
+            ("agreements_total", Value::u128(3)),
+            ("challenges_failed", Value::u128(1)),
+        ]);
+        // `BoundedVec<u8>` surfaces as a 1-field unnamed composite wrapping
+        // the byte sequence.
+        let multiaddr = Value::unnamed_composite([Value::from_bytes("/ip4/1.2.3.4/tcp/3333")]);
+        Value::named_composite([
+            ("multiaddr", multiaddr),
+            ("stake", Value::u128(1_000)),
+            ("committed_bytes", Value::u128(500)),
+            ("settings", settings),
+            ("stats", stats),
+            ("deregister_at", opt(deregister_at.map(u128::from))),
+        ])
+        .map_context(|_| 0u32)
+    }
+
+    #[test]
+    fn decode_provider_info_full() {
+        let info = decode_provider_info(&provider_info_value(Some(7), Some(42))).unwrap();
+        assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
+        assert_eq!(info.stake, 1_000);
+        assert_eq!(info.committed_bytes, 500);
+        assert_eq!(info.max_capacity, 10_000);
+        assert_eq!(info.min_duration, 10);
+        assert_eq!(info.max_duration, 100);
+        assert_eq!(info.price_per_byte, 5);
+        assert!(info.accepting_primary);
+        assert!(info.accepting_extensions);
+        assert_eq!(info.replica_sync_price, Some(7));
+        assert_eq!(info.agreements_total, 3);
+        assert_eq!(info.challenges_failed, 1);
+        assert_eq!(info.deregister_at, Some(42));
+    }
+
+    #[test]
+    fn decode_provider_info_none_options() {
+        let info = decode_provider_info(&provider_info_value(None, None)).unwrap();
+        assert_eq!(info.replica_sync_price, None);
+        assert_eq!(info.deregister_at, None);
+    }
+
+    #[test]
+    fn decode_provider_info_missing_required_field_errors() {
+        // Everything present except the required `stake` field.
+        let value = Value::named_composite([("multiaddr", Value::from_bytes("/ip4/1.2.3.4"))])
+            .map_context(|_| 0u32);
+        let err = decode_provider_info(&value).unwrap_err();
+        assert!(
+            matches!(&err, Error::Internal(msg) if msg.contains("stake")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn named_field_finds_and_misses() {
+        let value = Value::named_composite([("present", Value::u128(1))]).map_context(|_| 0u32);
+        assert!(named_field(&value, "present").is_some());
+        assert!(named_field(&value, "absent").is_none());
+        // Not a named composite → always None.
+        let prim = Value::u128(9).map_context(|_| 0u32);
+        assert!(named_field(&prim, "present").is_none());
+    }
+
+    #[test]
+    fn decode_byte_vec_handles_direct_and_wrapped_and_other() {
+        // Direct byte sequence (e.g. `Vec<u8>`).
+        let direct = Value::from_bytes(b"hello").map_context(|_| 0u32);
+        assert_eq!(decode_byte_vec(&direct), b"hello");
+        // Single-field unnamed wrapper (e.g. `BoundedVec<u8, _>`).
+        let wrapped = Value::unnamed_composite([Value::from_bytes(b"hi")]).map_context(|_| 0u32);
+        assert_eq!(decode_byte_vec(&wrapped), b"hi");
+        // Non-composite → empty.
+        let prim = Value::u128(5).map_context(|_| 0u32);
+        assert!(decode_byte_vec(&prim).is_empty());
+    }
+
+    #[test]
+    fn decode_account_from_flat_and_nested_bytes() {
+        // Flat 32-byte sequence.
+        let flat = Value::from_bytes([7u8; 32]).map_context(|_| 0u32);
+        assert_eq!(decode_account(&flat), Some(AccountId32::new([7u8; 32])));
+        // `[u8; 32]` newtype nests the sequence one level deeper.
+        let nested = Value::unnamed_composite([Value::from_bytes([9u8; 32])]).map_context(|_| 0u32);
+        assert_eq!(decode_account(&nested), Some(AccountId32::new([9u8; 32])));
+    }
+
+    #[test]
+    fn decode_account_rejects_wrong_length() {
+        let short = Value::from_bytes([0u8; 31]).map_context(|_| 0u32);
+        assert_eq!(decode_account(&short), None);
+        let long = Value::from_bytes([0u8; 33]).map_context(|_| 0u32);
+        assert_eq!(decode_account(&long), None);
     }
 }
