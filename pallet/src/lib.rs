@@ -22,6 +22,7 @@ extern crate alloc;
 pub use pallet::*;
 
 pub mod impls;
+pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -71,7 +72,12 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
+    /// In-code storage version. v1 backfills the `commitment_nonce` field added
+    /// to `BucketSnapshot` by #125; see [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
     #[pallet::pallet]
+    #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
