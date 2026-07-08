@@ -23,6 +23,30 @@ members = [
 	"storage-interfaces/s3/client",
 	"storage-interfaces/s3/pallet-s3-registry",
 	"storage-interfaces/s3/primitives",
+
+	# Benchmarks (excluded from default-members; build with `-p db-bench`)
+	"benchmarks/db-bench",
+]
+
+# Keep the heavy benchmark-only DB dependencies out of normal `cargo build`/`cargo
+# test`/CI runs. `db-bench` is built explicitly via `cargo build -p db-bench`
+# or `just db-bench`.
+default-members = [
+	"client",
+	"pallet",
+	"primitives",
+	"provider-node",
+	"runtimes/web3-storage-local",
+	"runtimes/web3-storage-paseo",
+	"precompiles/drive-registry-precompile",
+	"precompiles/s3-registry-precompile",
+	"precompiles/storage-provider-precompile",
+	"storage-interfaces/file-system/client",
+	"storage-interfaces/file-system/pallet-registry",
+	"storage-interfaces/file-system/primitives",
+	"storage-interfaces/s3/client",
+	"storage-interfaces/s3/pallet-s3-registry",
+	"storage-interfaces/s3/primitives",
 ]
 
 [workspace.package]

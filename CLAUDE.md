@@ -643,6 +643,7 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 | [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
 | [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
 | [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
+| [Database Engine Evaluation](docs/design/database-evaluation/README.md) | Benchmark-backed DB selection |
 
 ## Common Issues & Solutions
 

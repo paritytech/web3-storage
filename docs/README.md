@@ -32,6 +32,7 @@ docs/
 - **[Provider-Initiated Checkpoints](./design/provider-initiated-checkpoints.md)** — extension where providers proactively commit state.
 - **[Client-Side Encryption](./design/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
 - **[S3 Metadata Index](./design/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
+- **[Database Engine Evaluation](./design/database-evaluation/README.md)** — benchmark-backed engine selection.
 
 ## Layer 1 — file system interface
 
