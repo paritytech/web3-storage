@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: Apache-2.0
+//! `try_state` invariant checks (compiled only under the `try-runtime`
+//! feature). They assert config and cross-storage invariants against live
+//! state on every try-runtime block and runtime-upgrade dry-run, catching
+//! violations that `integrity_test` (build-time only) and the extrinsic
+//! guards (bypassed by `setStorage`/migrations) cannot.
+//!
+//! Read-only, never panics: a violated invariant returns `TryRuntimeError`.
+
+use crate::*;
+use alloc::collections::{BTreeMap, BTreeSet};
+use frame_support::pallet_prelude::*;
+use sp_runtime::TryRuntimeError;
+use storage_primitives::{BucketId, ProviderRole};
+
+impl<T: Config> Pallet<T> {
+    pub fn do_try_state() -> Result<(), TryRuntimeError> {
+        Self::check_timing_config()?;
+        Self::check_committed_bytes()?;
+        Self::check_buckets_and_membership()?;
+        Ok(())
+    }
+
+    /// P0: config timing invariants. Mirror of `integrity_test`, but run
+    /// against live storage so a `setStorage`/migration mutation is caught.
+    fn check_timing_config() -> Result<(), TryRuntimeError> {
+        ensure!(
+            T::RequestTimeout::get() < T::DeregisterAnnouncementPeriod::get(),
+            "RequestTimeout must be < DeregisterAnnouncementPeriod (re-register replay window)"
+        );
+        ensure!(
+            T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
+            "DeregisterAnnouncementPeriod must be > ChallengeTimeout (challenge maturity)"
+        );
+        Ok(())
+    }
+
+    /// P1.1: each provider's `committed_bytes` equals the sum of `max_bytes`
+    /// over all its storage agreements (the accounting that gates capacity and
+    /// required stake).
+    fn check_committed_bytes() -> Result<(), TryRuntimeError> {
+        let mut summed: BTreeMap<T::AccountId, u64> = BTreeMap::new();
+        for (_bucket_id, provider, agreement) in StorageAgreements::<T>::iter() {
+            let entry = summed.entry(provider).or_default();
+            *entry = entry
+                .checked_add(agreement.max_bytes)
+                .ok_or("committed_bytes sum overflows u64")?;
+        }
+        // Every provider with agreements is registered, with matching committed_bytes.
+        for (provider, committed) in summed.iter() {
+            let info = Providers::<T>::get(provider)
+                .ok_or("storage agreement exists for an unregistered provider")?;
+            ensure!(
+                info.committed_bytes == *committed,
+                "provider committed_bytes != sum of agreement max_bytes"
+            );
+        }
+        // A registered provider with no agreements has zero committed_bytes.
+        for (provider, info) in Providers::<T>::iter() {
+            if !summed.contains_key(&provider) {
+                ensure!(
+                    info.committed_bytes == 0,
+                    "registered provider has committed_bytes but no agreements"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// P1.3: per bucket, `primary_providers` has no duplicates and equals
+    /// exactly the set of `Primary`-role agreement providers.
+    /// P1.4: `MemberBuckets` is the correct and complete reverse index of
+    /// bucket membership, with no duplicates.
+    fn check_buckets_and_membership() -> Result<(), TryRuntimeError> {
+        for (bucket_id, bucket) in Buckets::<T>::iter() {
+            // P1.3
+            let declared: BTreeSet<T::AccountId> =
+                bucket.primary_providers.iter().cloned().collect();
+            ensure!(
+                declared.len() == bucket.primary_providers.len(),
+                "duplicate entry in bucket primary_providers"
+            );
+            let primaries: BTreeSet<T::AccountId> = StorageAgreements::<T>::iter_prefix(bucket_id)
+                .filter(|(_p, a)| matches!(a.role, ProviderRole::Primary))
+                .map(|(p, _a)| p)
+                .collect();
+            ensure!(
+                declared == primaries,
+                "primary_providers does not match Primary-role agreements for bucket"
+            );
+
+            // P1.4 (forward): every member is indexed under MemberBuckets.
+            for member in bucket.members.iter() {
+                ensure!(
+                    MemberBuckets::<T>::get(&member.account).contains(&bucket_id),
+                    "bucket member missing from MemberBuckets reverse index"
+                );
+            }
+        }
+
+        // P1.4 (reverse): every reverse-index entry is a real, unique membership.
+        for (account, buckets) in MemberBuckets::<T>::iter() {
+            let unique: BTreeSet<BucketId> = buckets.iter().copied().collect();
+            ensure!(
+                unique.len() == buckets.len(),
+                "duplicate bucket id in MemberBuckets entry"
+            );
+            for bucket_id in buckets.iter() {
+                let bucket = Buckets::<T>::get(bucket_id)
+                    .ok_or("MemberBuckets references a non-existent bucket")?;
+                ensure!(
+                    bucket.members.iter().any(|m| m.account == account),
+                    "MemberBuckets entry is not an actual member of the bucket"
+                );
+            }
+        }
+        Ok(())
+    }
+}
