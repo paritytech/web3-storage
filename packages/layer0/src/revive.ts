@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Helpers for driving `pallet_revive` from PAPI: deploy a PolkaVM contract,
@@ -14,6 +14,7 @@
  * different field name, adjust here.
  */
 
+import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 import type { Abi } from "viem";
 
@@ -31,6 +32,24 @@ export function substrateToH160(publicKey: Uint8Array | string): string {
   const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
   const hash = hexToBytes(keccak256(bytes));
   return "0x" + Buffer.from(hash.slice(12)).toString("hex");
+}
+
+/** A substrate account derived from an H160: its public key + SS58 address. */
+export interface MappedAccount {
+  publicKey: Uint8Array;
+  address: string;
+}
+
+/**
+ * Substrate account `AccountId32Mapper` assigns to an unmapped H160 (e.g. a
+ * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`. The
+ * counterpart to {@link substrateToH160} — use it as the `owner` of negotiated
+ * terms when a contract forwards them on a user's behalf.
+ */
+export function h160ToSubstrate(addressBytes: Uint8Array): MappedAccount {
+  const publicKey = new Uint8Array(32).fill(0xee);
+  publicKey.set(addressBytes, 0);
+  return { publicKey, address: ss58Address(publicKey) };
 }
 
 /**

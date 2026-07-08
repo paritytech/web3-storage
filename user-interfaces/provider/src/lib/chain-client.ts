@@ -9,63 +9,35 @@
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
  */
 
-import { createClient, Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from 'polkadot-api'
-import { getWsProvider } from 'polkadot-api/ws'
+import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
-import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
 import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
+import {
+  clientReady$,
+  connectToChain,
+  disconnectFromChain as disconnectChain,
+  getClient,
+  requireApi,
+  requireClient,
+  subscribeToBlocks,
+} from '@web3-storage/chain-client'
 
 export type { PolkadotClient }
-type ParachainApi = TypedApi<typeof parachain>
+export { clientReady$, connectToChain, getClient, subscribeToBlocks }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection state
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The generic connection lifecycle lives in the shared @web3-storage/chain-client
+// package (imported/re-exported above); only provider-specific state stays here.
 
-let client: PolkadotClient | null = null
-let api: ParachainApi | null = null
-let currentEndpoint: string = ''
-
-export const clientReady$ = new BehaviorSubject<boolean>(false)
 export const blockNumber$ = new BehaviorSubject<number | undefined>(undefined)
 
-export async function connectToChain(endpoint: string): Promise<PolkadotClient> {
-  if (client && currentEndpoint === endpoint) return client
-
-  try {
-    currentEndpoint = endpoint
-    client = createClient(getWsProvider(endpoint))
-    api = client.getTypedApi(parachain)
-    clientReady$.next(true)
-    return client
-  } catch (error) {
-    clientReady$.next(false)
-    throw error
-  }
-}
-
 export function disconnectFromChain(): void {
-  client?.destroy()
-  client = null
-  api = null
-  currentEndpoint = ''
-  clientReady$.next(false)
+  disconnectChain()
   blockNumber$.next(undefined)
-}
-
-export function getClient(): PolkadotClient | null {
-  return client
-}
-
-function requireApi(): ParachainApi {
-  if (!api) throw new Error('Not connected to chain')
-  return api
-}
-
-function requireClient(): PolkadotClient {
-  if (!client) throw new Error('Not connected to chain')
-  return client
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,7 +65,9 @@ export async function getChainProperties(): Promise<{
   let specVersion = 0
   let genesisHash = ''
 
-  if (client && api) {
+  const client = getClient()
+  if (client) {
+    const api = requireApi()
     try {
       const spec = await client.getChainSpecData()
       genesisHash = spec.genesisHash || genesisHash
@@ -412,8 +386,8 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     if (!bucket || !bucket.snapshot) continue
     out.push({
       bucketId,
-      mmrRoot: bucket.snapshot.mmr_root,
-      leafCount: Number(bucket.snapshot.leaf_count),
+      mmrRoot: bucket.snapshot.commitment.mmr_root,
+      leafCount: Number(bucket.snapshot.commitment.leaf_count),
       submittedAt: bucket.snapshot.checkpoint_block,
       blockNumber: bucket.snapshot.checkpoint_block,
       providers: bucket.primary_providers,
@@ -439,9 +413,9 @@ export async function getBucketDetails(
 
     const snapshot: OnChainBucketSnapshot | null = bucket.snapshot
       ? {
-          mmrRoot: bucket.snapshot.mmr_root,
-          startSeq: Number(bucket.snapshot.start_seq),
-          leafCount: Number(bucket.snapshot.leaf_count),
+          mmrRoot: bucket.snapshot.commitment.mmr_root,
+          startSeq: Number(bucket.snapshot.commitment.start_seq),
+          leafCount: Number(bucket.snapshot.commitment.leaf_count),
           checkpointBlock: bucket.snapshot.checkpoint_block,
         }
       : null
@@ -510,25 +484,25 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
   const entries = await requireApi().query.StorageProvider.Challenges.getEntries()
   const currentBlock = blockNumber$.getValue() || 0
   const challenges: OnChainChallenge[] = []
-  for (const { keyArgs, value } of entries) {
+  // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry is
+  // a single challenge with keyArgs = [deadline, index] and value = Challenge.
+  for (const { keyArgs, value: ch } of entries) {
     const deadline = Number(keyArgs[0])
-    for (let idx = 0; idx < value.length; idx++) {
-      const ch = value[idx]
-      if (!isSameAddress(ch.provider, address)) continue
-      challenges.push({
-        id: idx,
-        bucketId: Number(ch.bucket_id),
-        challenger: ch.challenger,
-        provider: ch.provider,
-        leafIndex: Number(ch.leaf_index),
-        chunkIndex: Number(ch.chunk_index),
-        mmrRoot: ch.mmr_root,
-        startSeq: Number(ch.start_seq),
-        status: currentBlock > deadline ? 'expired' : 'pending',
-        createdAt: 0,
-        deadline,
-      })
-    }
+    const index = Number(keyArgs[1])
+    if (!isSameAddress(ch.provider, address)) continue
+    challenges.push({
+      id: index,
+      bucketId: Number(ch.bucket_id),
+      challenger: ch.challenger,
+      provider: ch.provider,
+      leafIndex: Number(ch.target.leaf_index),
+      chunkIndex: Number(ch.target.chunk_index),
+      mmrRoot: ch.mmr_root,
+      startSeq: Number(ch.start_seq),
+      status: currentBlock > deadline ? 'expired' : 'pending',
+      createdAt: 0,
+      deadline,
+    })
   }
   return challenges.sort((a, b) => b.deadline - a.deadline)
 }
@@ -736,27 +710,16 @@ export async function submitRespondToChallenge(
 // Subscriptions
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function subscribeToBlocks(callback: (blockNumber: number) => void): () => void {
-  if (!client) {
-    console.warn('Cannot subscribe to blocks: not connected')
-    return () => {}
-  }
-  const sub = client.finalizedBlock$.subscribe({
-    next: (block) => callback(block.number),
-    error: (err) => console.error('Block subscription error:', err),
-  })
-  return () => sub.unsubscribe()
-}
-
 export function subscribeToChallengeEvents(
   address: string,
   onChallenge: (challenge: OnChainChallenge) => void,
 ): () => void {
-  if (!client || !api) {
+  const client = getClient()
+  if (!client) {
     console.warn('Cannot subscribe to challenge events: not connected')
     return () => {}
   }
-  const a = api
+  const a = requireApi()
   const c = client
   const created = a.event.StorageProvider.ChallengeCreated.watch().subscribe({
     next: ({ block, events }) => {

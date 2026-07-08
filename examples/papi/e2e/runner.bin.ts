@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+
 // SPDX-License-Identifier: Apache-2.0
+
 /**
  * Sequential orchestrator for the E2E test suite.
  *
  * Runs each numbered workflow file as a child process, collects exit codes,
  * and prints a summary table at the end.
  *
- * Usage: node e2e/runner.js [chain_ws] [provider_url]
+ * Usage: npx tsx e2e/runner.bin.ts [chain_ws] [provider_url]
  */
 
 import { execFileSync } from "node:child_process";

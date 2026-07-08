@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * @web3-storage/sdk — umbrella over the #123 package layout. Everything
@@ -24,7 +24,13 @@ export {
   verifyCid,
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
+  computeDataRoot,
+  metadataMerkleRoot,
+  paddedMerkleRoot,
+  hashChildren,
+  u64le,
   type HttpFetchOpts,
+  type MerkleEntry,
   type NegotiateRequest,
   type SignedTerms,
   type SigningKeypair,

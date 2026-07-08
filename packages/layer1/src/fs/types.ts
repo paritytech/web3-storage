@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /** File-system interface types (drive-backed storage). */
 
@@ -66,7 +66,8 @@ export interface IndexRoot {
   indexRoot: string;
   fileCount: number;
   dirCount: number;
-  totalSize: number;
+  /** Total byte count (u64 on the wire) — kept as bigint to avoid 2^53 loss. */
+  totalSize: bigint;
 }
 
 export interface CheckpointDuty {

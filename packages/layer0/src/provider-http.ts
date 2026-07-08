@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Provider-node HTTP helpers — the off-chain half of flows the pallet
@@ -114,6 +114,7 @@ export async function uploadChunk(
   providerUrl: string,
   bucketId: bigint | number,
   data: Uint8Array | string,
+  nonce: bigint | number,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
@@ -126,9 +127,12 @@ export async function uploadChunk(
       children: null,
     },
   });
+  // `nonce` is the block at which the caller intends to submit the extrinsic
+  // consuming the resulting `provider_signature`. The pallet rejects signatures
+  // whose nonce is older than `MaxNonceAge`, so thread it into /commit.
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
-    body: { bucket_id: Number(bucketId), data_roots: [hash] },
+    body: { bucket_id: Number(bucketId), data_roots: [hash], nonce: Number(nonce) },
   });
   return { hash, data: bytes, commit };
 }
@@ -146,9 +150,12 @@ export async function downloadChunk(
 export async function fetchCheckpointSignature(
   providerUrl: string,
   bucketId: bigint | number,
+  nonce: bigint | number,
 ): Promise<any> {
+  // The provider signs the CommitmentPayload including `nonce`; pass the block
+  // the caller will submit at so the on-chain recency check passes.
   return providerFetch(providerUrl, "/checkpoint-signature", {
-    params: { bucket_id: bucketId },
+    params: { bucket_id: bucketId, nonce: Number(nonce) },
   });
 }
 
@@ -189,26 +196,31 @@ export async function fetchChallengeProof(
   challengeId: { deadline: number; index: number },
 ): Promise<any> {
   // Best block: a finalized read would lag the just-created challenge.
-  const challenges = await api.query.StorageProvider.Challenges.getValue(
+  // Challenges is a StorageDoubleMap keyed by (deadline, index), so the single
+  // challenge is read directly with both keys.
+  const challenge = await api.query.StorageProvider.Challenges.getValue(
     challengeId.deadline,
+    challengeId.index,
     READ_OPTS,
   );
-  if (!challenges)
-    throw new Error("No challenges at deadline " + challengeId.deadline);
-  const challenge = challenges[challengeId.index];
   if (!challenge)
-    throw new Error("Challenge index not found: " + challengeId.index);
+    throw new Error(
+      "Challenge not found: deadline " +
+        challengeId.deadline +
+        " index " +
+        challengeId.index,
+    );
 
   const mmr = await providerFetch(providerUrl, "/mmr_proof", {
     params: {
       bucket_id: challenge.bucket_id,
-      leaf_index: challenge.leaf_index,
+      leaf_index: challenge.target.leaf_index,
     },
   });
   const chunk = await providerFetch(providerUrl, "/chunk_proof", {
     params: {
       data_root: mmr.leaf.data_root,
-      chunk_index: challenge.chunk_index,
+      chunk_index: challenge.target.chunk_index,
     },
   });
 

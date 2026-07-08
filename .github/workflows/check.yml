@@ -77,6 +77,18 @@ jobs:
             exit 1
           fi
 
+      - name: Check license headers
+        run: |
+          cargo install --locked hawkeye && hawkeye --version
+          if ! hawkeye check --config licenserc.apache.toml; then
+            echo "Please run 'hawkeye format --config licenserc.apache.toml' to fix any license header issues"
+            exit 1
+          fi
+          if ! hawkeye check --config licenserc.gpl.toml; then
+            echo "Please run 'hawkeye format --config licenserc.gpl.toml' to fix any license header issues"
+            exit 1
+          fi
+
   check:
     name: Cargo check
     runs-on: parity-large
@@ -214,7 +226,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2.82.0
+        uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d # v2.82.5
         with:
           tool: cargo-llvm-cov
 

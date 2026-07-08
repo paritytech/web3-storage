@@ -178,9 +178,11 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     impl_name: Cow::Borrowed("paseo-web3-storage-runtime"),
     authoring_version: 1,
     // Encodes the runtime semver: major * 1_000_000 + minor * 1_000 + patch.
-    // 0.4.1 -> 4_001. Must stay > the deployed value so the upgrade is
-    // accepted and migrations run (previous release was `4_000`).
-    spec_version: 4_001,
+    // 0.4.1 -> 4_001 on dev; 4_002 for the breaking Challenges storage reshape
+    // (Vec -> StorageDoubleMap); 4_003 for dropping the vestigial
+    // `ChallengerStatRecord::total_earnings` field. Must stay > the deployed
+    // value so the upgrade is accepted and migrations run.
+    spec_version: 4_003,
     impl_version: 0,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 2,
@@ -808,6 +810,18 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
 
         fn challenges_at(block: BlockNumber) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_challenges_at(block)
+        }
+
+        fn bucket_challenges(bucket_id: storage_primitives::BucketId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_bucket_challenges(bucket_id)
+        }
+
+        fn provider_challenges(provider: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_provider_challenges(&provider)
+        }
+
+        fn challenger_challenges(challenger: AccountId) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+            StorageProvider::query_challenger_challenges(&challenger)
         }
 
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool {

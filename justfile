@@ -273,6 +273,10 @@ sc-coverage PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob
 sc-team-drive PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
     node --import tsx examples/papi/sc-team-drive.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
+# Photos dApp (Layer 1) — namespaced module. Run `just photos` to list its recipes;
+# e.g. `just photos build`, `just photos deploy`, `just photos flow`.
+mod photos 'user-interfaces/photos/photos.just'
+
 # Smart-contract token-gated demo: deploys TokenGatedDrive, mints an
 # NFT-shaped access token per S3 object through the s3-registry precompile,
 # transfers + burns + shuts down.
@@ -350,7 +354,7 @@ papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_
 e2e PROVIDER_URL=PROVIDER_URL: papi-setup
     npx c8 --reporter=text --reporter=json --report-dir=examples/papi/coverage \
         --include="examples/papi/**" --include="packages/sdk/src/**" \
-        node --import tsx examples/papi/e2e/runner.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
+        node --import tsx examples/papi/e2e/runner.bin.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}"
 
 # Run a single E2E workflow by number (e.g. just e2e-single 01)
 e2e-single NUM PROVIDER_URL=PROVIDER_URL: papi-setup
