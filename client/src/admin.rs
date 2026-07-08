@@ -9,12 +9,11 @@
 //! - Freezing buckets
 //! - Deleting old data
 
-use crate::agreement::AgreementTermsOf;
+use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
-use sp_runtime::MultiSignature;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
@@ -84,8 +83,7 @@ impl AdminClient {
     /// ).await?;
     /// let bucket_id = client.establish_storage_agreement(
     ///     "5FHneW46...".to_string(),
-    ///     signed.terms,
-    ///     signed.signature,
+    ///     signed,
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -93,9 +91,9 @@ impl AdminClient {
     pub async fn establish_storage_agreement(
         &self,
         provider: String,
-        terms: AgreementTermsOf,
-        sig: MultiSignature,
+        signed_terms: SignedTerms,
     ) -> ClientResult<BucketId> {
+        let SignedTerms { terms, signature } = signed_terms;
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
@@ -109,7 +107,7 @@ impl AdminClient {
             terms.nonce,
         );
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &sig);
+        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &signature);
 
         let tx_progress = chain
             .api()

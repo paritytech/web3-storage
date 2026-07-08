@@ -26,7 +26,7 @@ use std::sync::Arc;
 use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
-pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_negotiation::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 
 /// Validate a negotiation request against the provider's current on-chain
 /// settings.

@@ -59,10 +59,10 @@ pub use storage::{
 };
 pub use types::*;
 
-use std::str::FromStr;
+use sp_core::crypto::Ss58Codec;
+use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
-use subxt_signer::sr25519;
 use tokio::sync::mpsc;
 
 /// Provider node state shared across handlers.
@@ -72,7 +72,7 @@ pub struct ProviderState {
     /// Provider account ID (SS58 encoded)
     pub provider_id: String,
     /// Signing keypair (optional, for dev/testing)
-    pub keypair: Option<sr25519::Keypair>,
+    pub keypair: Option<sr25519::Pair>,
     /// S3-compatible object index
     pub s3_index: S3IndexManager,
     /// File system drive index
@@ -103,7 +103,7 @@ impl ProviderState {
     fn from_parts(
         storage: Arc<dyn StorageBackend>,
         provider_id: String,
-        keypair: Option<sr25519::Keypair>,
+        keypair: Option<sr25519::Pair>,
     ) -> Self {
         Self {
             storage,
@@ -129,11 +129,10 @@ impl ProviderState {
 
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
     pub fn with_seed(storage: Arc<dyn StorageBackend>, seed: &str) -> Result<Self, String> {
-        let suri = subxt_signer::SecretUri::from_str(seed).expect("Failed to parse SURI");
-        let keypair = sr25519::Keypair::from_uri(&suri)
+        let keypair = sr25519::Pair::from_string(seed, None)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
 
-        let provider_id = keypair.public_key().to_account_id().to_string();
+        let provider_id = keypair.public().to_ss58check();
 
         Ok(Self::from_parts(storage, provider_id, Some(keypair)))
     }
@@ -246,11 +245,10 @@ mod tests {
             .clone()
             .try_into()
             .expect("sr25519 signatures are 64 bytes");
-        let sig = sr25519::Signature(sig_array);
-        let suri = subxt_signer::SecretUri::from_str("//Alice").expect("Failed to parse SURI");
-        let alice = sr25519::Keypair::from_uri(&suri).unwrap();
+        let sig = sr25519::Signature::from_raw(sig_array);
+        let alice = keypair_for("//Alice");
         assert!(
-            sr25519::verify(&sig, message, &alice.public_key()),
+            sr25519::Pair::verify(&sig, message, &alice.public()),
             "signature did not verify under //Alice's public key"
         );
     }
@@ -259,13 +257,12 @@ mod tests {
     fn sig_from_hex(sig_hex: &str) -> sr25519::Signature {
         let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
         let array: [u8; 64] = bytes.try_into().expect("sr25519 signatures are 64 bytes");
-        sr25519::Signature(array)
+        sr25519::Signature::from_raw(array)
     }
 
     /// Derive a keypair from a SURI like `//Alice`.
-    fn keypair_for(seed: &str) -> sr25519::Keypair {
-        let suri = subxt_signer::SecretUri::from_str(seed).expect("Failed to parse SURI");
-        sr25519::Keypair::from_uri(&suri).unwrap()
+    fn keypair_for(seed: &str) -> sr25519::Pair {
+        sr25519::Pair::from_string(seed, None).unwrap()
     }
 
     #[test]
@@ -275,7 +272,7 @@ mod tests {
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
         let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
-        let alice_pub = keypair_for("//Alice").public_key();
+        let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
 
         let sig_a = state.sign(msg).unwrap();
@@ -285,7 +282,7 @@ mod tests {
             let bytes = hex::decode(sig_hex.strip_prefix("0x").unwrap()).unwrap();
             assert_ne!(bytes, vec![0u8; 64]);
             let sig = sig_from_hex(sig_hex);
-            assert!(sr25519::verify(&sig, msg, &alice_pub));
+            assert!(sr25519::Pair::verify(&sig, msg, &alice_pub));
         }
     }
 
@@ -296,15 +293,15 @@ mod tests {
         // stops checking the message or the key.
         let alice = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
         let bob = ProviderState::with_seed(test_storage(), "//Bob").unwrap();
-        let alice_pub = keypair_for("//Alice").public_key();
+        let alice_pub = keypair_for("//Alice").public();
         let msg = b"checkpoint payload";
 
         let bob_sig = sig_from_hex(&bob.sign(msg).unwrap());
-        assert!(!sr25519::verify(&bob_sig, msg, &alice_pub));
+        assert!(!sr25519::Pair::verify(&bob_sig, msg, &alice_pub));
 
         // Sanity: //Alice's own signature still verifies under her own key.
         let alice_sig = sig_from_hex(&alice.sign(msg).unwrap());
-        assert!(sr25519::verify(&alice_sig, msg, &alice_pub));
+        assert!(sr25519::Pair::verify(&alice_sig, msg, &alice_pub));
     }
 
     #[test]

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Provider-signed agreement terms — wire format + client-side signing helper.
+//! Provider-signed agreement terms — wire format + signing helper.
 //!
-//! * Runtime-specific [`AgreementTermsOf`] alias the client uses to
+//! Shared by the client SDK and the provider node so both sides of the
+//! `/negotiate` endpoint agree on the wire format.
+//!
+//! * Runtime-specific [`AgreementTermsOf`] alias used to
 //!   talk to the parachain (AccountId32 / u128 / u32).
 //! * [`SignedTerms`] — the negotiated bundle returned over HTTP by a
 //!   provider node's `/negotiate` endpoint.
@@ -77,14 +80,18 @@ pub struct SignedTerms {
     pub signature: MultiSignature,
 }
 
-/// Sign already-built terms with a provider keypair.
-pub fn sign_terms(
-    keypair: &subxt_signer::sr25519::Keypair,
-    terms: &AgreementTermsOf,
-) -> MultiSignature {
+/// Sign already-built terms with a provider keypair, returning them bundled
+/// with the signature so the two can never be paired up wrongly.
+///
+/// The key's scheme must match the provider's registered on-chain key.
+pub fn sign_terms<P>(keypair: &P, terms: AgreementTermsOf) -> SignedTerms
+where
+    P: sp_core::Pair,
+    P::Signature: Into<MultiSignature>,
+{
     let hash = blake2_256(&terms.signing_payload());
-    let raw = keypair.sign(&hash);
-    MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw(raw.0))
+    let signature = keypair.sign(&hash).into();
+    SignedTerms { terms, signature }
 }
 
 /// Hex-bytes serde adapter for [`MultiSignature`] — SCALE-encode then hex.
