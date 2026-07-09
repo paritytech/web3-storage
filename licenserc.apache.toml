@@ -16,6 +16,7 @@ includes = [
 	"precompiles/**/*.rs",
 	"precompiles/**/*.sol",
 	"primitives/**/*.rs",
+	"provider/**/*.rs",
 	"storage-interfaces/**/*.rs",
 	"user-interfaces/photos/contracts/**/*.sol",
 ]

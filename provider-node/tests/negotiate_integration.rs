@@ -15,8 +15,8 @@ use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
+use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
     PalletConstants, ProviderState, SignedTerms, Storage,

@@ -8,7 +8,7 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::H256;
+use sp_core::{Pair, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
