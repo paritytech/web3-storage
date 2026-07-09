@@ -236,40 +236,19 @@ jobs:
         run: python3 -m pip install --quiet "diff-cover>=9,<10"
 
       - name: Measure coverage
-        env:
-          # Coverage exclusions, anchored by path/name: generated code, pure-type
-          # primitives, and the chain-access layer that can only run against a live
-          # chain. Migrating these to a path/module-based exclusion is tracked in #178.
-          COV_IGNORE: '(/\.cargo/|/rustc/|weights\.rs|runtime_api\.rs|mock\.rs|benchmarking\.rs|bechmarking\.rs|/primitives/|subxt_client\.rs|_subxt\.rs|checkpoint_coordinator\.rs|replica_sync_coordinator\.rs|replica_sync\.rs|challenge_responder\.rs|/command\.rs|/cli\.rs|/main\.rs)'
+        # Package list + exclusions live in scripts/coverage.sh, shared with
+        # `just coverage` so the gate is reproducible locally.
         run: |
           set -euo pipefail
+          scripts/coverage.sh measure
 
-          # Build + run the relevant tests once. A build/test failure aborts here
-          # (no silent zero-coverage fallthrough like the old gate).
-          cargo llvm-cov --no-report \
-            -p pallet-storage-provider \
-            -p pallet-drive-registry \
-            -p pallet-s3-registry \
-            -p storage-provider-node
-
-          # Render the collected data in several formats without re-running tests.
-          cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex "$COV_IGNORE"
-          cargo llvm-cov report --html --output-dir target/llvm-cov-html --ignore-filename-regex "$COV_IGNORE"
-          cargo llvm-cov report --ignore-filename-regex "$COV_IGNORE" | tee coverage-summary.txt
-
-          if [ ! -s lcov.info ]; then
-            echo "::error::lcov.info is empty — coverage generation failed"
-            exit 1
-          fi
-
-          # Make lcov source paths repo-relative so diff-cover matches git paths.
-          sed -i "s|SF:${GITHUB_WORKSPACE}/|SF:|g" lcov.info
-
-          # Per-file table -> job summary (collapsed) for at-a-glance diagnosis.
+          # Per-module table + collapsed per-file table -> job summary.
           {
-            echo "## Rust coverage (per file)"
+            echo "## Rust coverage (per module)"
             echo ""
-            echo "<details><summary>Full table</summary>"
+            cat coverage-modules.md
+            echo ""
+            echo "<details><summary>Per-file table</summary>"
             echo ""
             echo '```'
             cat coverage-summary.txt
@@ -299,15 +278,8 @@ jobs:
           # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
           git fetch --no-tags origin "$BASE_REF"
 
-          # Gate only on lines changed by this PR: refactors/renames of already
-          # covered (or excluded) code never move the number, and the report names
-          # the exact uncovered lines.
           set +e
-          diff-cover lcov.info \
-            --compare-branch "origin/${BASE_REF}" \
-            --fail-under "$MIN_PATCH_COV" \
-            --show-uncovered \
-            --markdown-report patch-coverage.md
+          COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate
           STATUS=$?
           set -e
 
