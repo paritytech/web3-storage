@@ -14,17 +14,51 @@ set -euo pipefail
 # Stable number formatting and sort order regardless of the host locale.
 export LC_ALL=C
 
-# The measured module set — per crate, never --workspace. A crate not listed
-# here is invisible to the gate, so every testable crate split out of
-# provider-node (#178) must be added; the chain-touching node bin stays out.
-# `cargo llvm-cov` fails loudly on unknown names, so renames can't silently
-# zero the measurement.
+# Every workspace member (root Cargo.toml) must appear in exactly one of the
+# two lists below — `measure` verifies this, so a crate added, split out
+# (#178), or renamed fails here until it is classified. Measurement stays per
+# crate, never --workspace.
 COV_PACKAGES=(
 	pallet-storage-provider
 	pallet-drive-registry
 	pallet-s3-registry
 	storage-provider-node
 )
+
+# Not measured, with the reason per crate.
+COV_SKIP_PACKAGES=(
+	storage-client # chain-bound SDK; integration tests self-skip without a live chain
+	file-system-client # chain-bound layer-1 SDK
+	s3-client # chain-bound layer-1 SDK
+	storage-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	file-system-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	s3-primitives # pure types; enters reports only via dep graph (see COV_IGNORE)
+	storage-parachain-runtime # exercised out of process (zombienet e2e)
+	storage-paseo-runtime # exercised out of process (zombienet e2e)
+	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)
+	pallet-drive-registry-precompile # exercised out of process (`just sc-demo`)
+	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
+)
+
+# Fail when the two lists and the workspace members drift apart: every member
+# classified, no stale or duplicated entries.
+verify_classification() {
+	local members classified drift
+	members=$(cargo metadata --no-deps --format-version 1 |
+		python3 -c 'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))' |
+		sort)
+	classified=$(printf '%s\n' "${COV_PACKAGES[@]}" "${COV_SKIP_PACKAGES[@]}" | sort)
+	drift=$(diff <(echo "$members") <(echo "$classified") || true)
+	if [ -n "$drift" ]; then
+		{
+			echo "error: coverage classification out of sync with the workspace."
+			echo "Each root Cargo.toml member must be in COV_PACKAGES (measured) or"
+			echo "COV_SKIP_PACKAGES (skipped, with a reason) in scripts/coverage.sh:"
+			echo "$drift" | sed -e 's/^</  unclassified member: /' -e 's/^>/  stale or duplicated entry:/' -e '/^[0-9-]/d'
+		} >&2
+		exit 1
+	fi
+}
 
 # Exclusions: only code that structurally cannot execute in this run —
 # "untested but testable" code stays measured so the gate pushes for tests.
@@ -71,6 +105,7 @@ modules_table() {
 
 measure() {
 	need cargo-llvm-cov "cargo install cargo-llvm-cov"
+	verify_classification
 
 	local pkg_flags=()
 	local pkg
