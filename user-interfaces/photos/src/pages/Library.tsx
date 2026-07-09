@@ -107,12 +107,20 @@ export function Library() {
   // idempotent for the same drive, so the re-reads triggered by `refresh` (e.g.
   // after a `setRoot`) just refresh the listings. `onAnchored` bumps `refresh`
   // so the displayed on-chain anchor updates after each mutation.
+  const readyState = state.kind === 'ready' ? state : null
   useEffect(() => {
-    if (state.kind !== 'ready' || !state.library.exists || !account) return
-    void initLibrary(state.library.driveId, state.contract, account, state.library.rootCid, () =>
-      setRefresh((n) => n + 1),
+    if (!readyState || !readyState.library.exists || !account) return
+    void initLibrary(
+      readyState.library.driveId,
+      readyState.contract,
+      account,
+      readyState.library.rootCid,
+      () => setRefresh((n) => n + 1),
     )
-  }, [state.kind, account?.address, network.id])
+    // Key on the library-exists/driveId transition, not just `state.kind`: creating
+    // a library in-session flips `exists` false→true while `kind` stays 'ready', so
+    // depending on `kind` alone would leave the album layer unbound until a reload.
+  }, [readyState?.library.exists, readyState?.library.driveId, account?.address, network.id])
 
   // Tear down the album layer (release object URLs, drop caches) when the
   // account or network changes, or the page unmounts.

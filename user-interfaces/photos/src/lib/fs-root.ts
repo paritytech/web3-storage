@@ -14,18 +14,34 @@ import type { LocalIndex } from './local-index'
  * Enumerate the drive's full entry set as `MerkleEntry[]`, trusting nothing the
  * provider claims about content: list the whole tree, then for each file
  * download its bytes and recompute `data_root` locally (directories use a zero
- * root). The input to `metadataMerkleRoot` for client-side verification.
+ * root). Each leaf's `size` is the length of the bytes we actually downloaded —
+ * never the provider-reported listing size — so the metadata root commits only
+ * to content we verified. The input to `metadataMerkleRoot`.
+ *
+ * When an `index` is supplied it is both a cache and an output: files already in
+ * it are reused without a re-download, and every entry seen is written back
+ * (`setDir`/`setFile`), fully repopulating the index so the caller can treat it
+ * as authoritative afterwards.
  */
 export async function enumerateEntries(
   client: FileSystemClient,
   bucketId: bigint,
+  index?: LocalIndex,
 ): Promise<MerkleEntry[]> {
   const listing = await client.listDirectory(bucketId, '/', { recursive: true })
   return Promise.all(
     listing.map(async (e): Promise<MerkleEntry> => {
-      if (e.entryType !== 'file') return { path: e.path, dataRoot: new Uint8Array(32), size: 0n }
+      if (e.entryType !== 'file') {
+        index?.setDir(e.path)
+        return { path: e.path, dataRoot: new Uint8Array(32), size: 0n }
+      }
+      const cached = index?.getFile(e.path)
+      if (cached) return { path: e.path, dataRoot: cached.dataRoot, size: cached.size }
       const bytes = await client.downloadFile(bucketId, e.path)
-      return { path: e.path, dataRoot: computeDataRoot(bytes), size: BigInt(e.size) }
+      const dataRoot = computeDataRoot(bytes)
+      const size = BigInt(bytes.length)
+      index?.setFile(e.path, dataRoot, size)
+      return { path: e.path, dataRoot, size }
     }),
   )
 }
@@ -46,20 +62,5 @@ export async function recomputeRoot(
   bucketId: bigint,
   index: LocalIndex,
 ): Promise<Uint8Array> {
-  const listing = await client.listDirectory(bucketId, '/', { recursive: true })
-  const entries: MerkleEntry[] = await Promise.all(
-    listing.map(async (e): Promise<MerkleEntry> => {
-      if (e.entryType !== 'file') {
-        index.setDir(e.path)
-        return { path: e.path, dataRoot: new Uint8Array(32), size: 0n }
-      }
-      const cached = index.getFile(e.path)
-      if (cached) return { path: e.path, dataRoot: cached.dataRoot, size: cached.size }
-      const bytes = await client.downloadFile(bucketId, e.path)
-      const dataRoot = computeDataRoot(bytes)
-      index.setFile(e.path, dataRoot, BigInt(e.size))
-      return { path: e.path, dataRoot, size: BigInt(e.size) }
-    }),
-  )
-  return metadataMerkleRoot(entries)
+  return metadataMerkleRoot(await enumerateEntries(client, bucketId, index))
 }

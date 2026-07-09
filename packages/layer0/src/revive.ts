@@ -17,7 +17,7 @@
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 import type { Abi } from "viem";
 
-import { asHex, hexToBytes, type ParachainApi } from "./address.js";
+import { asHex, hexToBytes, toHex, type ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
 import { requireOneEvent, submitTx, submitTxFinalized } from "./tx.js";
 
@@ -31,7 +31,9 @@ import { requireOneEvent, submitTx, submitTxFinalized } from "./tx.js";
 export function substrateToH160(publicKey: Uint8Array | string): string {
   const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
   const hash = hexToBytes(keccak256(bytes));
-  return "0x" + Buffer.from(hash.slice(12)).toString("hex");
+  // `toHex` (browser-safe, `0x`-prefixed) instead of Node's `Buffer` so this
+  // module can be imported from browser bundles too.
+  return toHex(hash.slice(12));
 }
 
 /**
@@ -166,7 +168,7 @@ export async function callContract(
  */
 export function decodeContractEmitted(
   events: unknown[],
-  api: ParachainApi,
+  _api: ParachainApi,
   contractAddress: Uint8Array | string,
   abi: Abi,
 ) {

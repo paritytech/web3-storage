@@ -32,6 +32,9 @@ import { makeThumbnail } from '@/lib/thumbnail'
 /** Parallel `.thumbs/` subtree that holds the downscaled grid thumbnails. */
 const THUMBS_ROOT = '/.thumbs'
 
+/** Max photo uploads kept in flight at once within a single batch. */
+const UPLOAD_CONCURRENCY = 4
+
 /** A photo as rendered in the grid (thumbnail-backed). */
 export interface GridItem {
   name: string
@@ -115,8 +118,13 @@ let currentDriveId: bigint | null = null
 let index = new LocalIndex()
 let indexAuthoritative = false
 let indexKey: string | null = null
-/** Live grid thumbnail object URLs, revoked when the grid reloads or the library resets. */
-let gridUrls: string[] = []
+/**
+ * Live grid thumbnail object URLs keyed by thumb path. Reused across grid reloads
+ * so a single-photo mutation doesn't re-download the whole album; an entry is
+ * revoked when its path leaves the grid (`replaceGrid`), when its content is
+ * rewritten (`putVerified`), or when the library resets.
+ */
+const gridThumbUrls = new Map<string, string>()
 /** Called after a successful `setRoot` so the page can re-read the on-chain anchor. */
 let anchoredCallback: (() => void) | null = null
 /** Set by `scheduleReanchor` when the tree changed; drained by the background anchor worker. */
@@ -233,12 +241,17 @@ export async function loadGrid(): Promise<void> {
     const items: GridItem[] = await Promise.all(
       files.map(async (f): Promise<GridItem> => {
         const thumbPath = `${THUMBS_ROOT}/${album}/${f.name}`
-        let thumbUrl: string | undefined
-        try {
-          const bytes = await getFsClient().downloadFile(bucketId, thumbPath)
-          thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
-        } catch {
-          // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
+        // Reuse an already-loaded thumbnail; only download ones we haven't cached
+        // (new/changed paths — `putVerified` evicts a thumb path when rewritten).
+        let thumbUrl = gridThumbUrls.get(thumbPath)
+        if (!thumbUrl) {
+          try {
+            const bytes = await getFsClient().downloadFile(bucketId, thumbPath)
+            thumbUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' }))
+            gridThumbUrls.set(thumbPath, thumbUrl)
+          } catch {
+            // No thumbnail (e.g. uploaded outside the app) — the grid shows a fallback.
+          }
         }
         return { name: f.name, path: `/${album}/${f.name}`, thumbPath, thumbUrl, size: f.size }
       }),
@@ -294,19 +307,19 @@ export async function uploadPhotos(files: File[]): Promise<void> {
 
   libraryError$.next(undefined)
   uploads$.next({ total: files.length, done: 0 })
+
+  let uploaded = 0
+  let done = 0
+  let firstError: unknown = null
   try {
     // Make sure the thumbnail subtree for this album exists (older albums may predate it).
     await ensureDir(bucketId, THUMBS_ROOT)
     await ensureDir(bucketId, `${THUMBS_ROOT}/${album}`)
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      uploads$.next({ total: files.length, done: i, current: file.name })
-
+    const uploadOne = async (file: File): Promise<void> => {
       const bytes = new Uint8Array(await file.arrayBuffer())
-      const photoPath = `/${album}/${file.name}`
-      await putVerified(bucketId, photoPath, bytes, file.type || 'application/octet-stream')
-
+      await putVerified(bucketId, `/${album}/${file.name}`, bytes, file.type || 'application/octet-stream')
+      uploaded++
       try {
         const thumb = await makeThumbnail(file)
         await putVerified(bucketId, `${THUMBS_ROOT}/${album}/${file.name}`, thumb.bytes, thumb.contentType)
@@ -315,13 +328,35 @@ export async function uploadPhotos(files: File[]): Promise<void> {
         // photo; the grid will fall back for this one.
       }
     }
-    uploads$.next({ total: files.length, done: files.length })
 
-    await loadGrid()
-    scheduleReanchor()
+    // Bounded-concurrency pool: keep up to UPLOAD_CONCURRENCY photos in flight.
+    // On the first failure, stop starting new files but let in-flight ones settle
+    // so their already-stored bytes are displayed and anchored in the finally.
+    let next = 0
+    const worker = async (): Promise<void> => {
+      while (next < files.length && firstError === null) {
+        const file = files[next++]
+        try {
+          await uploadOne(file)
+        } catch (err) {
+          if (firstError === null) firstError = err
+        } finally {
+          done++
+          uploads$.next({ total: files.length, done, current: file.name })
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, worker))
+
+    if (firstError !== null) throw firstError
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Upload failed.')
   } finally {
+    // Refresh + anchor whatever made it in, even if the batch aborted partway.
+    if (uploaded > 0) {
+      await loadGrid()
+      scheduleReanchor()
+    }
     uploads$.next(null)
   }
 }
@@ -431,13 +466,24 @@ export async function renamePhoto(item: GridItem, rawName: string): Promise<void
       // No thumbnail to carry over (e.g. uploaded outside the app) — skip it.
     }
 
-    await getFsClient().deleteFile(bucketId, item.path)
-    await getFsClient().deleteFile(bucketId, item.thumbPath).catch(() => {})
-    index.remove(item.path)
-    index.remove(item.thumbPath)
+    // Retire the old paths. Couple each index removal to its delete succeeding so
+    // the index never claims a path the provider still serves; always refresh and
+    // re-anchor so the new copy is reflected even when the old delete fails.
+    const photoRetired = await getFsClient().deleteFile(bucketId, item.path).then(
+      () => true,
+      () => false,
+    )
+    if (photoRetired) index.remove(item.path)
+    await getFsClient().deleteFile(bucketId, item.thumbPath).then(
+      () => index.remove(item.thumbPath),
+      () => {},
+    )
 
     await loadGrid()
     scheduleReanchor()
+    if (!photoRetired) {
+      libraryError$.next('Renamed, but the original copy could not be removed — you may see a duplicate.')
+    }
   } catch (err) {
     libraryError$.next(err instanceof Error ? err.message : 'Could not rename the photo.')
   }
@@ -565,6 +611,14 @@ async function putVerified(bucketId: bigint, path: string, bytes: Uint8Array, co
     throw new Error(`Provider stored ${path} with a different content root than computed locally.`)
   }
   index.setFile(path, localRoot, BigInt(bytes.length))
+  // A rewritten thumbnail must not keep being served from its stale cached URL.
+  if (path.startsWith(`${THUMBS_ROOT}/`)) {
+    const stale = gridThumbUrls.get(path)
+    if (stale) {
+      URL.revokeObjectURL(stale)
+      gridThumbUrls.delete(path)
+    }
+  }
 }
 
 /** Create `path` if a directory of that name isn't already present in its parent; record it in the index. */
@@ -578,10 +632,15 @@ async function ensureDir(bucketId: bigint, path: string): Promise<void> {
   index.setDir(path)
 }
 
-/** Replace the grid, revoking the previous batch's thumbnail object URLs. */
+/** Replace the grid, revoking only cached thumbnails whose path left the grid. */
 function replaceGrid(items: GridItem[]): void {
-  for (const url of gridUrls) URL.revokeObjectURL(url)
-  gridUrls = items.map((i) => i.thumbUrl).filter((u): u is string => !!u)
+  const keep = new Set(items.map((i) => i.thumbPath))
+  for (const [thumbPath, url] of gridThumbUrls) {
+    if (!keep.has(thumbPath)) {
+      URL.revokeObjectURL(url)
+      gridThumbUrls.delete(thumbPath)
+    }
+  }
   entries$.next(items)
 }
 

@@ -8,20 +8,17 @@
 // used for ABI encode/decode only — no EVM RPC client.
 
 import { ss58Decode } from '@polkadot-labs/hdkd-helpers'
-import { decodeEventLog, encodeFunctionData } from 'viem'
+import { decodeEventLog } from 'viem'
 import type { PolkadotSigner } from 'polkadot-api'
-import { fromHex, toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+import { toHex, type ParachainApi, type SignedTerms } from '@web3-storage/papi'
+// Reuse the SDK's ABI encoder and the shared gas/storage defaults so the browser
+// path can't drift from the headless flow (`scripts/*`) that already imports them.
+import { DEFAULT_GAS_LIMIT, DEFAULT_STORAGE_DEPOSIT_LIMIT, encodeCall } from '@web3-storage/sdk/revive'
 import { getClient } from '@/lib/chain-client'
 import { PHOTOS_ABI } from '@/contract/photos-abi'
 
 /** Token base unit (12 decimals, like Polkadot). */
 export const UNIT = 10n ** 12n
-
-// Generous gas/storage defaults — the precompile meters real weight via
-// `env.charge`; these just keep the dispatch from being gated on estimation.
-// Mirrors `scripts/lib/contract.ts`.
-const DEFAULT_GAS_LIMIT = { ref_time: 1_000_000_000_000n, proof_size: 4_000_000n }
-const DEFAULT_STORAGE_DEPOSIT_LIMIT = 10n ** 18n
 
 /** `IDriveRegistry.PrimitiveAgreementTerms`, shaped for viem ABI encoding. */
 export interface PrimitiveAgreementTerms {
@@ -110,15 +107,15 @@ export interface CreateLibraryArgs {
   signature: `0x${string}`
 }
 
-/** viem `encodeFunctionData(createLibrary)` → raw calldata bytes. */
+/** ABI-encode `createLibrary` → raw calldata bytes. */
 export function encodeCreateLibrary(args: CreateLibraryArgs): Uint8Array {
-  return fromHex(
-    encodeFunctionData({
-      abi: PHOTOS_ABI,
-      functionName: 'createLibrary',
-      args: [args.userAccount, args.name, args.provider, args.terms, args.signature],
-    }),
-  )
+  return encodeCall(PHOTOS_ABI, 'createLibrary', [
+    args.userAccount,
+    args.name,
+    args.provider,
+    args.terms,
+    args.signature,
+  ])
 }
 
 /** Stringify a PAPI dispatch error, coercing bigints (mirrors drive-ui `submit()`). */
@@ -332,6 +329,38 @@ export async function submitCreateLibrary(
 }
 
 /**
+ * Decode every `ContractEmitted` log from `contractAddress` in `events` against
+ * the Photos ABI, skipping any that don't belong to it. Shared by the
+ * event-detection helpers so the filter/decode loop lives in one place.
+ */
+function decodeContractLogs(
+  events: unknown[],
+  api: ParachainApi,
+  contractAddress: string,
+): Array<{ eventName: string; args?: Record<string, unknown> }> {
+  const want = contractAddress.toLowerCase()
+  const logs: Array<{ eventName: string; args?: Record<string, unknown> }> = []
+  for (const ev of api.event.Revive.ContractEmitted.filter(events as never[]) as Array<{
+    payload: { contract: string; data: Uint8Array; topics?: `0x${string}`[] }
+  }>) {
+    const p = ev.payload
+    if (String(p.contract).toLowerCase() !== want) continue
+    try {
+      logs.push(
+        decodeEventLog({
+          abi: PHOTOS_ABI,
+          data: toHex(p.data) as `0x${string}`,
+          topics: (p.topics ?? []) as [`0x${string}`, ...`0x${string}`[]],
+        }) as { eventName: string; args?: Record<string, unknown> },
+      )
+    } catch {
+      // not in this ABI — skip
+    }
+  }
+  return logs
+}
+
+/**
  * Decode the `driveId` from the contract's `LibraryCreated` log in a successful
  * `createLibrary` result, or `undefined` if it can't be found. Best-effort: the
  * UI flips to State B from the unsigned `libraryOf` re-read regardless.
@@ -341,22 +370,9 @@ export function driveIdFromEvents(
   api: ParachainApi,
   contractAddress: string,
 ): bigint | undefined {
-  const want = contractAddress.toLowerCase()
-  for (const ev of api.event.Revive.ContractEmitted.filter(events as never[]) as Array<{
-    payload: { contract: string; data: Uint8Array; topics?: `0x${string}`[] }
-  }>) {
-    const p = ev.payload
-    if (String(p.contract).toLowerCase() !== want) continue
-    try {
-      const log = decodeEventLog({
-        abi: PHOTOS_ABI,
-        data: toHex(p.data) as `0x${string}`,
-        topics: (p.topics ?? []) as [`0x${string}`, ...`0x${string}`[]],
-      }) as { eventName: string; args?: { driveId?: bigint } }
-      if (log.eventName === 'LibraryCreated' && log.args?.driveId != null) return log.args.driveId
-    } catch {
-      // not in this ABI — skip
-    }
+  for (const log of decodeContractLogs(events, api, contractAddress)) {
+    const driveId = (log.args as { driveId?: bigint } | undefined)?.driveId
+    if (log.eventName === 'LibraryCreated' && driveId != null) return driveId
   }
   return undefined
 }
@@ -374,11 +390,9 @@ export function rootToBytes32(root: Uint8Array): RootCid {
   return toHex(root) as RootCid
 }
 
-/** viem `encodeFunctionData(setRoot)` → raw calldata bytes. */
+/** ABI-encode `setRoot` → raw calldata bytes. */
 export function encodeSetRoot(rootCid: RootCid): Uint8Array {
-  return fromHex(
-    encodeFunctionData({ abi: PHOTOS_ABI, functionName: 'setRoot', args: [rootCid] }),
-  )
+  return encodeCall(PHOTOS_ABI, 'setRoot', [rootCid])
 }
 
 /**
@@ -417,22 +431,5 @@ export async function submitSetRoot(
 
 /** True if a `RootUpdated` log from `contractAddress` is present in `events`. */
 function rootUpdated(events: unknown[], api: ParachainApi, contractAddress: string): boolean {
-  const want = contractAddress.toLowerCase()
-  for (const ev of api.event.Revive.ContractEmitted.filter(events as never[]) as Array<{
-    payload: { contract: string; data: Uint8Array; topics?: `0x${string}`[] }
-  }>) {
-    const p = ev.payload
-    if (String(p.contract).toLowerCase() !== want) continue
-    try {
-      const log = decodeEventLog({
-        abi: PHOTOS_ABI,
-        data: toHex(p.data) as `0x${string}`,
-        topics: (p.topics ?? []) as [`0x${string}`, ...`0x${string}`[]],
-      }) as { eventName: string }
-      if (log.eventName === 'RootUpdated') return true
-    } catch {
-      // not in this ABI — skip
-    }
-  }
-  return false
+  return decodeContractLogs(events, api, contractAddress).some((log) => log.eventName === 'RootUpdated')
 }
