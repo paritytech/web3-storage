@@ -645,12 +645,12 @@ fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
 fn collect_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
     match &v.value {
         ValueDef::Primitive(Primitive::U128(n)) => {
+            // Keep counting past the buffer so oversized inputs fail the
+            // exact-length check in `decode_account`.
             if offset < 32 {
                 buf[offset] = *n as u8;
-                offset + 1
-            } else {
-                offset
             }
+            offset + 1
         }
         ValueDef::Composite(Composite::Unnamed(items)) => {
             let mut pos = offset;
