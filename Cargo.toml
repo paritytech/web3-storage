@@ -6,6 +6,7 @@ members = [
 	"pallet",
 	"primitives",
 	"provider-node",
+	"provider/negotiation",
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
 
@@ -37,6 +38,7 @@ pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompi
 pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
+provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "primitives", default-features = false }

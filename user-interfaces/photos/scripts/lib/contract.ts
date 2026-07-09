@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//
+
 // Photos-specific contract glue: reshape a provider-signed quote into the
 // drive-registry precompile's `PrimitiveAgreementTerms` ABI struct. This is NOT
 // general SDK material (it is precompile-shaped), so it stays local to the app,

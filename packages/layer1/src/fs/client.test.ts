@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
 import { makeSigner } from "@web3-storage/layer0";

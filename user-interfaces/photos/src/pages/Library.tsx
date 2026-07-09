@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// M4 — read-only state detection. Reads the Photos contract's `libraryOf` for
-// the selected account (unsigned) and renders State A ("no library") vs State B
-// ("drive #N"). No writes: creating a library is M5, albums/upload/grid are M6.
+// Reads the Photos contract's `libraryOf` for the selected account (unsigned)
+// and renders State A ("no library" — the interactive create flow) vs State B
+// ("drive #N" — albums, upload, grid, lightbox, and the on-chain metadata anchor).
 
 import { useEffect, useRef, useState } from 'react'
 import { Image, Anchor, AlertTriangle, Settings2, X } from 'lucide-react'

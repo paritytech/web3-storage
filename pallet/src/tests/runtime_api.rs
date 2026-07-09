@@ -3,7 +3,7 @@
 use super::*;
 use codec::Encode;
 use sp_core::H256;
-use storage_primitives::BucketSnapshot;
+use storage_primitives::{BucketSnapshot, ChunkLocation, Commitment};
 
 #[test]
 fn query_provider_info_returns_data() {
@@ -37,11 +37,14 @@ fn query_bucket_info_returns_data() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
+                    commitment_nonce: 0,
                 });
             }
         });
@@ -54,8 +57,8 @@ fn query_bucket_info_returns_data() {
         assert!(!response.members.is_empty());
         assert!(response.snapshot.is_some());
         let snapshot = response.snapshot.unwrap();
-        assert_eq!(snapshot.mmr_root, H256::repeat_byte(0xAB));
-        assert_eq!(snapshot.leaf_count, 10);
+        assert_eq!(snapshot.commitment.mmr_root, H256::repeat_byte(0xAB));
+        assert_eq!(snapshot.commitment.leaf_count, 10);
 
         // Primary providers should include provider 2
         assert!(!response.primary_providers.is_empty());
@@ -96,6 +99,56 @@ fn query_agreement_info_none_for_unknown() {
     new_test_ext().execute_with(|| {
         let response = StorageProvider::query_agreement_info(999, &2);
         assert!(response.is_none());
+    });
+}
+
+#[test]
+fn query_bucket_agreements_returns_data() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        register_provider(4, 200);
+        let bucket_id = setup_agreement(2, 1, 50, 200);
+        add_primary_to_bucket(4, 1, bucket_id, 30);
+
+        let agreements = StorageProvider::query_bucket_agreements(bucket_id);
+        assert_eq!(agreements.len(), 2);
+        assert!(agreements.iter().all(|a| a.bucket_id == bucket_id));
+        assert!(agreements.iter().any(|a| a.provider == 2u64.encode()));
+        assert!(agreements.iter().any(|a| a.provider == 4u64.encode()));
+    });
+}
+
+#[test]
+fn query_bucket_agreements_empty_for_unknown() {
+    new_test_ext().execute_with(|| {
+        let agreements = StorageProvider::query_bucket_agreements(999);
+        assert!(agreements.is_empty());
+    });
+}
+
+#[test]
+fn query_provider_agreements_returns_data() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        let bucket_a = setup_agreement(2, 1, 50, 200);
+        let bucket_b = setup_agreement(2, 3, 50, 200);
+
+        let agreements = StorageProvider::query_provider_agreements(&2);
+        assert_eq!(agreements.len(), 2);
+        assert!(agreements.iter().all(|a| a.provider == 2u64.encode()));
+        assert!(agreements.iter().any(|a| a.bucket_id == bucket_a));
+        assert!(agreements.iter().any(|a| a.bucket_id == bucket_b));
+    });
+}
+
+#[test]
+fn query_provider_agreements_empty_for_unknown() {
+    new_test_ext().execute_with(|| {
+        register_provider(2, 200);
+        setup_agreement(2, 1, 50, 200);
+
+        let agreements = StorageProvider::query_provider_agreements(&99);
+        assert!(agreements.is_empty());
     });
 }
 
@@ -250,35 +303,214 @@ fn query_challenges_at_returns_data() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
         register_provider(2, 200);
+        register_provider(4, 200);
         let bucket_id = setup_agreement(2, 1, 50, 200);
+        add_primary_to_bucket(4, 1, bucket_id, 50);
 
-        // Insert snapshot
+        // Insert snapshot signed by both primaries (bits 0 and 1).
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(BucketSnapshot {
-                    mmr_root: H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: Commitment {
+                        mmr_root: H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
-                    primary_signers: vec![0x01],
+                    primary_signers: vec![0x03],
+                    commitment_nonce: 0,
                 });
             }
         });
 
+        // Two challenges at the same deadline: index 0 -> provider 2,
+        // index 1 -> provider 4.
         assert_ok!(StorageProvider::challenge_checkpoint(
             RuntimeOrigin::signed(3),
             bucket_id,
             2,
-            0,
-            0,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        ));
+        assert_ok!(StorageProvider::challenge_checkpoint(
+            RuntimeOrigin::signed(5),
+            bucket_id,
+            4,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
         ));
 
+        // `iter_prefix` order is hash-dependent, so look entries up by their
+        // stable `index` rather than position.
         let challenges = StorageProvider::query_challenges_at(101);
+        assert_eq!(challenges.len(), 2);
+        let find = |idx: u16| {
+            challenges
+                .iter()
+                .find(|c| c.index == idx)
+                .unwrap_or_else(|| panic!("challenge index {idx} present"))
+        };
+
+        let c0 = find(0);
+        assert_eq!(c0.bucket_id, bucket_id);
+        assert_eq!(c0.provider, 2u64.encode());
+        assert_eq!(c0.challenger, 3u64.encode());
+        assert_eq!(c0.deadline, 101);
+        assert_eq!(c0.deposit, 100);
+
+        let c1 = find(1);
+        assert_eq!(c1.provider, 4u64.encode());
+        assert_eq!(c1.challenger, 5u64.encode());
+        assert_eq!(c1.deadline, 101);
+
+        // Supersede the challenged root, then resolve sibling index 0.
+        Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+            let bucket = maybe_bucket.as_mut().unwrap();
+            bucket.snapshot = Some(BucketSnapshot {
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xCD),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
+                checkpoint_block: 1,
+                primary_signers: vec![0x03],
+                commitment_nonce: 1,
+            });
+        });
+        assert_ok!(StorageProvider::respond_to_challenge(
+            RuntimeOrigin::signed(2),
+            storage_primitives::ChallengeId {
+                deadline: 101,
+                index: 0,
+            },
+            crate::ChallengeResponse::Superseded,
+        ));
+
+        // After removing sibling index 0, the survivor is still reported at its
+        // original index 1.
+        let remaining = StorageProvider::query_challenges_at(101);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].index, 1);
+        assert_eq!(remaining[0].provider, 4u64.encode());
+    });
+}
+
+/// Helper: set up a bucket with two primaries (2 and 4), a snapshot signed by
+/// both, and one open challenge per primary (challenger 3 -> provider 2,
+/// challenger 5 -> provider 4). Returns the bucket_id.
+fn setup_two_challenges() -> u64 {
+    frame_system::Pallet::<Test>::set_block_number(1);
+    register_provider(2, 200);
+    register_provider(4, 200);
+    let bucket_id = setup_agreement(2, 1, 50, 200);
+    add_primary_to_bucket(4, 1, bucket_id, 50);
+
+    Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
+        if let Some(bucket) = maybe_bucket {
+            bucket.snapshot = Some(BucketSnapshot {
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
+                checkpoint_block: 1,
+                primary_signers: vec![0x03],
+                commitment_nonce: 0,
+            });
+        }
+    });
+
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(3),
+        bucket_id,
+        2,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    ));
+    assert_ok!(StorageProvider::challenge_checkpoint(
+        RuntimeOrigin::signed(5),
+        bucket_id,
+        4,
+        ChunkLocation {
+            leaf_index: 0,
+            chunk_index: 0,
+        },
+    ));
+
+    bucket_id
+}
+
+#[test]
+fn query_bucket_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = setup_two_challenges();
+
+        let challenges = StorageProvider::query_bucket_challenges(bucket_id);
+        assert_eq!(challenges.len(), 2);
+        assert!(challenges.iter().all(|c| c.bucket_id == bucket_id));
+        assert!(challenges.iter().any(|c| c.provider == 2u64.encode()));
+        assert!(challenges.iter().any(|c| c.provider == 4u64.encode()));
+    });
+}
+
+#[test]
+fn query_bucket_challenges_empty_for_unknown() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+
+        let challenges = StorageProvider::query_bucket_challenges(999);
+        assert!(challenges.is_empty());
+    });
+}
+
+#[test]
+fn query_provider_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = setup_two_challenges();
+
+        let challenges = StorageProvider::query_provider_challenges(&2);
         assert_eq!(challenges.len(), 1);
         assert_eq!(challenges[0].bucket_id, bucket_id);
         assert_eq!(challenges[0].provider, 2u64.encode());
         assert_eq!(challenges[0].challenger, 3u64.encode());
-        assert_eq!(challenges[0].deadline, 101);
-        assert_eq!(challenges[0].deposit, 100);
+    });
+}
+
+#[test]
+fn query_provider_challenges_empty_for_unknown() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+
+        let challenges = StorageProvider::query_provider_challenges(&99);
+        assert!(challenges.is_empty());
+    });
+}
+
+#[test]
+fn query_challenger_challenges_returns_data() {
+    new_test_ext().execute_with(|| {
+        let bucket_id = setup_two_challenges();
+
+        let challenges = StorageProvider::query_challenger_challenges(&5);
+        assert_eq!(challenges.len(), 1);
+        assert_eq!(challenges[0].bucket_id, bucket_id);
+        assert_eq!(challenges[0].provider, 4u64.encode());
+        assert_eq!(challenges[0].challenger, 5u64.encode());
+    });
+}
+
+#[test]
+fn query_challenger_challenges_empty_for_unknown() {
+    new_test_ext().execute_with(|| {
+        setup_two_challenges();
+
+        let challenges = StorageProvider::query_challenger_challenges(&99);
+        assert!(challenges.is_empty());
     });
 }

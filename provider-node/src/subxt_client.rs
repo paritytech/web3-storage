@@ -10,7 +10,9 @@
 //! one a clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
 //! shares the underlying WebSocket connection).
 
-use crate::challenge_responder::{ChallengeChainClient, DetectedChallenge};
+use crate::challenge_responder::{
+    decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
+};
 use crate::checkpoint_coordinator::{CheckpointChainClient, CheckpointDuty};
 use crate::replica_sync_coordinator::{
     BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
@@ -498,9 +500,11 @@ impl CheckpointChainClient for SubxtChainClient {
             "provider_checkpoint",
             vec![
                 Value::u128(bucket_id as u128),
-                Value::from_bytes(mmr_root.as_bytes()),
-                Value::u128(start_seq as u128),
-                Value::u128(leaf_count as u128),
+                Value::named_composite(vec![
+                    ("mmr_root", Value::from_bytes(mmr_root.as_bytes())),
+                    ("start_seq", Value::u128(start_seq as u128)),
+                    ("leaf_count", Value::u128(leaf_count as u128)),
+                ]),
                 Value::u128(window as u128),
                 Value::unnamed_composite(sig_values),
             ],
@@ -805,17 +809,78 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
 #[async_trait::async_trait]
 impl ChallengeChainClient for SubxtChainClient {
+    /// Poll for active challenges against this provider.
+    ///
+    /// Iterates the on-chain `StorageProvider::Challenges` map. It is a
+    /// `StorageDoubleMap<BlockNumber deadline, u16 index, Challenge>`, so each
+    /// key holds exactly one challenge. We scan all entries, decode each
+    /// single `Challenge` from raw SCALE, and keep only the ones whose
+    /// `provider` matches our account.
+    ///
+    /// Cost is bounded by `ChallengeTimeout` (storage entries past their
+    /// deadline are reaped in `on_finalize`), so iteration is at worst the
+    /// number of open challenges across all unexpired deadlines.
     async fn poll_challenges(&self) -> Result<Vec<DetectedChallenge>, Error> {
-        let _storage = self
+        // Our account's raw bytes, used to filter challenges targeting us.
+        let our_bytes: [u8; 32] = self.signer.public_key().0;
+
+        let storage_address = subxt::dynamic::storage("StorageProvider", "Challenges", ());
+        let storage = self
             .api
             .storage()
             .at_latest()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        // TODO: Implement proper storage query for Challenges
-        // For now, return empty - challenges would be detected via events
-        Ok(vec![])
+        let mut iter = storage
+            .iter(storage_address)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to iterate Challenges: {e}")))?;
+
+        let mut detected = Vec::new();
+        while let Some(result) = iter.next().await {
+            let kv = match result {
+                Ok(kv) => kv,
+                Err(e) => {
+                    tracing::debug!("Error iterating Challenges: {e}");
+                    continue;
+                }
+            };
+
+            // DoubleMap key layout:
+            //   16 (pallet hash) + 16 (storage hash)
+            //   + 16 (blake2_128 of deadline) + 4 (BlockNumber u32 LE)
+            //   + 8 (twox64 of index)         + 2 (u16 index LE)
+            //   = 62 bytes total.
+            let key_bytes = &kv.key_bytes;
+            if key_bytes.len() < 62 {
+                continue;
+            }
+            let deadline = u32::from_le_bytes(key_bytes[48..52].try_into().unwrap_or([0; 4]));
+            let index = u16::from_le_bytes(key_bytes[60..62].try_into().unwrap_or([0; 2]));
+
+            let encoded = kv.value.encoded();
+            let challenge = match decode_challenge_for_provider(encoded, &our_bytes) {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!("Failed to decode challenge at {deadline}/{index}: {e}");
+                    continue;
+                }
+            };
+
+            detected.push(DetectedChallenge {
+                bucket_id: challenge.bucket_id,
+                deadline,
+                index,
+                mmr_root: challenge.mmr_root,
+                start_seq: challenge.start_seq,
+                leaf_index: challenge.leaf_index,
+                chunk_index: challenge.chunk_index,
+                challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
+            });
+        }
+        Ok(detected)
     }
 
     async fn submit_response(

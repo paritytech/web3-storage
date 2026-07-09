@@ -479,7 +479,7 @@ async fn delete_admin_can_prune() {
         .client
         .post(server.url("/delete"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
         .send()
         .await
         .unwrap();
@@ -500,7 +500,7 @@ async fn delete_writer_blocked() {
         .client
         .post(server.url("/delete"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
         .send()
         .await
         .unwrap();
@@ -515,7 +515,7 @@ async fn delete_missing_auth_returns_401() {
     let resp = server
         .client
         .post(server.url("/delete"))
-        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0 }))
+        .json(&serde_json::json!({ "bucket_id": 1, "new_start_seq": 0, "nonce": 0 }))
         .send()
         .await
         .unwrap();
@@ -618,7 +618,7 @@ async fn commit_writer_can_commit() {
         .client
         .post(server.url("/commit"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0 }))
         .send()
         .await
         .unwrap();
@@ -639,7 +639,7 @@ async fn commit_reader_blocked() {
         .client
         .post(server.url("/commit"))
         .header("Authorization", &header)
-        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [] }))
+        .json(&serde_json::json!({ "bucket_id": 1, "data_roots": [], "nonce": 0 }))
         .send()
         .await
         .unwrap();

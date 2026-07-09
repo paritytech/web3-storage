@@ -48,6 +48,8 @@ export async function connect(wsEndpoint?: string): Promise<void> {
 
     connectionStatus$.next('connected')
 
+    // Drop any previous subscription or they stack across reconnects.
+    blockUnsubscribe?.()
     // finalizedBlock$ replays the current head into blockNumber$ on subscribe,
     // so the badge shows the real height immediately — no manual seed needed.
     blockUnsubscribe = subscribeToBlocks((block) => {

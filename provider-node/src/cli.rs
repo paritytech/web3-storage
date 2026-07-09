@@ -37,6 +37,9 @@ pub struct Cli {
     pub replica_sync: ReplicaSyncParams,
 
     #[clap(flatten)]
+    pub challenge_responder: ChallengeResponderParams,
+
+    #[clap(flatten)]
     pub auth: AuthParams,
 }
 
@@ -207,6 +210,26 @@ pub struct AuthParams {
     pub auth_max_skew: u64,
 }
 
+/// Parameters for the challenge responder background service.
+#[derive(Debug, clap::Args)]
+pub struct ChallengeResponderParams {
+    /// Enable the autonomous challenge responder. Without this flag, the
+    /// provider relies on an external orchestrator (e.g. the client SDK
+    /// driving challenges) to surface incoming challenges via HTTP proof
+    /// endpoints. With this flag, the provider polls chain state itself.
+    #[arg(long, env = "ENABLE_CHALLENGE_RESPONDER")]
+    pub enable_challenge_responder: bool,
+
+    /// Seconds between `Challenges` storage poll cycles.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 6,
+        env = "CHALLENGE_POLL_INTERVAL"
+    )]
+    pub challenge_poll_interval: u64,
+}
+
 /// Parameters for replica synchronization.
 #[derive(Debug, clap::Args)]
 pub struct ReplicaSyncParams {
@@ -259,6 +282,8 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 12);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
+        assert!(!cli.challenge_responder.enable_challenge_responder);
+        assert_eq!(cli.challenge_responder.challenge_poll_interval, 6);
     }
 
     #[test]

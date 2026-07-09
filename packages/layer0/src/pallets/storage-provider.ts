@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * Thin typed wrappers around the StorageProvider pallet extrinsics. Each
@@ -280,15 +280,19 @@ export async function submitClientCheckpoint(
     start_seq: number | string;
     leaf_count: number | string;
     provider_signature: string;
+    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
   return submitTx(
     api.tx.StorageProvider.checkpoint({
       bucket_id: bucketId,
-      mmr_root: asHex(ck.mmr_root),
-      start_seq: BigInt(ck.start_seq),
-      leaf_count: BigInt(ck.leaf_count),
+      commitment: {
+        mmr_root: asHex(ck.mmr_root),
+        start_seq: BigInt(ck.start_seq),
+        leaf_count: BigInt(ck.leaf_count),
+      },
+      nonce: BigInt(ck.nonce),
       signatures: [[provider.address, Enum("Sr25519", asHex(ck.provider_signature))]],
     }),
     client.signer,
@@ -304,8 +308,10 @@ export async function challengeOffchain(
   upload: {
     mmrRoot: string;
     startSeq: number | string;
+    leafCount: number | string;
     leafIndex: number | string;
     providerSignature: string;
+    nonce: number | string;
   },
   opts: SubmitOpts = {},
 ) {
@@ -315,10 +321,20 @@ export async function challengeOffchain(
     api.tx.StorageProvider.challenge_offchain({
       bucket_id: bucketId,
       provider: provider.address,
-      mmr_root: asHex(upload.mmrRoot),
-      start_seq: BigInt(upload.startSeq),
-      leaf_index: BigInt(upload.leafIndex),
-      chunk_index: 0n,
+      // `commitment` is the (mmr_root, start_seq, leaf_count) the provider
+      // signed over in /commit; passed through verbatim so the pallet's
+      // CommitmentPayload reconstruction matches the signature.
+      commitment: {
+        mmr_root: asHex(upload.mmrRoot),
+        start_seq: BigInt(upload.startSeq),
+        leaf_count: BigInt(upload.leafCount),
+      },
+      // `target` is the leaf+chunk being challenged within that commitment.
+      target: {
+        leaf_index: BigInt(upload.leafIndex),
+        chunk_index: 0n,
+      },
+      nonce: BigInt(upload.nonce),
       provider_signature: Enum("Sr25519", asHex(upload.providerSignature)),
     }),
     client.signer,
@@ -344,8 +360,10 @@ export async function challengeCheckpoint(
     api.tx.StorageProvider.challenge_checkpoint({
       bucket_id: bucketId,
       provider: provider.address,
-      leaf_index: BigInt(leafIndex),
-      chunk_index: 0n,
+      target: {
+        leaf_index: BigInt(leafIndex),
+        chunk_index: 0n,
+      },
     }),
     client.signer,
     { label: "challenge_checkpoint", ...opts },
@@ -627,9 +645,11 @@ export async function submitProviderCheckpoint(
   const result = await submitTx(
     api.tx.StorageProvider.provider_checkpoint({
       bucket_id: bucketId,
-      mmr_root: asHex(duty.mmr_root),
-      start_seq: BigInt(duty.start_seq),
-      leaf_count: BigInt(duty.leaf_count),
+      commitment: {
+        mmr_root: asHex(duty.mmr_root),
+        start_seq: BigInt(duty.start_seq),
+        leaf_count: BigInt(duty.leaf_count),
+      },
       window: BigInt(window),
       signatures: [[provider.address, Enum("Sr25519", asHex(signature))]],
     }),
