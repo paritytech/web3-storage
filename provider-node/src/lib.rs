@@ -34,7 +34,7 @@ pub use api::create_router;
 pub use chain_state_coordinator::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, ChainStateCoordinatorHandle,
-    PalletConstants,
+    PalletConstants, ProviderLifecycleEvent,
 };
 pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
