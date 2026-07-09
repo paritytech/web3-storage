@@ -74,8 +74,7 @@
 //! //    happen atomically inside `establish_storage_agreement`.
 //! let bucket_id = client.establish_storage_agreement(
 //!     "5FHneW46...".to_string(), // provider account
-//!     signed.terms,
-//!     signed.signature,
+//!     signed,
 //! ).await?;
 //! # Ok(())
 //! # }
@@ -101,7 +100,6 @@
 
 // Re-export main types
 pub mod admin;
-pub mod agreement;
 pub mod base;
 pub mod block_subscription;
 pub mod challenger;
@@ -115,6 +113,9 @@ pub mod scale_decode;
 pub mod storage_user;
 pub mod substrate;
 pub mod verification;
+
+/// Negotiation wire types, re-exported from `provider-negotiation`.
+pub use provider_negotiation as agreement;
 
 // Re-export commonly used types
 pub use admin::AdminClient;
