@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     admin.connect().await?;
     admin.set_signer(user_keypair.clone().into())?;
     let bucket_id = admin
-        .establish_storage_agreement(provider_ss58, signed.terms, signed.signature)
+        .establish_storage_agreement(provider_ss58, signed)
         .await?;
     println!("  Bucket #{bucket_id} created");
 

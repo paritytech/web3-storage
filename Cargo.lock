@@ -6986,6 +6986,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-negotiation"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "parity-scale-codec",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sp-core",
+ "sp-runtime",
+ "storage-primitives",
+]
+
+[[package]]
 name = "pulley-interpreter"
 version = "35.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9586,11 +9600,11 @@ dependencies = [
  "futures",
  "hex",
  "parity-scale-codec",
+ "provider-negotiation",
  "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
- "serde_with",
  "sp-core",
  "sp-runtime",
  "storage-primitives",
@@ -9770,13 +9784,13 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "provider-negotiation",
  "reqwest",
  "rocksdb",
  "serde",
  "serde_json",
  "sp-core",
  "sp-runtime",
- "storage-client",
  "storage-primitives",
  "subxt",
  "subxt-signer",

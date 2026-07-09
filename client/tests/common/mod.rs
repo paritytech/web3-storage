@@ -3,6 +3,7 @@
 //! Shared test helpers for integration tests.
 
 use sp_core::crypto::Ss58Codec;
+use sp_core::Pair;
 use sp_runtime::AccountId32;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -125,8 +126,8 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         Ok(Some(_))
     );
 
-    let alice_keypair = subxt_signer::sr25519::dev::alice();
-    let alice_pubkey = alice_keypair.public_key().0.to_vec();
+    let alice_keypair = sp_core::sr25519::Pair::from_string("//Alice", None).unwrap();
+    let alice_pubkey = alice_keypair.public().0.to_vec();
 
     if !already_registered {
         // Idempotent: ignore "already registered" errors so tests survive races.
@@ -176,9 +177,9 @@ pub async fn chain_setup() -> Option<ChainSetup> {
         replica_params: None,
         bucket_id: None,
     };
-    let sig = sign_terms(&alice_keypair, &terms);
+    let signed_terms = sign_terms(&alice_keypair, terms);
     let bucket_id = admin
-        .establish_storage_agreement(alice_ss58.clone(), terms, sig)
+        .establish_storage_agreement(alice_ss58.clone(), signed_terms)
         .await
         .ok()?;
 
