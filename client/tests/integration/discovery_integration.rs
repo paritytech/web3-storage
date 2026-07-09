@@ -14,6 +14,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{chain_guard, chain_setup, dev_discovery};

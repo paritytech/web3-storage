@@ -9,14 +9,17 @@
 //! - Responding to challenges
 //! - Monitoring earnings and performance
 
-use crate::chain::substrate::{constants, extrinsics, storage, SubstrateClient};
+use crate::chain::events::{EventParser, StorageEvent, StorageProviderEventParser};
+use crate::chain::substrate::{constants, extrinsics, parse_h256, storage, SubstrateClient};
 use crate::config::ClientConfig;
 use crate::error::{ClientError, ClientResult};
 use crate::roles::base::BaseClient;
+use crate::roles::challenger::ChallengeId;
 use crate::roles::discovery::ProviderInfo;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
-use sp_runtime::AccountId32;
-use storage_primitives::BucketId;
+use sp_runtime::{AccountId32, MultiSignature};
+use storage_primitives::{BucketId, Commitment, MerkleProof, MmrLeaf, MmrProof};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for storage providers.
@@ -309,6 +312,60 @@ impl ProviderClient {
         Ok(())
     }
 
+    /// Cancel a previously-announced deregistration, restoring
+    /// `accepting_primary`/`accepting_extensions` to `true`.
+    pub async fn cancel_deregister(&self) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        tracing::info!(
+            "Cancelling deregistration for provider {}",
+            self.provider_account
+        );
+
+        let tx = extrinsics::cancel_deregister();
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Deregistration cancelled successfully");
+        Ok(())
+    }
+
+    /// Update the provider's multiaddr (network endpoint).
+    pub async fn update_multiaddr(&self, new_multiaddr: String) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        tracing::info!(
+            "Updating multiaddr for provider {} to {}",
+            self.provider_account,
+            new_multiaddr
+        );
+
+        let tx = extrinsics::update_provider_multiaddr(new_multiaddr.into_bytes());
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!("Provider multiaddr updated successfully");
+        Ok(())
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Term Negotiation (off-chain)
     // ═════════════════════════════════════════════════════════════════════════
@@ -417,6 +474,199 @@ impl ProviderClient {
 
         SubstrateClient::parse_account(provider_id)
             .map_err(|e| ClientError::Chain(format!("invalid provider_id from /info: {e}")))
+    }
+
+    /// Fetch a provider node's checkpoint duty for a bucket (`GET /checkpoint/duty`).
+    ///
+    /// Reports whether the provider has committed data ready to checkpoint,
+    /// plus the MMR state it would propose.
+    pub async fn fetch_checkpoint_duty(
+        provider_url: &str,
+        bucket_id: BucketId,
+    ) -> ClientResult<CheckpointDutyResponse> {
+        let url = format!("{}/checkpoint/duty", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .get(&url)
+            .query(&[("bucket_id", bucket_id.to_string())])
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /checkpoint/duty with status {}",
+                response.status()
+            )));
+        }
+
+        response.json().await.map_err(ClientError::Http)
+    }
+
+    /// Ask a provider node to sign a checkpoint proposal (`POST /checkpoint/sign`).
+    ///
+    /// Returns `agreed: false` (with an empty signature) if the provider's
+    /// local MMR state doesn't match `duty`.
+    pub async fn sign_checkpoint_proposal(
+        provider_url: &str,
+        bucket_id: BucketId,
+        duty: &CheckpointDutyResponse,
+        window: u64,
+    ) -> ClientResult<SignProposalResponse> {
+        let url = format!("{}/checkpoint/sign", provider_url.trim_end_matches('/'));
+        let response = reqwest::Client::new()
+            .post(&url)
+            .json(&SignProposalRequest {
+                bucket_id,
+                mmr_root: duty.mmr_root.clone(),
+                start_seq: duty.start_seq,
+                leaf_count: duty.leaf_count,
+                window,
+            })
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+
+        if !response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /checkpoint/sign with status {}",
+                response.status()
+            )));
+        }
+
+        response.json().await.map_err(ClientError::Http)
+    }
+
+    /// Build the proof payload for [`respond_to_challenge`](Self::respond_to_challenge).
+    ///
+    /// Reads the challenge from chain state to find which leaf/chunk is being
+    /// challenged, then fetches the MMR proof (`GET /mmr_proof`) and chunk
+    /// proof with data (`GET /chunk_proof`) from the provider node.
+    pub async fn fetch_challenge_proof(
+        chain_ws_url: &str,
+        provider_url: &str,
+        challenge_id: ChallengeId,
+    ) -> ClientResult<(Vec<u8>, MmrProof, MerkleProof)> {
+        let chain = SubstrateClient::connect(chain_ws_url).await?;
+        let thunk = chain
+            .api()
+            .storage()
+            .at_latest()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
+            .fetch(&storage::challenge(
+                challenge_id.deadline,
+                challenge_id.index,
+            ))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch challenge: {e}")))?
+            .ok_or_else(|| {
+                ClientError::Chain(format!(
+                    "Challenge not found: deadline={}, index={}",
+                    challenge_id.deadline, challenge_id.index
+                ))
+            })?;
+
+        let value = thunk
+            .to_value()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode challenge: {e}")))?;
+
+        let bucket_id = named_field(&value, "bucket_id")
+            .and_then(|v| v.as_u128())
+            .ok_or_else(|| ClientError::Chain("Missing 'bucket_id' in Challenge".to_string()))?
+            as u64;
+        let target = named_field(&value, "target")
+            .ok_or_else(|| ClientError::Chain("Missing 'target' in Challenge".to_string()))?;
+        let leaf_index = named_field(target, "leaf_index")
+            .and_then(|v| v.as_u128())
+            .ok_or_else(|| ClientError::Chain("Missing 'target.leaf_index'".to_string()))?
+            as u64;
+        let chunk_index = named_field(target, "chunk_index")
+            .and_then(|v| v.as_u128())
+            .ok_or_else(|| ClientError::Chain("Missing 'target.chunk_index'".to_string()))?
+            as u64;
+
+        let http = reqwest::Client::new();
+
+        let mmr_url = format!("{}/mmr_proof", provider_url.trim_end_matches('/'));
+        let mmr_response = http
+            .get(&mmr_url)
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("leaf_index", leaf_index.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+        if !mmr_response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /mmr_proof with status {}",
+                mmr_response.status()
+            )));
+        }
+        let mmr: MmrProofHttpResponse = mmr_response.json().await.map_err(ClientError::Http)?;
+
+        let chunk_url = format!("{}/chunk_proof", provider_url.trim_end_matches('/'));
+        let chunk_response = http
+            .get(&chunk_url)
+            .query(&[
+                ("data_root", mmr.leaf.data_root.clone()),
+                ("chunk_index", chunk_index.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(ClientError::Http)?;
+        if !chunk_response.status().is_success() {
+            return Err(ClientError::Chain(format!(
+                "provider node rejected /chunk_proof with status {}",
+                chunk_response.status()
+            )));
+        }
+        let chunk: ChunkProofHttpResponse =
+            chunk_response.json().await.map_err(ClientError::Http)?;
+
+        let chunk_data = chunk
+            .chunk_data
+            .ok_or_else(|| ClientError::Chain("/chunk_proof response missing chunk_data".into()))
+            .and_then(|b64| {
+                BASE64
+                    .decode(b64)
+                    .map_err(|e| ClientError::Serialization(format!("Invalid base64: {e}")))
+            })?;
+
+        let mmr_proof = MmrProof {
+            peaks: mmr
+                .proof
+                .peaks
+                .iter()
+                .map(|h| parse_h256(h))
+                .collect::<ClientResult<Vec<_>>>()?,
+            leaf: MmrLeaf {
+                data_root: parse_h256(&mmr.leaf.data_root)?,
+                data_size: mmr.leaf.data_size,
+                total_size: mmr.leaf.total_size,
+            },
+            leaf_proof: MerkleProof {
+                siblings: mmr
+                    .proof
+                    .siblings
+                    .iter()
+                    .map(|h| parse_h256(h))
+                    .collect::<ClientResult<Vec<_>>>()?,
+                path: mmr.proof.path,
+            },
+        };
+
+        let chunk_proof = MerkleProof {
+            siblings: chunk
+                .proof
+                .siblings
+                .iter()
+                .map(|h| parse_h256(h))
+                .collect::<ClientResult<Vec<_>>>()?,
+            path: chunk.proof.path,
+        };
+
+        Ok((chunk_data, mmr_proof, chunk_proof))
     }
 
     /// List all active agreements for this provider.
@@ -581,6 +831,125 @@ impl ProviderClient {
 
         tracing::info!("Challenge response submitted successfully");
         Ok(())
+    }
+
+    /// Submit a provider-initiated checkpoint for `bucket_id`.
+    ///
+    /// Providers autonomously coordinate checkpoints without requiring a
+    /// client to be online, using deterministic leader election. `signatures`
+    /// carries each signing provider's signature over the checkpoint
+    /// proposal (see [`AdminClient::configure_checkpoint_window`](crate::AdminClient::configure_checkpoint_window)
+    /// for enabling this).
+    ///
+    /// Returns the reward paid to the submitter (0 if the checkpoint pool was empty).
+    pub async fn provider_checkpoint(
+        &self,
+        bucket_id: BucketId,
+        commitment: Commitment,
+        window: u64,
+        signatures: Vec<(AccountId32, MultiSignature)>,
+    ) -> ClientResult<u128> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::provider_checkpoint(bucket_id, commitment, window, signatures);
+
+        let tx_progress = chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
+
+        let tx_in_block = tx_progress
+            .wait_for_finalized()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let raw_block_hash = tx_in_block.block_hash();
+        let events = tx_in_block
+            .wait_for_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        let block_hash = H256::from_slice(raw_block_hash.as_bytes());
+        let block_number = chain
+            .api()
+            .blocks()
+            .at(raw_block_hash)
+            .await
+            .map(|b| b.number())
+            .unwrap_or(0);
+
+        let parsed =
+            StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
+
+        for event in parsed {
+            if let StorageEvent::ProviderCheckpointSubmitted { reward, .. } = event {
+                tracing::info!(
+                    "Provider checkpoint submitted for bucket {} at window {} (reward={})",
+                    bucket_id,
+                    window,
+                    reward
+                );
+                return Ok(reward);
+            }
+        }
+
+        Err(ClientError::Chain(
+            "ProviderCheckpointSubmitted event not found in transaction".to_string(),
+        ))
+    }
+
+    /// Claim accumulated checkpoint rewards for `bucket_id`. Returns the claimed amount.
+    pub async fn claim_checkpoint_rewards(&self, bucket_id: BucketId) -> ClientResult<u128> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::claim_checkpoint_rewards(bucket_id);
+
+        let tx_progress = chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
+
+        let tx_in_block = tx_progress
+            .wait_for_finalized()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+        let raw_block_hash = tx_in_block.block_hash();
+        let events = tx_in_block
+            .wait_for_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        let block_hash = H256::from_slice(raw_block_hash.as_bytes());
+        let block_number = chain
+            .api()
+            .blocks()
+            .at(raw_block_hash)
+            .await
+            .map(|b| b.number())
+            .unwrap_or(0);
+
+        let parsed =
+            StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
+
+        for event in parsed {
+            if let StorageEvent::CheckpointRewardClaimed { amount, .. } = event {
+                tracing::info!(
+                    "Claimed {} checkpoint rewards for bucket {}",
+                    amount,
+                    bucket_id
+                );
+                return Ok(amount);
+            }
+        }
+
+        Err(ClientError::Chain(
+            "CheckpointRewardClaimed event not found in transaction".to_string(),
+        ))
     }
 
     /// List all active challenges against this provider.
@@ -858,6 +1227,73 @@ fn decode_byte_vec(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
 }
 
 // Types
+
+/// Response from a provider node's `GET /checkpoint/duty`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckpointDutyResponse {
+    pub bucket_id: BucketId,
+    pub mmr_root: String,
+    pub start_seq: u64,
+    pub leaf_count: u64,
+    /// Whether the provider has data ready to checkpoint.
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SignProposalRequest {
+    bucket_id: BucketId,
+    mmr_root: String,
+    start_seq: u64,
+    leaf_count: u64,
+    window: u64,
+}
+
+/// Response from a provider node's `POST /checkpoint/sign`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SignProposalResponse {
+    /// Signer's account ID (SS58).
+    pub signer: String,
+    /// Signature over the proposal (empty if `agreed` is `false`).
+    pub signature: String,
+    /// Whether the signer's local MMR state matched the proposal.
+    pub agreed: bool,
+    /// Signer's local MMR root, for debugging disagreements.
+    pub local_mmr_root: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MmrLeafHttp {
+    data_root: String,
+    data_size: u64,
+    total_size: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MmrProofHttpData {
+    peaks: Vec<String>,
+    siblings: Vec<String>,
+    path: Vec<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MmrProofHttpResponse {
+    leaf: MmrLeafHttp,
+    proof: MmrProofHttpData,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MerkleProofHttpData {
+    siblings: Vec<String>,
+    path: Vec<bool>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ChunkProofHttpResponse {
+    #[allow(dead_code)]
+    chunk_hash: String,
+    chunk_data: Option<String>,
+    proof: MerkleProofHttpData,
+}
 
 #[derive(Debug, Clone)]
 pub struct ProviderSettings {

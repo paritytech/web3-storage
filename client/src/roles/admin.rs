@@ -487,6 +487,72 @@ impl AdminClient {
         Ok(())
     }
 
+    /// Configure provider-initiated checkpoint window settings for a bucket.
+    ///
+    /// Only the bucket admin can configure. Setting `enabled=false` disables
+    /// provider-initiated checkpoints (client-initiated checkpoints still work).
+    pub async fn configure_checkpoint_window(
+        &self,
+        bucket_id: BucketId,
+        interval: u32,
+        grace_period: u32,
+        enabled: bool,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx =
+            extrinsics::configure_checkpoint_window(bucket_id, interval, grace_period, enabled);
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!(
+            "Checkpoint window configured for bucket {}: interval={}, grace_period={}, enabled={}",
+            bucket_id,
+            interval,
+            grace_period,
+            enabled
+        );
+        Ok(())
+    }
+
+    /// Fund the checkpoint reward pool for a bucket. Anyone can fund the pool.
+    pub async fn fund_checkpoint_pool(
+        &self,
+        bucket_id: BucketId,
+        amount: u128,
+    ) -> ClientResult<()> {
+        let chain = self.base.chain()?;
+        let signer = chain.signer()?;
+
+        let tx = extrinsics::fund_checkpoint_pool(bucket_id, amount);
+
+        chain
+            .api()
+            .tx()
+            .sign_and_submit_then_watch_default(&tx, signer)
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
+
+        tracing::info!(
+            "Funded checkpoint pool for bucket {} with {}",
+            bucket_id,
+            amount
+        );
+        Ok(())
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Monitoring
     // ═════════════════════════════════════════════════════════════════════════

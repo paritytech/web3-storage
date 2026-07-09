@@ -11,6 +11,7 @@
 //!
 //! Tests are skipped (not failed) when the chain is unreachable.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{alice_challenger, chain_guard, chain_setup};

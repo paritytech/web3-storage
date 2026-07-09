@@ -6,6 +6,7 @@
 //! that are specific to the checkpoint workflow (signatures, multi-provider
 //! setups). Unit tests for the checkpoint types live in `src/checkpoint.rs`.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{make_client, start_test_provider};

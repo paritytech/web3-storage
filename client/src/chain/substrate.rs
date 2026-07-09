@@ -346,6 +346,75 @@ pub mod extrinsics {
         )
     }
 
+    /// Create a provider_checkpoint extrinsic payload (provider-initiated checkpoint).
+    pub fn provider_checkpoint(
+        bucket_id: u64,
+        commitment: Commitment,
+        window: u64,
+        signatures: Vec<(AccountId32, sp_runtime::MultiSignature)>,
+    ) -> impl Payload {
+        let sigs: Vec<subxt::dynamic::Value> = signatures
+            .into_iter()
+            .map(|(account, sig)| {
+                subxt::dynamic::Value::unnamed_composite(vec![
+                    subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),
+                    dynamic_multi_signature(&sig),
+                ])
+            })
+            .collect();
+
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "provider_checkpoint",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                dynamic_commitment(commitment),
+                subxt::dynamic::Value::u128(window as u128),
+                subxt::dynamic::Value::unnamed_composite(sigs),
+            ],
+        )
+    }
+
+    /// Create a claim_checkpoint_rewards extrinsic payload.
+    pub fn claim_checkpoint_rewards(bucket_id: u64) -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "claim_checkpoint_rewards",
+            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+        )
+    }
+
+    /// Create a configure_checkpoint_window extrinsic payload.
+    pub fn configure_checkpoint_window(
+        bucket_id: u64,
+        interval: u32,
+        grace_period: u32,
+        enabled: bool,
+    ) -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "configure_checkpoint_window",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::u128(interval as u128),
+                subxt::dynamic::Value::u128(grace_period as u128),
+                subxt::dynamic::Value::bool(enabled),
+            ],
+        )
+    }
+
+    /// Create a fund_checkpoint_pool extrinsic payload.
+    pub fn fund_checkpoint_pool(bucket_id: u64, amount: u128) -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "fund_checkpoint_pool",
+            vec![
+                subxt::dynamic::Value::u128(bucket_id as u128),
+                subxt::dynamic::Value::u128(amount),
+            ],
+        )
+    }
+
     /// Create a challenge_checkpoint extrinsic payload.
     pub fn challenge_checkpoint(
         bucket_id: u64,
@@ -407,6 +476,24 @@ pub mod extrinsics {
             PALLET_NAME,
             "deregister_provider",
             Vec::<subxt::dynamic::Value>::new(),
+        )
+    }
+
+    /// Create a cancel_deregister extrinsic payload.
+    pub fn cancel_deregister() -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "cancel_deregister",
+            Vec::<subxt::dynamic::Value>::new(),
+        )
+    }
+
+    /// Create an update_provider_multiaddr extrinsic payload.
+    pub fn update_provider_multiaddr(multiaddr: Vec<u8>) -> impl Payload {
+        subxt::dynamic::tx(
+            PALLET_NAME,
+            "update_provider_multiaddr",
+            vec![subxt::dynamic::Value::from_bytes(multiaddr)],
         )
     }
 
@@ -878,6 +965,27 @@ pub mod storage {
             PALLET_NAME,
             "Challenges",
             vec![subxt::dynamic::Value::u128(deadline_block as u128)],
+        )
+    }
+
+    /// Query a single challenge by its `(deadline, index)` key.
+    pub fn challenge(
+        deadline: u32,
+        index: u16,
+    ) -> subxt::storage::DefaultAddress<
+        Vec<subxt::dynamic::Value>,
+        subxt::dynamic::DecodedValueThunk,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+        subxt::utils::Yes,
+    > {
+        subxt::dynamic::storage(
+            PALLET_NAME,
+            "Challenges",
+            vec![
+                subxt::dynamic::Value::u128(deadline as u128),
+                subxt::dynamic::Value::u128(index as u128),
+            ],
         )
     }
 

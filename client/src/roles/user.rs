@@ -17,12 +17,14 @@ use crate::roles::base::BaseClient;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
+use subxt_signer::sr25519::{dev, Keypair};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {
     base: BaseClient,
     verifier: ClientVerifier,
     cipher: Option<Box<dyn Cipher>>,
+    signer: Option<Keypair>,
 }
 
 impl StorageUserClient {
@@ -32,6 +34,7 @@ impl StorageUserClient {
             base: BaseClient::new(config)?,
             verifier: ClientVerifier::new(),
             cipher: None,
+            signer: None,
         })
     }
 
@@ -54,6 +57,53 @@ impl StorageUserClient {
     /// Returns `true` if client-side encryption is enabled.
     pub fn is_encryption_enabled(&self) -> bool {
         self.cipher.is_some()
+    }
+
+    /// Sign write requests (`upload`, `commit`) with `signer` (builder pattern).
+    ///
+    /// Provider nodes running with auth enabled (the default; see
+    /// `--disable-auth-i-know-what-i-am-doing`) reject writes without a
+    /// signed `Authorization` header from a bucket member with at least
+    /// Writer role. Reads (`download`) never require this.
+    pub fn with_signer(mut self, signer: Keypair) -> Self {
+        self.signer = Some(signer);
+        self
+    }
+
+    /// Sign write requests with a development keypair (builder pattern).
+    pub fn with_dev_signer(mut self, name: &str) -> ClientResult<Self> {
+        let signer = match name {
+            "alice" => dev::alice(),
+            "bob" => dev::bob(),
+            "charlie" => dev::charlie(),
+            "dave" => dev::dave(),
+            "eve" => dev::eve(),
+            "ferdie" => dev::ferdie(),
+            _ => return Err(ClientError::Config(format!("Unknown dev account: {name}"))),
+        };
+        self.signer = Some(signer);
+        Ok(self)
+    }
+
+    /// Build the `Authorization` header value for a signed request, per the
+    /// provider node's scheme: sign `web3storage:<METHOD>:<bucket_id>:<unix_ts>`
+    /// and send `Web3Storage <pubkey_hex>:<signature_hex>:<unix_ts>`.
+    ///
+    /// Returns `None` when no signer is configured - callers then send the
+    /// request unauthenticated (fine against an auth-disabled provider).
+    fn auth_header(&self, method: &str, bucket_id: BucketId) -> Option<String> {
+        let signer = self.signer.as_ref()?;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
+        let signature = signer.sign(message.as_bytes());
+        Some(format!(
+            "Web3Storage {}:{}:{timestamp}",
+            hex::encode(signer.public_key().0),
+            hex::encode(signature.0),
+        ))
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -344,13 +394,15 @@ impl StorageUserClient {
             nonce,
         };
 
-        let response = self
+        let mut req = self
             .base
             .http
             .post(format!("{provider_url}/commit"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        if let Some(auth) = self.auth_header("POST", bucket_id) {
+            req = req.header(reqwest::header::AUTHORIZATION, auth);
+        }
+        let response = req.send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -503,13 +555,15 @@ impl StorageUserClient {
             }),
         };
 
-        let response = self
+        let mut req = self
             .base
             .http
             .put(format!("{provider_url}/node"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        if let Some(auth) = self.auth_header("PUT", bucket_id) {
+            req = req.header(reqwest::header::AUTHORIZATION, auth);
+        }
+        let response = req.send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(

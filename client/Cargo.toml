@@ -34,3 +34,59 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
 tempfile = { workspace = true }
+
+[[test]]
+name = "admin_integration"
+path = "tests/integration/admin_integration.rs"
+
+[[test]]
+name = "challenger_integration"
+path = "tests/integration/challenger_integration.rs"
+
+[[test]]
+name = "checkpoint_integration"
+path = "tests/integration/checkpoint_integration.rs"
+
+[[test]]
+name = "client_integration"
+path = "tests/integration/client_integration.rs"
+
+[[test]]
+name = "discovery_integration"
+path = "tests/integration/discovery_integration.rs"
+
+[[test]]
+name = "provider_integration"
+path = "tests/integration/provider_integration.rs"
+
+[[test]]
+name = "user_auth_integration"
+path = "tests/integration/user_auth_integration.rs"
+
+[[test]]
+name = "e2e_01_provider_registration"
+path = "tests/e2e/01_provider_registration.rs"
+
+[[test]]
+name = "e2e_02_agreement_lifecycle"
+path = "tests/e2e/02_agreement_lifecycle.rs"
+
+[[test]]
+name = "e2e_04_data_upload_and_retrieval"
+path = "tests/e2e/04_data_upload_and_retrieval.rs"
+
+[[test]]
+name = "e2e_06_bucket_membership_acl"
+path = "tests/e2e/06_bucket_membership_acl.rs"
+
+[[test]]
+name = "e2e_07_agreement_extensions_topup"
+path = "tests/e2e/07_agreement_extensions_topup.rs"
+
+[[test]]
+name = "e2e_08_provider_deregistration"
+path = "tests/e2e/08_provider_deregistration.rs"
+
+[[test]]
+name = "e2e_05_checkpoint_and_challenges"
+path = "tests/e2e/05_checkpoint_and_challenges.rs"

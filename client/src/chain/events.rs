@@ -71,6 +71,27 @@ pub enum StorageEvent {
         block_number: u32,
     },
 
+    /// A provider-initiated checkpoint was submitted for a bucket.
+    ProviderCheckpointSubmitted {
+        bucket_id: BucketId,
+        mmr_root: H256,
+        window: u64,
+        leader: AccountId32,
+        signers: Vec<AccountId32>,
+        reward: u128,
+        block_hash: H256,
+        block_number: u32,
+    },
+
+    /// A provider claimed their accumulated checkpoint rewards for a bucket.
+    CheckpointRewardClaimed {
+        bucket_id: BucketId,
+        provider: AccountId32,
+        amount: u128,
+        block_hash: H256,
+        block_number: u32,
+    },
+
     // ========================================================================
     // Challenge Events
     // ========================================================================
@@ -277,6 +298,8 @@ impl StorageEvent {
     pub fn bucket_id(&self) -> Option<BucketId> {
         match self {
             StorageEvent::BucketCheckpointed { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::ProviderCheckpointSubmitted { bucket_id, .. } => Some(*bucket_id),
+            StorageEvent::CheckpointRewardClaimed { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::ChallengeCreated { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::ProviderAddedToBucket { bucket_id, .. } => Some(*bucket_id),
             StorageEvent::PrimaryProviderRemoved { bucket_id, .. } => Some(*bucket_id),
@@ -296,6 +319,8 @@ impl StorageEvent {
     pub fn provider(&self) -> Option<&AccountId32> {
         match self {
             StorageEvent::BucketCheckpointed { providers, .. } => providers.first(),
+            StorageEvent::ProviderCheckpointSubmitted { leader, .. } => Some(leader),
+            StorageEvent::CheckpointRewardClaimed { provider, .. } => Some(provider),
             StorageEvent::ChallengeCreated { provider, .. } => Some(provider),
             StorageEvent::ChallengeDefended { provider, .. } => Some(provider),
             StorageEvent::ChallengeSlashed { provider, .. } => Some(provider),
@@ -320,6 +345,8 @@ impl StorageEvent {
     pub fn block_hash(&self) -> H256 {
         match self {
             StorageEvent::BucketCheckpointed { block_hash, .. } => *block_hash,
+            StorageEvent::ProviderCheckpointSubmitted { block_hash, .. } => *block_hash,
+            StorageEvent::CheckpointRewardClaimed { block_hash, .. } => *block_hash,
             StorageEvent::ChallengeCreated { block_hash, .. } => *block_hash,
             StorageEvent::ChallengeDefended { block_hash, .. } => *block_hash,
             StorageEvent::ChallengeSlashed { block_hash, .. } => *block_hash,
@@ -347,6 +374,8 @@ impl StorageEvent {
     pub fn block_number(&self) -> u32 {
         match self {
             StorageEvent::BucketCheckpointed { block_number, .. } => *block_number,
+            StorageEvent::ProviderCheckpointSubmitted { block_number, .. } => *block_number,
+            StorageEvent::CheckpointRewardClaimed { block_number, .. } => *block_number,
             StorageEvent::ChallengeCreated { block_number, .. } => *block_number,
             StorageEvent::ChallengeDefended { block_number, .. } => *block_number,
             StorageEvent::ChallengeSlashed { block_number, .. } => *block_number,
@@ -372,7 +401,12 @@ impl StorageEvent {
 
     /// Check if this is a checkpoint-related event.
     pub fn is_checkpoint_event(&self) -> bool {
-        matches!(self, StorageEvent::BucketCheckpointed { .. })
+        matches!(
+            self,
+            StorageEvent::BucketCheckpointed { .. }
+                | StorageEvent::ProviderCheckpointSubmitted { .. }
+                | StorageEvent::CheckpointRewardClaimed { .. }
+        )
     }
 
     /// Check if this is a challenge-related event.
@@ -504,7 +538,9 @@ impl EventFilter {
 
         // Check event type filter
         match event {
-            StorageEvent::BucketCheckpointed { .. } => self.include_checkpoints,
+            StorageEvent::BucketCheckpointed { .. }
+            | StorageEvent::ProviderCheckpointSubmitted { .. }
+            | StorageEvent::CheckpointRewardClaimed { .. } => self.include_checkpoints,
             StorageEvent::ChallengeCreated { .. }
             | StorageEvent::ChallengeDefended { .. }
             | StorageEvent::ChallengeSlashed { .. } => self.include_challenges,
@@ -967,6 +1003,24 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
                 bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
                 commitment: scale_decode::field_commitment(&fields, "commitment")?,
                 providers: scale_decode::field_accounts(&fields, "providers"),
+                block_hash,
+                block_number,
+            }),
+
+            "ProviderCheckpointSubmitted" => Some(StorageEvent::ProviderCheckpointSubmitted {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                mmr_root: scale_decode::field_h256(&fields, "mmr_root")?,
+                window: scale_decode::field_u64(&fields, "window")?,
+                leader: scale_decode::field_account(&fields, "leader")?,
+                signers: scale_decode::field_accounts(&fields, "signers"),
+                reward: scale_decode::field_u128(&fields, "reward")?,
+                block_hash,
+                block_number,
+            }),
+            "CheckpointRewardClaimed" => Some(StorageEvent::CheckpointRewardClaimed {
+                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
+                provider: scale_decode::field_account(&fields, "provider")?,
+                amount: scale_decode::field_u128(&fields, "amount")?,
                 block_hash,
                 block_number,
             }),

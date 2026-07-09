@@ -141,7 +141,9 @@ pub use roles::discovery;
 pub use roles::discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
 };
-pub use roles::provider::{ProviderClient, ProviderSettings};
+pub use roles::provider::{
+    CheckpointDutyResponse, ProviderClient, ProviderSettings, SignProposalResponse,
+};
 pub use roles::user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,

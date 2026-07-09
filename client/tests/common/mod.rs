@@ -39,7 +39,7 @@ pub async fn chain_guard() -> MutexGuard<'static, ()> {
 }
 
 /// Minimum provider stake: 1000 tokens × 12 decimals.
-const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
+pub const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 
 // ─── Dev account helpers ──────────────────────────────────────────────────────
 

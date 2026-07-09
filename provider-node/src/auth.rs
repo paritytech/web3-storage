@@ -144,7 +144,7 @@ impl ChainMembershipResolver {
 #[async_trait::async_trait]
 impl MembershipResolver for ChainMembershipResolver {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
-        use subxt::dynamic::{At, Value};
+        use subxt::dynamic::Value;
 
         let api = self.api().await?;
 
@@ -172,33 +172,50 @@ impl MembershipResolver for ChainMembershipResolver {
             .to_value()
             .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
-        let members_val = match decoded.at("members") {
-            Some(v) => v,
-            None => return Ok(vec![]),
-        };
+        Ok(decode_members(&decoded))
+    }
+}
 
-        let mut members = Vec::new();
-        if let subxt::ext::scale_value::ValueDef::Composite(
-            subxt::ext::scale_value::Composite::Unnamed(items),
-        ) = &members_val.value
-        {
-            for item in items {
-                let account_val = item.at("account");
-                let role_val = item.at("role");
+/// Decode a `Bucket`'s `members: BoundedVec<Member, MaxMembers>` field from its
+/// dynamically-decoded scale value.
+///
+/// `BoundedVec<T, S>` is a newtype (`Vec<T>` plus a zero-size `PhantomData<S>`),
+/// so it decodes as `Composite::Unnamed([inner_vec])` - one wrapper level around
+/// the actual `Vec` contents - which must be peeled before iterating members
+/// (mirrors the identical `BoundedVec` peel in `AdminClient::get_bucket_info`).
+fn decode_members<T>(bucket_value: &subxt::ext::scale_value::Value<T>) -> Vec<(AccountId32, Role)> {
+    use subxt::ext::scale_value::{At, Composite, ValueDef};
 
-                if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
-                    let account_bytes = extract_account_bytes(account_v);
-                    if let Some(bytes) = account_bytes {
-                        let account = AccountId32::from(bytes);
-                        let role = extract_role(role_v);
-                        members.push((account, role));
-                    }
-                }
+    let Some(members_val) = bucket_value.at("members") else {
+        return Vec::new();
+    };
+
+    let entries = match &members_val.value {
+        ValueDef::Composite(Composite::Unnamed(outer)) => {
+            outer.first().and_then(|inner| match &inner.value {
+                ValueDef::Composite(Composite::Unnamed(entries)) => Some(entries),
+                _ => None,
+            })
+        }
+        _ => None,
+    };
+
+    let Some(items) = entries else {
+        return Vec::new();
+    };
+
+    let mut members = Vec::new();
+    for item in items {
+        let account_val = item.at("account");
+        let role_val = item.at("role");
+
+        if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
+            if let Some(bytes) = extract_account_bytes(account_v) {
+                members.push((AccountId32::from(bytes), extract_role(role_v)));
             }
         }
-
-        Ok(members)
     }
+    members
 }
 
 fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
@@ -353,6 +370,8 @@ pub async fn require_role(
     let header = auth_header.ok_or(Error::AuthRequired)?;
     let account = verify_signature(header, method, bucket_id, max_skew)?;
 
+    tracing::info!("============== code here 373 ==============");
+
     let role = cache
         .get_role(bucket_id, &account)
         .await
@@ -490,5 +509,40 @@ mod tests {
 
         let unknown = AccountId32::new([4u8; 32]);
         assert_eq!(find_role(&members, &unknown), None);
+    }
+
+    #[test]
+    fn test_decode_members_peels_bounded_vec_wrapper() {
+        // Regression test: `BoundedVec<Member, MaxMembers>` decodes via subxt's
+        // dynamic `Value` as `Composite::Unnamed([inner_vec])` - one wrapper
+        // level around the actual `Vec` of members - which `decode_members`
+        // must peel before reading `account`/`role`. Without the peel,
+        // membership always resolves empty and every write 403s.
+        use subxt::dynamic::Value;
+
+        let account_bytes = [7u8; 32];
+        let member = Value::named_composite([
+            ("account", Value::from_bytes(account_bytes)),
+            ("role", Value::unnamed_variant("Writer", vec![])),
+        ]);
+        let inner_vec = Value::unnamed_composite(vec![member]);
+        let bounded_vec = Value::unnamed_composite(vec![inner_vec]); // the extra wrapper level
+        let bucket = Value::named_composite([("members", bounded_vec)]);
+
+        let members = decode_members(&bucket);
+
+        assert_eq!(
+            members,
+            vec![(AccountId32::new(account_bytes), Role::Writer)]
+        );
+    }
+
+    #[test]
+    fn test_decode_members_empty_when_no_members_field() {
+        use subxt::dynamic::Value;
+
+        let bucket =
+            Value::named_composite([("frozen_start_seq", Value::unnamed_variant("None", vec![]))]);
+        assert_eq!(decode_members(&bucket), vec![]);
     }
 }

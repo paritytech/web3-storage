@@ -6,6 +6,7 @@
 //! there is no external dependency. On-chain operations are not exercised
 //! here — see the end-to-end demo in `justfile` for those.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{make_client, start_test_provider};
