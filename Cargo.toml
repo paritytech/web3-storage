@@ -2,14 +2,14 @@
 resolver = "2"
 members = [
 	"client",
+	"pallets/drive-registry",
+	"pallets/s3-registry",
+	"pallets/storage-provider",
 	"primitives",
 	"provider-node",
 	"provider/negotiation",
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
-	"pallets/drive-registry",
-	"pallets/s3-registry",
-	"pallets/storage-provider",
 
 	# Smart-contract precompiles (pallet_revive integration)
 	"precompiles/drive-registry-precompile",
