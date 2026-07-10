@@ -3,7 +3,7 @@
   "private": true,
   "devDependencies": {
     "c8": "^11.0.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.22.5"
   },
   "scripts": {
     "postinstall": "pnpm --filter @web3-storage/papi run papi:install",

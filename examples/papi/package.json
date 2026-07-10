@@ -19,13 +19,13 @@
     "@web3-storage/sdk": "workspace:*",
     "@web3-storage/test-helpers": "workspace:*",
     "polkadot-api": "^2.1.7",
-    "viem": "^2.53.1",
+    "viem": "^2.54.1",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
     "c8": "^11.0.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.22.5",
     "typescript": "~6.0.3"
   }
 }
