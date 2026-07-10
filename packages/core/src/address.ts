@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-only
-//
+// SPDX-License-Identifier: Apache-2.0
+
 // Address-format primitives. Pure byte/SS58 computation with no chain coupling,
 // so they belong in core rather than the layer-0 chain binding.
 
