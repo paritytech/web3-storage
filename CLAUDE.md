@@ -212,10 +212,11 @@ export function sameAddress(a, b) {
 
 ```
 web3-storage/
-├── pallets/                    # FRAME pallets (on-chain logic)
-│   ├── storage-provider/      # Storage provider pallet (Layer 0)
-│   ├── drive-registry/        # Drive Registry pallet (Layer 1 file system)
-│   └── s3-registry/           # S3 Registry pallet (Layer 1 S3)
+├── crates/
+│   └── pallets/               # FRAME pallets (on-chain logic)
+│       ├── storage-provider/  # Storage provider pallet (Layer 0)
+│       ├── drive-registry/    # Drive Registry pallet (Layer 1 file system)
+│       └── s3-registry/       # S3 Registry pallet (Layer 1 S3)
 ├── runtimes/                   # Parachain runtimes
 │   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
 │   │   ├── src/lib.rs         # Runtime configuration
@@ -275,7 +276,7 @@ web3-storage/
 
 #### Layer 0 (Raw Storage)
 
-**Pallet (`pallets/storage-provider/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
+**Pallet (`crates/pallets/storage-provider/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
 **Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
@@ -304,7 +305,7 @@ web3-storage/
 - `CommitStrategy`: Checkpoint strategies (Immediate, Batched, Manual)
 - Helper functions for CID computation and path handling
 
-**Drive Registry Pallet (`pallets/drive-registry/`)**: On-chain drive management:
+**Drive Registry Pallet (`crates/pallets/drive-registry/`)**: On-chain drive management:
 - Drive creation with automatic infrastructure setup
 - Root CID tracking for drive state
 - User-to-drive mapping

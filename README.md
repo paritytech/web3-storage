@@ -186,7 +186,7 @@ Two types of nodes work together:
 
 ```
 scalable-web3-storage/
-├── pallets/              # FRAME pallets (on-chain logic)
+├── crates/pallets/       # FRAME pallets (on-chain logic)
 ├── runtimes/             # Parachain runtimes (web3-storage-local, web3-storage-paseo)
 ├── provider-node/        # Off-chain storage server (HTTP API)
 ├── client/               # Client SDK for applications

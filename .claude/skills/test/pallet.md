@@ -186,6 +186,6 @@ fn test_provider_registered_event() {
 
 ## Links
 
-- [Pallet Source](/pallets/storage-provider/src/lib.rs)
+- [Pallet Source](/crates/pallets/storage-provider/src/lib.rs)
 - For end-to-end exercise: `just demo` (Layer-0 PAPI), `just fs-demo-ci`, `just s3-demo-ci`
 - [Runtime](/runtime/src/lib.rs)

@@ -48,7 +48,7 @@ Core data structures and types for the file system.
 - CID computation and manipulation
 - DAG helper functions
 
-### Drive Registry pallet (`pallets/drive-registry/`)
+### Drive Registry pallet (`crates/pallets/drive-registry/`)
 On-chain registry pallet for drive management.
 
 **User-Facing Extrinsics:**

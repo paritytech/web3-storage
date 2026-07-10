@@ -51,7 +51,7 @@ jobs:
           filters: |
             runtime:
               - 'runtimes/**'
-              - 'pallets/**'
+              - 'crates/pallets/**'
               - 'primitives/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'

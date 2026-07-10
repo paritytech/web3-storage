@@ -23,7 +23,7 @@ function publicKeyHex(address: string): string {
  * Storage key for `pallet_storage_provider::Providers[address]`. Layout
  * is `twox128(pallet_name) ++ twox128(storage_name) ++
  * blake2_128_concat(scale(account))`, matching the FRAME `StorageMap`
- * with `Blake2_128Concat` hasher in `pallets/storage-provider/src/lib.rs`. AccountId32 is
+ * with `Blake2_128Concat` hasher in `crates/pallets/storage-provider/src/lib.rs`. AccountId32 is
  * 32 raw bytes, so the scale encoding of the key is just those bytes.
  */
 function providersStorageKey(address: string): Uint8Array {
