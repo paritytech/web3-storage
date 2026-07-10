@@ -212,9 +212,10 @@ export function sameAddress(a, b) {
 
 ```
 web3-storage/
-├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
-│   ├── src/lib.rs             # Core pallet implementation
-│   └── Cargo.toml             # Pallet dependencies
+├── pallets/                    # FRAME pallets (on-chain logic)
+│   ├── storage-provider/      # Storage provider pallet (Layer 0)
+│   ├── drive-registry/        # Drive Registry pallet (Layer 1 file system)
+│   └── s3-registry/           # S3 Registry pallet (Layer 1 S3)
 ├── runtimes/                   # Parachain runtimes
 │   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
 │   │   ├── src/lib.rs         # Runtime configuration
@@ -242,7 +243,6 @@ web3-storage/
 ├── storage-interfaces/         # Layer 1 - High-level interfaces
 │   └── file-system/           # File System Interface
 │       ├── primitives/        # File system types (DriveInfo, CommitStrategy, etc.)
-│       ├── pallet-registry/   # Drive Registry pallet (on-chain)
 │       └── client/            # File System Client SDK
 │           ├── src/
 │           │   ├── lib.rs     # Main file system client
@@ -275,7 +275,7 @@ web3-storage/
 
 #### Layer 0 (Raw Storage)
 
-**Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
+**Pallet (`pallets/storage-provider/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
 **Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
@@ -304,7 +304,7 @@ web3-storage/
 - `CommitStrategy`: Checkpoint strategies (Immediate, Batched, Manual)
 - Helper functions for CID computation and path handling
 
-**Drive Registry Pallet (`storage-interfaces/file-system/pallet-registry/`)**: On-chain drive management:
+**Drive Registry Pallet (`pallets/drive-registry/`)**: On-chain drive management:
 - Drive creation with automatic infrastructure setup
 - Root CID tracking for drive state
 - User-to-drive mapping

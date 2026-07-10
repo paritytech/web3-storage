@@ -12,7 +12,7 @@ includes = [
 	"packages/**/*.js",
 	"packages/**/*.ts",
 	"packages/**/*.tsx",
-	"pallet/**/*.rs",
+	"pallets/**/*.rs",
 	"precompiles/**/*.rs",
 	"precompiles/**/*.sol",
 	"primitives/**/*.rs",

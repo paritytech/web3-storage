@@ -1,14 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-	# Layer 0: Scalable Web3 Storage
 	"client",
-	"pallet",
 	"primitives",
 	"provider-node",
 	"provider/negotiation",
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
+	"pallets/drive-registry",
+	"pallets/s3-registry",
+	"pallets/storage-provider",
 
 	# Smart-contract precompiles (pallet_revive integration)
 	"precompiles/drive-registry-precompile",
@@ -17,12 +18,10 @@ members = [
 
 	# Storage Interfaces: File System Interface
 	"storage-interfaces/file-system/client",
-	"storage-interfaces/file-system/pallet-registry",
 	"storage-interfaces/file-system/primitives",
 
 	# Storage Interfaces: S3-Compatible Interface
 	"storage-interfaces/s3/client",
-	"storage-interfaces/s3/pallet-s3-registry",
 	"storage-interfaces/s3/primitives",
 ]
 
@@ -36,7 +35,7 @@ repository = "https://github.com/paritytech/web3-storage"
 # Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompile", default-features = false }
 pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
-pallet-storage-provider = { path = "pallet", default-features = false }
+pallet-storage-provider = { path = "pallets/storage-provider", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
 provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
@@ -47,10 +46,10 @@ storage-provider-node = { path = "provider-node" }
 # Storage Interfaces: File System Interface
 file-system-client = { path = "storage-interfaces/file-system/client" }
 file-system-primitives = { path = "storage-interfaces/file-system/primitives", default-features = false }
-pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
+pallet-drive-registry = { path = "pallets/drive-registry", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
-pallet-s3-registry = { path = "storage-interfaces/s3/pallet-s3-registry", default-features = false }
+pallet-s3-registry = { path = "pallets/s3-registry", default-features = false }
 s3-client = { path = "storage-interfaces/s3/client" }
 s3-primitives = { path = "storage-interfaces/s3/primitives", default-features = false }
 

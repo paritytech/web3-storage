@@ -51,9 +51,8 @@ jobs:
           filters: |
             runtime:
               - 'runtimes/**'
-              - 'pallet/**'
+              - 'pallets/**'
               - 'primitives/**'
-              - 'storage-interfaces/**/pallet-*/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/check-runtime-migration.yml'
