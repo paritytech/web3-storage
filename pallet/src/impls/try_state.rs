@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+
 //! `try_state` invariant checks (compiled only under the `try-runtime`
 //! feature). They assert config and cross-storage invariants against live
 //! state on every try-runtime block and runtime-upgrade dry-run, catching
