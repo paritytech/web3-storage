@@ -299,6 +299,10 @@ impl ChainStateCoordinator {
         /// backend resubscriptions), so this is several times the block time;
         /// a genuinely stalled stream otherwise hangs forever with no error.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+        /// The first block gets a longer budget: a fresh embedded light client
+        /// has to discover peers and warp-sync before anything is finalized,
+        /// and rebuilding mid-sync would throw that progress away.
+        const FIRST_BLOCK_TIMEOUT: Duration = Duration::from_secs(300);
 
         let handle = chain_connection::connect(&self.transport).await?;
         let api = handle.api.clone();
@@ -331,18 +335,20 @@ impl ChainStateCoordinator {
                 .load(std::sync::atomic::Ordering::Relaxed),
         });
 
+        let mut stall_timeout = FIRST_BLOCK_TIMEOUT;
         loop {
-            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+            let next = match tokio::time::timeout(stall_timeout, blocks.next()).await {
                 Ok(Some(next)) => next,
                 Ok(None) => break,
                 Err(_) => {
                     tracing::warn!(
                         "chain-state coordinator: no finalized block for {}s; rebuilding connection",
-                        STALL_TIMEOUT.as_secs()
+                        stall_timeout.as_secs()
                     );
                     break;
                 }
             };
+            stall_timeout = STALL_TIMEOUT;
             let block = match next {
                 Ok(block) => block,
                 Err(e) => {

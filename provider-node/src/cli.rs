@@ -2,6 +2,7 @@
 
 //! CLI argument parsing for the storage provider node.
 
+use crate::chain_connection::{ChainTransport, SpecSource};
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -76,6 +77,33 @@ pub struct RpcParams {
     )]
     pub chain_rpc: String,
 
+    /// How to talk to the chain: an external RPC node or the embedded smoldot
+    /// light client (which needs no operated RPC infrastructure).
+    #[arg(
+        long,
+        value_enum,
+        value_name = "TRANSPORT",
+        default_value_t = TransportKind::Rpc,
+        env = "CHAIN_TRANSPORT"
+    )]
+    pub chain_transport: TransportKind,
+
+    /// Relay-chain spec file for the light transport (a raw spec with
+    /// reachable boot nodes). Falls back to fetching from --relay-rpc.
+    #[arg(long, value_name = "FILE", env = "RELAY_CHAIN_SPEC")]
+    pub relay_chain_spec: Option<PathBuf>,
+
+    /// Parachain spec file for the light transport (a raw spec with boot
+    /// nodes serving the light request-response protocols). Falls back to
+    /// fetching from --chain-rpc.
+    #[arg(long, value_name = "FILE", env = "PARA_CHAIN_SPEC")]
+    pub para_chain_spec: Option<PathBuf>,
+
+    /// Relay-chain RPC URL used only to fetch the relay spec at startup when
+    /// --relay-chain-spec is not given (dev convenience; trusts that node).
+    #[arg(long, value_name = "URL", env = "RELAY_RPC")]
+    pub relay_rpc: Option<String>,
+
     /// Public multiaddr to advertise on chain instead of the bind-derived one.
     ///
     /// On hosted deployments the bind address (e.g. `0.0.0.0:3333`) is not
@@ -97,6 +125,52 @@ pub struct RpcParams {
         value_delimiter = ','
     )]
     pub cors_allowed_origins: Option<Vec<String>>,
+}
+
+/// Chain transport selection for `--chain-transport`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum TransportKind {
+    /// External RPC node over WebSocket (`--chain-rpc`).
+    Rpc,
+    /// Embedded smoldot light client. Chain specs come from
+    /// `--relay-chain-spec` / `--para-chain-spec` files, falling back to
+    /// fetching from `--relay-rpc` / `--chain-rpc` (dev only).
+    Light,
+}
+
+impl RpcParams {
+    /// Resolve the CLI flags into a concrete [`ChainTransport`].
+    ///
+    /// Errors when the light transport has no way to obtain the relay spec
+    /// (neither a spec file nor a relay RPC to fetch it from).
+    pub fn chain_transport(&self) -> Result<ChainTransport, String> {
+        match self.chain_transport {
+            TransportKind::Rpc => Ok(ChainTransport::Rpc {
+                url: self.chain_rpc.clone(),
+            }),
+            TransportKind::Light => {
+                let relay_spec = match (&self.relay_chain_spec, &self.relay_rpc) {
+                    (Some(path), _) => SpecSource::File(path.clone()),
+                    (None, Some(url)) => SpecSource::FetchFromRpc(url.clone()),
+                    (None, None) => {
+                        return Err(
+                            "--chain-transport light needs --relay-chain-spec (or, for dev, \
+                             --relay-rpc to fetch it from a node)"
+                                .to_string(),
+                        )
+                    }
+                };
+                let para_spec = match &self.para_chain_spec {
+                    Some(path) => SpecSource::File(path.clone()),
+                    None => SpecSource::FetchFromRpc(self.chain_rpc.clone()),
+                };
+                Ok(ChainTransport::Light {
+                    relay_spec,
+                    para_spec,
+                })
+            }
+        }
+    }
 }
 
 /// Parameters for provider identity and signing keys.
@@ -328,6 +402,75 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 30);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 600);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 5);
+    }
+
+    #[test]
+    fn transport_defaults_to_rpc() {
+        let cli = Cli::try_parse_from(["storage-provider-node"]).unwrap();
+        assert!(matches!(cli.rpc.chain_transport, TransportKind::Rpc));
+        let transport = cli.rpc.chain_transport().unwrap();
+        assert!(matches!(transport, ChainTransport::Rpc { url } if url == "ws://127.0.0.1:2222"));
+    }
+
+    #[test]
+    fn light_transport_resolves_spec_sources() {
+        // Spec files win over RPC fetching.
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--chain-transport",
+            "light",
+            "--relay-chain-spec",
+            "/specs/relay.json",
+            "--para-chain-spec",
+            "/specs/para.json",
+        ])
+        .unwrap();
+        let ChainTransport::Light {
+            relay_spec,
+            para_spec,
+        } = cli.rpc.chain_transport().unwrap()
+        else {
+            panic!("expected light transport");
+        };
+        assert!(
+            matches!(relay_spec, SpecSource::File(p) if p == PathBuf::from("/specs/relay.json").as_path())
+        );
+        assert!(
+            matches!(para_spec, SpecSource::File(p) if p == PathBuf::from("/specs/para.json").as_path())
+        );
+
+        // Without spec files, the relay spec fetches from --relay-rpc and the
+        // para spec from --chain-rpc.
+        let cli = Cli::try_parse_from([
+            "storage-provider-node",
+            "--chain-transport",
+            "light",
+            "--relay-rpc",
+            "ws://127.0.0.1:9900",
+        ])
+        .unwrap();
+        let ChainTransport::Light {
+            relay_spec,
+            para_spec,
+        } = cli.rpc.chain_transport().unwrap()
+        else {
+            panic!("expected light transport");
+        };
+        assert!(
+            matches!(relay_spec, SpecSource::FetchFromRpc(url) if url == "ws://127.0.0.1:9900")
+        );
+        assert!(matches!(para_spec, SpecSource::FetchFromRpc(url) if url == "ws://127.0.0.1:2222"));
+    }
+
+    #[test]
+    fn light_transport_without_relay_source_errors() {
+        let cli =
+            Cli::try_parse_from(["storage-provider-node", "--chain-transport", "light"]).unwrap();
+        let err = cli.rpc.chain_transport().unwrap_err();
+        assert!(
+            err.contains("--relay-chain-spec"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

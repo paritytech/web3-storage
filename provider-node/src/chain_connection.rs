@@ -10,12 +10,11 @@
 //! borrow the live client and nobody else carries reconnect logic.
 
 use crate::Error;
+use std::path::PathBuf;
+use subxt::lightclient::LightClient;
 use subxt::{OnlineClient, PolkadotConfig};
 
 /// How the provider node talks to the chain.
-///
-/// A `Light` (embedded smoldot) variant is planned as a follow-up; keeping
-/// construction behind this enum means adding it only touches this module.
 #[derive(Clone, Debug)]
 pub enum ChainTransport {
     /// External RPC node reached over WebSocket.
@@ -23,6 +22,56 @@ pub enum ChainTransport {
         /// `ws://` / `wss://` URL of the parachain RPC endpoint.
         url: String,
     },
+    /// Embedded smoldot light client following the relay chain and deriving
+    /// parachain finality from it — no operated RPC infrastructure needed.
+    Light {
+        /// Relay-chain spec (with reachable boot nodes).
+        relay_spec: SpecSource,
+        /// Parachain spec (with boot nodes serving the light-client
+        /// request-response protocols).
+        para_spec: SpecSource,
+    },
+}
+
+/// Where a chain spec for the light client comes from.
+#[derive(Clone, Debug)]
+pub enum SpecSource {
+    /// A chain-spec JSON file shipped with the deployment. This is the
+    /// trust-preserving option: the spec (genesis + boot nodes) is vetted
+    /// ahead of time rather than trusted from a node at runtime.
+    File(PathBuf),
+    /// Fetch the spec from a running node's RPC at startup. Convenient for
+    /// local development (zombienet regenerates genesis every run), but it
+    /// reintroduces trust in that node — dev use only.
+    FetchFromRpc(String),
+}
+
+impl SpecSource {
+    async fn load(&self, what: &str) -> Result<String, Error> {
+        match self {
+            SpecSource::File(path) => std::fs::read_to_string(path).map_err(|e| {
+                Error::Internal(format!(
+                    "Failed to read {what} chain spec {}: {e}",
+                    path.display()
+                ))
+            }),
+            SpecSource::FetchFromRpc(url) => {
+                tracing::warn!(
+                    "Fetching the {what} chain spec from {url}: this trusts that node and \
+                     defeats the light client's verification purpose — use spec files in \
+                     production"
+                );
+                let spec = subxt::utils::fetch_chainspec_from_rpc_node(url)
+                    .await
+                    .map_err(|e| {
+                        Error::Internal(format!(
+                            "Failed to fetch {what} chain spec from {url}: {e}"
+                        ))
+                    })?;
+                Ok(spec.get().to_string())
+            }
+        }
+    }
 }
 
 /// A live chain connection, cheap to clone (`OnlineClient` is `Arc`-backed).
@@ -30,6 +79,10 @@ pub enum ChainTransport {
 pub struct ChainHandle {
     /// The subxt client for storage reads, event decoding, and tx submission.
     pub api: OnlineClient<PolkadotConfig>,
+    /// Keeps the embedded smoldot instance alive for the handle's lifetime;
+    /// dropping the last clone tears the light client down. `None` on the
+    /// RPC transport.
+    _light: Option<LightClient>,
 }
 
 /// Receiver side of the connection watch channel. `None` until the first
@@ -37,13 +90,39 @@ pub struct ChainHandle {
 pub type ChainWatch = tokio::sync::watch::Receiver<Option<ChainHandle>>;
 
 /// Build a fresh connection for the given transport.
+///
+/// For `Light` this boots a new embedded smoldot instance (relay + para);
+/// the watchdog's rebuild path therefore recovers even from a wedged smoldot
+/// background task, not just a dropped subscription.
 pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
     match transport {
         ChainTransport::Rpc { url } => {
             let api = OnlineClient::<PolkadotConfig>::from_url(url)
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-            Ok(ChainHandle { api })
+            Ok(ChainHandle { api, _light: None })
+        }
+        ChainTransport::Light {
+            relay_spec,
+            para_spec,
+        } => {
+            let relay = relay_spec.load("relay").await?;
+            let para = para_spec.load("parachain").await?;
+
+            let (light, _relay_rpc) = LightClient::relay_chain(relay.as_str())
+                .map_err(|e| Error::Internal(format!("Failed to start light client: {e}")))?;
+            let para_rpc = light.parachain(para.as_str()).map_err(|e| {
+                Error::Internal(format!("Failed to add parachain to light client: {e}"))
+            })?;
+            let api = OnlineClient::<PolkadotConfig>::from_rpc_client(para_rpc)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to connect via light client: {e}")))?;
+
+            tracing::info!("Embedded light client started (relay + parachain)");
+            Ok(ChainHandle {
+                api,
+                _light: Some(light),
+            })
         }
     }
 }

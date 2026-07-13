@@ -40,9 +40,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // channel. The chain-state coordinator owns the sender and rebuilds the
     // connection on loss or stall; every consumer (HTTP auth, the signing
     // client, coordinators) borrows the current handle from the receiver.
-    let transport = ChainTransport::Rpc {
-        url: cli.rpc.chain_rpc.clone(),
-    };
+    let transport = cli.rpc.chain_transport()?;
     let (chain_tx, chain_rx) = watch::channel::<Option<ChainHandle>>(None);
     // Per-block event fan-out from the chain-state coordinator to the
     // background coordinators.
