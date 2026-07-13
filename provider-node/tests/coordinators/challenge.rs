@@ -48,6 +48,20 @@ impl ChallengeChainClient for MockChallengeChainClient {
         Ok(self.challenges.lock().unwrap().clone())
     }
 
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error> {
+        Ok(self
+            .challenges
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.deadline == deadline && c.index == index)
+            .cloned())
+    }
+
     async fn submit_response(
         &self,
         challenge_id: (u32, u16),
@@ -79,7 +93,7 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
 #[test]
 fn test_challenge_responder_config_default() {
     let config = ChallengeResponderConfig::default();
-    assert_eq!(config.poll_interval, Duration::from_secs(6));
+    assert_eq!(config.poll_interval, Duration::from_secs(300));
     assert!(config.auto_respond);
 }
 
@@ -100,7 +114,10 @@ async fn test_no_challenges() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -118,7 +135,10 @@ async fn test_paused_skips_poll() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -137,7 +157,10 @@ async fn test_stop_command() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(mock));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     assert!(handle.is_running());
     handle.stop().await.unwrap();
@@ -194,7 +217,10 @@ async fn test_successful_challenge_response() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     let mock_ref = Arc::clone(&mock);
     assert!(
@@ -245,7 +271,10 @@ async fn test_proof_generation_failed_no_bucket() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -290,7 +319,10 @@ async fn test_data_not_found_bad_chunk_index() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -335,7 +367,10 @@ async fn test_submission_failed() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -376,7 +411,10 @@ async fn test_callback_invoked_on_success() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(Some(callback)).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, Some(callback))
+        .await
+        .unwrap();
 
     let result_ref = Arc::clone(&result);
     assert!(
@@ -413,7 +451,10 @@ async fn test_resume_after_pause() {
         ..Default::default()
     };
     let responder = ChallengeResponder::new(config, state, Box::new(Arc::clone(&mock)));
-    let handle = responder.start(None).await.unwrap();
+    let handle = responder
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;

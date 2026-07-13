@@ -6,6 +6,7 @@
 //! providers to autonomously submit checkpoints without requiring the
 //! client to be online.
 
+use crate::chain_events::BlockEvent;
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{Pair, H256};
@@ -13,12 +14,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::{BucketId, CheckpointProposal};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 /// Configuration for the checkpoint coordinator.
 #[derive(Clone, Debug)]
 pub struct CheckpointCoordinatorConfig {
-    /// How often to poll for checkpoint duties.
+    /// Retained for compatibility; duty checks are clocked by finalized
+    /// blocks from the chain-state coordinator, not by wall time (checkpoint
+    /// windows are a function of block height, so block arrival is the only
+    /// meaningful tick).
     pub poll_interval: Duration,
     /// Timeout for collecting signatures from peers.
     pub signature_timeout: Duration,
@@ -221,8 +225,13 @@ impl CheckpointCoordinator {
     }
 
     /// Start the checkpoint coordinator background service.
+    ///
+    /// `events_rx` is a subscription to the chain-state coordinator's block
+    /// event fan-out; duty checks run once per finalized block (checkpoint
+    /// windows are a function of block height, so this is the natural clock).
     pub async fn start(
         self,
+        events_rx: broadcast::Receiver<BlockEvent>,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) -> Result<CheckpointCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<CoordinatorCommand>(32);
@@ -231,7 +240,8 @@ impl CheckpointCoordinator {
 
         let running_exit = running.clone();
         tokio::spawn(async move {
-            self.run_loop(command_rx, running_clone, callback).await;
+            self.run_loop(command_rx, events_rx, running_clone, callback)
+                .await;
             tracing::error!("Checkpoint coordinator run_loop exited unexpectedly!");
             running_exit.store(false, Ordering::SeqCst);
         });
@@ -246,11 +256,16 @@ impl CheckpointCoordinator {
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<CoordinatorCommand>,
+        mut events_rx: broadcast::Receiver<BlockEvent>,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
+        // A closed broadcast channel (follower gone) yields `Closed` on every
+        // poll; disarm the events select arm then, or the loop busy-spins.
+        // With the arm disarmed only commands remain, matching the pre-event
+        // behavior of a coordinator without a chain connection.
+        let mut events_open = true;
 
         tracing::info!("Checkpoint coordinator started");
 
@@ -296,9 +311,23 @@ impl CheckpointCoordinator {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                event = events_rx.recv(), if events_open => {
+                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                        events_open = false;
+                        continue;
+                    }
                     if paused || !self.config.auto_submit {
                         continue;
+                    }
+                    // Checkpoint windows advance with block height, so a new
+                    // finalized block is the duty tick. On a lagged receiver
+                    // or (re)subscribe, checking duties once is equally
+                    // correct — window state is recomputed from chain state.
+                    match event {
+                        Ok(BlockEvent::NewBlock { .. })
+                        | Ok(BlockEvent::Resubscribed { .. })
+                        | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => continue,
                     }
 
                     // Get active checkpoint duties

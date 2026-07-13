@@ -4,6 +4,8 @@
 
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
+    chain_connection::{self, ChainHandle, ChainTransport, ChainWatch},
+    chain_events::{BlockEvent, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
@@ -19,6 +21,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{broadcast, watch};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Parse CLI arguments, initialize the node, and run the server.
@@ -32,6 +35,28 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let cli = Cli::parse();
+
+    // One chain connection for the whole node, published through a watch
+    // channel. The chain-state coordinator owns the sender and rebuilds the
+    // connection on loss or stall; every consumer (HTTP auth, the signing
+    // client, coordinators) borrows the current handle from the receiver.
+    let transport = ChainTransport::Rpc {
+        url: cli.rpc.chain_rpc.clone(),
+    };
+    let (chain_tx, chain_rx) = watch::channel::<Option<ChainHandle>>(None);
+    // Per-block event fan-out from the chain-state coordinator to the
+    // background coordinators.
+    let (events_tx, _) = broadcast::channel::<BlockEvent>(EVENT_CHANNEL_CAPACITY);
+
+    // Connect eagerly so auth lookups and the one-shot multiaddr sync work
+    // right away; failure is non-fatal (the coordinator retries in the
+    // background and republishes).
+    match chain_connection::connect(&transport).await {
+        Ok(handle) => {
+            chain_tx.send_replace(Some(handle));
+        }
+        Err(e) => tracing::warn!("Chain unreachable at startup ({e}); retrying in the background"),
+    }
 
     // Create storage backend and the associated nonce store (which follows the
     // same persistence mode so the nonce counter survives disk restarts).
@@ -58,7 +83,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(seed) => {
             let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-            configure_state(state, &cli)
+            configure_state(state, &cli, chain_rx.clone())
         }
         None => {
             let provider_id = cli
@@ -71,7 +96,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
+            configure_state(
+                ProviderState::with_provider_id(storage, provider_id),
+                &cli,
+                chain_rx.clone(),
+            )
         }
     };
 
@@ -82,32 +111,46 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(state);
 
-    // Connect a single chain client shared by every coordinator. One
-    // WebSocket connection and one signer (the provider's own account) back
-    // all on-chain actions; coordinators each get a cheap clone. Requires a
-    // signing key, so this is only available when a seed was provided.
+    // The signing chain client shared by every coordinator: one signer (the
+    // provider's own account) over the shared watch connection; coordinators
+    // each get a cheap clone. Requires a signing key, so this is only
+    // available when a seed was provided.
     let chain_client = match &seed {
-        Some(seed) => match SubxtChainClient::connect(&cli.rpc.chain_rpc, seed).await {
+        Some(seed) => match SubxtChainClient::new(chain_rx.clone(), seed) {
             Ok(client) => Some(client),
             Err(e) => {
-                tracing::error!("Failed to connect chain client: {}", e);
+                tracing::error!("Failed to create chain client: {}", e);
                 None
             }
         },
         None => None,
     };
 
+    // Subscribe the coordinators before the follower starts, so none of them
+    // can miss the initial `Resubscribed` bootstrap event.
+    let checkpoint_events = events_tx.subscribe();
+    let replica_events = events_tx.subscribe();
+    let challenge_events = events_tx.subscribe();
+
     // Start optional background services (failures are non-fatal)
-    let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
-    let checkpoint_handle =
-        start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+    let _chain_state_handle =
+        start_chain_state_coordinator(transport, chain_tx, events_tx, state.clone());
+    let checkpoint_handle = start_checkpoint_coordinator(
+        &cli,
+        chain_client.as_ref(),
+        checkpoint_events,
+        state.clone(),
+    )
+    .await;
     if let Some(ref handle) = checkpoint_handle {
         state.set_checkpoint_handle(handle);
     }
     let _replica_sync_handle =
-        start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+        start_replica_sync_coordinator(&cli, chain_client.as_ref(), replica_events, state.clone())
+            .await;
     let _challenge_responder_handle =
-        start_challenge_responder(&cli, chain_client.as_ref(), state.clone()).await;
+        start_challenge_responder(&cli, chain_client.as_ref(), challenge_events, state.clone())
+            .await;
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -141,7 +184,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// Authentication is enforced by default: unless the operator explicitly passed
 /// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
 /// resolver so every bucket-scoped request is checked against the caller's role.
-fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
+fn configure_state(state: ProviderState, cli: &Cli, chain_rx: ChainWatch) -> ProviderState {
     let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
 
     if cli.auth.disable_auth_i_know_what_i_am_doing {
@@ -152,7 +195,7 @@ fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
              Never do this outside a throwaway local environment."
         );
     } else {
-        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+        let resolver = ChainMembershipResolver::new(chain_rx);
         let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
         let cache = MembershipCache::new(Box::new(resolver), ttl);
         state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
@@ -174,7 +217,9 @@ fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
 /// retries with a backoff if the chain is unreachable, so `current_block` is
 /// populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
-    cli: &Cli,
+    transport: ChainTransport,
+    chain_tx: watch::Sender<Option<ChainHandle>>,
+    events_tx: broadcast::Sender<BlockEvent>,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
     let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
@@ -189,9 +234,11 @@ fn start_chain_state_coordinator(
     };
 
     let coordinator = ChainStateCoordinator::new(
-        cli.rpc.chain_rpc.clone(),
+        transport,
         provider_account,
         state.chain_state.clone(),
+        chain_tx,
+        events_tx,
     );
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
@@ -201,6 +248,7 @@ fn start_chain_state_coordinator(
 async fn start_checkpoint_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
+    events_rx: broadcast::Receiver<BlockEvent>,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
@@ -221,7 +269,7 @@ async fn start_checkpoint_coordinator(
 
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
 
-    match coordinator.start(None).await {
+    match coordinator.start(events_rx, None).await {
         Ok(handle) => {
             tracing::info!("Checkpoint coordinator started");
             Some(handle)
@@ -236,6 +284,7 @@ async fn start_checkpoint_coordinator(
 async fn start_replica_sync_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
+    events_rx: broadcast::Receiver<BlockEvent>,
     state: Arc<ProviderState>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
@@ -261,7 +310,7 @@ async fn start_replica_sync_coordinator(
 
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
 
-    match coordinator.start(None).await {
+    match coordinator.start(events_rx, None).await {
         Ok(handle) => {
             tracing::info!("Replica sync coordinator started");
             Some(handle)
@@ -276,6 +325,7 @@ async fn start_replica_sync_coordinator(
 async fn start_challenge_responder(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
+    events_rx: broadcast::Receiver<BlockEvent>,
     state: Arc<ProviderState>,
 ) -> Option<ChallengeResponderHandle> {
     if !cli.challenge_responder.enable_challenge_responder {
@@ -299,7 +349,7 @@ async fn start_challenge_responder(
 
     let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
 
-    match responder.start(None).await {
+    match responder.start(events_rx, None).await {
         Ok(handle) => {
             tracing::info!("Challenge responder started — auto-responding to challenges");
             Some(handle)

@@ -3,26 +3,32 @@
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
 //! This module provides a background service that:
-//! 1. Subscribes to checkpoint events on-chain
+//! 1. Reacts to agreement/checkpoint events fanned out by the chain-state
+//!    coordinator (with a bootstrap scan on every (re)subscribe and a slow
+//!    safety-net interval as backstop)
 //! 2. Detects when new data is available to sync
 //! 3. Performs top-down MMR traversal to fetch missing data from primaries
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
+use crate::chain_events::BlockEvent;
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
 use sp_core::H256;
+use sp_runtime::AccountId32;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 /// Configuration for the replica sync coordinator.
 #[derive(Clone, Debug)]
 pub struct ReplicaSyncCoordinatorConfig {
-    /// How often to poll for sync duties (default: 12 seconds = ~2 blocks).
+    /// Safety-net interval between duty reconciliation passes. Duties are
+    /// normally discovered event-driven; zero disables the safety net.
     pub poll_interval: Duration,
     /// Timeout for a sync operation (default: 5 minutes).
     pub sync_timeout: Duration,
@@ -35,7 +41,7 @@ pub struct ReplicaSyncCoordinatorConfig {
 impl Default for ReplicaSyncCoordinatorConfig {
     fn default() -> Self {
         Self {
-            poll_interval: Duration::from_secs(12),
+            poll_interval: Duration::from_secs(600),
             sync_timeout: Duration::from_secs(300),
             max_concurrent_syncs: 3,
             auto_confirm: true,
@@ -296,8 +302,13 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Start the replica sync coordinator background service.
+    ///
+    /// `events_rx` is a subscription to the chain-state coordinator's block
+    /// event fan-out; duty passes run on relevant agreement/checkpoint
+    /// events, on `Resubscribed` / lag, and on the safety-net interval.
     pub async fn start(
         self,
+        events_rx: broadcast::Receiver<BlockEvent>,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) -> Result<ReplicaSyncCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<SyncCommand>(32);
@@ -305,7 +316,8 @@ impl ReplicaSyncCoordinator {
         let running_clone = running.clone();
 
         tokio::spawn(async move {
-            self.run_loop(command_rx, running_clone, callback).await;
+            self.run_loop(command_rx, events_rx, running_clone, callback)
+                .await;
         });
 
         Ok(ReplicaSyncCoordinatorHandle {
@@ -314,23 +326,56 @@ impl ReplicaSyncCoordinator {
         })
     }
 
+    /// Whether a broadcast event can create or advance a sync duty for us.
+    ///
+    /// Replica duties appear when we get a replica agreement and progress
+    /// when a bucket we hold locally is checkpointed. Everything else is
+    /// noise for this coordinator.
+    fn is_relevant_event(&self, event: &BlockEvent, our_account: &Option<AccountId32>) -> bool {
+        match event {
+            BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
+                our_account.as_ref().is_none_or(|me| me == provider)
+            }
+            BlockEvent::BucketCheckpointUpdated { bucket_id } => self
+                .state
+                .storage
+                .list_buckets()
+                .iter()
+                .any(|b| b.bucket_id == *bucket_id),
+            _ => false,
+        }
+    }
+
     /// Main coordinator loop.
     async fn run_loop(
         mut self,
         mut command_rx: mpsc::Receiver<SyncCommand>,
+        mut events_rx: broadcast::Receiver<BlockEvent>,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) {
         let mut paused = false;
-        let mut interval = tokio::time::interval(self.config.poll_interval);
+        // A closed broadcast channel (follower gone) yields `Closed` on every
+        // poll; disarm the events select arm then, or the loop busy-spins.
+        let mut events_open = true;
+        let our_account = AccountId32::from_str(&self.state.provider_id).ok();
+        // The safety-net interval's first tick fires immediately, doubling as
+        // the startup bootstrap pass (duties accrued while the node was
+        // down). With the safety net disabled, the bootstrap pass comes from
+        // the follower's `Resubscribed` event on its first connect instead.
+        let safety_net = !self.config.poll_interval.is_zero();
+        let mut interval = tokio::time::interval(if safety_net {
+            self.config.poll_interval
+        } else {
+            Duration::from_secs(3600)
+        });
 
         tracing::info!("Replica sync coordinator started");
 
         loop {
             tokio::select! {
-                // Prefer control commands over the poll tick: the interval's
-                // first tick fires immediately, so an unbiased select could
-                // service a poll before a Pause/Stop queued right after start().
+                // Prefer control commands over event/scan work, so a
+                // Pause/Stop queued right after start() is honored first.
                 biased;
 
                 cmd = command_rx.recv() => {
@@ -368,45 +413,75 @@ impl ReplicaSyncCoordinator {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                event = events_rx.recv(), if events_open => {
+                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                        events_open = false;
+                        continue;
+                    }
                     if paused || !self.config.auto_confirm {
                         continue;
                     }
-
-                    // Clean up completed syncs
-                    self.cleanup_completed_syncs();
-
-                    // Get active replica duties
-                    match self.get_active_replica_duties().await {
-                        Ok(duties) => {
-                            for duty in duties {
-                                // Skip if already syncing this bucket
-                                if self.active_syncs.contains_key(&duty.bucket_id) {
-                                    continue;
-                                }
-
-                                // Skip if at max concurrent syncs
-                                if self.active_syncs.len() >= self.config.max_concurrent_syncs {
-                                    break;
-                                }
-
-                                tracing::info!(
-                                    "Starting sync for bucket {} (target root: 0x{})",
-                                    duty.bucket_id,
-                                    hex::encode(duty.target_mmr_root.as_bytes())
-                                );
-
-                                let result = self.sync_and_confirm(&duty).await;
-                                if let Some(ref cb) = callback {
-                                    cb(result);
-                                }
-                            }
+                    match event {
+                        Ok(BlockEvent::Resubscribed { .. })
+                        | Err(broadcast::error::RecvError::Lagged(_)) => {
+                            self.run_duty_pass(&callback).await;
                         }
-                        Err(e) => {
-                            tracing::warn!("Failed to get replica duties: {e}");
+                        Ok(event) if self.is_relevant_event(&event, &our_account) => {
+                            self.run_duty_pass(&callback).await;
                         }
+                        Ok(_) | Err(broadcast::error::RecvError::Closed) => {}
                     }
                 }
+                _ = interval.tick() => {
+                    if paused || !self.config.auto_confirm || !safety_net {
+                        continue;
+                    }
+                    self.run_duty_pass(&callback).await;
+                }
+            }
+        }
+    }
+
+    /// One duty pass: reconcile agreements against local state and start
+    /// syncs for every bucket that needs one (bounded by
+    /// `max_concurrent_syncs`).
+    ///
+    /// Runs the full agreement fetch even when triggered by a single-bucket
+    /// event: relevant events are rare (new replica agreement, checkpoint on
+    /// a held bucket), so this stays off the hot path while keeping exactly
+    /// one duty-discovery code path.
+    async fn run_duty_pass(&mut self, callback: &Option<Arc<dyn Fn(SyncResult) + Send + Sync>>) {
+        // Clean up completed syncs
+        self.cleanup_completed_syncs();
+
+        // Get active replica duties
+        match self.get_active_replica_duties().await {
+            Ok(duties) => {
+                for duty in duties {
+                    // Skip if already syncing this bucket
+                    if self.active_syncs.contains_key(&duty.bucket_id) {
+                        continue;
+                    }
+
+                    // Skip if at max concurrent syncs
+                    if self.active_syncs.len() >= self.config.max_concurrent_syncs {
+                        break;
+                    }
+
+                    tracing::info!(
+                        "Starting sync for bucket {} (target root: 0x{})",
+                        duty.bucket_id,
+                        hex::encode(duty.target_mmr_root.as_bytes())
+                    );
+
+                    let result = self.sync_and_confirm(&duty).await;
+                    if let Some(ref cb) = callback {
+                        cb(result);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get replica duties: {e}");
             }
         }
     }

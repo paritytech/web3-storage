@@ -10,6 +10,7 @@
 //! one a clone of the same client (a cheap `OnlineClient`/`Keypair` clone that
 //! shares the underlying WebSocket connection).
 
+use crate::chain_connection::{self, ChainWatch};
 use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
@@ -20,32 +21,38 @@ use crate::replica_sync_coordinator::{
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
+use std::time::Duration;
 use storage_primitives::BucketId;
 use subxt::dynamic::Value;
 use subxt::ext::scale_value::value;
 
+/// Pallet dispatch errors that mean "this action already happened" — a retry
+/// after a dropped transaction watch may race an earlier attempt that landed,
+/// and these rejections prove the duty is done rather than failed.
+const ALREADY_DONE_ERRORS: [&str; 3] = [
+    "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
+    "CheckpointAlreadySubmitted", // provider_checkpoint: window already covered
+    "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
+];
+
 /// Production implementation that talks to the chain via subxt.
 ///
-/// Cloning is cheap: `OnlineClient` shares one connection behind an `Arc`, and
-/// the `Keypair` clone is a key copy. This lets a single instance be shared
-/// across every background coordinator.
+/// Holds a receiver of the connection watch channel (owned by the chain-state
+/// coordinator) plus this provider's signing key. Cloning is cheap, so every
+/// background coordinator gets its own copy; each operation borrows the
+/// current connection, which survives follower reconnects transparently.
 #[derive(Clone)]
 pub struct SubxtChainClient {
-    api: subxt::OnlineClient<subxt::PolkadotConfig>,
+    chain_rx: ChainWatch,
     signer: subxt_signer::sr25519::Keypair,
 }
 
 impl SubxtChainClient {
-    /// Connect to the chain and create a signer from the seed URI.
-    ///
-    /// The signer is derived from `seed` (e.g. `//Alice` or a mnemonic), which
+    /// Create the signing chain client from the connection watch channel and
+    /// the provider's seed URI (e.g. `//Alice` or a mnemonic), which
     /// reproduces the provider's registered account — the identity every
     /// on-chain action must be signed by.
-    pub async fn connect(chain_ws_url: &str, seed: &str) -> Result<Self, Error> {
-        let api = subxt::OnlineClient::<subxt::PolkadotConfig>::from_url(chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-
+    pub fn new(chain_rx: ChainWatch, seed: &str) -> Result<Self, Error> {
         let uri: subxt_signer::SecretUri = seed
             .parse()
             .map_err(|e| Error::Internal(format!("Invalid seed URI: {e}")))?;
@@ -53,12 +60,17 @@ impl SubxtChainClient {
             .map_err(|e| Error::Internal(format!("Failed to create signer: {e}")))?;
 
         tracing::info!(
-            "Chain client connected to {} as {}",
-            chain_ws_url,
+            "Chain client signing as {}",
             sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
         );
 
-        Ok(Self { api, signer })
+        Ok(Self { chain_rx, signer })
+    }
+
+    /// The current live connection, or an error while the chain has never
+    /// been reached yet.
+    fn api(&self) -> Result<subxt::OnlineClient<subxt::PolkadotConfig>, Error> {
+        chain_connection::current_api(&self.chain_rx)
     }
 
     /// Get the current (latest) block number.
@@ -66,11 +78,75 @@ impl SubxtChainClient {
     /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
     async fn current_block(&self) -> Result<u64, Error> {
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
         Ok(at.block_number())
+    }
+
+    /// Sign, submit, and wait for finalized success, retrying once on
+    /// transport-level failures (dropped socket, backend resubscription
+    /// killing the transaction watch).
+    ///
+    /// On the retry, a dispatch error from [`ALREADY_DONE_ERRORS`] is treated
+    /// as success: it means the first submission actually landed and the duty
+    /// is complete. Matching on the formatted error is pragmatic — the names
+    /// come from pallet metadata and are stable.
+    async fn submit_and_finalize(
+        &self,
+        tx: &subxt::tx::DynamicPayload<Vec<Value>>,
+        what: &str,
+    ) -> Result<(), Error> {
+        const RETRY_DELAY: Duration = Duration::from_secs(6);
+
+        for attempt in 0..2 {
+            let retrying = attempt > 0;
+            let submitted = async {
+                self.api()?
+                    .at_current_block()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+                    .transactions()
+                    .sign_and_submit_then_watch_default(tx, &self.signer)
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
+            }
+            .await;
+
+            let progress = match submitted {
+                Ok(progress) => progress,
+                Err(e) if !retrying => {
+                    tracing::warn!("{what}: submission failed ({e}); retrying once");
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+
+            return match progress.wait_for_finalized_success().await {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if retrying && ALREADY_DONE_ERRORS.iter().any(|name| msg.contains(name)) {
+                        tracing::info!(
+                            "{what}: duplicate rejected on retry ({msg}); first attempt landed"
+                        );
+                        Ok(())
+                    } else if !retrying && !msg.contains("Module") {
+                        // Non-dispatch failure (e.g. the watch subscription
+                        // died): the tx may or may not have landed — resubmit
+                        // and let the duplicate classification above decide.
+                        tracing::warn!("{what}: tx watch failed ({msg}); retrying once");
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        continue;
+                    } else {
+                        Err(Error::Internal(format!("Transaction failed: {msg}")))
+                    }
+                }
+            };
+        }
+        unreachable!("loop either returns or continues at most once")
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -201,7 +277,14 @@ impl SubxtChainClient {
         let storage_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-        let at = match self.api.at_current_block().await {
+        let api = match self.api() {
+            Ok(api) => api,
+            Err(e) => {
+                tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
+                return;
+            }
+        };
+        let at = match api.at_current_block().await {
             Ok(at) => at,
             Err(e) => {
                 tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
@@ -278,27 +361,12 @@ impl SubxtChainClient {
             vec![Value::from_bytes(multiaddr_bytes)],
         );
 
-        let at = match self.api.at_current_block().await {
-            Ok(at) => at,
-            Err(e) => {
-                tracing::error!("Failed to submit multiaddr update: {}", e);
-                return;
-            }
-        };
-        match at
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
+        match self
+            .submit_and_finalize(&tx, "update_provider_multiaddr")
             .await
         {
-            Ok(progress) => match progress.wait_for_finalized_success().await {
-                Ok(_) => {
-                    tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr)
-                }
-                Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
-            },
-            Err(e) => {
-                tracing::error!("Failed to submit multiaddr update: {}", e);
-            }
+            Ok(()) => tracing::info!("Multiaddr updated on-chain to: {}", expected_multiaddr),
+            Err(e) => tracing::error!("Multiaddr update tx failed: {}", e),
         }
     }
 
@@ -440,7 +508,7 @@ impl CheckpointChainClient for SubxtChainClient {
         let config_query =
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "CheckpointConfigs");
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -513,20 +581,7 @@ impl CheckpointChainClient for SubxtChainClient {
             ],
         );
 
-        let tx_progress = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        self.submit_and_finalize(&tx, "provider_checkpoint").await?;
 
         Ok(H256::zero())
     }
@@ -550,6 +605,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
                 .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
 
+            let api = self.api()?;
+
             // Query local buckets for agreements
             for bucket_id in &local_buckets {
                 let storage_address = subxt::dynamic::storage::<(Value, Value), Value>(
@@ -557,8 +614,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                     "StorageAgreements",
                 );
 
-                let at = self
-                    .api
+                let at = api
                     .at_current_block()
                     .await
                     .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -588,7 +644,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 "StorageAgreements",
             );
 
-            if let Ok(at) = self.api.at_current_block().await {
+            if let Ok(at) = api.at_current_block().await {
                 if let Ok(mut iter) = at.storage().iter(storage_address, ()).await {
                     while let Some(result) = iter.next().await {
                         let kv = match result {
@@ -643,7 +699,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -688,7 +744,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -740,7 +796,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
             let at = self
-                .api
+                .api()?
                 .at_current_block()
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -799,20 +855,8 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             hex::encode(target_mmr_root.as_bytes())
         );
 
-        let tx_progress = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        self.submit_and_finalize(&tx, "confirm_replica_sync")
+            .await?;
 
         tracing::info!(
             "confirm_replica_sync submitted successfully for bucket {}",
@@ -843,7 +887,7 @@ impl ChallengeChainClient for SubxtChainClient {
         let storage_address =
             subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
         let at = self
-            .api
+            .api()?
             .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
@@ -898,6 +942,61 @@ impl ChallengeChainClient for SubxtChainClient {
             });
         }
         Ok(detected)
+    }
+
+    /// Point-read a single challenge at `(deadline, index)`.
+    ///
+    /// Backs the event-driven path: a `ChallengeCreated` event carries the
+    /// challenge id but not the proof parameters, so the responder fetches
+    /// the full `Challenge` value here. Returns `None` when the entry is
+    /// missing (already responded / reaped) or targets another provider.
+    async fn fetch_challenge(
+        &self,
+        deadline: u32,
+        index: u16,
+    ) -> Result<Option<DetectedChallenge>, Error> {
+        let our_bytes: [u8; 32] = self.signer.public_key().0;
+
+        let storage_address =
+            subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
+        let at = self
+            .api()?
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+
+        let Some(value) = at
+            .storage()
+            .try_fetch(
+                storage_address,
+                (Value::u128(deadline as u128), Value::u128(index as u128)),
+            )
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to fetch challenge: {e}")))?
+        else {
+            return Ok(None);
+        };
+
+        let challenge = match decode_challenge_for_provider(value.bytes(), &our_bytes) {
+            Ok(Some(c)) => c,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                return Err(Error::Internal(format!(
+                    "Failed to decode challenge at {deadline}/{index}: {e}"
+                )))
+            }
+        };
+
+        Ok(Some(DetectedChallenge {
+            bucket_id: challenge.bucket_id,
+            deadline,
+            index,
+            mmr_root: challenge.mmr_root,
+            start_seq: challenge.start_seq,
+            leaf_index: challenge.leaf_index,
+            chunk_index: challenge.chunk_index,
+            challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
+        }))
     }
 
     async fn submit_response(
@@ -982,20 +1081,8 @@ impl ChallengeChainClient for SubxtChainClient {
             vec![challenge_id_val, response_val],
         );
 
-        let tx_progress = self
-            .api
-            .at_current_block()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-            .transactions()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
-
-        let _events = tx_progress
-            .wait_for_finalized_success()
-            .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+        self.submit_and_finalize(&tx, "respond_to_challenge")
+            .await?;
 
         Ok(H256::zero())
     }

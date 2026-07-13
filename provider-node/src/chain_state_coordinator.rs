@@ -17,6 +17,8 @@
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
 
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::chain_events::{self, BlockEvent};
 use crate::negotiate::NonceCounter;
 use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
@@ -29,6 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
 use subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
@@ -227,21 +230,31 @@ fn parse_provider_lifecycle_events(
 /// Start with [`ChainStateCoordinator::start`]; keep the returned
 /// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
 pub struct ChainStateCoordinator {
-    chain_ws_url: String,
+    transport: ChainTransport,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
+    /// Publishes the live connection to every chain consumer. This coordinator
+    /// is the only writer: it rebuilds the connection on stream loss or stall
+    /// and everyone else picks up the new handle from the watch channel.
+    chain_tx: watch::Sender<Option<ChainHandle>>,
+    /// Fan-out of decoded per-block events to the background coordinators.
+    events_tx: broadcast::Sender<BlockEvent>,
 }
 
 impl ChainStateCoordinator {
     pub fn new(
-        chain_ws_url: String,
+        transport: ChainTransport,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
+        chain_tx: watch::Sender<Option<ChainHandle>>,
+        events_tx: broadcast::Sender<BlockEvent>,
     ) -> Self {
         Self {
-            chain_ws_url,
+            transport,
             provider_account,
             chain_state,
+            chain_tx,
+            events_tx,
         }
     }
 
@@ -278,16 +291,25 @@ impl ChainStateCoordinator {
     }
 
     /// Connect to the chain, bootstrap initial state, then drive the finalized-block
-    /// stream until it ends. Returns `Err` if connecting fails; `Ok(())` if the
-    /// stream terminates cleanly — either way the caller reconnects.
+    /// stream until it ends or stalls. Returns `Err` if connecting fails; `Ok(())`
+    /// if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
+        /// How long without a finalized block before the connection is treated
+        /// as dead and rebuilt. Finality can pause briefly (session boundaries,
+        /// backend resubscriptions), so this is several times the block time;
+        /// a genuinely stalled stream otherwise hangs forever with no error.
+        const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+        let handle = chain_connection::connect(&self.transport).await?;
+        let api = handle.api.clone();
         let mut blocks = api
             .stream_blocks()
             .await
             .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+
+        // Publish the new connection only after the block stream is up, so
+        // consumers never observe a handle whose backend failed immediately.
+        self.chain_tx.send_replace(Some(handle));
         let chain = RealChainStateClient { api };
 
         tracing::info!("chain-state coordinator: connected; following finalized blocks");
@@ -300,7 +322,27 @@ impl ChainStateCoordinator {
         // rather than waiting for the next relevant event.
         refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
 
-        while let Some(next) = blocks.next().await {
+        // Tell coordinators to reconcile: events emitted while the stream was
+        // down were missed for good, so they re-scan chain state instead.
+        let _ = self.events_tx.send(BlockEvent::Resubscribed {
+            at_block: self
+                .chain_state
+                .current_block
+                .load(std::sync::atomic::Ordering::Relaxed),
+        });
+
+        loop {
+            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+                Ok(Some(next)) => next,
+                Ok(None) => break,
+                Err(_) => {
+                    tracing::warn!(
+                        "chain-state coordinator: no finalized block for {}s; rebuilding connection",
+                        STALL_TIMEOUT.as_secs()
+                    );
+                    break;
+                }
+            };
             let block = match next {
                 Ok(block) => block,
                 Err(e) => {
@@ -326,8 +368,8 @@ impl ChainStateCoordinator {
                     .map_err(|e| Error::Internal(format!("Failed to fetch events: {e}")))
             }
             .await;
-            let parsed = match events {
-                Ok(events) => parse_provider_lifecycle_events(&events),
+            let events = match events {
+                Ok(events) => events,
                 Err(e) => {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
@@ -336,6 +378,16 @@ impl ChainStateCoordinator {
                 }
             };
 
+            // Fan out the block clock and the coordinator-relevant events.
+            // Send failures just mean no coordinator is subscribed.
+            let _ = self.events_tx.send(BlockEvent::NewBlock {
+                number: block_number,
+            });
+            for event in chain_events::decode_block_events(&events) {
+                let _ = self.events_tx.send(event);
+            }
+
+            let parsed = parse_provider_lifecycle_events(&events);
             self.process_provider_events(&chain, &parsed, block_number)
                 .await;
         }
@@ -638,7 +690,7 @@ fn decode_byte_vec(value: &Value) -> Vec<u8> {
 
 /// Decode an [`AccountId32`] from a SCALE value (a possibly-nested composite of
 /// 32 byte primitives).
-fn decode_account(v: &Value) -> Option<AccountId32> {
+pub(crate) fn decode_account(v: &Value) -> Option<AccountId32> {
     let mut bytes = [0u8; 32];
     if collect_bytes(v, &mut bytes, 0) == 32 {
         Some(AccountId32::new(bytes))

@@ -159,7 +159,10 @@ async fn test_pause_resume() {
     };
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(mock));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
     assert!(handle.is_running());
 
     handle.pause().await.unwrap();
@@ -183,7 +186,10 @@ async fn test_force_checkpoint() {
     };
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.force_checkpoint(1).await.unwrap();
     let mock_ref = Arc::clone(&mock);
