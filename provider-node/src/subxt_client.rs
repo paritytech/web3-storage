@@ -24,6 +24,38 @@ use storage_primitives::BucketId;
 use subxt::dynamic::Value;
 use subxt::ext::scale_value::value;
 
+/// Fetch and decode `ParachainSystem::LastRelayChainBlockNumber` from a storage
+/// view (`api.storage().at_latest()` or `block.storage()`). This is the relay
+/// clock every on-chain duration (timeouts, expiries, `valid_until`, nonces) is
+/// measured against, so off-chain actors must read it, not the parachain
+/// block height.
+///
+/// Inlined here so the provider node stays free of a `storage-client`
+/// dependency (see #275).
+pub(crate) async fn fetch_last_relay_block_number(
+    storage: &subxt::storage::Storage<
+        subxt::PolkadotConfig,
+        subxt::OnlineClient<subxt::PolkadotConfig>,
+    >,
+) -> Result<u32, Error> {
+    let addr = subxt::dynamic::storage(
+        "ParachainSystem",
+        "LastRelayChainBlockNumber",
+        Vec::<Value>::new(),
+    );
+    let thunk = storage
+        .fetch(&addr)
+        .await
+        .map_err(|e| Error::Internal(format!("Failed to fetch relay block number: {e}")))?
+        .ok_or_else(|| Error::Internal("LastRelayChainBlockNumber not found".to_string()))?;
+    thunk
+        .to_value()
+        .map_err(|e| Error::Internal(format!("Failed to decode relay block number: {e}")))?
+        .as_u128()
+        .map(|v| v as u32)
+        .ok_or_else(|| Error::Internal("relay block number is not an integer".to_string()))
+}
+
 /// Production implementation that talks to the chain via subxt.
 ///
 /// Cloning is cheap: `OnlineClient` shares one connection behind an `Arc`, and
@@ -73,10 +105,7 @@ impl SubxtChainClient {
             .at_latest()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get latest storage: {e}")))?;
-        storage_client::substrate::fetch_last_relay_block_number(&storage)
-            .await
-            .map(u64::from)
-            .map_err(|e| Error::Internal(e.to_string()))
+        fetch_last_relay_block_number(&storage).await.map(u64::from)
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.

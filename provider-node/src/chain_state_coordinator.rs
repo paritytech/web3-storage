@@ -322,7 +322,7 @@ impl ChainStateCoordinator {
             // are denominated in relay-chain blocks, so `current_block` must
             // track the relay block anchored to this finalized block — not
             // its parachain height.
-            match storage_client::substrate::fetch_last_relay_block_number(&block.storage()).await {
+            match crate::subxt_client::fetch_last_relay_block_number(&block.storage()).await {
                 Ok(relay_block) => {
                     self.chain_state
                         .current_block
