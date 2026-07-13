@@ -163,7 +163,7 @@ gate() {
 		--compare-branch "$compare_branch" \
 		--fail-under "$min_patch_cov" \
 		--show-uncovered \
-		--markdown-report patch-coverage.md
+		--format markdown:patch-coverage.md
 }
 
 case "${1:-all}" in
