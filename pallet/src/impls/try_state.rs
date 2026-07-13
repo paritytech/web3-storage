@@ -73,6 +73,26 @@ impl<T: Config> Pallet<T> {
     /// P1.4: `MemberBuckets` is the correct and complete reverse index of
     /// bucket membership, with no duplicates.
     fn check_buckets_and_membership() -> Result<(), TryRuntimeError> {
+        // Decode the reverse index once, up front, rejecting duplicate bucket
+        // ids as we build it. The forward check below looks up each bucket
+        // member's entry: calling `MemberBuckets::get` per member would
+        // re-decode a member's (potentially large) bucket list once per bucket
+        // it belongs to — an N+1 with quadratic decode cost. The reverse check
+        // already needs a full pass over `MemberBuckets`, so materialising the
+        // map here is effectively free, and both directions then check against
+        // it in memory.
+        let mut member_index: BTreeMap<T::AccountId, BTreeSet<BucketId>> = BTreeMap::new();
+        for (account, buckets) in MemberBuckets::<T>::iter() {
+            let mut indexed = BTreeSet::new();
+            for bucket_id in buckets.iter() {
+                ensure!(
+                    indexed.insert(*bucket_id),
+                    "duplicate bucket id in MemberBuckets entry"
+                );
+            }
+            member_index.insert(account, indexed);
+        }
+
         for (bucket_id, bucket) in Buckets::<T>::iter() {
             // P1.3
             let declared: BTreeSet<T::AccountId> =
@@ -93,24 +113,21 @@ impl<T: Config> Pallet<T> {
             // P1.4 (forward): every member is indexed under MemberBuckets.
             for member in bucket.members.iter() {
                 ensure!(
-                    MemberBuckets::<T>::get(&member.account).contains(&bucket_id),
+                    member_index
+                        .get(&member.account)
+                        .is_some_and(|buckets| buckets.contains(&bucket_id)),
                     "bucket member missing from MemberBuckets reverse index"
                 );
             }
         }
 
-        // P1.4 (reverse): every reverse-index entry is a real, unique membership.
-        for (account, buckets) in MemberBuckets::<T>::iter() {
-            let unique: BTreeSet<BucketId> = buckets.iter().copied().collect();
-            ensure!(
-                unique.len() == buckets.len(),
-                "duplicate bucket id in MemberBuckets entry"
-            );
-            for bucket_id in buckets.iter() {
+        // P1.4 (reverse): every reverse-index entry is a real membership.
+        for (account, buckets) in member_index.iter() {
+            for bucket_id in buckets {
                 let bucket = Buckets::<T>::get(bucket_id)
                     .ok_or("MemberBuckets references a non-existent bucket")?;
                 ensure!(
-                    bucket.members.iter().any(|m| m.account == account),
+                    bucket.members.iter().any(|m| m.account == *account),
                     "MemberBuckets entry is not an actual member of the bucket"
                 );
             }
