@@ -6,8 +6,9 @@
 #
 # Usage: scripts/coverage.sh {measure|gate|all}
 # Env: COMPARE_BRANCH (default origin/dev), MIN_PATCH_COV (default 80)
-# Outputs: lcov.info, coverage-summary.txt, coverage-modules.md,
-# patch-coverage.md, target/llvm-cov-html/.
+# Outputs: lcov.info, lcov-integration.info, coverage-summary.txt,
+# coverage-modules.md, coverage-integration.md, patch-coverage.md,
+# target/llvm-cov-html/.
 
 set -euo pipefail
 
@@ -119,26 +120,50 @@ measure() {
 		pkg_flags+=(-p "$pkg")
 	done
 
-	# One instrumented run of the measured modules' tests (lib + integration).
-	# A build/test failure aborts here — no silent zero-coverage fallthrough.
-	cargo llvm-cov --no-report "${pkg_flags[@]}"
+	# Two views from one instrumented build, no test executed twice:
+	# `report` renders every profraw accumulated so far and cannot select a
+	# subset, so run integration targets first, render the integration-only
+	# view, then run the remaining targets (--lib --bins covers exactly
+	# what the single default-target invocation ran) and render the merged
+	# view. The upfront clean keeps a local rerun's stale profraws out of
+	# the first view. A build/test failure aborts here — no silent
+	# zero-coverage fallthrough.
+	cargo llvm-cov clean --profraw-only
+	# --test '*' = every target under tests/ — picks up new suites
+	# automatically, skips packages that have none.
+	cargo llvm-cov --no-report "${pkg_flags[@]}" --test '*'
+	cargo llvm-cov report --lcov --output-path lcov-integration.info --ignore-filename-regex "$COV_IGNORE"
+	cargo llvm-cov --no-report "${pkg_flags[@]}" --lib --bins
 
 	# Render the collected data in several formats without re-running tests.
 	cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex "$COV_IGNORE"
 	cargo llvm-cov report --html --output-dir target/llvm-cov-html --ignore-filename-regex "$COV_IGNORE"
 	cargo llvm-cov report --ignore-filename-regex "$COV_IGNORE" >coverage-summary.txt
 
-	if [ ! -s lcov.info ]; then
-		echo "error: lcov.info is empty — coverage generation failed" >&2
+	if [ ! -s lcov.info ] || [ ! -s lcov-integration.info ]; then
+		echo "error: lcov.info or lcov-integration.info is empty — coverage generation failed" >&2
 		exit 1
 	fi
 
 	# Make lcov source paths repo-relative so diff-cover matches git paths.
-	sed -i "s|SF:${REPO_ROOT}/|SF:|g" lcov.info
+	sed -i "s|SF:${REPO_ROOT}/|SF:|g" lcov.info lcov-integration.info
 
 	modules_table lcov.info >coverage-modules.md
+
+	# Diagnostic only, not gated: what integration tests alone reach.
+	{
+		echo "Line coverage reachable through integration tests alone —"
+		echo "diagnostic only, no gate."
+		echo
+		modules_table lcov-integration.info
+	} >coverage-integration.md
+
 	echo
 	cat coverage-modules.md
+	echo
+	echo "Integration-only coverage (public-API view):"
+	echo
+	cat coverage-integration.md
 }
 
 gate() {

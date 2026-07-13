@@ -254,6 +254,10 @@ jobs:
             cat coverage-summary.txt
             echo '```'
             echo "</details>"
+            echo ""
+            echo "## Integration-only coverage (public-API view)"
+            echo ""
+            cat coverage-integration.md
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifacts
@@ -263,6 +267,7 @@ jobs:
           name: rust-coverage
           path: |
             lcov.info
+            lcov-integration.info
             target/llvm-cov-html
           if-no-files-found: warn
 
