@@ -10,7 +10,7 @@ use frame_support::{
 use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
-    constants::{currency::UNIT, relay_time::HOURS},
+    constants::{currency::UNIT, relay_time::RC_HOURS},
     AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
@@ -20,18 +20,18 @@ use crate::{
 // their wall-clock meaning when the parachain block time changes.
 parameter_types! {
     pub const MinProviderStake: Balance = 1_000 * UNIT;  // 1000 tokens minimum stake
-    pub const ChallengeTimeout: BlockNumber = 48 * HOURS;  // 48 hours to respond
+    pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;  // 48 hours to respond
     // Replay-protection window for `CommitmentPayload::nonce`. A signature whose
     // nonce is older than this is rejected. Set wide enough to accommodate
     // normal off-chain choreography (provider signs, client builds & broadcasts
     // tx, tx finalises) without forcing re-signing.
-    pub const MaxNonceAge: BlockNumber = 24 * HOURS;
+    pub const MaxNonceAge: BlockNumber = 24 * RC_HOURS;
     // Reserved from the challenger when opening a challenge. 1 token at 12
     // decimals = floor on spam economics. Previously hardcoded `100u32`
     // (1e-10 of a token) which made challenge spam effectively free.
     pub const ChallengeDeposit: Balance = UNIT;
-    pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-    pub const RequestTimeout: BlockNumber = 6 * HOURS;
+    pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
+    pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
     pub const DefaultCheckpointInterval: BlockNumber = 100; // relay blocks (~10 min)
@@ -44,7 +44,7 @@ parameter_types! {
     /// pre-deregistration agreement quote expires before re-registration (the
     /// re-register replay defense). Both are checked in `integrity_test`.
     /// Value: the 48h challenge window plus a 6h grace.
-    pub const DeregisterAnnouncementPeriod: BlockNumber = 54 * HOURS;
+    pub const DeregisterAnnouncementPeriod: BlockNumber = 54 * RC_HOURS;
     /// Caps the challenges sharing one deadline (relay block) and the
     /// `on_initialize` sweep's per-block slash budget. Generous: only
     /// challenges created while the chain sits on the same relay parent

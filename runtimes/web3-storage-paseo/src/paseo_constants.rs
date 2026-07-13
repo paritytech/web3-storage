@@ -61,9 +61,9 @@ pub mod time {
 pub mod relay_time {
     use crate::BlockNumber;
 
-    pub const MINUTES: BlockNumber =
+    pub const RC_MINUTES: BlockNumber =
         60_000 / (super::consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS as BlockNumber);
-    pub const HOURS: BlockNumber = MINUTES * 60;
+    pub const RC_HOURS: BlockNumber = RC_MINUTES * 60;
 }
 
 /// Constants relating to the native token.

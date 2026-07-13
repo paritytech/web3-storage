@@ -506,7 +506,7 @@ fn should_deregister_provider() {
         );
 
         // Step 3: fast-forward through the announcement period. Jump close to
-        // the boundary with `set_clocks` (the period is `48 * HOURS`
+        // the boundary with `set_clocks` (the period is `48 * RC_HOURS`
         // ≈ 28,800 blocks, far too many to iterate one-by-one) then cross it
         // via `advance_block` so the `on_finalize` / `on_initialize` hooks
         // fire at the maturing block.
