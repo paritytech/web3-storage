@@ -65,13 +65,12 @@ impl SubxtChainClient {
     ///
     /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
     async fn current_block(&self) -> Result<u64, Error> {
-        let block = self
+        let at = self
             .api
-            .blocks()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-        Ok(block.number() as u64)
+        Ok(at.block_number())
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -199,19 +198,20 @@ impl SubxtChainClient {
             };
         let our_bytes: [u8; 32] = our_account.into();
 
-        let storage_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "Providers",
-            vec![Value::from_bytes(our_bytes)],
-        );
+        let storage_query =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-        let result = match self.api.storage().at_latest().await {
-            Ok(s) => s.fetch(&storage_query).await,
+        let at = match self.api.at_current_block().await {
+            Ok(at) => at,
             Err(e) => {
                 tracing::warn!("Failed to query storage for multiaddr sync: {}", e);
                 return;
             }
         };
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::from_bytes(our_bytes),))
+            .await;
 
         let provider_value = match result {
             Ok(Some(v)) => v,
@@ -227,7 +227,7 @@ impl SubxtChainClient {
 
         // Extract the current multiaddr from the encoded provider storage entry.
         let current = {
-            let decoded = match provider_value.to_value() {
+            let decoded = match provider_value.decode() {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("Could not decode provider value: {}, skipping sync", e);
@@ -278,9 +278,15 @@ impl SubxtChainClient {
             vec![Value::from_bytes(multiaddr_bytes)],
         );
 
-        match self
-            .api
-            .tx()
+        let at = match self.api.at_current_block().await {
+            Ok(at) => at,
+            Err(e) => {
+                tracing::error!("Failed to submit multiaddr update: {}", e);
+                return;
+            }
+        };
+        match at
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
         {
@@ -431,26 +437,23 @@ impl CheckpointChainClient for SubxtChainClient {
     ) -> Result<Option<(u32, u32)>, Error> {
         use subxt::dynamic::At;
 
-        let config_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "CheckpointConfigs",
-            vec![Value::u128(bucket_id as u128)],
-        );
-        let storage = self
+        let config_query =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "CheckpointConfigs");
+        let at = self
             .api
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        match storage
-            .fetch(&config_query)
+        match at
+            .storage()
+            .try_fetch(config_query, (Value::u128(bucket_id as u128),))
             .await
             .map_err(|e| Error::Internal(format!("Failed to fetch config: {e}")))?
         {
             Some(val) => {
                 let decoded = val
-                    .to_value()
+                    .decode()
                     .map_err(|e| Error::Internal(format!("Failed to decode config: {e}")))?;
                 let interval = decoded
                     .at("interval")
@@ -512,7 +515,10 @@ impl CheckpointChainClient for SubxtChainClient {
 
         let tx_progress = self
             .api
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
@@ -546,24 +552,29 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
             // Query local buckets for agreements
             for bucket_id in &local_buckets {
-                let storage_address = subxt::dynamic::storage(
+                let storage_address = subxt::dynamic::storage::<(Value, Value), Value>(
                     "StorageProvider",
                     "StorageAgreements",
-                    vec![
-                        Value::u128(*bucket_id as u128),
-                        Value::from_bytes(&account_bytes),
-                    ],
                 );
 
-                let storage = self
+                let at = self
                     .api
-                    .storage()
-                    .at_latest()
+                    .at_current_block()
                     .await
                     .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-                if let Ok(Some(value)) = storage.fetch(&storage_address).await {
-                    let encoded = value.encoded();
+                if let Ok(Some(value)) = at
+                    .storage()
+                    .try_fetch(
+                        storage_address,
+                        (
+                            Value::u128(*bucket_id as u128),
+                            Value::from_bytes(&account_bytes),
+                        ),
+                    )
+                    .await
+                {
+                    let encoded = value.bytes();
                     if let Ok(agreement) = Self::decode_storage_agreement_bytes(*bucket_id, encoded)
                     {
                         agreements.push(agreement);
@@ -572,11 +583,13 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             }
 
             // Also iterate chain storage for agreements we might not have locally
-            let storage_address =
-                subxt::dynamic::storage("StorageProvider", "StorageAgreements", ());
+            let storage_address = subxt::dynamic::storage::<(Value, Value), Value>(
+                "StorageProvider",
+                "StorageAgreements",
+            );
 
-            if let Ok(storage) = self.api.storage().at_latest().await {
-                if let Ok(mut iter) = storage.iter(storage_address).await {
+            if let Ok(at) = self.api.at_current_block().await {
+                if let Ok(mut iter) = at.storage().iter(storage_address, ()).await {
                     while let Some(result) = iter.next().await {
                         let kv = match result {
                             Ok(kv) => kv,
@@ -586,7 +599,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                             }
                         };
 
-                        let key_bytes = kv.key_bytes;
+                        let key_bytes = kv.key_bytes();
                         if key_bytes.len() < 32 + 16 + 8 + 16 + 32 {
                             continue;
                         }
@@ -604,7 +617,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                             continue;
                         }
 
-                        let encoded = kv.value.encoded();
+                        let encoded = kv.value().bytes();
                         if let Ok(agreement) =
                             Self::decode_storage_agreement_bytes(bucket_id, encoded)
                         {
@@ -626,24 +639,24 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
         use subxt::ext::scale_value::ValueDef;
 
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let storage_address =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let storage = self
+        let at = self
             .api
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        match storage.fetch(&storage_address).await {
+        match at
+            .storage()
+            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .await
+        {
             Ok(Some(value)) => {
                 use subxt::ext::scale_value::At;
                 let decoded = value
-                    .to_value()
+                    .decode()
                     .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
 
                 if let Some(snapshot_opt) = decoded.at(4) {
@@ -671,26 +684,26 @@ impl ReplicaSyncChainClient for SubxtChainClient {
     async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
-        let storage_address = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let storage_address =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let storage = self
+        let at = self
             .api
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        let bucket_value = match storage.fetch(&storage_address).await {
+        let bucket_value = match at
+            .storage()
+            .try_fetch(storage_address, (Value::u128(bucket_id as u128),))
+            .await
+        {
             Ok(Some(v)) => v,
             _ => return Ok(vec![]),
         };
 
         let decoded = bucket_value
-            .to_value()
+            .decode()
             .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
 
         let mut provider_bytes_list = Vec::new();
@@ -723,21 +736,21 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         // Look up each provider's multiaddr
         let mut endpoints = Vec::new();
         for provider_bytes in provider_bytes_list {
-            let provider_addr = subxt::dynamic::storage(
-                "StorageProvider",
-                "Providers",
-                vec![Value::from_bytes(&provider_bytes)],
-            );
+            let provider_addr =
+                subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Providers");
 
-            let storage = self
+            let at = self
                 .api
-                .storage()
-                .at_latest()
+                .at_current_block()
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-            if let Ok(Some(value)) = storage.fetch(&provider_addr).await {
-                if let Ok(decoded) = value.to_value() {
+            if let Ok(Some(value)) = at
+                .storage()
+                .try_fetch(provider_addr, (Value::from_bytes(&provider_bytes),))
+                .await
+            {
+                if let Ok(decoded) = value.decode() {
                     if let Some(field0) = decoded.at(0) {
                         let bytes = Self::extract_byte_vec(field0);
                         if !bytes.is_empty() {
@@ -788,7 +801,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let tx_progress = self
             .api
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
@@ -824,16 +840,17 @@ impl ChallengeChainClient for SubxtChainClient {
         // Our account's raw bytes, used to filter challenges targeting us.
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
-        let storage_address = subxt::dynamic::storage("StorageProvider", "Challenges", ());
-        let storage = self
+        let storage_address =
+            subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
+        let at = self
             .api
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage_address)
+        let mut iter = at
+            .storage()
+            .iter(storage_address, ())
             .await
             .map_err(|e| Error::Internal(format!("Failed to iterate Challenges: {e}")))?;
 
@@ -852,14 +869,14 @@ impl ChallengeChainClient for SubxtChainClient {
             //   + 16 (blake2_128 of deadline) + 4 (BlockNumber u32 LE)
             //   + 8 (twox64 of index)         + 2 (u16 index LE)
             //   = 62 bytes total.
-            let key_bytes = &kv.key_bytes;
+            let key_bytes = kv.key_bytes();
             if key_bytes.len() < 62 {
                 continue;
             }
             let deadline = u32::from_le_bytes(key_bytes[48..52].try_into().unwrap_or([0; 4]));
             let index = u16::from_le_bytes(key_bytes[60..62].try_into().unwrap_or([0; 2]));
 
-            let encoded = kv.value.encoded();
+            let encoded = kv.value().bytes();
             let challenge = match decode_challenge_for_provider(encoded, &our_bytes) {
                 Ok(Some(c)) => c,
                 Ok(None) => continue,
@@ -967,7 +984,10 @@ impl ChallengeChainClient for SubxtChainClient {
 
         let tx_progress = self
             .api
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
             .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;

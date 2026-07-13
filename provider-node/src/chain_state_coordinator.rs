@@ -107,30 +107,23 @@ struct RealChainStateClient {
 }
 
 impl RealChainStateClient {
-    async fn fetch_value(
-        &self,
-        entry: &str,
-        who: &AccountId32,
-    ) -> Result<Option<Value<u32>>, Error> {
-        let addr = subxt::dynamic::storage(
-            PALLET_NAME,
-            entry,
-            vec![Value::from_bytes(who.as_ref() as &[u8])],
-        );
-        let Some(thunk) = self
+    async fn fetch_value(&self, entry: &str, who: &AccountId32) -> Result<Option<Value>, Error> {
+        let addr = subxt::dynamic::storage::<(Value,), Value>(PALLET_NAME, entry);
+        let at = self
             .api
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?
-            .fetch(&addr)
+            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+        let Some(value) = at
+            .storage()
+            .try_fetch(addr, (Value::from_bytes(who.as_ref() as &[u8]),))
             .await
             .map_err(|e| Error::Internal(format!("Failed to fetch {entry}: {e}")))?
         else {
             return Ok(None);
         };
-        thunk
-            .to_value()
+        value
+            .decode()
             .map(Some)
             .map_err(|e| Error::Internal(format!("Failed to decode {entry}: {e}")))
     }
@@ -156,13 +149,17 @@ impl ChainStateChainClient for RealChainStateClient {
     }
 
     async fn fetch_request_timeout(&self) -> Result<Option<u32>, Error> {
-        let value = self
+        let value: Value = self
             .api
+            .at_current_block()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
             .constants()
-            .at(&subxt::dynamic::constant(PALLET_NAME, "RequestTimeout"))
-            .map_err(|e| Error::Internal(format!("Failed to read RequestTimeout: {e}")))?
-            .to_value()
-            .map_err(|e| Error::Internal(format!("Failed to decode RequestTimeout: {e}")))?;
+            .entry(subxt::dynamic::constant::<Value>(
+                PALLET_NAME,
+                "RequestTimeout",
+            ))
+            .map_err(|e| Error::Internal(format!("Failed to read RequestTimeout: {e}")))?;
 
         Ok(value.as_u128().map(|v| v as u32))
     }
@@ -203,7 +200,7 @@ fn parse_provider_lifecycle_events(
         .filter_map(|event| event.ok())
         .filter(|event| event.pallet_name() == PALLET_NAME)
         .filter_map(|event| {
-            let deregistered = match event.variant_name() {
+            let deregistered = match event.event_name() {
                 "ProviderDeregistered" => true,
                 "ProviderRegistered"
                 | "ProviderSettingsUpdated"
@@ -212,7 +209,7 @@ fn parse_provider_lifecycle_events(
                 | "DeregisterCancelled" => false,
                 _ => return None,
             };
-            let fields = event.field_values().ok()?;
+            let fields = event.decode_fields_unchecked_as::<Value>().ok()?;
             let provider = decode_account(fields.at("provider")?)?;
             Some(if deregistered {
                 ProviderLifecycleEvent::Deregistered { provider }
@@ -288,8 +285,7 @@ impl ChainStateCoordinator {
             .await
             .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
         let mut blocks = api
-            .blocks()
-            .subscribe_finalized()
+            .stream_blocks()
             .await
             .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
         let chain = RealChainStateClient { api };
@@ -312,14 +308,25 @@ impl ChainStateCoordinator {
                     break;
                 }
             };
-            let block_number = block.number();
+            let block_number = block.number() as u32;
 
             tracing::debug!("Finalized block: {}", block_number);
             self.chain_state
                 .current_block
                 .store(block_number, std::sync::atomic::Ordering::Relaxed);
 
-            let parsed = match block.events().await {
+            let events = async {
+                let at = block
+                    .at()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to get block: {e}")))?;
+                at.events()
+                    .fetch()
+                    .await
+                    .map_err(|e| Error::Internal(format!("Failed to fetch events: {e}")))
+            }
+            .await;
+            let parsed = match events {
                 Ok(events) => parse_provider_lifecycle_events(&events),
                 Err(e) => {
                     tracing::warn!(
@@ -523,7 +530,7 @@ impl ChainStateCoordinatorHandle {
 // ── dynamic-value decoding ────────────────────────────────────────────────────
 
 /// Decode a `StorageProvider::Providers` storage value into [`ProviderInfo`].
-fn decode_provider_info(value: &Value<u32>) -> Result<ProviderInfo, Error> {
+fn decode_provider_info(value: &Value) -> Result<ProviderInfo, Error> {
     let missing = |field: &str| Error::Internal(format!("Missing '{field}' in ProviderInfo"));
 
     let multiaddr = named_field(value, "multiaddr")
@@ -595,7 +602,7 @@ fn decode_provider_info(value: &Value<u32>) -> Result<ProviderInfo, Error> {
 }
 
 /// Look up a named field in a scale_value composite.
-fn named_field<'a>(value: &'a Value<u32>, field: &str) -> Option<&'a Value<u32>> {
+fn named_field<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     match &value.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
@@ -610,7 +617,7 @@ fn named_field<'a>(value: &'a Value<u32>, field: &str) -> Option<&'a Value<u32>>
 /// wrapping the inner `Vec<T>`, so scale_value surfaces it as
 /// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
 /// if present, then collects the bytes.
-fn decode_byte_vec(value: &Value<u32>) -> Vec<u8> {
+fn decode_byte_vec(value: &Value) -> Vec<u8> {
     let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
         return Vec::new();
     };
@@ -631,7 +638,7 @@ fn decode_byte_vec(value: &Value<u32>) -> Vec<u8> {
 
 /// Decode an [`AccountId32`] from a SCALE value (a possibly-nested composite of
 /// 32 byte primitives).
-fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
+fn decode_account(v: &Value) -> Option<AccountId32> {
     let mut bytes = [0u8; 32];
     if collect_bytes(v, &mut bytes, 0) == 32 {
         Some(AccountId32::new(bytes))
@@ -642,7 +649,7 @@ fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
 
 /// Recursively collect raw bytes from a SCALE value into `buf` starting at
 /// `offset`, returning the new offset.
-fn collect_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
+fn collect_bytes(v: &Value, buf: &mut [u8; 32], offset: usize) -> usize {
     match &v.value {
         ValueDef::Primitive(Primitive::U128(n)) => {
             // Keep counting past the buffer so oversized inputs fail the
@@ -753,10 +760,7 @@ mod tests {
     /// a named composite with nested `settings`/`stats` composites, `Option`
     /// fields as `Some`/`None` variants, and the `multiaddr` `BoundedVec<u8>`
     /// wrapped in the single-field unnamed composite scale_value produces.
-    fn provider_info_value(
-        replica_sync_price: Option<u128>,
-        deregister_at: Option<u32>,
-    ) -> Value<u32> {
+    fn provider_info_value(replica_sync_price: Option<u128>, deregister_at: Option<u32>) -> Value {
         let opt = |val: Option<u128>| match val {
             Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
             None => Value::unnamed_variant("None", Vec::<Value<()>>::new()),
@@ -785,7 +789,6 @@ mod tests {
             ("stats", stats),
             ("deregister_at", opt(deregister_at.map(u128::from))),
         ])
-        .map_context(|_| 0u32)
     }
 
     #[test]
@@ -816,8 +819,7 @@ mod tests {
     #[test]
     fn decode_provider_info_missing_required_field_errors() {
         // Everything present except the required `stake` field.
-        let value = Value::named_composite([("multiaddr", Value::from_bytes("/ip4/1.2.3.4"))])
-            .map_context(|_| 0u32);
+        let value = Value::named_composite([("multiaddr", Value::from_bytes("/ip4/1.2.3.4"))]);
         let err = decode_provider_info(&value).unwrap_err();
         assert!(
             matches!(&err, Error::Internal(msg) if msg.contains("stake")),
@@ -827,42 +829,42 @@ mod tests {
 
     #[test]
     fn named_field_finds_and_misses() {
-        let value = Value::named_composite([("present", Value::u128(1))]).map_context(|_| 0u32);
+        let value = Value::named_composite([("present", Value::u128(1))]);
         assert!(named_field(&value, "present").is_some());
         assert!(named_field(&value, "absent").is_none());
         // Not a named composite → always None.
-        let prim = Value::u128(9).map_context(|_| 0u32);
+        let prim = Value::u128(9);
         assert!(named_field(&prim, "present").is_none());
     }
 
     #[test]
     fn decode_byte_vec_handles_direct_and_wrapped_and_other() {
         // Direct byte sequence (e.g. `Vec<u8>`).
-        let direct = Value::from_bytes(b"hello").map_context(|_| 0u32);
+        let direct = Value::from_bytes(b"hello");
         assert_eq!(decode_byte_vec(&direct), b"hello");
         // Single-field unnamed wrapper (e.g. `BoundedVec<u8, _>`).
-        let wrapped = Value::unnamed_composite([Value::from_bytes(b"hi")]).map_context(|_| 0u32);
+        let wrapped = Value::unnamed_composite([Value::from_bytes(b"hi")]);
         assert_eq!(decode_byte_vec(&wrapped), b"hi");
         // Non-composite → empty.
-        let prim = Value::u128(5).map_context(|_| 0u32);
+        let prim = Value::u128(5);
         assert!(decode_byte_vec(&prim).is_empty());
     }
 
     #[test]
     fn decode_account_from_flat_and_nested_bytes() {
         // Flat 32-byte sequence.
-        let flat = Value::from_bytes([7u8; 32]).map_context(|_| 0u32);
+        let flat = Value::from_bytes([7u8; 32]);
         assert_eq!(decode_account(&flat), Some(AccountId32::new([7u8; 32])));
         // `[u8; 32]` newtype nests the sequence one level deeper.
-        let nested = Value::unnamed_composite([Value::from_bytes([9u8; 32])]).map_context(|_| 0u32);
+        let nested = Value::unnamed_composite([Value::from_bytes([9u8; 32])]);
         assert_eq!(decode_account(&nested), Some(AccountId32::new([9u8; 32])));
     }
 
     #[test]
     fn decode_account_rejects_wrong_length() {
-        let short = Value::from_bytes([0u8; 31]).map_context(|_| 0u32);
+        let short = Value::from_bytes([0u8; 31]);
         assert_eq!(decode_account(&short), None);
-        let long = Value::from_bytes([0u8; 33]).map_context(|_| 0u32);
+        let long = Value::from_bytes([0u8; 33]);
         assert_eq!(decode_account(&long), None);
     }
 }
