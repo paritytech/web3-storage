@@ -14,11 +14,10 @@
  * different field name, adjust here.
  */
 
-import { ss58Address } from "@polkadot-labs/hdkd-helpers";
 import { decodeEventLog, encodeFunctionData, keccak256 } from "viem";
 import type { Abi } from "viem";
 
-import { asHex, hexToBytes, type ParachainApi } from "./address.js";
+import { asHex, hexToBytes, toHex, type ParachainApi } from "./address.js";
 import type { ChainSigner } from "./signers.js";
 import { requireOneEvent, submitTx, submitTxFinalized } from "./tx.js";
 
@@ -26,30 +25,15 @@ import { requireOneEvent, submitTx, submitTxFinalized } from "./tx.js";
  * Compute the EVM-side H160 of a substrate account via `AccountId32Mapper`'s
  * forward direction: `keccak256(account_bytes)[12..]`. Use this when you need
  * the `address` view of a substrate-only account (e.g. minting an
- * `address`-keyed token to `//Bob`).
+ * `address`-keyed token to `//Bob`). The inverse (H160 → `AccountId32`) is
+ * `h160ToSubstrate` in `@web3-storage/core` (it needs no viem).
  */
 export function substrateToH160(publicKey: Uint8Array | string): string {
   const bytes = publicKey instanceof Uint8Array ? publicKey : hexToBytes(publicKey);
   const hash = hexToBytes(keccak256(bytes));
-  return "0x" + Buffer.from(hash.slice(12)).toString("hex");
-}
-
-/** A substrate account derived from an H160: its public key + SS58 address. */
-export interface MappedAccount {
-  publicKey: Uint8Array;
-  address: string;
-}
-
-/**
- * Substrate account `AccountId32Mapper` assigns to an unmapped H160 (e.g. a
- * deployed contract): the 20 address bytes followed by 12 bytes of `0xEE`. The
- * counterpart to {@link substrateToH160} — use it as the `owner` of negotiated
- * terms when a contract forwards them on a user's behalf.
- */
-export function h160ToSubstrate(addressBytes: Uint8Array): MappedAccount {
-  const publicKey = new Uint8Array(32).fill(0xee);
-  publicKey.set(addressBytes, 0);
-  return { publicKey, address: ss58Address(publicKey) };
+  // `toHex` (browser-safe, `0x`-prefixed) instead of Node's `Buffer` so this
+  // module can be imported from browser bundles too.
+  return toHex(hash.slice(12));
 }
 
 /**
@@ -184,7 +168,7 @@ export async function callContract(
  */
 export function decodeContractEmitted(
   events: unknown[],
-  api: ParachainApi,
+  _api: ParachainApi,
   contractAddress: Uint8Array | string,
   abi: Abi,
 ) {
