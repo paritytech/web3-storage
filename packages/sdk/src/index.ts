@@ -14,6 +14,8 @@ export * from "@web3-storage/layer1";
 
 // core's chain-free primitives that layer0 doesn't already re-export.
 export {
+  h160ToSubstrate,
+  type MappedAccount,
   HttpError,
   httpFetch,
   negotiateTerms,
