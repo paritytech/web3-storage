@@ -45,6 +45,7 @@ import type {
   CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
+  FileWithType,
   FsEntry,
   IndexRoot,
   MemberRole,
@@ -333,6 +334,22 @@ export class FileSystemClient {
     return { dataRoot: body.data_root, size: data.length };
   }
 
+  /** GET the /fs file route, shared by the path-based download methods. */
+  private async fetchFileResponse(
+    bucketId: bigint,
+    path: string,
+    opts: { signal?: AbortSignal },
+  ): Promise<Response> {
+    const providerUrl = await this.getProviderUrl(bucketId);
+    const response = await httpFetch(
+      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
+      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
+      this.fetchOpts,
+    );
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    return response;
+  }
+
   /**
    * Download a file by path. UNVERIFIED — the /fs file route returns no
    * data_root to check against; see the module docs.
@@ -342,14 +359,23 @@ export class FileSystemClient {
     path: string,
     opts: { signal?: AbortSignal } = {},
   ): Promise<Uint8Array> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const response = await this.fetchFileResponse(bucketId, path, opts);
     return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /**
+   * Download a file by path along with its stored MIME type (from the
+   * provider's `Content-Type` header) — e.g. to re-`uploadFile` it unchanged
+   * when moving/renaming a path. UNVERIFIED, like {@link downloadFile}.
+   */
+  async downloadFileWithType(
+    bucketId: bigint,
+    path: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<FileWithType> {
+    const response = await this.fetchFileResponse(bucketId, path, opts);
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    return { bytes: new Uint8Array(await response.arrayBuffer()), contentType };
   }
 
   /** Download a single chunk by CID — VERIFIED (throws CidMismatchError). */
