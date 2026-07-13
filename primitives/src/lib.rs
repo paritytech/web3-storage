@@ -63,6 +63,24 @@ pub enum Role {
 // Provider Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// A replica's last confirmed sync.
+#[derive(
+    Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
+)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReplicaSync<BlockNumber> {
+    /// MMR root the replica synced to.
+    pub root: H256,
+    /// `(start_seq, leaf_count)` of the synced root, when it was the bucket's
+    /// current snapshot (so the range is known on-chain). `None` if the replica
+    /// synced only to a historical root, whose range the chain does not retain;
+    /// `challenge_replica` then returns `ReplicaSyncRangeUnknown` because it
+    /// cannot bind the proof to a specific leaf.
+    pub range: Option<(u64, u64)>,
+    /// Block at which the sync was confirmed.
+    pub block: BlockNumber,
+}
+
 /// Provider role for a specific bucket agreement.
 #[derive(
     Clone, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo, MaxEncodedLen, Debug,
@@ -86,9 +104,8 @@ pub enum ProviderRole<Balance, BlockNumber> {
         sync_price: Balance,
         /// Minimum blocks between sync confirmations for this agreement.
         min_sync_interval: BlockNumber,
-        /// Last confirmed sync: (mmr_root, block_number).
-        /// None if replica hasn't confirmed sync yet.
-        last_sync: Option<(H256, BlockNumber)>,
+        /// Last confirmed sync. `None` if the replica hasn't confirmed sync yet.
+        last_sync: Option<ReplicaSync<BlockNumber>>,
     },
 }
 
@@ -435,33 +452,12 @@ pub fn verify_merkle_proof(leaf_hash: H256, index: u64, proof: &MerkleProof, roo
     current == *root
 }
 
-/// Verify an MMR proof
+/// Bag a list of MMR peaks (ordered tallest → shortest) into a single root.
 ///
-/// This verifies that a leaf at the given index with the given hash
-/// is part of an MMR with the given root.
-pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
-    // First verify the Merkle proof gets us to the data root
-    let leaf_hash = blake2_256(&proof.leaf.encode());
-
-    // Hash up from leaf through the Merkle proof to reach a peak
-    let mut current = leaf_hash;
-    for (i, sibling) in proof.leaf_proof.siblings.iter().enumerate() {
-        let is_right = proof.leaf_proof.path.get(i).copied().unwrap_or(false);
-        current = if is_right {
-            hash_children(*sibling, current)
-        } else {
-            hash_children(current, *sibling)
-        };
-    }
-
-    // Current should be one of the peaks
-    if !proof.peaks.contains(&current) {
-        return false;
-    }
-
-    // Verify that peaks bag to the root
-    let bagged_root = proof
-        .peaks
+/// Folds right-to-left so the tallest peak is outermost, matching the prover's
+/// `Mmr::root()`. An empty peak list bags to `H256::zero()`.
+pub fn bag_peaks(peaks: &[H256]) -> H256 {
+    peaks
         .iter()
         .rev()
         .fold(None, |acc: Option<H256>, &peak| {
@@ -470,9 +466,94 @@ pub fn verify_mmr_proof(proof: &MmrProof, root: &H256) -> bool {
                 Some(right) => hash_children(peak, right),
             })
         })
-        .unwrap_or(H256::zero());
+        .unwrap_or(H256::zero())
+}
 
-    bagged_root == *root
+/// Locate a leaf within an MMR of `leaf_count` leaves.
+///
+/// Returns `(peak_index, local_index, height)` where:
+/// - `peak_index` is the leaf's peak position in the peaks list (ordered
+///   tallest → shortest, the same order the prover and [`bag_peaks`] use),
+/// - `local_index` is the leaf's 0-based index within that peak's perfect
+///   subtree (its bits are the root-ward path: bit `k` set ⇒ right child at
+///   level `k`),
+/// - `height` is that subtree's height (== the proof's expected path length).
+///
+/// Returns `None` if `leaf_index >= leaf_count` (the leaf does not exist).
+pub fn mmr_leaf_position(leaf_index: u64, leaf_count: u64) -> Option<(usize, u64, u32)> {
+    if leaf_index >= leaf_count {
+        return None;
+    }
+    let mut remaining = leaf_count;
+    let mut offset = 0u64;
+    let mut peak_index = 0usize;
+    while remaining > 0 {
+        // Highest set bit of `remaining` => height of the current (tallest) peak.
+        let height = 63 - remaining.leading_zeros();
+        let subtree_leaves = 1u64 << height;
+        if leaf_index < offset.saturating_add(subtree_leaves) {
+            return Some((peak_index, leaf_index - offset, height));
+        }
+        offset = offset.saturating_add(subtree_leaves);
+        remaining -= subtree_leaves;
+        peak_index += 1;
+    }
+    None
+}
+
+/// Verify an MMR inclusion proof, **bound to the exact `(leaf_index, leaf_count)`**.
+///
+/// This is the verification a sound challenge must use: the expected root-ward
+/// path and target peak are *derived* from `(leaf_index, leaf_count)` and checked
+/// against the proof, so a prover cannot satisfy a challenge for one leaf with a
+/// proof for a *different* leaf it happens to still hold. It checks, in order:
+/// 1. `leaf_index < leaf_count` (the leaf exists),
+/// 2. the proof has one sibling per level and one peak per set bit of `leaf_count`,
+/// 3. the leaf hashes up to the peak at its expected position, taking the direction
+///    at each level from the leaf's local index (and rejecting a mismatching path bit),
+/// 4. the peaks bag to `root`.
+pub fn verify_mmr_proof(proof: &MmrProof, leaf_index: u64, leaf_count: u64, root: &H256) -> bool {
+    // Derive the leaf's canonical position; rejects out-of-range leaves.
+    let (peak_index, local_index, height) = match mmr_leaf_position(leaf_index, leaf_count) {
+        Some(pos) => pos,
+        None => return false,
+    };
+
+    // One sibling per level, and one peak per set bit of leaf_count.
+    if proof.leaf_proof.siblings.len() != height as usize
+        || proof.leaf_proof.path.len() != height as usize
+        || proof.peaks.len() != leaf_count.count_ones() as usize
+    {
+        return false;
+    }
+
+    // Climb from the leaf to its peak. The direction at each level is the
+    // corresponding bit of the local index; a proof whose path bit disagrees is
+    // rejected. The climbed hash must then be the peak at the leaf's expected
+    // position (not merely *some* peak under the root).
+    let mut current = blake2_256(&proof.leaf.encode());
+    for (k, (&sibling, &is_right)) in proof
+        .leaf_proof
+        .siblings
+        .iter()
+        .zip(proof.leaf_proof.path.iter())
+        .enumerate()
+    {
+        if is_right != ((local_index >> k) & 1 == 1) {
+            return false;
+        }
+        current = if is_right {
+            hash_children(sibling, current)
+        } else {
+            hash_children(current, sibling)
+        };
+    }
+    if proof.peaks.get(peak_index) != Some(&current) {
+        return false;
+    }
+
+    // The peaks must bag to the committed root.
+    bag_peaks(&proof.peaks) == *root
 }
 
 #[cfg(test)]
@@ -503,5 +584,103 @@ mod tests {
         // Different input should produce different output
         let hash3 = blake2_256(b"hello world!");
         assert_ne!(hash, hash3);
+    }
+
+    #[test]
+    fn test_mmr_leaf_position() {
+        // Out-of-range leaves do not exist.
+        assert_eq!(mmr_leaf_position(0, 0), None);
+        assert_eq!(mmr_leaf_position(5, 5), None);
+        assert_eq!(mmr_leaf_position(7, 7), None);
+
+        // Single leaf: peak 0, local 0, height 0.
+        assert_eq!(mmr_leaf_position(0, 1), Some((0, 0, 0)));
+
+        // leaf_count = 7 decomposes into peaks 4 (h2) + 2 (h1) + 1 (h0),
+        // ordered tallest-first.
+        assert_eq!(mmr_leaf_position(0, 7), Some((0, 0, 2)));
+        assert_eq!(mmr_leaf_position(3, 7), Some((0, 3, 2)));
+        assert_eq!(mmr_leaf_position(4, 7), Some((1, 0, 1)));
+        assert_eq!(mmr_leaf_position(5, 7), Some((1, 1, 1)));
+        assert_eq!(mmr_leaf_position(6, 7), Some((2, 0, 0)));
+    }
+
+    #[test]
+    fn test_bag_peaks() {
+        assert_eq!(bag_peaks(&[]), H256::zero());
+        let a = blake2_256(b"a");
+        let b = blake2_256(b"b");
+        assert_eq!(bag_peaks(&[a]), a);
+        // Folds right-to-left: hash_children(a, b).
+        assert_eq!(bag_peaks(&[a, b]), hash_children(a, b));
+    }
+
+    fn leaf(data_root: H256, total: u64) -> MmrLeaf {
+        MmrLeaf {
+            data_root,
+            data_size: total,
+            total_size: total,
+        }
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_single_leaf() {
+        let l0 = leaf(blake2_256(b"file0"), 10);
+        let l0_hash = blake2_256(&l0.encode());
+        let root = bag_peaks(&[l0_hash]);
+
+        let proof = MmrProof {
+            peaks: vec![l0_hash],
+            leaf: l0,
+            leaf_proof: MerkleProof {
+                siblings: vec![],
+                path: vec![],
+            },
+        };
+
+        // Honest: leaf 0 of a 1-leaf MMR verifies.
+        assert!(verify_mmr_proof(&proof, 0, 1, &root));
+        // Out-of-range leaf_index is rejected.
+        assert!(!verify_mmr_proof(&proof, 1, 1, &root));
+        // Wrong leaf_count (claims 2 leaves) is rejected on path length.
+        assert!(!verify_mmr_proof(&proof, 0, 2, &root));
+    }
+
+    #[test]
+    fn test_verify_mmr_proof_binds_leaf_index_two_leaves() {
+        let l0 = leaf(blake2_256(b"file0"), 10);
+        let l1 = leaf(blake2_256(b"file1"), 30);
+        let l0_hash = blake2_256(&l0.encode());
+        let l1_hash = blake2_256(&l1.encode());
+        let parent = hash_children(l0_hash, l1_hash);
+        let root = bag_peaks(&[parent]);
+
+        // Proof for leaf 0 (left child: path bit false, sibling = leaf 1).
+        let proof0 = MmrProof {
+            peaks: vec![parent],
+            leaf: l0,
+            leaf_proof: MerkleProof {
+                siblings: vec![l1_hash],
+                path: vec![false],
+            },
+        };
+        // Proof for leaf 1 (right child: path bit true, sibling = leaf 0).
+        let proof1 = MmrProof {
+            peaks: vec![parent],
+            leaf: l1,
+            leaf_proof: MerkleProof {
+                siblings: vec![l0_hash],
+                path: vec![true],
+            },
+        };
+
+        // Each leaf verifies at its own index.
+        assert!(verify_mmr_proof(&proof0, 0, 2, &root));
+        assert!(verify_mmr_proof(&proof1, 1, 2, &root));
+
+        // Substitution is rejected: leaf 0's proof cannot answer a leaf-1
+        // challenge, nor leaf 1's a leaf-0 challenge.
+        assert!(!verify_mmr_proof(&proof0, 1, 2, &root));
+        assert!(!verify_mmr_proof(&proof1, 0, 2, &root));
     }
 }

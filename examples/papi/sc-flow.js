@@ -178,6 +178,7 @@ async function main() {
       mmrRoot: upload.commit.mmr_root,
       startSeq: upload.commit.start_seq,
       leafIndex: upload.commit.leaf_indices[0],
+      leafCount: upload.commit.leaf_count,
       providerSignature: upload.commit.provider_signature,
     });
     const proof = await fetchChallengeProof(api, PROVIDER_URL, offchainId);

@@ -154,7 +154,7 @@ async fn test_already_synced() {
     let hash = sp_core::hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     let _ = storage.store_node(1, data_root, data, None);
-    let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let (mmr_root, _, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let state = Arc::new(ProviderState::new(storage, "test".to_string()));
 
@@ -362,7 +362,7 @@ async fn test_duties_filter_already_synced() {
     let hash = sp_core::hashing::blake2_256(&data);
     let data_root = H256::from(hash);
     storage.store_node(1, data_root, data, None).unwrap();
-    let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
+    let (mmr_root, _, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
     let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
 

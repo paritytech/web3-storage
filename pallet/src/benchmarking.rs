@@ -210,6 +210,8 @@ fn insert_challenge<T: Config>(
     provider: &T::AccountId,
     challenger: &T::AccountId,
     mmr_root: H256,
+    leaf_count: u64,
+    leaf_index: u64,
 ) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
@@ -218,7 +220,8 @@ fn insert_challenge<T: Config>(
         challenger: challenger.clone(),
         mmr_root,
         start_seq: 0,
-        leaf_index: 0,
+        leaf_count,
+        leaf_index,
         chunk_index: 0,
         deposit: 100u32.into(),
     };
@@ -901,9 +904,11 @@ mod benchmarks {
             }
         });
 
-        // Sign the commitment payload via host function
+        // Sign the commitment payload via host function. leaf_count = 1 (with
+        // leaf_index 0 below) so create_challenge's leaf_index < leaf_count guard
+        // is satisfied.
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 0);
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 1);
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -915,9 +920,10 @@ mod benchmarks {
             bucket_id,
             provider,
             mmr_root,
-            0,
-            0,
-            0,
+            0, // start_seq
+            1, // leaf_count (matches the signed CommitmentPayload above)
+            0, // leaf_index
+            0, // chunk_index
             signature,
         );
     }
@@ -968,27 +974,28 @@ mod benchmarks {
     }
 
     /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
+    /// Uses a worst-case MMR proof (max 64 peaks, 63-level climb) so the flat weight
+    /// bounds the deepest verification, not just the single-leaf case.
     #[benchmark]
     fn respond_to_challenge_proof() {
         let admin = funded_account::<T>("admin", 0);
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Construct a single-chunk / single-leaf MMR so all proof verifications pass.
-        //
-        // Chunk tree (1 chunk):  data_root = blake2_256(chunk_data)
-        //   chunk_proof = empty (leaf IS the root, no siblings)
-        //
-        // MMR (1 leaf):  mmr_root = blake2_256(encode(mmr_leaf))
-        //   leaf_proof = empty (leaf IS the single peak, no siblings)
-        //   peaks = [mmr_root]
+        // WORST CASE for the bound verify: an MMR of leaf_count = u64::MAX has the
+        // maximum 64 peaks (popcount), and the challenged leaf (index 0) sits in the
+        // tallest peak (height 63), so `respond_to_challenge` must climb 63 sibling
+        // hashes AND bag 64 peaks. The proof is synthetic but valid — we compute the
+        // climbed peak and the bagged root so `verify_mmr_proof` returns true — giving
+        // a conservative upper-bound weight without materialising 2^64 leaves. The
+        // chunk side stays a single MaxChunkSize chunk (whose hashing dominates the
+        // chunk-tree cost), so `data_root == chunk_hash` and the chunk proof is empty.
         let chunk_size = T::MaxChunkSize::get() as usize;
         let chunk_bytes = alloc::vec![0xBEu8; chunk_size];
         let chunk_data: BoundedVec<u8, T::MaxChunkSize> =
             BoundedVec::try_from(chunk_bytes.clone()).unwrap();
-
         let chunk_hash = storage_primitives::blake2_256(&chunk_bytes);
-        let data_root = chunk_hash; // single-element Merkle tree
+        let data_root = chunk_hash;
 
         let mmr_leaf = storage_primitives::MmrLeaf {
             data_root,
@@ -996,22 +1003,42 @@ mod benchmarks {
             total_size: chunk_size as u64,
         };
         let leaf_hash = storage_primitives::blake2_256(&codec::Encode::encode(&mmr_leaf));
-        let mmr_root = leaf_hash; // single-peak MMR, root == peak == leaf_hash
+
+        let leaf_count = u64::MAX; // 64 peaks; challenged leaf 0 lives in the height-63 peak
+        let leaf_index = 0u64;
+        let height = 63u32;
+
+        // Climb 63 levels to the tallest peak (local_index 0 => every step is a left child).
+        let siblings: alloc::vec::Vec<H256> = (0..height)
+            .map(|k| H256::repeat_byte((k + 1) as u8))
+            .collect();
+        let path = alloc::vec![false; height as usize];
+        let mut peak0 = leaf_hash;
+        for sibling in &siblings {
+            peak0 = storage_primitives::hash_children(peak0, *sibling);
+        }
+
+        // 64 peaks total: the climbed peak first (peak_index 0) plus 63 fillers; the
+        // root is their bag, so verify's peak-count / peak-position / bag checks pass.
+        let mut peaks = alloc::vec![peak0];
+        for i in 1..leaf_count.count_ones() {
+            peaks.push(H256::repeat_byte((0x80 + i) as u8));
+        }
+        let mmr_root = storage_primitives::bag_peaks(&peaks);
 
         let mmr_proof = storage_primitives::MmrProof {
-            peaks: alloc::vec![leaf_hash],
+            peaks,
             leaf: mmr_leaf,
-            leaf_proof: storage_primitives::MerkleProof {
-                siblings: alloc::vec![],
-                path: alloc::vec![],
-            },
+            leaf_proof: storage_primitives::MerkleProof { siblings, path },
         };
         let chunk_proof = storage_primitives::MerkleProof {
             siblings: alloc::vec![],
             path: alloc::vec![],
         };
 
-        let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
+        let challenge_id = insert_challenge::<T>(
+            bucket_id, &provider, &admin, mmr_root, leaf_count, leaf_index,
+        );
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
             chunk_data,
@@ -1041,7 +1068,7 @@ mod benchmarks {
         let admin_key = register_sr25519_key::<T>(&admin, KEY_TYPE, u32::MAX);
 
         let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD), 1, 0);
 
         let new_mmr_root = H256::repeat_byte(0xEF);
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
@@ -1094,7 +1121,7 @@ mod benchmarks {
         );
 
         let challenge_id =
-            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
+            insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD), 1, 0);
 
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
 

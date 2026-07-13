@@ -30,25 +30,8 @@ impl Mmr {
 
     /// Get the current root hash (bagged peaks).
     pub fn root(&self) -> H256 {
-        if self.nodes.is_empty() {
-            return H256::zero();
-        }
-
-        let peaks = self.peaks();
-        if peaks.is_empty() {
-            return H256::zero();
-        }
-
-        peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero())
+        // `bag_peaks(&[])` is `H256::zero()`, covering the empty-MMR case.
+        storage_primitives::bag_peaks(&self.peaks())
     }
 
     /// Get the peaks of the MMR (left to right, highest to lowest height).
@@ -177,19 +160,7 @@ impl Mmr {
             return false;
         }
 
-        let bagged_root = proof
-            .peaks
-            .iter()
-            .rev()
-            .fold(None, |acc: Option<H256>, &peak| {
-                Some(match acc {
-                    None => peak,
-                    Some(right) => hash_children(peak, right),
-                })
-            })
-            .unwrap_or(H256::zero());
-
-        bagged_root == root
+        storage_primitives::bag_peaks(&proof.peaks) == root
     }
 
     /// Determine which peak subtree a leaf belongs to.
@@ -339,6 +310,379 @@ mod tests {
     }
 
     #[test]
+    fn hello_world_mmr_values() {
+        use codec::Encode;
+        use storage_primitives::{hash_children, MmrLeaf};
+
+        // "hello world" (11 bytes) is a single chunk, so data_root == chunk hash.
+        let h0 = blake2_256(b"hello world");
+        let leaf0 = MmrLeaf {
+            data_root: h0,
+            data_size: 11,
+            total_size: 11,
+        };
+        let l0 = blake2_256(&leaf0.encode());
+
+        let mut mmr = Mmr::new();
+        mmr.push(l0);
+
+        println!("h0            = {h0:x}");
+        println!("encode(leaf0) = {:02x?}", leaf0.encode());
+        println!("L0            = {l0:x}");
+        println!("MMR root(n=1) = {:x}", mmr.root());
+
+        assert_eq!(
+            format!("{h0:x}"),
+            "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610"
+        );
+        assert_eq!(
+            format!("{l0:x}"),
+            "ec89c4bb9c2abf33c7d090e64b3d53f3886518930c61cf9b9a0b866eff2406c9"
+        );
+        assert_eq!(mmr.root(), l0);
+
+        // Append a second file "goodbye moon".
+        let h1 = blake2_256(b"goodbye moon");
+        let leaf1 = MmrLeaf {
+            data_root: h1,
+            data_size: 12,
+            total_size: 23,
+        };
+        let l1 = blake2_256(&leaf1.encode());
+        mmr.push(l1);
+
+        println!("L1            = {l1:x}");
+        println!("MMR root(n=2) = {:x}", mmr.root());
+
+        assert_eq!(mmr.root(), hash_children(l0, l1));
+        assert_eq!(
+            format!("{:x}", mmr.root()),
+            "051cfeb922130ffefe7a9f68875b61fe1fa057dd90ad33d6c8c21592d9cc9c2b"
+        );
+    }
+
+    #[test]
+    fn poc_client_tracks_append_modify_remove() {
+        use codec::Encode;
+        use storage_primitives::{blake2_256, hash_children, MmrLeaf};
+
+        fn leaf_hash(data: &[u8], total_after: u64) -> H256 {
+            let leaf = MmrLeaf {
+                data_root: blake2_256(data),
+                data_size: data.len() as u64,
+                total_size: total_after,
+            };
+            blake2_256(&leaf.encode())
+        }
+        fn root_over(window: &[H256]) -> H256 {
+            let mut m = Mmr::new();
+            for &lh in window {
+                m.push(lh);
+            }
+            m.root()
+        }
+
+        // Ground truth == the minimal "leaf-hash list" client: every leaf hash
+        // (32B each, NOT the data) + the window start. Enough to follow append,
+        // modify-as-append, AND remove (by rebuilding over the survivors).
+        struct LeafList {
+            leaves: Vec<H256>,
+            start: usize,
+            total: u64,
+        }
+        impl LeafList {
+            fn append(&mut self, data: &[u8]) {
+                self.total += data.len() as u64;
+                self.leaves.push(leaf_hash(data, self.total));
+            }
+            fn remove_front(&mut self, k: usize) {
+                self.start += k;
+            }
+            fn root(&self) -> H256 {
+                root_over(&self.leaves[self.start..])
+            }
+        }
+
+        // Peaks-only accumulator: follows appends, but has NO way to follow a
+        // front-remove (the prune rebuilds the tree; the new root is unrelated
+        // to the old peaks).
+        struct Peaks {
+            peaks: Vec<H256>,
+            leaf_count: u64,
+            total: u64,
+        }
+        impl Peaks {
+            fn append(&mut self, data: &[u8]) {
+                self.total += data.len() as u64;
+                let mut node = leaf_hash(data, self.total);
+                self.leaf_count += 1;
+                for _ in 0..self.leaf_count.trailing_zeros() {
+                    node = hash_children(self.peaks.pop().unwrap(), node);
+                }
+                self.peaks.push(node);
+            }
+            fn root(&self) -> H256 {
+                storage_primitives::bag_peaks(&self.peaks)
+            }
+        }
+
+        let mut truth = LeafList {
+            leaves: vec![],
+            start: 0,
+            total: 0,
+        };
+        let mut peaks = Peaks {
+            peaks: vec![],
+            leaf_count: 0,
+            total: 0,
+        };
+
+        // (1) APPEND A, B, C, D
+        let files: [&[u8]; 4] = [b"A", b"B", b"C", b"D"];
+        for f in files {
+            truth.append(f);
+            peaks.append(f);
+        }
+        assert_eq!(peaks.root(), truth.root(), "append: both clients track");
+
+        // (2) MODIFY B == append a new version B-v2 (old B's leaf stays; the
+        //     directory layer, not modeled here, repoints /B -> B-v2).
+        truth.append(b"B-v2");
+        peaks.append(b"B-v2");
+        assert_eq!(peaks.root(), truth.root(), "modify-as-append: both track");
+        let before_delete = truth.root();
+
+        // (3) REMOVE the two oldest leaves (A and original B) via delete_before.
+        truth.remove_front(2);
+        assert_eq!(
+            peaks.root(),
+            before_delete,
+            "peaks-only is frozen at the pre-delete root"
+        );
+        assert_ne!(
+            peaks.root(),
+            truth.root(),
+            "=> peaks-only is WRONG after a remove; only the leaf-hash list can rebuild"
+        );
+
+        // (4) APPEND E after the delete — leaf-list keeps tracking.
+        truth.append(b"E");
+
+        println!("append + modify + remove + append:");
+        println!("  peaks-only client: tracks append & modify, BREAKS on remove");
+        println!(
+            "  leaf-hash client : tracks ALL (kept {} leaf hashes, start={}, NO data)",
+            truth.leaves.len(),
+            truth.start
+        );
+        println!("  root before remove        = {before_delete:x}");
+        println!("  root after remove+append  = {:x}", truth.root());
+    }
+
+    #[test]
+    fn poc_client_appends_root_without_old_data() {
+        use codec::Encode;
+        use storage_primitives::{blake2_256, hash_children, MmrLeaf};
+
+        // single-chunk file => data_root == blake2_256(bytes)
+        fn leaf_hash(data: &[u8], total_after: u64) -> H256 {
+            let leaf = MmrLeaf {
+                data_root: blake2_256(data),
+                data_size: data.len() as u64,
+                total_size: total_after,
+            };
+            blake2_256(&leaf.encode())
+        }
+
+        // A minimal CLIENT-side accumulator: keeps ONLY peaks + two counters,
+        // never any file bytes. `append` mirrors mmr.rs push (carry merges).
+        struct Acc {
+            peaks: Vec<H256>,
+            leaf_count: u64,
+            total: u64,
+        }
+        impl Acc {
+            fn append(&mut self, data: &[u8]) {
+                self.total += data.len() as u64;
+                let mut node = leaf_hash(data, self.total); // needs ONLY new data + running total
+                self.leaf_count += 1;
+                for _ in 0..self.leaf_count.trailing_zeros() {
+                    let left = self.peaks.pop().unwrap(); // smallest existing peak
+                    node = hash_children(left, node);
+                }
+                self.peaks.push(node);
+            }
+            fn root(&self) -> H256 {
+                storage_primitives::bag_peaks(&self.peaks)
+            }
+        }
+
+        let a: &[u8] = b"file A";
+        let b: &[u8] = b"file B";
+        let c: &[u8] = b"file C";
+        let d: &[u8] = b"file D (the brand new upload)";
+
+        // Phase 1: client uploaded A, B, C earlier and folded them into peaks.
+        let mut acc = Acc {
+            peaks: vec![],
+            leaf_count: 0,
+            total: 0,
+        };
+        acc.append(a);
+        acc.append(b);
+        acc.append(c);
+        let kept_peaks = acc.peaks.clone();
+        let root_after_3 = acc.root();
+        let kept_total = acc.total;
+
+        // Client now DISCARDS A/B/C bytes; retains only this tiny state:
+        let mut client = Acc {
+            peaks: kept_peaks.clone(), // ~log2(n) hashes
+            leaf_count: 3,             // a counter
+            total: kept_total,         // a counter
+        };
+
+        // Phase 2: client uploads D (has only D's bytes) and computes expected root.
+        client.append(d);
+        let expected_root = client.root();
+
+        // Ground truth: the real provider Mmr built over A,B,C,D from scratch.
+        let mut mmr = Mmr::new();
+        let mut total = 0u64;
+        for f in [a, b, c, d] {
+            total += f.len() as u64;
+            mmr.push(leaf_hash(f, total));
+        }
+        let actual_root = mmr.root();
+
+        println!(
+            "client kept {} peaks + 2 counters, NO file data",
+            kept_peaks.len()
+        );
+        println!("root after A,B,C      = {root_after_3:x}");
+        println!("client EXPECTED root  = {expected_root:x}");
+        println!("provider ACTUAL root  = {actual_root:x}");
+
+        assert_eq!(
+            expected_root, actual_root,
+            "accumulator-only client must reproduce the full MMR root"
+        );
+
+        // If the client had kept only the OLD ROOT, it can re-fetch peaks from the
+        // provider and verify them against that trusted root before appending:
+        let bagged = storage_primitives::bag_peaks(&kept_peaks);
+        assert_eq!(bagged, root_after_3, "bag(peaks) == trusted old root");
+    }
+
+    // Regression test for the challenge leaf-index binding fix.
+    //
+    // Before the fix, `verify_mmr_proof` ignored the challenged leaf_index, so a
+    // provider could answer a challenge for leaf N with any other leaf it still
+    // held. This test asserts that the bound `verify_mmr_proof(proof, leaf_index,
+    // leaf_count, root)` accepts a leaf ONLY when it is presented at its own index.
+    #[test]
+    fn challenge_binds_leaf_index() {
+        use codec::Encode;
+        use storage_primitives::{
+            verify_merkle_proof, verify_mmr_proof, MerkleProof, MmrLeaf, MmrProof,
+        };
+
+        // A bucket MMR of 6 single-chunk "files". For a single chunk,
+        // data_root == blake2_256(chunk), so the chunk proof is empty and
+        // verify_merkle_proof(chunk_hash, 0, [], &data_root) reduces to
+        // chunk_hash == data_root.
+        let files: Vec<Vec<u8>> = (0..6)
+            .map(|i| format!("file {i} contents").into_bytes())
+            .collect();
+        let leaf_count = files.len() as u64;
+
+        let mut mmr = Mmr::new();
+        let mut leaves: Vec<MmrLeaf> = Vec::new();
+        let mut total = 0u64;
+        for f in &files {
+            let data_root = blake2_256(f);
+            let data_size = f.len() as u64;
+            total += data_size;
+            let leaf = MmrLeaf {
+                data_root,
+                data_size,
+                total_size: total,
+            };
+            mmr.push(blake2_256(&leaf.encode()));
+            leaves.push(leaf);
+        }
+        let root = mmr.root();
+
+        // Build an on-chain `storage_primitives::MmrProof` for a chosen leaf index.
+        let make_proof = |idx: u64| -> MmrProof {
+            let (siblings, path, peaks) = mmr.proof_with_path(idx).unwrap();
+            MmrProof {
+                peaks,
+                leaf: leaves[idx as usize].clone(),
+                leaf_proof: MerkleProof { siblings, path },
+            }
+        };
+
+        // The two checks the pallet runs for a `Proof` response (chunk_index 0,
+        // empty chunk proof), now BOUND to the challenged (leaf_index, leaf_count).
+        let empty = MerkleProof {
+            siblings: vec![],
+            path: vec![],
+        };
+        let pallet_accepts = |chunk_data: &[u8], challenged_leaf: u64, proof: &MmrProof| -> bool {
+            let chunk_hash = blake2_256(chunk_data);
+            verify_merkle_proof(chunk_hash, 0, &empty, &proof.leaf.data_root)
+                && verify_mmr_proof(proof, challenged_leaf, leaf_count, &root)
+        };
+
+        // HONEST: challenge for leaf 5, answer with leaf 5 -> accepted.
+        assert!(
+            pallet_accepts(&files[5], 5, &make_proof(5)),
+            "honest proof for the challenged leaf must pass"
+        );
+
+        // SUBSTITUTION (the fix): challenge for leaf 5, answer with leaf 2's proof
+        // + data -> REJECTED, because the proof's path/peak don't match the path
+        // derived from leaf_index 5.
+        assert!(
+            !pallet_accepts(&files[2], 5, &make_proof(2)),
+            "a substituted leaf must be rejected for the challenged index"
+        );
+
+        // Exhaustive: a proof for leaf `answer` verifies against a leaf-`challenged`
+        // challenge IFF answer == challenged. No off-diagonal substitution survives.
+        for answer in 0..leaf_count {
+            for challenged in 0..leaf_count {
+                let accepted =
+                    pallet_accepts(&files[answer as usize], challenged, &make_proof(answer));
+                assert_eq!(
+                    accepted,
+                    answer == challenged,
+                    "leaf {answer} answering a leaf-{challenged} challenge"
+                );
+            }
+        }
+
+        // Tampered chunk bytes fail (chunk content is bound).
+        assert!(
+            !pallet_accepts(b"forged bytes", 5, &make_proof(5)),
+            "forged chunk bytes must fail"
+        );
+
+        // Out-of-range challenged leaf_index fails (the leaf does not exist).
+        assert!(
+            !pallet_accepts(&files[3], leaf_count, &make_proof(3)),
+            "an out-of-range leaf_index must fail"
+        );
+
+        // A wrong leaf_count (peak-structure mismatch) fails.
+        assert!(
+            !verify_mmr_proof(&make_proof(5), 5, leaf_count + 1, &root),
+            "a mismatched leaf_count must fail"
+        );
+    }
+
+    #[test]
     fn test_proof_with_path_primitives_verify() {
         use codec::Encode;
 
@@ -371,7 +715,7 @@ mod tests {
             };
 
             assert!(
-                storage_primitives::verify_mmr_proof(&mmr_proof, &root),
+                storage_primitives::verify_mmr_proof(&mmr_proof, i as u64, 5, &root),
                 "verify_mmr_proof failed for leaf {i}"
             );
         }

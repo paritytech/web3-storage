@@ -156,11 +156,15 @@ pub trait StorageBackend: Send + Sync {
     fn check_exists(&self, bucket_id: BucketId, hashes: &[H256]) -> (Vec<H256>, Vec<H256>);
 
     /// Commit data roots to the bucket's MMR.
+    ///
+    /// Returns `(mmr_root, start_seq, leaf_count, leaf_indices)`, all computed under
+    /// the same lock so `leaf_count` is consistent with `mmr_root` (do not re-read it
+    /// separately — a concurrent commit/delete could otherwise desync the two).
     fn commit(
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error>;
+    ) -> Result<(H256, u64, u64, Vec<u64>), Error>;
 
     /// Collect actual chunk data under a data root (DFS, leaf data in order).
     fn collect_chunks(&self, root: H256) -> Vec<Vec<u8>> {

@@ -36,6 +36,12 @@ mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
+    // Some dispatchables (e.g. `challenge_offchain`, which must carry the full
+    // challenged coordinate: mmr_root/start_seq/leaf_count/leaf_index/chunk_index
+    // plus the provider signature) exceed clippy's argument threshold on the
+    // macro-generated `Call` handling, where per-fn `#[allow]` does not reach.
+    #![allow(clippy::too_many_arguments)]
+
     use crate::weights::WeightInfo;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -520,6 +526,13 @@ pub mod pallet {
         pub mmr_root: H256,
         /// Start sequence of the commitment.
         pub start_seq: u64,
+        /// Leaf count of the committed MMR. Lets `respond_to_challenge` bind the
+        /// proof to the exact `leaf_index` (see
+        /// [`storage_primitives::verify_mmr_proof`]). Every challenge path supplies
+        /// it: the snapshot's for `challenge_checkpoint`, the signed one for
+        /// `challenge_offchain`, and the replica's synced range for
+        /// `challenge_replica`.
+        pub leaf_count: u64,
         /// Leaf index within the MMR.
         pub leaf_index: u64,
         /// Chunk index within the leaf's data.
@@ -843,6 +856,11 @@ pub mod pallet {
         SyncTooFrequent,
         InvalidSyncRoot,
         InsufficientSyncBalance,
+        /// The replica's last sync was to a historical root whose `(start_seq,
+        /// leaf_count)` range the chain does not retain, so `challenge_replica`
+        /// cannot bind the proof to a leaf. Re-sync to the current snapshot (or
+        /// use `challenge_offchain` with a signed commitment) to challenge it.
+        ReplicaSyncRangeUnknown,
 
         // Challenge errors
         ChallengeNotFound,
@@ -853,6 +871,9 @@ pub mod pallet {
         ProviderNotInSnapshot,
         LeafBeyondCanonical,
         InvalidDeletionProof,
+        /// Challenge `leaf_index` is out of range for the committed `leaf_count`
+        /// (the leaf does not exist), so no valid proof could ever defend it.
+        LeafIndexOutOfRange,
 
         // Checkpoint errors
         InvalidSignature,
@@ -2376,6 +2397,7 @@ pub mod pallet {
                 provider,
                 snapshot.mmr_root,
                 snapshot.start_seq,
+                snapshot.leaf_count,
                 leaf_index,
                 chunk_index,
             )
@@ -2396,6 +2418,7 @@ pub mod pallet {
             provider: T::AccountId,
             mmr_root: H256,
             start_seq: u64,
+            leaf_count: u64,
             leaf_index: u64,
             chunk_index: u64,
             provider_signature: sp_runtime::MultiSignature,
@@ -2414,10 +2437,10 @@ pub mod pallet {
                 Error::<T>::AgreementNotFound
             );
 
-            // Build the commitment payload that the provider signed
-            // Note: We use leaf_count = 0 here as a placeholder since we don't have it
-            // The actual verification will be based on the mmr_proof submitted in the response
-            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0);
+            // Build the commitment payload that the provider signed. The real
+            // `leaf_count` is signed (not a placeholder) so the challenge can
+            // bind the proof to the exact `leaf_index` in `respond_to_challenge`.
+            let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
             let encoded_payload = payload.encode();
 
             // Verify the provider's signature on this commitment
@@ -2430,6 +2453,7 @@ pub mod pallet {
                 provider,
                 mmr_root,
                 start_seq,
+                leaf_count,
                 leaf_index,
                 chunk_index,
             )
@@ -2454,12 +2478,16 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
 
-            let (mmr_root, start_seq) = match &agreement.role {
+            let (mmr_root, start_seq, leaf_count) = match &agreement.role {
                 ProviderRole::Replica { last_sync, .. } => {
-                    let (root, _block) = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
-                    // We need to get the start_seq from the bucket's snapshot at that root
-                    // For simplicity, we'll use 0 here - in production this should be tracked
-                    (*root, 0u64)
+                    let sync = last_sync.as_ref().ok_or(Error::<T>::InvalidSyncRoot)?;
+                    // Bind the challenge to the synced range. Only a sync to the
+                    // bucket's current snapshot records `(start_seq, leaf_count)`;
+                    // a replica synced only to a historical root cannot be soundly
+                    // challenged here (the chain doesn't retain that root's range).
+                    let (start_seq, leaf_count) =
+                        sync.range.ok_or(Error::<T>::ReplicaSyncRangeUnknown)?;
+                    (sync.root, start_seq, leaf_count)
                 }
                 ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
             };
@@ -2470,6 +2498,7 @@ pub mod pallet {
                 provider,
                 mmr_root,
                 start_seq,
+                leaf_count,
                 leaf_index,
                 chunk_index,
             )
@@ -2528,9 +2557,16 @@ pub mod pallet {
                         Error::<T>::InvalidChallengeProof
                     );
 
-                    // Verify MMR proof: leaf is in the MMR with the challenged root
+                    // Verify the MMR proof, bound to the exact challenged
+                    // `leaf_index`: the provider cannot answer with a proof for a
+                    // different leaf it still holds.
                     ensure!(
-                        storage_primitives::verify_mmr_proof(mmr_proof, &challenge.mmr_root),
+                        storage_primitives::verify_mmr_proof(
+                            mmr_proof,
+                            challenge.leaf_index,
+                            challenge.leaf_count,
+                            &challenge.mmr_root,
+                        ),
                         Error::<T>::InvalidChallengeProof
                     );
                 }
@@ -2680,8 +2716,8 @@ pub mod pallet {
                     let current_block = frame_system::Pallet::<T>::block_number();
 
                     // Check sync interval
-                    if let Some((_, last_block)) = last_sync {
-                        let min_next_block = last_block.saturating_add(*min_sync_interval);
+                    if let Some(sync) = last_sync {
+                        let min_next_block = sync.block.saturating_add(*min_sync_interval);
                         ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
@@ -2690,8 +2726,8 @@ pub mod pallet {
                         Self::find_matching_root(&bucket, &roots)?;
 
                     // Check it's a new root
-                    if let Some((old_root, _)) = last_sync {
-                        ensure!(matched_root != *old_root, Error::<T>::InvalidSyncRoot);
+                    if let Some(sync) = last_sync {
+                        ensure!(matched_root != sync.root, Error::<T>::InvalidSyncRoot);
                     }
 
                     // Pay for sync
@@ -2701,8 +2737,23 @@ pub mod pallet {
                     );
                     *sync_balance = sync_balance.saturating_sub(*sync_price);
 
-                    // Update last sync
-                    *last_sync = Some((matched_root, current_block));
+                    // Update last sync. Record the synced range only when the
+                    // replica matched the current snapshot (position 0), so
+                    // challenge_replica can bind the proof to a leaf; a match on a
+                    // historical root carries no on-chain range.
+                    let range = if position_matched == 0 {
+                        bucket
+                            .snapshot
+                            .as_ref()
+                            .map(|s| (s.start_seq, s.leaf_count))
+                    } else {
+                        None
+                    };
+                    *last_sync = Some(storage_primitives::ReplicaSync {
+                        root: matched_root,
+                        range,
+                        block: current_block,
+                    });
 
                     // Transfer sync payment to provider
                     T::Currency::unreserve(&agreement.owner, *sync_price);
@@ -3237,9 +3288,18 @@ pub mod pallet {
             provider: T::AccountId,
             mmr_root: H256,
             start_seq: u64,
+            leaf_count: u64,
             leaf_index: u64,
             chunk_index: u64,
         ) -> DispatchResult {
+            // Reject a challenge for a non-existent leaf. `verify_mmr_proof` binds
+            // the response to `leaf_index` and rejects `leaf_index >= leaf_count`,
+            // so such a challenge could never be answered with a valid Proof and
+            // would resolve only by slashing the provider on timeout. Guarding here
+            // — the single choke point for all challenge_* paths — closes that
+            // griefing vector at creation time.
+            ensure!(leaf_index < leaf_count, Error::<T>::LeafIndexOutOfRange);
+
             // Calculate deposit (simplified - would be based on expected costs)
             let deposit: BalanceOf<T> = 100u32.into();
 
@@ -3254,6 +3314,7 @@ pub mod pallet {
                 challenger: challenger.clone(),
                 mmr_root,
                 start_seq,
+                leaf_count,
                 leaf_index,
                 chunk_index,
                 deposit,
@@ -3597,8 +3658,11 @@ pub mod pallet {
                             sync_balance: sync_balance.saturated_into::<u128>(),
                             sync_price: sync_price.saturated_into::<u128>(),
                             min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                            last_sync: last_sync
-                                .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                            last_sync: last_sync.map(|s| storage_primitives::ReplicaSync {
+                                root: s.root,
+                                range: s.range,
+                                block: s.block.saturated_into::<u32>(),
+                            }),
                         },
                     },
                     started_at: agreement.started_at.saturated_into::<u32>(),
@@ -3631,8 +3695,11 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|s| storage_primitives::ReplicaSync {
+                                    root: s.root,
+                                    range: s.range,
+                                    block: s.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),
@@ -3675,8 +3742,11 @@ pub mod pallet {
                                 sync_balance: sync_balance.saturated_into::<u128>(),
                                 sync_price: sync_price.saturated_into::<u128>(),
                                 min_sync_interval: min_sync_interval.saturated_into::<u32>(),
-                                last_sync: last_sync
-                                    .map(|(root, block)| (root, block.saturated_into::<u32>())),
+                                last_sync: last_sync.map(|s| storage_primitives::ReplicaSync {
+                                    root: s.root,
+                                    range: s.range,
+                                    block: s.block.saturated_into::<u32>(),
+                                }),
                             },
                         },
                         started_at: agreement.started_at.saturated_into::<u32>(),

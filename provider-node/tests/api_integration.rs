@@ -491,6 +491,7 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
 
     let mmr_root_hex = body["mmr_root"].as_str().expect("mmr_root present");
     let start_seq = body["start_seq"].as_u64().expect("start_seq present");
+    let leaf_count = body["leaf_count"].as_u64().expect("leaf_count present");
     let sig_hex = body["provider_signature"]
         .as_str()
         .expect("provider_signature present");
@@ -505,11 +506,11 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
         "server returned zero-byte placeholder instead of a real signature"
     );
 
-    // Reconstruct exactly what the handler signed: CommitmentPayload with
-    // leaf_count = 0 (matches /commit's encoding).
+    // Reconstruct exactly what the handler signed: CommitmentPayload with the
+    // real leaf_count, so the signature can back a bound challenge_offchain.
     let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
     let mmr_root = H256::from_slice(&mmr_root_bytes);
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0);
+    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
     let encoded = payload.encode();
 
     let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");

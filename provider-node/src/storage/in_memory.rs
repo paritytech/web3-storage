@@ -197,7 +197,7 @@ impl Storage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
         // Verify all roots exist
         for root in &data_roots {
             if !self.nodes.contains_key(root) {
@@ -243,7 +243,14 @@ impl Storage {
         // Derive MMR root from the actual MMR structure
         bucket.mmr_root = bucket.mmr.root();
 
-        Ok((bucket.mmr_root, bucket.start_seq, leaf_indices))
+        // leaf_count is read under the same lock as mmr_root, so the returned
+        // (mmr_root, leaf_count) pair is always self-consistent.
+        Ok((
+            bucket.mmr_root,
+            bucket.start_seq,
+            bucket.leaf_count(),
+            leaf_indices,
+        ))
     }
 
     /// Get MMR proof for a leaf, suitable for on-chain verification.
@@ -373,7 +380,7 @@ impl StorageBackend for Storage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
         self.commit(bucket_id, data_roots)
     }
 
@@ -425,7 +432,7 @@ mod tests {
         let data_root = build_padded_merkle_tree(&storage, bucket_id, &chunk_hashes);
 
         // Commit to MMR
-        let (mmr_root, _, _) = storage.commit(bucket_id, vec![data_root]).unwrap();
+        let (mmr_root, _, _, _) = storage.commit(bucket_id, vec![data_root]).unwrap();
 
         (storage, bucket_id, data_root, mmr_root)
     }
@@ -535,7 +542,7 @@ mod tests {
 
         let mmr_proof = storage.get_mmr_proof(bucket_id, 0).unwrap();
         assert!(
-            verify_mmr_proof(&mmr_proof, &mmr_root),
+            verify_mmr_proof(&mmr_proof, 0, 1, &mmr_root),
             "MMR proof failed for single leaf"
         );
     }
@@ -557,13 +564,13 @@ mod tests {
             data_roots.push(hash);
         }
 
-        let (mmr_root, _, _) = storage.commit(bucket_id, data_roots).unwrap();
+        let (mmr_root, _, _, _) = storage.commit(bucket_id, data_roots).unwrap();
 
         // Verify MMR proof for each leaf
         for i in 0..5u64 {
             let mmr_proof = storage.get_mmr_proof(bucket_id, i).unwrap();
             assert!(
-                verify_mmr_proof(&mmr_proof, &mmr_root),
+                verify_mmr_proof(&mmr_proof, i, 5, &mmr_root),
                 "MMR proof failed for leaf {i}"
             );
         }
@@ -597,6 +604,10 @@ mod tests {
             ),
             "Chunk Merkle proof failed"
         );
-        assert!(verify_mmr_proof(&mmr_proof, &mmr_root), "MMR proof failed");
+        // Single committed file => one MMR leaf (leaf_index 0, leaf_count 1).
+        assert!(
+            verify_mmr_proof(&mmr_proof, leaf_index, 1, &mmr_root),
+            "MMR proof failed"
+        );
     }
 }

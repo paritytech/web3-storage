@@ -184,6 +184,7 @@ export async function challengeOffchain(api, client, provider, bucketId, upload)
       provider: provider.address,
       mmr_root: Binary.fromBytes(hexToBytes(upload.mmrRoot)),
       start_seq: BigInt(upload.startSeq),
+      leaf_count: BigInt(upload.leafCount),
       leaf_index: BigInt(upload.leafIndex),
       chunk_index: 0n,
       provider_signature: Enum(

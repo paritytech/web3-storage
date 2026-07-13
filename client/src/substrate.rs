@@ -335,11 +335,13 @@ pub mod extrinsics {
     /// Create a challenge_offchain extrinsic payload.
     ///
     /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
+    #[allow(clippy::too_many_arguments)]
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,
         mmr_root: H256,
         start_seq: u64,
+        leaf_count: u64,
         leaf_index: u64,
         chunk_index: u64,
         provider_signature: Vec<u8>,
@@ -353,6 +355,7 @@ pub mod extrinsics {
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
                 subxt::dynamic::Value::from_bytes(mmr_root.as_bytes()),
                 subxt::dynamic::Value::u128(start_seq as u128),
+                subxt::dynamic::Value::u128(leaf_count as u128),
                 subxt::dynamic::Value::u128(leaf_index as u128),
                 subxt::dynamic::Value::u128(chunk_index as u128),
                 // MultiSignature enum: Sr25519 = 0, Ed25519 = 1, Ecdsa = 2

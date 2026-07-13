@@ -69,6 +69,7 @@ async function main() {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
     startSeq: upload.commit.start_seq,
+    leafCount: upload.commit.leaf_count,
     providerSignature: upload.commit.provider_signature,
   };
 

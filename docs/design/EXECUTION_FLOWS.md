@@ -519,10 +519,10 @@ sequenceDiagram
     Note over C:   mmr_proof     // MMR proof data_root → mmr_root
     Note over C: }
 
-    Note over C: Verify proofs
+    Note over C: Verify proofs (bound to the challenged coordinate)
     C->>C: chunk_hash = blake2_256(chunk_data)
-    C->>C: verify_merkle_proof(chunk_hash, chunk_proof, data_root)?
-    C->>C: verify_mmr_proof(mmr_proof, mmr_root)?
+    C->>C: verify_merkle_proof(chunk_hash, chunk_index, chunk_proof, data_root)?
+    C->>C: verify_mmr_proof(mmr_proof, leaf_index, leaf_count, mmr_root)?
 
     Note over C: Challenge defended!
     C->>C: Remove challenge

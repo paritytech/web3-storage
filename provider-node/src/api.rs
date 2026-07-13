@@ -333,17 +333,19 @@ async fn commit(
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let (mmr_root, start_seq, leaf_indices) =
+    let (mmr_root, start_seq, leaf_count, leaf_indices) =
         state.storage.commit(request.bucket_id, data_roots)?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    // leaf_count is returned atomically by `commit` (consistent with mmr_root under
+    // the same lock) and signed into the commitment so the signature can back a
+    // bound `challenge_offchain`.
+    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, leaf_count);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
         mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
         start_seq,
+        leaf_count,
         leaf_indices,
         provider_signature: signature,
     }))
@@ -401,9 +403,15 @@ async fn get_commitment(
         .get_bucket(query.bucket_id)
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(query.bucket_id, bucket.mmr_root, bucket.start_seq, 0);
+    // Create commitment payload and sign it. The real `leaf_count` is signed so
+    // the returned signature can back a bound `challenge_offchain` (the pallet now
+    // verifies the signature over the real leaf_count and binds the leaf_index).
+    let payload = CommitmentPayload::new(
+        query.bucket_id,
+        bucket.mmr_root,
+        bucket.start_seq,
+        bucket.leaf_count,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitmentResponse {
@@ -415,11 +423,11 @@ async fn get_commitment(
     }))
 }
 
-/// Return a checkpoint-compatible signature (signs with real leaf_count).
+/// Return a checkpoint-compatible signature.
 ///
-/// Unlike `/commitment` which signs with leaf_count=0 for challenge_offchain,
-/// this endpoint signs with the actual leaf_count so the signature can be used
-/// in the on-chain `checkpoint` extrinsic.
+/// Signs the same `CommitmentPayload` (with the real `leaf_count`) as `/commitment`
+/// — the two differ only in response shape. This one returns a
+/// `CheckpointSignatureResponse` intended for the on-chain `checkpoint` extrinsic.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<CommitmentQuery>,
@@ -530,9 +538,9 @@ async fn delete_data(
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Create commitment payload and sign it
-    // Note: leaf_count is set to 0 to match pallet's challenge_offchain verification
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, 0);
+    // Create commitment payload and sign it over the real leaf_count so the
+    // signature can back a bound `challenge_offchain` against the post-delete state.
+    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, leaf_count);
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {

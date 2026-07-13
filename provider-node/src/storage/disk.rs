@@ -327,7 +327,7 @@ impl DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
         // Verify all roots exist
         let cf_nodes = self
             .db
@@ -392,7 +392,14 @@ impl DiskStorage {
         // Update bucket
         self.update_bucket(bucket_id, &bucket)?;
 
-        Ok((bucket.mmr_root, start_seq, leaf_indices))
+        // leaf_count is derived from the same in-scope `bucket` as mmr_root, so the
+        // returned (mmr_root, leaf_count) pair is self-consistent.
+        Ok((
+            bucket.mmr_root,
+            start_seq,
+            bucket.leaf_count(),
+            leaf_indices,
+        ))
     }
 
     /// Delete data before a given sequence number.
@@ -532,7 +539,7 @@ impl StorageBackend for DiskStorage {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
-    ) -> Result<(H256, u64, Vec<u64>), Error> {
+    ) -> Result<(H256, u64, u64, Vec<u64>), Error> {
         self.commit(bucket_id, data_roots)
     }
 

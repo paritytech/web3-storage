@@ -740,9 +740,10 @@ Challenge a provider using an **off-chain commitment signature**. Works even whe
 - `provider`: `AccountId`
 - `mmrRoot`: `H256`
 - `startSeq`: `u64`
+- `leafCount`: `u64` - leaf count of the committed MMR. Must equal the `leaf_count` the provider signed (e.g. from `GET /commitment`); the chain verifies the signature over it and uses it to bind the proof to `leafIndex`.
 - `leafIndex`: `u64`
 - `chunkIndex`: `u64`
-- `providerSignature`: `MultiSignature` - provider's signature over the commitment payload
+- `providerSignature`: `MultiSignature` - provider's signature over the commitment payload `(bucketId, mmrRoot, startSeq, leafCount)`
 
 **Example:**
 ```
@@ -750,6 +751,7 @@ bucketId: 0
 provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
 mmrRoot: 0x1234567890abcdef...
 startSeq: 0
+leafCount: 12
 leafIndex: 7
 chunkIndex: 3
 providerSignature: 0xsig...
@@ -763,6 +765,8 @@ providerSignature: 0xsig...
 ### `challengeReplica`
 
 Challenge a **replica** provider against the MMR root recorded by their last `confirmReplicaSync`. No signature needed.
+
+> **Note:** `confirmReplicaSync` records the synced `(start_seq, leaf_count)` when the replica syncs to the bucket's **current snapshot**, and `challengeReplica` binds the proof to `leafIndex` with it — same as the other paths. A replica that synced only to a **historical** root has no on-chain range, so `challengeReplica` returns `ReplicaSyncRangeUnknown`; re-sync to the current snapshot, or use `challengeOffchain` with a signed commitment.
 
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
@@ -779,14 +783,14 @@ chunkIndex: 3
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`
+**Errors:** `AgreementNotFound`, `NotReplica`, `InvalidSyncRoot`, `ReplicaSyncRangeUnknown`
 
 ---
 
 ### `respondToChallenge`
 
 Provider defends an active challenge. Three response variants:
-- `Proof { chunk_data, mmr_proof, chunk_proof }` - present the chunk and Merkle proof
+- `Proof { chunk_data, mmr_proof, chunk_proof }` - present the chunk and Merkle proof. The proof is verified **bound to the challenged coordinate**: `chunk_index` (via `verify_merkle_proof`) and `leaf_index` (via `verify_mmr_proof`, using the challenge's `leaf_count`). A proof for any other leaf is rejected, so a provider cannot answer a challenge for one chunk with a different chunk it still holds. (All three challenge paths — checkpoint, offchain, and replica — carry `leaf_count` and bind the leaf.)
 - `Deleted { new_mmr_root, new_start_seq, admin, admin_signature }` - show the bucket admin authorized deletion
 - `Superseded` - show the challenged state was overtaken by a newer canonical state
 
@@ -979,7 +983,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 challengeCheckpoint(bucketId, provider, leafIndex, chunkIndex)
 
 // against an off-chain commitment (hot buckets):
-challengeOffchain(bucketId, provider, mmrRoot, startSeq, leafIndex, chunkIndex, providerSignature)
+challengeOffchain(bucketId, provider, mmrRoot, startSeq, leafCount, leafIndex, chunkIndex, providerSignature)
 
 // against a replica:
 challengeReplica(bucketId, provider, leafIndex, chunkIndex)
