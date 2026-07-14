@@ -9,3 +9,5 @@ pub mod members;
 pub mod providers;
 pub mod queries;
 pub mod signatures;
+#[cfg(feature = "try-runtime")]
+pub mod try_state;
