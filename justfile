@@ -60,7 +60,8 @@ build-paseo-runtime:
 build-provider:
     cargo build --release -p storage-provider-node
 
-# Reproduce the CI Rust coverage gate locally (needs cargo-llvm-cov + diff-cover)
+# Reproduce the CI Rust coverage gate locally (needs cargo-llvm-cov + diff-cover).
+# For a PR not based on dev: git fetch origin <base> && COMPARE_BRANCH=origin/<base> just coverage
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail

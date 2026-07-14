@@ -130,7 +130,10 @@ measure() {
 	# zero-coverage fallthrough.
 	cargo llvm-cov clean --profraw-only
 	# --test '*' = every target under tests/ — picks up new suites
-	# automatically, skips packages that have none.
+	# automatically, skips packages that have none. Invariant: at least one
+	# measured crate must keep a tests/ target (today: provider-node) —
+	# cargo fails the run if the glob matches nothing across the whole
+	# selection, which is the right signal that this split needs a rethink.
 	cargo llvm-cov --no-report "${pkg_flags[@]}" --test '*'
 	cargo llvm-cov report --lcov --output-path lcov-integration.info --ignore-filename-regex "$COV_IGNORE"
 	cargo llvm-cov --no-report "${pkg_flags[@]}" --lib --bins
@@ -146,9 +149,9 @@ measure() {
 	fi
 
 	# Make lcov source paths repo-relative so diff-cover matches git paths.
-     # Make lcov source paths repo-relative so diff-cover matches git paths.
-     sed -i.bak "s|SF:${REPO_ROOT}/|SF:|g" lcov.info lcov-integration.info
-     rm -f lcov.info.bak lcov-integration.info.bak
+	# -i.bak + rm stays portable across GNU and BSD/macOS sed.
+	sed -i.bak "s|SF:${REPO_ROOT}/|SF:|g" lcov.info lcov-integration.info
+	rm -f lcov.info.bak lcov-integration.info.bak
 
 	modules_table lcov.info >coverage-modules.md
 
@@ -170,6 +173,16 @@ measure() {
 
 gate() {
 	need diff-cover "python3 -m pip install 'diff-cover>=9,<10'"
+
+	# Match CI's pin (check.yml installs >=9,<10) so local gate behavior
+	# cannot silently diverge — e.g. 7.x lacks `--format markdown:`.
+	case "$(diff-cover --version 2>/dev/null)" in
+	*" 9."*) ;;
+	*)
+		echo "error: diff-cover 9.x required (CI pins >=9,<10) — install it with: python3 -m pip install 'diff-cover>=9,<10'" >&2
+		exit 1
+		;;
+	esac
 
 	if [ ! -s lcov.info ]; then
 		echo "error: lcov.info not found — run '$0 measure' first" >&2
