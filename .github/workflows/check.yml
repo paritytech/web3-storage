@@ -231,9 +231,13 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Install diff-cover
-        # Drives the patch-coverage gate. The bullseye CI image ships an
-        # unmanaged pip and runs as root, so a plain system-wide install works.
-        run: python3 -m pip install --quiet "diff-cover>=9,<10"
+        # Drives the patch-coverage gate. Minimum version comes from
+        # .github/env, shared with the local check in scripts/coverage.sh.
+        # The bullseye CI image ships an unmanaged pip and runs as root, so
+        # a plain system-wide install works.
+        run: |
+          source .github/env
+          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
 
       - name: Measure coverage
         # Package list + exclusions live in scripts/coverage.sh, shared with

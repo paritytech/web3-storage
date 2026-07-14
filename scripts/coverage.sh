@@ -172,17 +172,23 @@ measure() {
 }
 
 gate() {
-	need diff-cover "python3 -m pip install 'diff-cover>=9,<10'"
-
-	# Match CI's pin (check.yml installs >=9,<10) so local gate behavior
-	# cannot silently diverge — e.g. 7.x lacks `--format markdown:`.
-	case "$(diff-cover --version 2>/dev/null)" in
-	*" 9."*) ;;
-	*)
-		echo "error: diff-cover 9.x required (CI pins >=9,<10) — install it with: python3 -m pip install 'diff-cover>=9,<10'" >&2
+	# Minimum version lives in .github/env (single source of truth, also
+	# installed by CI), so local and CI gate behavior cannot silently
+	# diverge — `--format <fmt>:<path>` only exists since 9.3.0.
+	local min_dc installed
+	min_dc=$(sed -n 's/^DIFF_COVER_MIN_VERSION=//p' .github/env)
+	if [ -z "$min_dc" ]; then
+		echo "error: DIFF_COVER_MIN_VERSION not set in .github/env" >&2
 		exit 1
-		;;
-	esac
+	fi
+
+	need diff-cover "python3 -m pip install 'diff-cover>=${min_dc}'"
+
+	installed=$(diff-cover --version 2>/dev/null | awk '{print $2; exit}')
+	if [ "$(printf '%s\n' "$min_dc" "$installed" | sort -V | head -n1)" != "$min_dc" ]; then
+		echo "error: diff-cover >= ${min_dc} required (found ${installed:-unknown}) — upgrade with: python3 -m pip install --upgrade 'diff-cover>=${min_dc}'" >&2
+		exit 1
+	fi
 
 	if [ ! -s lcov.info ]; then
 		echo "error: lcov.info not found — run '$0 measure' first" >&2
