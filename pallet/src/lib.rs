@@ -52,9 +52,13 @@ pub mod pallet {
         traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
+    #[cfg(feature = "try-runtime")]
+    use frame_system::pallet_prelude::BlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
         CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
@@ -148,6 +152,11 @@ pub mod pallet {
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
+        }
+
+        #[cfg(feature = "try-runtime")]
+        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
         }
     }
 

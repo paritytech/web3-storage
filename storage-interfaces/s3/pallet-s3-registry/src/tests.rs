@@ -323,3 +323,30 @@ fn delete_nonempty_bucket_fails() {
         );
     });
 }
+
+#[cfg(feature = "try-runtime")]
+#[test]
+fn try_state_holds_and_detects_corruption() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"photos/cat.jpg".to_vec(),
+            cid,
+            1024,
+            b"image/jpeg".to_vec(),
+            vec![],
+        ));
+
+        // Index and counter invariants hold on real state.
+        assert_ok!(S3Registry::do_try_state());
+
+        // object_count no longer matches the actual Objects entries.
+        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
+            b.as_mut().unwrap().object_count += 1;
+        });
+        assert!(S3Registry::do_try_state().is_err());
+    });
+}
