@@ -146,7 +146,9 @@ measure() {
 	fi
 
 	# Make lcov source paths repo-relative so diff-cover matches git paths.
-	sed -i "s|SF:${REPO_ROOT}/|SF:|g" lcov.info lcov-integration.info
+     # Make lcov source paths repo-relative so diff-cover matches git paths.
+     sed -i.bak "s|SF:${REPO_ROOT}/|SF:|g" lcov.info lcov-integration.info
+     rm -f lcov.info.bak lcov-integration.info.bak
 
 	modules_table lcov.info >coverage-modules.md
 
