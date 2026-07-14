@@ -109,15 +109,10 @@ jobs:
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
-      # Snapshot lookup is confined to an explicit 3-day key window (today,
-      # yesterday, day before). An unbounded prefix restore would search the
-      # PR's own ref scope before the base branch, so one stale PR-scoped
-      # snapshot could shadow fresh dev-scoped ones forever (and daily use
-      # keeps it from evicting) — a chain-state fix would then never reach
-      # that PR's checks. With `lookup-only` the snapshot isn't restored — we
-      # just decide whether to regenerate. `cache-matched-key` is empty iff
-      # nothing was found in the window, which is also the case on the daily
-      # `schedule` (lookup skipped) so the snapshot is force-refreshed nightly.
+      # The lookup is date-bounded because an unbounded prefix restore would
+      # let a stale PR-scoped snapshot shadow fresh dev-scoped ones forever.
+      # `cache-matched-key` is empty on a miss and on the nightly `schedule`
+      # (lookup skipped), forcing a snapshot refresh.
       - name: Compute snapshot date window
         id: dates
         shell: bash
