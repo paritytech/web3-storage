@@ -6,8 +6,9 @@ name: UI Checks
 on:
   push:
     branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
   pull_request:
-    branches: [main, dev]
   merge_group:
   workflow_dispatch:
 
