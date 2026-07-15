@@ -324,6 +324,118 @@ fn delete_nonempty_bucket_fails() {
     });
 }
 
+#[test]
+fn put_object_metadata_fails_on_total_size_overflow() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // A second object of any size would overflow total_size - the call
+        // must fail instead of silently saturating.
+        assert_noop!(
+            S3Registry::put_object_metadata(
+                RuntimeOrigin::signed(1),
+                s3_bucket_id,
+                b"one-more-byte.bin".to_vec(),
+                cid,
+                1,
+                b"application/octet-stream".to_vec(),
+                vec![],
+            ),
+            Error::<Test>::ArithmeticOverflow
+        );
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert!(S3Registry::get_object(s3_bucket_id, b"one-more-byte.bin").is_none());
+    });
+}
+
+#[test]
+fn put_object_metadata_overwrite_at_max_size_works() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // Overwriting the same key subtracts the old size first, so replacing
+        // a u64::MAX object with another u64::MAX object must not overflow.
+        let new_cid = sp_core::H256::repeat_byte(0xCD);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            new_cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert_eq!(
+            S3Registry::get_object(s3_bucket_id, b"huge.bin")
+                .unwrap()
+                .cid,
+            new_cid
+        );
+    });
+}
+
+#[test]
+fn copy_object_metadata_fails_on_total_size_overflow() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // Copying the object within the same bucket would double-count its
+        // size and overflow total_size.
+        assert_noop!(
+            S3Registry::copy_object_metadata(
+                RuntimeOrigin::signed(1),
+                s3_bucket_id,
+                b"huge.bin".to_vec(),
+                s3_bucket_id,
+                b"huge-copy.bin".to_vec(),
+            ),
+            Error::<Test>::ArithmeticOverflow
+        );
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert!(S3Registry::get_object(s3_bucket_id, b"huge-copy.bin").is_none());
+    });
+}
+
 #[cfg(feature = "try-runtime")]
 #[test]
 fn try_state_holds_and_detects_corruption() {
@@ -346,6 +458,16 @@ fn try_state_holds_and_detects_corruption() {
         // object_count no longer matches the actual Objects entries.
         S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
             b.as_mut().unwrap().object_count += 1;
+        });
+        assert!(S3Registry::do_try_state().is_err());
+
+        // Restore object_count, then corrupt total_size instead.
+        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
+            b.as_mut().unwrap().object_count -= 1;
+        });
+        assert_ok!(S3Registry::do_try_state());
+        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
+            b.as_mut().unwrap().total_size += 1;
         });
         assert!(S3Registry::do_try_state().is_err());
     });
