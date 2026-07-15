@@ -166,6 +166,7 @@ rand = "0.8"
 
 # Subxt (chain interaction for off-chain clients)
 subxt = { version = "0.50.2" }
+subxt-rpcs = { version = "0.50.2" }
 subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
