@@ -30,6 +30,3 @@ std = [
 	"subxt/jsonrpsee",
 	"subxt/native",
 ]
-# Select the network runtime bindings exposed as `storage_runtime`.
-# Off (default): testnet (`storage_paseo_runtime`). On: mainnet (`storage_mainnet_runtime`).
-mainnet = []

@@ -17,14 +17,6 @@ pub use subxt::ext::subxt_core;
 pub use subxt_core;
 pub use subxt_signer;
 
-#[cfg(feature = "mainnet")]
-#[rustfmt::skip]
-pub mod storage_mainnet_runtime;
-#[cfg(feature = "mainnet")]
-pub use storage_mainnet_runtime::*;
-
-// #[cfg(not(feature = "mainnet"))]
 #[rustfmt::skip]
 pub mod storage_paseo_runtime;
-#[cfg(not(feature = "mainnet"))]
 pub use storage_paseo_runtime::*;
