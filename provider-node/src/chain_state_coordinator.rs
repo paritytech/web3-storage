@@ -294,13 +294,21 @@ impl ChainStateCoordinator {
     /// stream until it ends or stalls. Returns `Err` if connecting fails; `Ok(())`
     /// if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
+        let handle = chain_connection::connect(&self.transport).await?;
+        self.follow(handle).await
+    }
+
+    /// Bootstrap state from the connection and follow its finalized blocks
+    /// until the stream ends or stalls. Split from
+    /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
+    /// a mock RPC connection.
+    async fn follow(&self, handle: ChainHandle) -> Result<(), Error> {
         /// How long without a finalized block before the connection is treated
         /// as dead and rebuilt. Finality can pause briefly (session boundaries,
         /// backend resubscriptions), so this is several times the block time;
         /// a genuinely stalled stream otherwise hangs forever with no error.
         const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 
-        let handle = chain_connection::connect(&self.transport).await?;
         let api = handle.api.clone();
         let mut blocks = api
             .stream_blocks()
@@ -918,5 +926,394 @@ mod tests {
         assert_eq!(decode_account(&short), None);
         let long = Value::from_bytes([0u8; 33]);
         assert_eq!(decode_account(&long), None);
+    }
+
+    // ── real subxt client over a mock RPC connection ──────────────────────
+    //
+    // These tests drive [`RealChainStateClient`] and [`ChainStateCoordinator::follow`]
+    // through a real `OnlineClient` (legacy backend) backed by canned RPC
+    // responses, using the repo's tracked runtime metadata snapshot. Storage
+    // values and events are round-tripped through `scale_value` encoding
+    // against the actual runtime types, so these exercise the same dynamic
+    // decode paths as a live chain — without one.
+    mod real_client {
+        use super::*;
+        use std::sync::atomic::Ordering;
+        use subxt::backend::LegacyBackend;
+        use subxt::ext::scale_value::scale::encode_as_type;
+        use subxt_rpcs::client::mock_rpc_client::Json;
+        use subxt_rpcs::client::{MockRpcClient, RpcClient};
+
+        /// Tracked runtime metadata snapshot (shared with the PAPI codegen).
+        const METADATA: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../packages/papi/.papi/metadata/parachain.scale"
+        ));
+        const BLOCK_HASH: &str =
+            "0x2222222222222222222222222222222222222222222222222222222222222222";
+        const GENESIS_HASH: &str =
+            "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+        fn metadata() -> subxt::Metadata {
+            use codec::Decode;
+            subxt::Metadata::decode(&mut &METADATA[..]).expect("tracked metadata decodes")
+        }
+
+        fn provider_account() -> AccountId32 {
+            AccountId32::new([7u8; 32])
+        }
+
+        /// `0x`-prefixed twox128(pallet) ++ twox128(entry) storage-key prefix.
+        fn key_prefix(pallet: &str, entry: &str) -> String {
+            let mut key = sp_core::twox_128(pallet.as_bytes()).to_vec();
+            key.extend(sp_core::twox_128(entry.as_bytes()));
+            format!("0x{}", hex::encode(key))
+        }
+
+        /// Look up the value type of a storage entry in the runtime metadata.
+        fn storage_value_type(md: &subxt::Metadata, pallet: &str, entry: &str) -> u32 {
+            md.pallet_by_name(pallet)
+                .expect("pallet in metadata")
+                .storage()
+                .expect("pallet has storage")
+                .entry_by_name(entry)
+                .expect("entry in metadata")
+                .value_ty()
+        }
+
+        /// SCALE-encode a dynamic value as the given runtime type.
+        fn encode_value(md: &subxt::Metadata, ty: u32, value: &Value) -> Vec<u8> {
+            let mut out = Vec::new();
+            encode_as_type(value, ty, md.types(), &mut out).expect("value encodes as type");
+            out
+        }
+
+        /// A `Providers` storage value matching the full runtime `ProviderInfo`
+        /// shape — unlike [`provider_info_value`], every runtime field must be
+        /// present for `scale_value` to encode it against the real type.
+        fn runtime_provider_info_value(
+            replica_sync_price: Option<u128>,
+            deregister_at: Option<u32>,
+        ) -> Value {
+            let opt = |val: Option<u128>| match val {
+                Some(v) => Value::unnamed_variant("Some", vec![Value::u128(v)]),
+                None => Value::unnamed_variant("None", Vec::<Value>::new()),
+            };
+            Value::named_composite([
+                ("multiaddr", Value::from_bytes("/ip4/1.2.3.4/tcp/3333")),
+                ("public_key", Value::from_bytes([9u8; 32])),
+                ("stake", Value::u128(1_000)),
+                ("committed_bytes", Value::u128(500)),
+                (
+                    "settings",
+                    Value::named_composite([
+                        ("min_duration", Value::u128(10)),
+                        ("max_duration", Value::u128(100)),
+                        ("price_per_byte", Value::u128(5)),
+                        ("accepting_primary", Value::bool(true)),
+                        ("replica_sync_price", opt(replica_sync_price)),
+                        ("accepting_extensions", Value::bool(true)),
+                        ("max_capacity", Value::u128(10_000)),
+                    ]),
+                ),
+                (
+                    "stats",
+                    Value::named_composite([
+                        ("registered_at", Value::u128(1)),
+                        ("agreements_total", Value::u128(3)),
+                        ("agreements_extended", Value::u128(0)),
+                        ("agreements_not_extended", Value::u128(0)),
+                        ("agreements_burned", Value::u128(0)),
+                        ("total_bytes_committed", Value::u128(500)),
+                        ("challenges_received", Value::u128(2)),
+                        ("challenges_failed", Value::u128(1)),
+                    ]),
+                ),
+                ("deregister_at", opt(deregister_at.map(u128::from))),
+            ])
+        }
+
+        /// `System::Events` bytes holding one `StorageProvider::ProviderRegistered`
+        /// event for `provider`, encoded against the real runtime types.
+        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
+            let record = Value::named_composite([
+                ("phase", Value::unnamed_variant("Initialization", vec![])),
+                (
+                    "event",
+                    Value::unnamed_variant(
+                        "StorageProvider",
+                        vec![Value::named_variant(
+                            "ProviderRegistered",
+                            [
+                                (
+                                    "provider",
+                                    Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(
+                                        provider,
+                                    )),
+                                ),
+                                ("stake", Value::u128(1_000)),
+                            ],
+                        )],
+                    ),
+                ),
+                ("topics", Value::unnamed_composite(Vec::<Value>::new())),
+            ]);
+            let ty = storage_value_type(md, "System", "Events");
+            encode_value(md, ty, &Value::unnamed_composite([record]))
+        }
+
+        fn header_json(number: u32) -> serde_json::Value {
+            serde_json::json!({
+                "parentHash": GENESIS_HASH,
+                "number": format!("{number:#x}"),
+                "stateRoot": GENESIS_HASH,
+                "extrinsicsRoot": GENESIS_HASH,
+                "digest": { "logs": [] }
+            })
+        }
+
+        fn runtime_version_json() -> serde_json::Value {
+            serde_json::json!({
+                "specName": "test",
+                "implName": "test",
+                "authoringVersion": 1,
+                "specVersion": 1,
+                "implVersion": 1,
+                "apis": [],
+                "transactionVersion": 1,
+                "stateVersion": 1
+            })
+        }
+
+        /// Build a real `OnlineClient` over a mock RPC connection.
+        ///
+        /// `storage` maps a storage-key prefix (see [`key_prefix`]) to the
+        /// hex value served for reads under it; unmapped keys read as absent.
+        async fn mock_api(
+            storage: Vec<(String, String)>,
+        ) -> subxt::OnlineClient<subxt::PolkadotConfig> {
+            let metadata_hex = format!("0x{}", hex::encode(METADATA));
+            let mock = MockRpcClient::builder()
+                .method_handler("state_getMetadata", move |_params| {
+                    let metadata_hex = metadata_hex.clone();
+                    async move { Json(metadata_hex) }
+                })
+                .method_handler("state_call", move |params| async move {
+                    use codec::Encode;
+                    let raw = params.map(|p| p.get().to_string()).unwrap_or_default();
+                    let function: String = serde_json::from_str::<Vec<serde_json::Value>>(&raw)
+                        .ok()
+                        .and_then(|p| p.first().and_then(|f| f.as_str().map(str::to_string)))
+                        .unwrap_or_default();
+                    let response = match function.as_str() {
+                        // The runtime metadata version(s) this "node" serves:
+                        // exactly the tracked snapshot's version.
+                        "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
+                        "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
+                        "Metadata_metadata" => METADATA.to_vec().encode(),
+                        // sp_version::RuntimeVersion, field by field.
+                        "Core_version" => (
+                            "test".to_string(),           // spec_name
+                            "test".to_string(),           // impl_name
+                            1u32,                         // authoring_version
+                            1u32,                         // spec_version
+                            1u32,                         // impl_version
+                            Vec::<([u8; 8], u32)>::new(), // apis
+                            1u32,                         // transaction_version
+                            1u8,                          // system_version
+                        )
+                            .encode(),
+                        other => panic!("mock RPC: unhandled state_call {other}"),
+                    };
+                    Json(format!("0x{}", hex::encode(response)))
+                })
+                .method_handler("chain_getBlockHash", |_params| async {
+                    Json(GENESIS_HASH.to_string())
+                })
+                .method_handler("chain_getFinalizedHead", |_params| async {
+                    Json(BLOCK_HASH.to_string())
+                })
+                .method_handler("chain_getHeader", |_params| async { Json(header_json(42)) })
+                .method_handler("state_getRuntimeVersion", |_params| async {
+                    Json(runtime_version_json())
+                })
+                .method_handler("state_getStorage", move |params| {
+                    let storage = storage.clone();
+                    async move {
+                        let key: String = params
+                            .map(|p| {
+                                let (key, _rest): (String, serde_json::Value) =
+                                    serde_json::from_str(p.get())
+                                        .or_else(|_| {
+                                            serde_json::from_str::<(String,)>(p.get())
+                                                .map(|(k,)| (k, serde_json::Value::Null))
+                                        })
+                                        .expect("storage params decode");
+                                key
+                            })
+                            .unwrap_or_default();
+                        let value = storage
+                            .iter()
+                            .find(|(prefix, _)| key.starts_with(prefix.as_str()))
+                            .map(|(_, value)| value.clone());
+                        Json(value)
+                    }
+                })
+                .subscription_handler("chain_subscribeFinalizedHeads", |_params, _unsub| async {
+                    vec![Json(header_json(42))]
+                })
+                .subscription_handler("state_subscribeRuntimeVersion", |_params, _unsub| async {
+                    vec![Json(runtime_version_json())]
+                })
+                .method_fallback(|name, _params| async move {
+                    panic!("mock RPC: unhandled method {name}");
+                    #[allow(unreachable_code)]
+                    Json(serde_json::Value::Null)
+                })
+                .subscription_fallback(|name, _params, _unsub| async move {
+                    panic!("mock RPC: unhandled subscription {name}");
+                    #[allow(unreachable_code)]
+                    Vec::<Json<serde_json::Value>>::new()
+                })
+                .build();
+
+            let backend = LegacyBackend::builder().build(RpcClient::new(mock));
+            subxt::OnlineClient::<subxt::PolkadotConfig>::from_backend(Arc::new(backend))
+                .await
+                .expect("client over mock RPC")
+        }
+
+        #[tokio::test]
+        async fn request_timeout_constant_reads_from_real_metadata() {
+            let md = metadata();
+            let client = RealChainStateClient {
+                api: mock_api(vec![]).await,
+            };
+
+            let timeout = client
+                .fetch_request_timeout()
+                .await
+                .expect("constant fetch succeeds")
+                .expect("RequestTimeout present in metadata");
+
+            // Self-consistency: the dynamic lookup must agree with the raw
+            // constant bytes in the same metadata.
+            let expected = {
+                use codec::Decode;
+                let constant = md
+                    .pallet_by_name(PALLET_NAME)
+                    .expect("pallet in metadata")
+                    .constant_by_name("RequestTimeout")
+                    .expect("constant in metadata");
+                u32::decode(&mut constant.value()).expect("u32 constant")
+            };
+            assert_eq!(timeout, expected);
+        }
+
+        #[tokio::test]
+        async fn provider_info_absent_reads_as_none() {
+            let client = RealChainStateClient {
+                api: mock_api(vec![]).await,
+            };
+            let info = client
+                .get_provider_info(&provider_account())
+                .await
+                .expect("storage fetch succeeds");
+            assert!(info.is_none());
+        }
+
+        #[tokio::test]
+        async fn provider_info_round_trips_through_runtime_types() {
+            let md = metadata();
+            let ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let encoded = encode_value(&md, ty, &runtime_provider_info_value(Some(7), Some(42)));
+
+            let client = RealChainStateClient {
+                api: mock_api(vec![(
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(encoded)),
+                )])
+                .await,
+            };
+
+            let info = client
+                .get_provider_info(&provider_account())
+                .await
+                .expect("storage fetch succeeds")
+                .expect("provider info decodes");
+            assert_eq!(info.multiaddr, "/ip4/1.2.3.4/tcp/3333");
+            assert_eq!(info.stake, 1_000);
+            assert_eq!(info.max_capacity, 10_000);
+            assert_eq!(info.replica_sync_price, Some(7));
+            assert_eq!(info.deregister_at, Some(42));
+        }
+
+        #[tokio::test]
+        async fn follow_processes_finalized_blocks_and_provider_events() {
+            let md = metadata();
+            let account = provider_account();
+
+            let providers_ty = storage_value_type(&md, PALLET_NAME, "Providers");
+            let provider_bytes =
+                encode_value(&md, providers_ty, &runtime_provider_info_value(None, None));
+            let events_bytes = encoded_events(&md, &account);
+
+            let api = mock_api(vec![
+                (
+                    key_prefix("System", "Events"),
+                    format!("0x{}", hex::encode(events_bytes)),
+                ),
+                (
+                    key_prefix(PALLET_NAME, "Providers"),
+                    format!("0x{}", hex::encode(provider_bytes)),
+                ),
+                // ProviderReplayStates intentionally unmapped: reads as absent,
+                // covering the no-replay-state nonce bootstrap path.
+            ])
+            .await;
+
+            let chain_state = Arc::new(ChainState::default());
+            let (chain_tx, chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
+            let coordinator = ChainStateCoordinator::new(
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
+                account,
+                chain_state.clone(),
+                chain_tx,
+                events_tx,
+            );
+
+            // The finalized stream serves exactly one block then ends, so
+            // `follow` bootstraps, processes the block (decoding the
+            // ProviderRegistered event and refreshing state), and returns.
+            coordinator
+                .follow(ChainHandle { api })
+                .await
+                .expect("follow runs to stream end");
+
+            assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 42);
+            let info = chain_state.provider_info.read();
+            let info = info.as_ref().expect("provider info synced from chain");
+            assert_eq!(info.stake, 1_000);
+            assert!(chain_state.constants.read().is_some());
+            assert!(chain_state.nonce_counter.read().is_some());
+
+            // The connection was published and the block fanned out.
+            assert!(chain_rx.borrow().is_some());
+            use crate::chain_events::BlockEvent;
+            let mut saw_resubscribed = false;
+            let mut saw_new_block = false;
+            while let Ok(event) = events_rx.try_recv() {
+                match event {
+                    BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
+                    BlockEvent::NewBlock { number: 42 } => saw_new_block = true,
+                    _ => {}
+                }
+            }
+            assert!(saw_resubscribed, "follow should broadcast Resubscribed");
+            assert!(saw_new_block, "follow should broadcast the block clock");
+        }
     }
 }
