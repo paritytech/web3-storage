@@ -24,11 +24,14 @@ use sp_core::H256;
 use std::time::Duration;
 use storage_primitives::BucketId;
 use subxt::dynamic::Value;
+use subxt::error::{DispatchError, TransactionEventsError, TransactionFinalizedSuccessError};
 use subxt::ext::scale_value::value;
 
-/// Pallet dispatch errors that mean "this action already happened" — a retry
-/// after a dropped transaction watch may race an earlier attempt that landed,
-/// and these rejections prove the duty is done rather than failed.
+/// `StorageProvider` error variants that mean "this action already happened"
+/// — a retry after a dropped transaction watch may race an earlier attempt
+/// that landed, and these rejections prove the duty is done rather than
+/// failed. Matched against the pallet + error-variant names resolved from
+/// runtime metadata (see [`SubxtChainClient::is_already_done`]).
 const ALREADY_DONE_ERRORS: [&str; 3] = [
     "ChallengeNotFound", // respond_to_challenge: challenge was taken on defense
     "CheckpointAlreadySubmitted", // provider_checkpoint: window already covered
@@ -85,14 +88,42 @@ impl SubxtChainClient {
         Ok(at.block_number())
     }
 
+    /// Whether the failure is the chain rejecting the call itself (a
+    /// dispatch error decoded from `System::ExtrinsicFailed`), as opposed to
+    /// the watch or transport dying before a verdict was seen.
+    fn is_dispatch_failure(e: &TransactionFinalizedSuccessError) -> bool {
+        matches!(
+            e,
+            TransactionFinalizedSuccessError::SuccessError(
+                TransactionEventsError::ExtrinsicFailed(_)
+            )
+        )
+    }
+
+    /// Whether the dispatch error is one of the pallet's duplicate
+    /// rejections ([`ALREADY_DONE_ERRORS`]): on a retry it proves the first
+    /// attempt landed and the duty is complete.
+    fn is_already_done(e: &TransactionFinalizedSuccessError) -> bool {
+        let TransactionFinalizedSuccessError::SuccessError(
+            TransactionEventsError::ExtrinsicFailed(DispatchError::Module(module_error)),
+        ) = e
+        else {
+            return false;
+        };
+        let Ok(details) = module_error.details() else {
+            return false;
+        };
+        details.pallet.name() == "StorageProvider"
+            && ALREADY_DONE_ERRORS.contains(&details.variant.name.as_str())
+    }
+
     /// Sign, submit, and wait for finalized success, retrying once on
     /// transport-level failures (dropped socket, backend resubscription
     /// killing the transaction watch).
     ///
-    /// On the retry, a dispatch error from [`ALREADY_DONE_ERRORS`] is treated
-    /// as success: it means the first submission actually landed and the duty
-    /// is complete. Matching on the formatted error is pragmatic — the names
-    /// come from pallet metadata and are stable.
+    /// On the retry, a duplicate rejection ([`Self::is_already_done`]) is
+    /// treated as success: it means the first submission actually landed and
+    /// the duty is complete.
     async fn submit_and_finalize(
         &self,
         tx: &subxt::tx::DynamicPayload<Vec<Value>>,
@@ -127,21 +158,20 @@ impl SubxtChainClient {
             return match progress.wait_for_finalized_success().await {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    let msg = e.to_string();
-                    if retrying && ALREADY_DONE_ERRORS.iter().any(|name| msg.contains(name)) {
+                    if retrying && Self::is_already_done(&e) {
                         tracing::info!(
-                            "{what}: duplicate rejected on retry ({msg}); first attempt landed"
+                            "{what}: duplicate rejected on retry ({e}); first attempt landed"
                         );
                         Ok(())
-                    } else if !retrying && !msg.contains("Module") {
+                    } else if !retrying && !Self::is_dispatch_failure(&e) {
                         // Non-dispatch failure (e.g. the watch subscription
                         // died): the tx may or may not have landed — resubmit
                         // and let the duplicate classification above decide.
-                        tracing::warn!("{what}: tx watch failed ({msg}); retrying once");
+                        tracing::warn!("{what}: tx watch failed ({e}); retrying once");
                         tokio::time::sleep(RETRY_DELAY).await;
                         continue;
                     } else {
-                        Err(Error::Internal(format!("Transaction failed: {msg}")))
+                        Err(Error::Internal(format!("Transaction failed: {e}")))
                     }
                 }
             };
