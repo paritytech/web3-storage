@@ -39,11 +39,6 @@ impl StorageUserClient {
         })
     }
 
-    /// Create with default configuration and a dev **Alice** signer.
-    pub fn with_defaults() -> ClientResult<Self> {
-        Self::new(ClientConfig::default(), Signer::default())
-    }
-
     /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
     fn sign(
         &self,
@@ -96,9 +91,9 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
     /// let data = b"Hello, decentralized world!";
     /// let data_root = client.upload(1, data, Default::default()).await?;
     /// println!("Uploaded data with root: 0x{}", hex::encode(data_root.as_bytes()));
@@ -182,10 +177,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
     /// let data = client.download(&data_root, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
@@ -265,10 +260,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
     /// let (data, children) = client.read_node(&hash).await?;
     /// println!("Read {} bytes", data.len());
     /// # Ok(())
@@ -344,10 +339,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
     /// let commitment = client.commit(1, vec![data_root], 0u64).await?;
     /// println!("Committed with MMR root: {}", commitment.mmr_root);
     /// # Ok(())

@@ -11,10 +11,10 @@
 //! ### For Storage Users
 //! [`StorageUserClient`](storage_user::StorageUserClient) - Upload, download, and verify data
 //! ```no_run
-//! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy};
+//! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = StorageUserClient::with_defaults()?;
+//! let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
 //!
 //! // Upload data
 //! let data = b"Hello, decentralized world!";

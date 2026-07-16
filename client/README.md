@@ -56,12 +56,12 @@ See [INTEGRATION.md](INTEGRATION.md) for detailed substrate integration guide.
 Upload, download, and verify data:
 
 ```rust
-use storage_client::{StorageUserClient, ChunkingStrategy};
+use storage_client::{ChunkingStrategy, ClientConfig, Signer, StorageUserClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create client (default config, dev Alice signer)
-    let client = StorageUserClient::with_defaults()?;
+    let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
 
     // Upload data
     let data = b"My important data";
@@ -355,7 +355,7 @@ cargo run --example complete_workflow
 ### Automated Spot-Checking
 
 ```rust
-let mut client = StorageUserClient::with_defaults()?;
+let mut client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
 
 // Perform 10 random spot-checks
 let (passed, failed) = client.spot_check_batch(

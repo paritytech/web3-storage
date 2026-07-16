@@ -63,12 +63,6 @@ impl From<Keypair> for Signer {
     }
 }
 
-impl Default for Signer {
-    fn default() -> Self {
-        Self(Arc::new(dev::alice()))
-    }
-}
-
 impl core::fmt::Debug for Signer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Public key only — never print secret material.
@@ -96,15 +90,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seed_dev_and_default_agree_for_alice() {
+    fn seed_and_dev_agree_for_alice() {
         let seed = Signer::from_seed("//Alice").unwrap();
         let dev = Signer::dev("Alice").unwrap();
-        let default = Signer::default();
         assert_eq!(seed.keypair().public_key().0, dev.keypair().public_key().0);
-        assert_eq!(
-            seed.keypair().public_key().0,
-            default.keypair().public_key().0
-        );
     }
 
     #[test]
