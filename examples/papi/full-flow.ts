@@ -97,10 +97,10 @@ async function setupAgreement(
   return bucketId;
 }
 
-async function uploadAndVerify(api: ParachainApi, bucketId: bigint, client: ChainSigner) {
+async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
   const nonce = Number(await api.query.System.Number.getValue());
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, client);
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
