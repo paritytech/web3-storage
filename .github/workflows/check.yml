@@ -90,6 +90,21 @@ jobs:
             exit 1
           fi
 
+  check-workspace-inheritance:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Check workspace dependency inheritance
+        uses: RomarQ/cargo-workspace-inheritance-check@ca470feb48c8ca8d62c25c72bc5a4cad4a1775b5 # v1.3.0
+        with:
+          promotion-failure: true
+          promotion-threshold: 1
+
   check:
     name: Cargo check
     runs-on: parity-large
@@ -309,7 +324,7 @@ jobs:
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
   basic-checks:
     name: Basic checks
-    needs: [changes, check-fmt, check, clippy, test, benchmarks, coverage]
+    needs: [changes, check-fmt, check-workspace-inheritance, check, clippy, test, benchmarks, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
