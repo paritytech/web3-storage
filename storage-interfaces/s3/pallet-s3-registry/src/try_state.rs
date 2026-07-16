@@ -17,9 +17,18 @@ use sp_runtime::TryRuntimeError;
 
 impl<T: Config> Pallet<T> {
     pub fn do_try_state() -> Result<(), TryRuntimeError> {
+        Self::check_buckets()?;
+        Self::check_name_index()?;
+        Self::check_user_buckets()?;
+        Ok(())
+    }
+
+    /// Per-bucket invariants: `NextS3BucketId` strictly exceeds every live id,
+    /// the name and owner indexes list the bucket, and `object_count` /
+    /// `total_size` match the actual `Objects` entries.
+    fn check_buckets() -> Result<(), TryRuntimeError> {
         let next_id = NextS3BucketId::<T>::get();
         for (id, info) in S3Buckets::<T>::iter() {
-            // `NextS3BucketId` strictly exceeds every live id.
             ensure!(
                 id < next_id,
                 "NextS3BucketId does not exceed a live S3BucketId"
@@ -37,7 +46,6 @@ impl<T: Config> Pallet<T> {
                 "S3 bucket missing from its owner's UserBuckets"
             );
 
-            // `object_count` / `total_size` match the actual `Objects` entries.
             let mut count: u64 = 0;
             let mut total: u64 = 0;
             for (_key, obj) in Objects::<T>::iter_prefix(id) {
@@ -55,8 +63,12 @@ impl<T: Config> Pallet<T> {
                 "S3 bucket total_size != sum of object sizes"
             );
         }
+        Ok(())
+    }
 
-        // `BucketNameToId` reverse: every entry points to a live bucket with that name.
+    /// `BucketNameToId` reverse: every entry points to a live bucket with
+    /// that name.
+    fn check_name_index() -> Result<(), TryRuntimeError> {
         for (name, id) in BucketNameToId::<T>::iter() {
             let info =
                 S3Buckets::<T>::get(id).ok_or("BucketNameToId references a non-existent bucket")?;
@@ -65,9 +77,12 @@ impl<T: Config> Pallet<T> {
                 "BucketNameToId key does not match the bucket's name"
             );
         }
+        Ok(())
+    }
 
-        // `UserBuckets` correctness: no duplicates, and every entry is owned
-        // by the account it is listed under.
+    /// `UserBuckets` correctness: no duplicates, and every entry is owned by
+    /// the account it is listed under.
+    fn check_user_buckets() -> Result<(), TryRuntimeError> {
         for (owner, ids) in UserBuckets::<T>::iter() {
             let unique: BTreeSet<S3BucketId> = ids.iter().copied().collect();
             ensure!(

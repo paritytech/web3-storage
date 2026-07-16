@@ -16,8 +16,15 @@ use sp_runtime::TryRuntimeError;
 
 impl<T: Config> Pallet<T> {
     pub fn do_try_state() -> Result<(), TryRuntimeError> {
-        // `BucketToDrive` is consistent, has no dangling entries, and is
-        // injective on drive ids (two buckets never map to one drive).
+        Self::check_bucket_to_drive()?;
+        Self::check_drives()?;
+        Self::check_user_drives()?;
+        Ok(())
+    }
+
+    /// `BucketToDrive` is consistent, has no dangling entries, and is
+    /// injective on drive ids (two buckets never map to one drive).
+    fn check_bucket_to_drive() -> Result<(), TryRuntimeError> {
         let mut seen_drives: BTreeSet<DriveId> = BTreeSet::new();
         for (bucket_id, drive_id) in BucketToDrive::<T>::iter() {
             let drive = Drives::<T>::get(drive_id)
@@ -31,10 +38,14 @@ impl<T: Config> Pallet<T> {
                 "BucketToDrive maps two buckets to the same drive (not injective)"
             );
         }
+        Ok(())
+    }
 
+    /// Per-drive invariants: `NextDriveId` strictly exceeds every live drive
+    /// id, and the `BucketToDrive` / `UserDrives` indexes list each drive.
+    fn check_drives() -> Result<(), TryRuntimeError> {
         let next_id = NextDriveId::<T>::get();
         for (drive_id, drive) in Drives::<T>::iter() {
-            // `NextDriveId` strictly exceeds every live drive id.
             ensure!(
                 drive_id < next_id,
                 "NextDriveId does not exceed a live DriveId"
@@ -50,9 +61,12 @@ impl<T: Config> Pallet<T> {
                 "live drive missing from its owner's UserDrives"
             );
         }
+        Ok(())
+    }
 
-        // `UserDrives` correctness: no duplicates, and every entry is owned
-        // by the account it is listed under.
+    /// `UserDrives` correctness: no duplicates, and every entry is owned by
+    /// the account it is listed under.
+    fn check_user_drives() -> Result<(), TryRuntimeError> {
         for (owner, drive_ids) in UserDrives::<T>::iter() {
             let unique: BTreeSet<DriveId> = drive_ids.iter().copied().collect();
             ensure!(
