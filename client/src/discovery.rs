@@ -180,15 +180,15 @@ impl DiscoveryClient {
             requirements.max_price_per_byte
         );
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::all_providers())
+        let mut iter = at
+            .storage()
+            .iter(storage::all_providers(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
 
@@ -198,12 +198,12 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+            let account_str = match account_ss58_from_key(kv.key_bytes()) {
                 Some(s) => s,
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("Failed to decode provider {account_str}: {e}");
@@ -275,15 +275,15 @@ impl DiscoveryClient {
             limit
         );
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::all_providers())
+        let mut iter = at
+            .storage()
+            .iter(storage::all_providers(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
 
@@ -293,12 +293,12 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+            let account_str = match account_ss58_from_key(kv.key_bytes()) {
                 Some(s) => s,
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -418,13 +418,15 @@ impl DiscoveryClient {
 
         let account_id = SubstrateClient::parse_account(account)?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_info(&account_id))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_info(&account_id);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
@@ -433,7 +435,7 @@ impl DiscoveryClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         Ok(parse_provider_info(&value))
@@ -459,13 +461,15 @@ impl DiscoveryClient {
 
         let account_id = SubstrateClient::parse_account(account)?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_info(&account_id))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_info(&account_id);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
@@ -474,7 +478,7 @@ impl DiscoveryClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         let Some(info) = parse_provider_info(&value) else {
@@ -503,15 +507,15 @@ impl DiscoveryClient {
 
         tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::all_providers())
+        let mut iter = at
+            .storage()
+            .iter(storage::all_providers(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
 
@@ -521,12 +525,12 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let account_str = match account_ss58_from_key(&kv.key_bytes) {
+            let account_str = match account_ss58_from_key(kv.key_bytes()) {
                 Some(s) => s,
                 None => continue,
             };
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -566,9 +570,9 @@ fn account_ss58_from_key(key: &[u8]) -> Option<String> {
 }
 
 fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
+    value: &'a subxt::ext::scale_value::Value,
     field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
+) -> Option<&'a subxt::ext::scale_value::Value> {
     match &value.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
@@ -577,7 +581,7 @@ fn named_field<'a>(
     }
 }
 
-fn as_bool(value: &subxt::ext::scale_value::Value<u32>) -> bool {
+fn as_bool(value: &subxt::ext::scale_value::Value) -> bool {
     match &value.value {
         ValueDef::Primitive(Primitive::Bool(b)) => *b,
         // Fallback: some decoders emit booleans as u128 0/1 without type info
@@ -585,7 +589,7 @@ fn as_bool(value: &subxt::ext::scale_value::Value<u32>) -> bool {
     }
 }
 
-fn decode_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
+fn decode_bytes(value: &subxt::ext::scale_value::Value) -> Vec<u8> {
     match &value.value {
         ValueDef::Composite(Composite::Unnamed(items)) => items
             .iter()
@@ -596,7 +600,7 @@ fn decode_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
 }
 
 /// Parse a `ProviderInfo<T>` dynamic value into the client-side [`ProviderInfo`].
-fn parse_provider_info(value: &subxt::ext::scale_value::Value<u32>) -> Option<ProviderInfo> {
+fn parse_provider_info(value: &subxt::ext::scale_value::Value) -> Option<ProviderInfo> {
     let multiaddr_bytes = named_field(value, "multiaddr")
         .map(decode_bytes)
         .unwrap_or_default();

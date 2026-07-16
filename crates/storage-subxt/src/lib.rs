@@ -9,12 +9,7 @@
 
 pub use codec;
 pub use scale_info;
-#[cfg(feature = "std")]
 pub use subxt;
-#[cfg(feature = "std")]
-pub use subxt::ext::subxt_core;
-#[cfg(not(feature = "std"))]
-pub use subxt_core;
 pub use subxt_signer;
 
 #[rustfmt::skip]
