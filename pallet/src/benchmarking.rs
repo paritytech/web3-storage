@@ -1246,12 +1246,26 @@ mod benchmarks {
     /// `on_initialize` slash sweep: drains and slashes every challenge expiring
     /// at a single deadline key. Linear in the challenge count `c`; each entry
     /// is drained, its pending counters decremented, and its provider slashed.
-    /// The upper bound is the runtime cap `MaxChallengesPerDeadline` itself, so
-    /// the linear fit covers the true worst case rather than extrapolating to
-    /// it. The sweep applies this per key, so a small fixed hook overhead is
-    /// counted here and again in the hook's base weight — conservative.
+    /// The upper bound is the effective per-block slash budget
+    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
+    /// sweep ever slashes for one key in a block — so the linear fit covers the
+    /// true worst case rather than extrapolating to it. The sweep applies this
+    /// per key, so a small fixed hook overhead is counted here and again in the
+    /// hook's base weight — conservative.
     #[benchmark]
-    fn on_initialize_slash_challenges(c: Linear<0, { T::MaxChallengesPerDeadline::get() as u32 }>) {
+    fn on_initialize_slash_challenges(
+        c: Linear<
+            0,
+            {
+                let cap = T::MaxChallengesPerDeadline::get() as u32;
+                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
+                    cap
+                } else {
+                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
+                }
+            },
+        >,
+    ) {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
         for i in 0..c {

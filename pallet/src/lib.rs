@@ -84,8 +84,17 @@ pub mod pallet {
     /// numbers can jump by more than one per parachain block, so the sweep
     /// covers a range; this caps the probing and the remainder carries over via
     /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
-    /// [`Config::MaxChallengesPerDeadline`].
+    /// [`MAX_SWEEP_SLASH_BUDGET`].
     const MAX_SWEEP_SPAN: u32 = 32;
+
+    /// Maximum challenges the slash sweep slashes per block, across all deadline
+    /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
+    /// to 1000) because slashing that many in one block would consume the whole
+    /// block's PoV (~5 KB each). A fully loaded deadline instead drains over
+    /// several blocks via the [`LastSweptChallengeBlock`] carry-over. The
+    /// effective budget is `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)`,
+    /// so runtimes with a smaller per-deadline cap (e.g. tests) are unaffected.
+    pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
@@ -106,9 +115,9 @@ pub mod pallet {
         ///   `d`. Escape hatches are unaffected; they gate on the
         ///   [`PendingChallenges`] counters, not on the sweep.
         /// - **Budget.** [`MAX_SWEEP_SPAN`] caps keys probed per block;
-        ///   [`Config::MaxChallengesPerDeadline`] caps slashes per block (the
-        ///   worst case one full deadline always had). On exhaustion the cursor
-        ///   parks just below the partly drained key; the rest carries over.
+        ///   [`MAX_SWEEP_SLASH_BUDGET`] caps slashes per block so one maturing
+        ///   deadline cannot eat the block's PoV. On exhaustion the cursor parks
+        ///   just below the partly drained key; the rest carries over.
         /// - **Why `on_initialize`.** Work done is returned as weight instead of
         ///   pre-reserved, which `on_finalize` cannot do.
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
@@ -138,9 +147,11 @@ pub mod pallet {
                 return weight;
             }
             let end = sweepable.min(last.saturating_add(MAX_SWEEP_SPAN.into()));
-            // Per-block slash budget. `.max(1)` so a (nonsensical) zero cap
-            // cannot park the cursor forever.
-            let mut budget = u32::from(T::MaxChallengesPerDeadline::get()).max(1);
+            // Per-block slash budget, capped so one maturing deadline cannot eat
+            // the whole block's PoV. Lower bound of 1 so a (nonsensical) zero
+            // cap cannot park the cursor forever.
+            let mut budget =
+                u32::from(T::MaxChallengesPerDeadline::get()).clamp(1, MAX_SWEEP_SLASH_BUDGET);
             let mut key = last.saturating_add(One::one());
             while key <= end {
                 let mut count: u32 = 0;
@@ -1088,8 +1099,8 @@ pub mod pallet {
         /// resolves (defended, slashed, or timed out).
         AgreementHasPendingChallenge,
         /// `MaxChallengesPerDeadline` challenges have already been allocated
-        /// for the deadline this challenge would land on. Bounds the
-        /// `on_initialize` slash sweep's per-block slash budget.
+        /// for the deadline this challenge would land on. Caps the total the
+        /// `on_initialize` sweep must eventually drain for a single key.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
