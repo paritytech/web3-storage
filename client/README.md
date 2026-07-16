@@ -32,19 +32,19 @@ tokio = { version = "1", features = ["full"] }
 
 ### Setup
 
-All clients that need on-chain access must connect to the chain and set a signer:
+All clients must connect to the chain before on-chain operations. `AdminClient`
+and `StorageUserClient` take their signer at construction; `ProviderClient` and
+`ChallengerClient` set it after connecting via `set_signer`:
 
 ```rust
 use storage_client::{AdminClient, ClientConfig, Signer};
 
 let config = ClientConfig::default(); // ws://localhost:2222
-let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
+// Dev account for testing — use a real keypair in production!
+let mut client = AdminClient::new(config, Signer::dev("alice")?)?;
 
 // Connect to chain
 client.connect().await?;
-
-// Set signer (dev account for testing — use a real keypair in production!)
-client.set_signer(Signer::dev("alice")?)?;
 
 // Now ready for on-chain operations
 ```

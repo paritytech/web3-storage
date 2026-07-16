@@ -15,11 +15,13 @@ use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use storage_primitives::ReplicaTerms;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
-    PalletConstants, ProviderState, SignedTerms, Storage,
+    PalletConstants, ProviderDeps, ProviderState, SignedTerms, Storage,
 };
 use tokio::net::TcpListener;
 
@@ -36,8 +38,16 @@ impl TestServer {
     /// `//Alice`-signed server whose state advertises `info` on-chain and has a
     /// nonce counter ready, i.e. every `/negotiate` prerequisite satisfied.
     async fn ready(info: ProviderInfo) -> Self {
-        let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-            .expect("//Alice is a valid SURI");
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI");
         // Simulate what the coordinator does once registration lands: publish
         // constants, bootstrap the nonce counter, then publish provider_info.
         // Together these satisfy every `/negotiate` prerequisite.
@@ -230,8 +240,17 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 #[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
     let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
-        Arc::new(Storage::new()),
+        deps,
         "0xtest_provider".to_string(),
     )))
     .await;
@@ -247,7 +266,16 @@ async fn negotiate_503_when_provider_info_unavailable() {
     // Keypair present and chain state ready, but no on-chain registration info
     // loaded (the reconciler never published it): the node cannot validate terms
     // it would be bound to, so it must refuse. `provider_info` defaults to `None`.
-    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
@@ -333,7 +361,16 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     // returns None → clears provider_info. Subsequent negotiate calls should
     // return provider_info_unavailable, not provider_deregistering (the info is
     // just gone at that point).
-    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
@@ -383,7 +420,16 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     // coordinator re-fetches storage which now reports deregister_at = None →
     // negotiate signs again. Mirrors the coordinator clearing the deregistering
     // state when a provider backs out of winding down.
-    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
@@ -426,7 +472,16 @@ async fn negotiate_503_when_nonce_counter_absent() {
     // Registered (provider_info loaded) but the coordinator has not yet
     // published any nonce counter (nonce_counter == None). The handler must
     // refuse so we never sign a nonce not derived from on-chain state.
-    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block
@@ -450,7 +505,16 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     // Some counter but bootstrap_from_hsn has not yet been called (e.g. the
     // chain returned the provider info but replay state was not yet visible).
     // The handler must refuse until is_bootstrapped() is true.
-    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, PROVIDER_SEED).unwrap();
     state
         .chain_state
         .current_block

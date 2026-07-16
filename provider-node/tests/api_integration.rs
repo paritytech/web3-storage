@@ -16,8 +16,10 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::{Commitment, CommitmentPayload};
-use storage_provider_node::{ProviderState, Storage};
+use std::time::Duration;
+use storage_primitives::{Commitment, CommitmentPayload, Role};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
 
 /// Test server helper that starts the provider node on a random port.
 struct TestServer {
@@ -33,9 +35,20 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(
+                    common::test_member_account(),
+                    Role::Admin,
+                )])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
         Self::with_state(
-            ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-                .expect("//Alice is a valid SURI"),
+            ProviderState::with_seed(deps, PROVIDER_SEED).expect("//Alice is a valid SURI"),
         )
         .await
     }
@@ -45,8 +58,20 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(
+                    common::test_member_account(),
+                    Role::Admin,
+                )])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
         Self::with_state(ProviderState::with_provider_id(
-            Arc::new(Storage::new()),
+            deps,
             "0xtest_provider".to_string(),
         ))
         .await

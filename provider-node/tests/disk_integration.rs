@@ -14,7 +14,10 @@ use common::SignedClient;
 use reqwest::Method;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use storage_provider_node::{DiskStorage, ProviderState};
+use std::time::Duration;
+use storage_primitives::Role;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{DiskStorage, NullNonceStore, ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 struct DiskTestServer {
@@ -28,10 +31,21 @@ impl DiskTestServer {
     async fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let disk = DiskStorage::new(dir.path()).expect("RocksDB should open");
-        let (addr, client) = common::serve(
-            ProviderState::with_seed(Arc::new(disk), "//Alice").expect("//Alice is valid"),
-        )
-        .await;
+        let deps = ProviderDeps {
+            storage: Arc::new(disk),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(
+                    common::test_member_account(),
+                    Role::Admin,
+                )])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let (addr, client) =
+            common::serve(ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid"))
+                .await;
         Self {
             addr,
             client,

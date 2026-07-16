@@ -396,15 +396,11 @@ pub async fn require_role(
     required: RequiredRole,
     max_skew: Duration,
 ) -> Result<(), Error> {
-    let cache = state
-        .membership_cache
-        .as_ref()
-        .ok_or_else(|| Error::Internal("No membership cache".to_string()))?;
-
     let header = auth_header.ok_or(Error::AuthRequired)?;
     let account = verify_signature(header, method, bucket_id, max_skew)?;
 
-    let role = cache
+    let role = state
+        .membership_cache
         .get_role(bucket_id, &account)
         .await
         .map_err(|e| Error::Internal(format!("Membership lookup failed: {e}")))?

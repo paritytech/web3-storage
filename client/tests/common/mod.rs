@@ -13,7 +13,7 @@ use storage_client::{
 };
 use storage_primitives::{AgreementTerms, Role};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_provider_node::{create_router, NullNonceStore, ProviderDeps, ProviderState, Storage};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -231,16 +231,20 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// (`/commit`, `/commitment`, `/checkpoint/sign`, `/delete`) work end-to-end.
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
-    let storage = Arc::new(Storage::new());
-    let alice_account = dev_account("alice");
-    let mut state = ProviderState::with_seed(storage, "//Alice").expect("//Alice is a valid SURI");
-    let cache = Arc::new(MembershipCache::new(
-        Box::new(StaticMembershipResolver(vec![(alice_account, Role::Admin)])),
-        Duration::from_secs(60),
-    ));
-    state.set_auth_config(cache, Duration::from_secs(300));
-    let state = Arc::new(state);
-    let app = create_router(state);
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![(
+                dev_account("alice"),
+                Role::Admin,
+            )])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is a valid SURI");
+    let app = create_router(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -9,7 +9,10 @@ use common::SignedClient;
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_provider_node::{ProviderState, Storage};
+use std::time::Duration;
+use storage_primitives::Role;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
 
 struct TestServer {
     addr: SocketAddr,
@@ -18,8 +21,20 @@ struct TestServer {
 
 impl TestServer {
     async fn new() -> Self {
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(
+                    common::test_member_account(),
+                    Role::Admin,
+                )])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
         let (addr, client) = common::serve(ProviderState::with_provider_id(
-            Arc::new(Storage::new()),
+            deps,
             "0xtest_provider".to_string(),
         ))
         .await;

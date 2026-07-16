@@ -2,24 +2,25 @@
 
 //! Integration tests for auth-enabled HTTP endpoints.
 //!
-//! These tests spin up a real HTTP server with a
-//! `common::membership_cache` over a fixed member set with configurable roles
-//! for test accounts. All assertions go through real HTTP requests — the auth
-//! middleware, signature verification, membership cache lookup, and role check
-//! are exercised as a single end-to-end path.
+//! These tests spin up a real HTTP server whose membership is a fixed member
+//! set with configurable roles per test account. All assertions go through
+//! real HTTP requests — the auth middleware, signature verification,
+//! membership cache lookup, and role check are exercised as a single
+//! end-to-end path.
 
 mod common;
 
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use common::{current_timestamp, make_auth_header, membership_cache};
+use common::{current_timestamp, make_auth_header};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::{create_router, ProviderState, Storage};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{create_router, NullNonceStore, ProviderDeps, ProviderState, Storage};
 use tokio::net::TcpListener;
 
 type AccountId32 = sp_core::crypto::AccountId32;
@@ -39,12 +40,17 @@ impl AuthTestServer {
         let alice_kp = sr25519::Pair::from_string("//Alice", None).unwrap();
         let alice_account = AccountId32::new(alice_kp.public().0);
 
-        let cache = membership_cache(vec![(alice_account, alice_role)]);
-
-        let mut state = ProviderState::with_seed(Arc::new(Storage::new()), "//Alice")
-            .expect("//Alice is valid");
-        // 300s skew keeps the default the `*_expired_timestamp` tests assume.
-        state.set_auth_config(cache, Duration::from_secs(300));
+        // The 300s skew keeps the default the `*_expired_timestamp` tests assume.
+        let deps = ProviderDeps {
+            storage: Arc::new(Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(MembershipCache::new(
+                Box::new(StaticMembershipResolver(vec![(alice_account, alice_role)])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_seed(deps, "//Alice").expect("//Alice is valid");
 
         let app = create_router(Arc::new(state));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

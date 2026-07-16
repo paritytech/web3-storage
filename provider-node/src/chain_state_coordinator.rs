@@ -63,12 +63,19 @@ pub struct ChainState {
 
 impl Default for ChainState {
     fn default() -> Self {
+        Self::with_nonce_store(Arc::new(NullNonceStore))
+    }
+}
+
+impl ChainState {
+    /// Fresh chain state whose nonce counter persists through `store`.
+    pub fn with_nonce_store(store: Arc<dyn NonceStore>) -> Self {
         Self {
             current_block: AtomicU32::new(0),
             constants: RwLock::new(None),
             provider_info: RwLock::new(None),
             nonce_counter: RwLock::new(None),
-            nonce_store: Arc::new(NullNonceStore),
+            nonce_store: store,
         }
     }
 }

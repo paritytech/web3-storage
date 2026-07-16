@@ -2,13 +2,10 @@
 
 //! Shared test helpers for the provider-node integration suites.
 //!
-//! Tests run with `//Alice` as a bucket `Admin`
-//! ([`with_admin_member`]) and use [`SignedClient`] to sign every request as
-//! `//Alice`.
+//! Tests use [`SignedClient`] to sign every request as `//Alice`.
 
-// Each integration suite (`api_`/`auth_`/`s3_`/`fs_`/`disk_integration`) compiles this
-// module in its own test crate and exercises only a subset of these helpers, so per-crate
-// dead-code analysis flags the rest.
+// Each integration suite compiles this module in its own test crate and exercises only
+// a subset of these helpers, so per-crate dead-code analysis flags the rest.
 #![allow(dead_code)]
 
 use provider_negotiation::build_auth_header;
@@ -16,9 +13,7 @@ use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use std::time::{SystemTime, UNIX_EPOCH};
 use storage_provider_node::{create_router, ProviderState};
 
 type AccountId32 = sp_core::crypto::AccountId32;
@@ -34,25 +29,10 @@ pub fn test_member_account() -> AccountId32 {
     AccountId32::new(test_member_pair().public().0)
 }
 
-/// Membership cache over a fixed member set (returned for every bucket).
-pub fn membership_cache(members: Vec<(AccountId32, Role)>) -> Arc<MembershipCache> {
-    Arc::new(MembershipCache::new(
-        Box::new(StaticMembershipResolver(members)),
-        Duration::from_secs(60),
-    ))
-}
-
-/// Enforce auth with the test member as `Admin` on every bucket.
-pub fn with_admin_member(mut state: ProviderState) -> ProviderState {
-    let cache = membership_cache(vec![(test_member_account(), Role::Admin)]);
-    state.set_auth_config(cache, Duration::from_secs(300));
-    state
-}
-
-/// Spawn the provider on a random port with the test member as `Admin`, and
-/// return its address plus a [`SignedClient`].
+/// Spawn the provider on a random port and return its address plus a
+/// [`SignedClient`].
 pub async fn serve(state: ProviderState) -> (SocketAddr, SignedClient) {
-    let app = create_router(Arc::new(with_admin_member(state)));
+    let app = create_router(Arc::new(state));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

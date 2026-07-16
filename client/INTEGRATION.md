@@ -34,7 +34,7 @@ Each specialized client (ProviderClient, AdminClient, etc.) uses the base client
 ### Basic Setup
 
 ```rust
-use storage_client::{AdminClient, ClientConfig};
+use storage_client::{AdminClient, ClientConfig, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,12 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enable_retries: true,
     };
 
-    // Create client and connect to chain
-    let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
+    // Create client (dev signer for testing) and connect to chain
+    let mut client = AdminClient::new(config, Signer::dev("alice")?)?;
     client.connect().await?;
-
-    // Set signer (dev account for testing)
-    client.set_signer(Signer::dev("alice")?)?;
 
     // Now you can make on-chain calls
     let bucket_id = client.create_bucket(2).await?;
@@ -66,16 +63,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For production, use actual keypairs instead of dev accounts:
 
 ```rust
+use storage_client::{AdminClient, Signer};
 use subxt_signer::sr25519::Keypair;
 
 // Load from seed phrase or keystore
 let keypair = Keypair::from_uri("//Alice")?;
 
-// Set signer
-if let Some(chain_client) = client.base.chain_client.as_mut() {
-    let client = Arc::make_mut(chain_client);
-    *client = client.clone().with_signer(keypair);
-}
+// Any subxt sr25519 keypair converts into a Signer
+let mut client = AdminClient::new(config, Signer::from(keypair))?;
+client.connect().await?;
 ```
 
 ### Dynamic Extrinsics
@@ -262,7 +258,9 @@ client.connect().await?;
 
 ### "No signer configured" Error
 
-Set a signer before submitting extrinsics:
+Set a signer before submitting extrinsics. Only `ProviderClient` and
+`ChallengerClient` need this step — `AdminClient` and `StorageUserClient`
+take their signer at construction:
 
 ```rust
 client.set_signer(Signer::dev("alice")?)?;
