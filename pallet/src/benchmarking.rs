@@ -1243,13 +1243,13 @@ mod benchmarks {
         );
     }
 
-    /// `on_finalize` slash sweep: drains and slashes every challenge expiring
-    /// at a deadline. Linear in the challenge count `c`; each entry is drained,
-    /// its pending counters decremented, and its provider slashed. The cost is
-    /// charged up front in `on_initialize` via
-    /// `WeightInfo::on_initialize_slash_challenges(c)`. The upper bound is the
-    /// runtime cap `MaxChallengesPerDeadline` itself, so the linear fit covers
-    /// the true worst case rather than extrapolating to it.
+    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
+    /// at a single deadline key. Linear in the challenge count `c`; each entry
+    /// is drained, its pending counters decremented, and its provider slashed.
+    /// The upper bound is the runtime cap `MaxChallengesPerDeadline` itself, so
+    /// the linear fit covers the true worst case rather than extrapolating to
+    /// it. The sweep applies this per key, so a small fixed hook overhead is
+    /// counted here and again in the hook's base weight — conservative.
     #[benchmark]
     fn on_initialize_slash_challenges(c: Linear<0, { T::MaxChallengesPerDeadline::get() as u32 }>) {
         let deadline: BlockNumberFor<T> = 200u32.into();
@@ -1281,10 +1281,25 @@ mod benchmarks {
         }
         NextChallengeIndex::<T>::insert(deadline, c as u16);
 
+        // Drive the real sweep over exactly one key. Anchor the cursor one
+        // below `deadline`, then set the relay clock so the sweepable range
+        // (keys < previous relay parent) is exactly `{deadline}`:
+        // `sweepable = current_block() - 1 = deadline`, `end = deadline`.
+        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
+        let now = deadline.saturating_add(1u32.into());
+        set_block_number::<T>(now);
+
         #[block]
         {
-            StorageProvider::<T>::on_finalize(deadline);
+            StorageProvider::<T>::on_initialize(now);
         }
+
+        // Guard against the sweep silently no-op'ing (the bug this benchmark
+        // had while it still called the dropped `on_finalize`): every challenge
+        // at the deadline must have been drained. (At the worst-case component
+        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
+        // the cursor parks at `deadline - 1` and carries over — expected.)
+        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
