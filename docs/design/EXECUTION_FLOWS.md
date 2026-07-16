@@ -538,9 +538,11 @@ sequenceDiagram
     participant C as Chain (Pallet)
     participant B as Balances
 
-    Note over C: on_finalize(block_number) hook
+    Note over C: on_initialize(n) slash sweep
 
-    C->>C: expired = Challenges::take(block_number)
+    Note over C: Deadlines are relay-chain blocks. Drain every deadline key in<br/>(LastSweptChallengeBlock, previous relay parent], budget-capped.
+
+    C->>C: expired = Challenges::drain_prefix(deadline_key)
 
     loop For each expired challenge
         Note over C: Provider failed to respond!
