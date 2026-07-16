@@ -374,7 +374,7 @@ fn put_object_metadata_fails_on_total_size_overflow() {
                 b"application/octet-stream".to_vec(),
                 vec![],
             ),
-            Error::<Test>::ArithmeticOverflow
+            Error::<Test>::BucketSizeLimitReached
         );
 
         let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
@@ -449,7 +449,7 @@ fn copy_object_metadata_fails_on_total_size_overflow() {
                 s3_bucket_id,
                 b"huge-copy.bin".to_vec(),
             ),
-            Error::<Test>::ArithmeticOverflow
+            Error::<Test>::BucketSizeLimitReached
         );
 
         let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
@@ -514,7 +514,7 @@ fn saturated_total_size_underflow_recipe_is_blocked() {
         assert_ok!(put_sized_object(s3_bucket_id, b"huge.bin", u64::MAX));
         assert_noop!(
             put_sized_object(s3_bucket_id, b"small.bin", 5),
-            Error::<Test>::ArithmeticOverflow
+            Error::<Test>::BucketSizeLimitReached
         );
         assert_eq!(checked_bucket_stats(s3_bucket_id), (1, u64::MAX));
 

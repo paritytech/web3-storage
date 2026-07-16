@@ -251,7 +251,7 @@ pub mod pallet {
         /// Content type too long.
         ContentTypeTooLong,
         /// Arithmetic overflow in bucket size accounting.
-        ArithmeticOverflow,
+        BucketSizeLimitReached,
     }
 
     #[pallet::call]
@@ -443,7 +443,7 @@ pub mod pallet {
             bucket_info.total_size = bucket_info
                 .total_size
                 .checked_add(size)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(s3_bucket_id, bucket_info);
 
             // Create metadata
@@ -564,7 +564,7 @@ pub mod pallet {
             dst_bucket.total_size = dst_bucket
                 .total_size
                 .checked_add(metadata.size)
-                .ok_or(Error::<T>::ArithmeticOverflow)?;
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(dst_bucket_id, dst_bucket);
 
             // Store copy
