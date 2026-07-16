@@ -77,7 +77,7 @@ async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
 
     // A chain it can't reach must never produce state: every field stays at the
     // default that makes `/negotiate` return 503.
-    assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 0);
+    assert_eq!(chain_state.current_relay_block.load(Ordering::Relaxed), 0);
     assert!(chain_state.constants.read().is_none());
     assert!(chain_state.provider_info.read().is_none());
     assert!(chain_state.nonce_counter.read().is_none());
@@ -140,7 +140,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
     // dirties state. If the task had panicked, `stop()`'s join would surface it.
     for _ in 0..3 {
         tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 0);
+        assert_eq!(chain_state.current_relay_block.load(Ordering::Relaxed), 0);
         assert!(chain_state.provider_info.read().is_none());
     }
 
@@ -300,7 +300,7 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
     // provider is not (or no longer) registered — both fields are dropped so
     // `/negotiate` reports `provider_info_unavailable`.
     let cs = ChainState::default();
-    cs.current_block.store(100, Ordering::Relaxed);
+    cs.current_relay_block.store(100, Ordering::Relaxed);
     *cs.constants.write() = Some(PalletConstants {
         request_timeout: 200,
     });
@@ -315,7 +315,7 @@ async fn refresh_clears_info_and_counter_when_not_registered() {
     assert!(cs.provider_info.read().is_none());
     assert!(cs.nonce_counter.read().is_none());
     // Per-connection constants and the block height are not tied to registration.
-    assert_eq!(cs.current_block.load(Ordering::Relaxed), 100);
+    assert_eq!(cs.current_relay_block.load(Ordering::Relaxed), 100);
     assert_eq!(cs.constants.read().as_ref().unwrap().request_timeout, 200);
 }
 
