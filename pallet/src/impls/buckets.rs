@@ -149,7 +149,7 @@ impl<T: Config> Pallet<T> {
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
 
-        let admin_member = Member {
+        let admin_member = Member::<T> {
             account: admin.clone(),
             role: Role::Admin,
         };
@@ -166,7 +166,7 @@ impl<T: Config> Pallet<T> {
                 .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
         }
 
-        let bucket = Bucket {
+        let bucket = Bucket::<T> {
             members,
             frozen_start_seq: None,
             min_providers,

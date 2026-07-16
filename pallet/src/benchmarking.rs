@@ -48,7 +48,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     // Enable provider for agreements
     let _ = Pallet::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        pallet::ProviderSettings {
+        pallet::ProviderSettings::<T> {
             min_duration: 1u32.into(),
             max_duration: 1000u32.into(),
             price_per_byte: 1u32.into(),
@@ -343,7 +343,7 @@ mod benchmarks {
     #[benchmark]
     fn update_provider_settings() {
         let provider = create_provider::<T>(0);
-        let settings = pallet::ProviderSettings {
+        let settings = pallet::ProviderSettings::<T> {
             min_duration: 10u32.into(),
             max_duration: 10000u32.into(),
             price_per_byte: 100u32.into(),
@@ -1062,7 +1062,7 @@ mod benchmarks {
 
         let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Proof {
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Proof {
             chunk_data,
             mmr_proof,
             chunk_proof,
@@ -1108,7 +1108,7 @@ mod benchmarks {
             .expect("signing should work");
         let admin_signature = sp_runtime::MultiSignature::Sr25519(sig);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Deleted {
             new_mmr_root,
             new_start_seq,
             nonce: 0u64,
@@ -1156,7 +1156,7 @@ mod benchmarks {
         let challenge_id =
             insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Superseded;
+        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Superseded;
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);

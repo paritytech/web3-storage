@@ -247,7 +247,7 @@ fn respond_to_challenge_fails_not_provider() {
             StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(4),
                 challenge_id,
-                crate::ChallengeResponse::Superseded,
+                crate::ChallengeResponse::<Test>::Superseded,
             ),
             Error::<Test>::NotChallengeProvider
         );
@@ -297,7 +297,7 @@ fn respond_to_challenge_superseded_works() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // Challenge should be removed
@@ -378,7 +378,7 @@ fn respond_to_challenge_superseded_cost_split_block_1() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // Block 1: challenger 90%, provider 10%
@@ -442,7 +442,7 @@ fn respond_to_challenge_superseded_cost_split_block_5() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // challenger_cost = 80, provider_cost = 20
@@ -485,7 +485,7 @@ fn respond_to_challenge_superseded_cost_split_block_24() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // challenger_cost = 70, provider_cost = 30
@@ -528,7 +528,7 @@ fn respond_to_challenge_superseded_cost_split_block_95() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // challenger_cost = 60, provider_cost = 40
@@ -572,7 +572,7 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // challenger_cost = 50, provider_cost = 50
@@ -740,7 +740,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                 deadline: 101,
                 index: 0,
             },
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // Index 0 is gone; the OTHER challenge is still at its ORIGINAL index 1
@@ -761,7 +761,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
                 deadline: 101,
                 index: 1,
             },
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
         assert!(Challenges::<Test>::get(101, 1).is_none());
         assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 0);
@@ -877,7 +877,7 @@ fn respond_to_challenge_superseded_emits_defended_event() {
         assert_ok!(StorageProvider::respond_to_challenge(
             RuntimeOrigin::signed(2),
             challenge_id,
-            crate::ChallengeResponse::Superseded,
+            crate::ChallengeResponse::<Test>::Superseded,
         ));
 
         // Verify ChallengeDefended event
@@ -1292,7 +1292,7 @@ mod challenge_tests {
             assert_ok!(StorageProvider::respond_to_challenge(
                 RuntimeOrigin::signed(2),
                 challenge_id,
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof,
@@ -1323,7 +1323,7 @@ mod challenge_tests {
                         deadline: 999u64,
                         index: 0u16,
                     },
-                    ChallengeResponse::Proof {
+                    ChallengeResponse::<Test>::Proof {
                         chunk_data: make_chunk_bv(b"chunk-0"),
                         mmr_proof,
                         chunk_proof,
@@ -1359,7 +1359,7 @@ mod challenge_tests {
                         deadline: 101u64,
                         index: 0u16,
                     },
-                    ChallengeResponse::Proof {
+                    ChallengeResponse::<Test>::Proof {
                         chunk_data: make_chunk_bv(&chunk_data),
                         mmr_proof,
                         chunk_proof,
@@ -1401,7 +1401,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof: bad_chunk_proof,
@@ -1456,7 +1456,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof: bad_mmr_proof,
                     chunk_proof,
@@ -1467,7 +1467,7 @@ mod challenge_tests {
         });
     }
 
-    /// `ChallengeResponse::Superseded` claimed against a leaf the snapshot
+    /// `ChallengeResponse::<Test>::Superseded` claimed against a leaf the snapshot
     /// doesn't actually cover is a lie — slash.
     #[test]
     fn respond_with_bogus_superseded_claim_slashes_immediately() {
@@ -1492,7 +1492,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Superseded,
+                ChallengeResponse::<Test>::Superseded,
             ));
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
@@ -1540,7 +1540,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Superseded,
+                ChallengeResponse::<Test>::Superseded,
             ));
             assert!(Challenges::<Test>::get(101, 0).is_none());
         });
@@ -1576,7 +1576,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Superseded,
+                ChallengeResponse::<Test>::Superseded,
             ));
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
@@ -1628,7 +1628,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Superseded,
+                ChallengeResponse::<Test>::Superseded,
             ));
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stake, 0);
@@ -1664,7 +1664,7 @@ mod challenge_tests {
                         deadline: 101u64,
                         index: 0u16,
                     },
-                    ChallengeResponse::Proof {
+                    ChallengeResponse::<Test>::Proof {
                         chunk_data: make_chunk_bv(&chunk_data),
                         mmr_proof,
                         chunk_proof,
@@ -1745,7 +1745,7 @@ mod challenge_tests {
                 200
             ));
             // Enable replica acceptance via settings update.
-            let settings = ProviderSettings {
+            let settings = ProviderSettings::<Test> {
                 min_duration: 0u64,
                 max_duration: 1000u64,
                 price_per_byte: 0u64,
@@ -2046,7 +2046,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof,
@@ -2108,7 +2108,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof: bad_proof,
@@ -2178,7 +2178,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof,
@@ -2222,7 +2222,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof: bad_proof,
@@ -2431,7 +2431,7 @@ mod challenge_tests {
                     deadline: 101u64,
                     index: 0u16,
                 },
-                ChallengeResponse::Proof {
+                ChallengeResponse::<Test>::Proof {
                     chunk_data: make_chunk_bv(&chunk_data),
                     mmr_proof,
                     chunk_proof,

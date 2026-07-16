@@ -75,7 +75,7 @@ impl<T: Config> Pallet<T> {
                 }
                 bucket.members[idx].role = role;
             } else {
-                let new_member = Member {
+                let new_member = Member::<T> {
                     account: member.clone(),
                     role,
                 };

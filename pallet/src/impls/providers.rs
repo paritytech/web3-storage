@@ -88,13 +88,13 @@ impl<T: Config> Pallet<T> {
 
         let current_block = frame_system::Pallet::<T>::block_number();
 
-        let provider_info = ProviderInfo {
+        let provider_info = ProviderInfo::<T> {
             multiaddr,
             public_key,
             stake,
             committed_bytes: 0,
             settings,
-            stats: ProviderStats {
+            stats: ProviderStats::<T> {
                 registered_at: current_block,
                 ..Default::default()
             },

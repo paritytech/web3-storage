@@ -265,12 +265,12 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
         --derive Clone \
         --derive Eq \
         --derive PartialEq \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
-        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "storage_primitives::provider::ProviderInfo=serde::Serialize" \
+        --derive-for-type "storage_primitives::provider::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "storage_primitives::provider::ProviderSettings=serde::Serialize" \
+        --derive-for-type "storage_primitives::provider::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "storage_primitives::provider::ProviderStats=serde::Serialize" \
+        --derive-for-type "storage_primitives::provider::ProviderStats=serde::Deserialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
         --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
         --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \

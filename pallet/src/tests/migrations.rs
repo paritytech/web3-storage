@@ -39,7 +39,7 @@ fn put_old_bucket(bucket_id: BucketId, old: OldBucket) {
 fn migration_backfills_commitment_nonce_on_existing_snapshot() {
     new_test_ext().execute_with(|| {
         let bucket_id: BucketId = 1;
-        let member = Member {
+        let member = Member::<Test> {
             account: 42u64,
             role: Role::Admin,
         };

@@ -31,7 +31,7 @@ impl<T: Config> Pallet<T> {
         let current_block = frame_system::Pallet::<T>::block_number();
         let deadline = current_block.saturating_add(T::ChallengeTimeout::get());
 
-        let challenge = Challenge {
+        let challenge = Challenge::<T> {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),

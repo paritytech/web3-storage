@@ -75,7 +75,7 @@ fn create_provider<T: Config>(index: u32) -> (T::AccountId, sp_core::sr25519::Pu
 
     let _ = StorageProvider::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        ProviderSettings {
+        ProviderSettings::<T> {
             min_duration: 1u32.into(),
             max_duration: 1_000_000u32.into(),
             price_per_byte: 1u32.into(),

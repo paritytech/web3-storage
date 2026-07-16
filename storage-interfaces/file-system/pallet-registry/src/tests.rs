@@ -65,7 +65,7 @@ fn setup_provider() -> (sp_core::sr25519::Public, u64) {
         public_key_bytes,
         10_000_000_000_000, // Must exceed MinProviderStake (1_000_000_000_000)
     ));
-    let settings = ProviderSettings {
+    let settings = ProviderSettings::<Test> {
         min_duration: 10u64,
         max_duration: 10_000u64,
         price_per_byte: 0u128,

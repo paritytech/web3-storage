@@ -9,7 +9,9 @@
 
 extern crate alloc;
 
+pub mod agreement;
 pub mod agreement_term;
+pub mod bucket;
 pub mod challenge;
 pub mod checkpoint;
 pub mod commitment;
@@ -17,7 +19,9 @@ pub mod mmr;
 pub mod provider;
 pub mod provider_replay_state;
 
+pub use agreement::*;
 pub use agreement_term::*;
+pub use bucket::*;
 pub use challenge::*;
 pub use checkpoint::*;
 pub use commitment::*;

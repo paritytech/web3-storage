@@ -805,7 +805,7 @@ fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
     assert_ok_ok(construct_and_apply_extrinsic(
         Some(account.pair()),
         RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::update_provider_settings {
-            settings: pallet_storage_provider::ProviderSettings {
+            settings: pallet_storage_provider::ProviderSettings::<Runtime> {
                 min_duration: 1,
                 max_duration: 1_000_000,
                 price_per_byte: 0,

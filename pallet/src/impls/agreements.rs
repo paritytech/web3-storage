@@ -234,7 +234,7 @@ impl<T: Config> Pallet<T> {
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
 
         let expires_at = current_block.saturating_add(terms.duration);
-        let agreement = StorageAgreement {
+        let agreement = StorageAgreement::<T> {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
             payment_locked: payment,
@@ -382,7 +382,7 @@ impl<T: Config> Pallet<T> {
         T::Currency::reserve(owner, total_lock)?;
 
         let expires_at = current_block.saturating_add(terms.duration);
-        let agreement = StorageAgreement {
+        let agreement = StorageAgreement::<T> {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
             payment_locked: payment,

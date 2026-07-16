@@ -57,7 +57,7 @@ pub mod v1 {
             let mut translated = 0u64;
             Buckets::<T>::translate::<old::Bucket<T>, _>(|_bucket_id, old| {
                 translated = translated.saturating_add(1);
-                Some(Bucket {
+                Some(Bucket::<T> {
                     members: old.members,
                     frozen_start_seq: old.frozen_start_seq,
                     min_providers: old.min_providers,

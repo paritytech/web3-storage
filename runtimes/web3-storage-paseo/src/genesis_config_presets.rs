@@ -35,7 +35,7 @@ fn previewnet_genesis_provider() -> GenesisProvider<Runtime> {
                 .to_vec(),
         public_key: Sr25519Keyring::Alice.to_raw_public_vec(),
         stake: 1_200_000_000_000 * UNIT,
-        settings: ProviderSettings {
+        settings: ProviderSettings::<Runtime> {
             min_duration: 100,
             max_duration: 100_000,
             price_per_byte: 1,

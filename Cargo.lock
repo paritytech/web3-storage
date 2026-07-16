@@ -9770,6 +9770,7 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
+ "sp-runtime",
 ]
 
 [[package]]

@@ -43,7 +43,7 @@ fn establish_storage_agreement_reserves_payment() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings {
+            ProviderSettings::<Test> {
                 price_per_byte: 1,
                 accepting_primary: true,
                 ..Default::default()
@@ -178,7 +178,7 @@ fn establish_storage_agreement_fails_not_accepting_primary() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings {
+            ProviderSettings::<Test> {
                 accepting_primary: false,
                 ..Default::default()
             },
@@ -200,7 +200,7 @@ fn establish_storage_agreement_fails_duration_too_long() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings {
+            ProviderSettings::<Test> {
                 max_duration: 50,
                 accepting_primary: true,
                 ..Default::default()
