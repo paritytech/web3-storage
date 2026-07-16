@@ -5,8 +5,8 @@
 //!
 //! [`ChainState`] is the single source of truth for all on-chain state the
 //! provider node needs at runtime:
-//! - [`ChainState::current_block`] — relay-chain block anchored to the latest
-//!   finalized parachain block (the clock all on-chain durations use).
+//! - [`ChainState::current_relay_block`] — relay-chain block anchored to the
+//!   latest finalized parachain block (the clock all on-chain durations use).
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
 //! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
@@ -45,7 +45,7 @@ pub struct ChainState {
     /// Relay-chain block anchored to the latest finalized parachain block —
     /// the clock all on-chain durations (timeouts, `valid_until`, nonce age)
     /// are measured against. `0` means not yet known.
-    pub current_block: AtomicU32,
+    pub current_relay_block: AtomicU32,
     /// Pallet constants fetched once per connection. `None` until the first
     /// successful fetch; `/negotiate` returns 503 until this is `Some`.
     pub constants: RwLock<Option<PalletConstants>>,
@@ -67,7 +67,7 @@ pub struct ChainState {
 impl Default for ChainState {
     fn default() -> Self {
         Self {
-            current_block: AtomicU32::new(0),
+            current_relay_block: AtomicU32::new(0),
             constants: RwLock::new(None),
             provider_info: RwLock::new(None),
             nonce_counter: RwLock::new(None),
@@ -319,13 +319,13 @@ impl ChainStateCoordinator {
 
             tracing::debug!("Finalized block: {}", block_number);
             // All on-chain durations (RequestTimeout, MaxNonceAge, expiries)
-            // are denominated in relay-chain blocks, so `current_block` must
-            // track the relay block anchored to this finalized block — not
+            // are denominated in relay-chain blocks, so `current_relay_block`
+            // must track the relay block anchored to this finalized block — not
             // its parachain height.
             match crate::subxt_client::fetch_last_relay_block_number(&block.storage()).await {
                 Ok(relay_block) => {
                     self.chain_state
-                        .current_block
+                        .current_relay_block
                         .store(relay_block, std::sync::atomic::Ordering::Relaxed);
                 }
                 Err(e) => tracing::warn!(
@@ -706,17 +706,17 @@ mod tests {
     #[test]
     fn chain_state_defaults_to_unknown() {
         let cs = ChainState::default();
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 0);
+        assert_eq!(cs.current_relay_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
         assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
-    fn chain_state_current_block_round_trips() {
+    fn chain_state_current_relay_block_round_trips() {
         let cs = ChainState::default();
-        cs.current_block.store(42, Ordering::Relaxed);
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 42);
+        cs.current_relay_block.store(42, Ordering::Relaxed);
+        assert_eq!(cs.current_relay_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]

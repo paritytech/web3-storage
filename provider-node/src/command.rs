@@ -166,13 +166,14 @@ fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
     state
 }
 
-/// Start the chain-state coordinator, which keeps `chain_state.current_block`
-/// and `chain_state.provider_info` in sync with the chain.
+/// Start the chain-state coordinator, which keeps
+/// `chain_state.current_relay_block` and `chain_state.provider_info` in sync
+/// with the chain.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and
-/// retries with a backoff if the chain is unreachable, so `current_block` is
-/// populated as soon as the chain comes up.
+/// retries with a backoff if the chain is unreachable, so `current_relay_block`
+/// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
     cli: &Cli,
     state: Arc<ProviderState>,
