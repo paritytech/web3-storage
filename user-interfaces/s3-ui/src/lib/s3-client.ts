@@ -205,13 +205,13 @@ export class S3Client {
     }
   }
 
-  setSigner(signer: Signer | null, address: string | null): void {
+  setSigner(
+    signer: Signer | null,
+    address: string | null,
+    keypair: Keypair | null,
+  ): void {
     this.signer = signer;
     this.signerAddress = address;
-    this.rebuild();
-  }
-
-  setKeypair(keypair: Keypair | null): void {
     this.keypair = keypair;
     this.rebuild();
   }

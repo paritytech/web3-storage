@@ -84,13 +84,15 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
-  client.setSigner(signer, address);
-});
-
-keypair$$.subscribe((keypair) => {
-  client.setKeypair(keypair);
-});
+// Use combineLatest so the client always receives signer + address + keypair
+// together. With separate subscriptions the client is left partially updated
+// between emissions (e.g. a stale keypair signs provider HTTP requests as the
+// previous account, which the provider rejects with 401).
+combineLatest([signer$$, signerAddress$$, keypair$$]).subscribe(
+  ([signer, address, keypair]) => {
+    client.setSigner(signer, address, keypair);
+  },
+);
 
 export function getS3Client(): S3Client {
   return client;

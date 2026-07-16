@@ -86,20 +86,15 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-// Use combineLatest so the client always receives signer + address together.
-// With separate subscriptions, signer$ fires before signerAddress$ inside
-// setSigner(), leaving client.signerAddress null when refreshDrives() runs.
-combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
-  client.setSigner(signer, address);
-});
-
-// The raw keypair signs provider HTTP requests (/fs uploads, listing, delete).
-// Own subscription, mirroring setSigner above; rebuild() folds it into the
-// ChainSigner. A missing keypair means unsigned requests, which the provider
-// rejects with 401.
-keypair$$.subscribe((keypair) => {
-  client.setKeypair(keypair);
-});
+// Use combineLatest so the client always receives signer + address + keypair
+// together. With separate subscriptions the client is left partially updated
+// between emissions (e.g. a stale keypair signs provider HTTP requests as the
+// previous account, which the provider rejects with 401).
+combineLatest([signer$$, signerAddress$$, keypair$$]).subscribe(
+  ([signer, address, keypair]) => {
+    client.setSigner(signer, address, keypair);
+  },
+);
 
 export function getDriveClient(): DriveClient {
   return client;
