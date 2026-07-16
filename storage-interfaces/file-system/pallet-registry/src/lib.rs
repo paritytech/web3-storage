@@ -47,14 +47,14 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub mod try_state;
+
 #[frame_support::pallet]
 #[allow(clippy::let_unit_value)]
 #[allow(clippy::type_complexity)]
 #[allow(deprecated)]
 pub mod pallet {
     use super::*;
-    #[cfg(feature = "try-runtime")]
-    use alloc::collections::BTreeSet;
     use alloc::vec::Vec;
     use file_system_primitives::{DriveId, DriveInfo};
     use frame_support::{pallet_prelude::*, traits::Get};
@@ -137,67 +137,6 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn next_drive_id)]
     pub type NextDriveId<T> = StorageValue<_, DriveId, ValueQuery>;
-
-    #[cfg(feature = "try-runtime")]
-    impl<T: Config> Pallet<T> {
-        /// Cross-storage index invariants, checked on every try-runtime block
-        /// and runtime-upgrade dry-run (read-only, never panics).
-        pub fn do_try_state() -> Result<(), TryRuntimeError> {
-            // `BucketToDrive` is consistent, has no dangling entries, and is
-            // injective on drive ids (two buckets never map to one drive).
-            let mut seen_drives: BTreeSet<DriveId> = BTreeSet::new();
-            for (bucket_id, drive_id) in BucketToDrive::<T>::iter() {
-                let drive = Drives::<T>::get(drive_id)
-                    .ok_or("BucketToDrive references a non-existent drive")?;
-                ensure!(
-                    drive.bucket_id == bucket_id,
-                    "BucketToDrive maps a bucket to a drive with a different bucket_id"
-                );
-                ensure!(
-                    seen_drives.insert(drive_id),
-                    "BucketToDrive maps two buckets to the same drive (not injective)"
-                );
-            }
-
-            let next_id = NextDriveId::<T>::get();
-            for (drive_id, drive) in Drives::<T>::iter() {
-                // `NextDriveId` strictly exceeds every live drive id.
-                ensure!(
-                    drive_id < next_id,
-                    "NextDriveId does not exceed a live DriveId"
-                );
-                // `BucketToDrive` completeness: each live drive maps back from its bucket.
-                ensure!(
-                    BucketToDrive::<T>::get(drive.bucket_id) == Some(drive_id),
-                    "live drive has no matching BucketToDrive entry"
-                );
-                // `UserDrives` completeness: each live drive is listed under its owner.
-                ensure!(
-                    UserDrives::<T>::get(&drive.owner).contains(&drive_id),
-                    "live drive missing from its owner's UserDrives"
-                );
-            }
-
-            // `UserDrives` correctness: no duplicates, and every entry is owned
-            // by the account it is listed under.
-            for (owner, drive_ids) in UserDrives::<T>::iter() {
-                let unique: BTreeSet<DriveId> = drive_ids.iter().copied().collect();
-                ensure!(
-                    unique.len() == drive_ids.len(),
-                    "duplicate drive id in UserDrives entry"
-                );
-                for drive_id in drive_ids.iter() {
-                    let drive = Drives::<T>::get(drive_id)
-                        .ok_or("UserDrives references a non-existent drive")?;
-                    ensure!(
-                        drive.owner == owner,
-                        "UserDrives entry not owned by the account"
-                    );
-                }
-            }
-            Ok(())
-        }
-    }
 
     /// Events
     #[pallet::event]
