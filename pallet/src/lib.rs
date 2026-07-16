@@ -52,9 +52,13 @@ pub mod pallet {
         traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
+    #[cfg(feature = "try-runtime")]
+    use frame_system::pallet_prelude::BlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, One, Saturating, Zero};
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
         CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
@@ -224,25 +228,9 @@ pub mod pallet {
             );
         }
 
-        /// Invariant: no unresolved challenge sits at or below the swept cursor.
-        /// The sweep drains every deadline key up to its cursor (parking one
-        /// below a key it only partly drained), and `create_challenge` always
-        /// sets `deadline = now + ChallengeTimeout`, which is above the cursor —
-        /// so anything at or below it must already have been drained. A
-        /// violation means a challenge was stranded unslashed (e.g. an upgrade
-        /// that left parachain-denominated keys below the anchor).
         #[cfg(feature = "try-runtime")]
-        fn try_state(_n: BlockNumberFor<T>) -> Result<(), sp_runtime::TryRuntimeError> {
-            if let Some(cursor) = LastSweptChallengeBlock::<T>::get() {
-                for (deadline, _index, _challenge) in Challenges::<T>::iter() {
-                    ensure!(
-                        deadline > cursor,
-                        "LastSweptChallengeBlock: an unresolved challenge sits at or \
-                         below the swept cursor"
-                    );
-                }
-            }
-            Ok(())
+        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
         }
     }
 
