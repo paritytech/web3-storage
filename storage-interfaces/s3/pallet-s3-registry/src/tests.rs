@@ -2,6 +2,8 @@
 
 //! Tests for S3 Registry pallet.
 
+mod try_state;
+
 use crate::{mock::*, Error, S3Buckets};
 use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
 use pallet_storage_provider::{AgreementTermsOf, ProviderSettings};
@@ -111,10 +113,9 @@ fn put_sized_object(s3_bucket_id: u64, key: &[u8], size: u64) -> sp_runtime::Dis
 }
 
 /// (object_count, total_size) of a bucket. Also re-checks the pallet's
-/// try_state invariants when the try-runtime feature is enabled, so every
-/// accounting assertion doubles as an invariant check.
+/// try_state invariants, so every accounting assertion doubles as an
+/// invariant check.
 fn checked_bucket_stats(s3_bucket_id: u64) -> (u64, u64) {
-    #[cfg(feature = "try-runtime")]
     assert_ok!(S3Registry::do_try_state());
     let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
     (bucket.object_count, bucket.total_size)
@@ -456,43 +457,6 @@ fn copy_object_metadata_fails_on_total_size_overflow() {
         assert_eq!(bucket.object_count, 1);
         assert_eq!(bucket.total_size, u64::MAX);
         assert!(S3Registry::get_object(s3_bucket_id, b"huge-copy.bin").is_none());
-    });
-}
-
-#[cfg(feature = "try-runtime")]
-#[test]
-fn try_state_holds_and_detects_corruption() {
-    new_test_ext().execute_with(|| {
-        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
-        let cid = sp_core::H256::repeat_byte(0xAB);
-        assert_ok!(S3Registry::put_object_metadata(
-            RuntimeOrigin::signed(1),
-            s3_bucket_id,
-            b"photos/cat.jpg".to_vec(),
-            cid,
-            1024,
-            b"image/jpeg".to_vec(),
-            vec![],
-        ));
-
-        // Index and counter invariants hold on real state.
-        assert_ok!(S3Registry::do_try_state());
-
-        // object_count no longer matches the actual Objects entries.
-        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
-            b.as_mut().unwrap().object_count += 1;
-        });
-        assert!(S3Registry::do_try_state().is_err());
-
-        // Restore object_count, then corrupt total_size instead.
-        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
-            b.as_mut().unwrap().object_count -= 1;
-        });
-        assert_ok!(S3Registry::do_try_state());
-        S3Buckets::<Test>::mutate(s3_bucket_id, |b| {
-            b.as_mut().unwrap().total_size += 1;
-        });
-        assert!(S3Registry::do_try_state().is_err());
     });
 }
 
