@@ -167,7 +167,7 @@ fn primary_terms(
         price_per_byte: 0,
         // `valid_until` is checked against the pallet's relay-chain clock,
         // not the parachain height.
-        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_block()
+        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_anchor_block()
             + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
         nonce,
         bucket_id: None,

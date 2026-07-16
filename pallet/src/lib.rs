@@ -128,7 +128,7 @@ pub mod pallet {
             // Provider read + cursor read/write.
             let mut weight = T::DbWeight::get().reads_writes(2, 1);
 
-            let now = Self::current_block();
+            let now = Self::current_anchor_block();
             if now.is_zero() {
                 return weight;
             }
@@ -1262,7 +1262,7 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::deregister_provider())]
         pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let complete_after =
                 current_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
 
@@ -1315,7 +1315,7 @@ pub mod pallet {
             let deregister_at = provider
                 .deregister_at
                 .ok_or(Error::<T>::DeregisterNotAnnounced)?;
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             ensure!(
                 current_block >= deregister_at,
                 Error::<T>::DeregisterPeriodNotElapsed
@@ -1471,7 +1471,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotFound
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
@@ -1799,7 +1799,7 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             let is_early_termination = current_block < agreement.expires_at;
 
@@ -1854,7 +1854,7 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             ensure!(
                 current_block > agreement.expires_at,
@@ -1902,7 +1902,7 @@ pub mod pallet {
 
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
                     let remaining_duration = if current_block < agreement.expires_at {
                         agreement.expires_at.saturating_sub(current_block)
                     } else {
@@ -2006,7 +2006,7 @@ pub mod pallet {
                     // Validate duration
                     Self::validate_duration(&provider_info.settings, additional_duration)?;
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
 
                     // Check if price increased
                     let price_increased =
@@ -2180,7 +2180,7 @@ pub mod pallet {
                     Error::<T>::InsufficientSignatures
                 );
 
-                let current_block = Self::current_block();
+                let current_block = Self::current_anchor_block();
 
                 // Update historical roots
                 Self::update_historical_roots(bucket, current_block, commitment.mmr_root);
@@ -2324,7 +2324,7 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current block and calculate current window
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let current_window = Self::calculate_window(current_block, config.interval);
 
             // Validate window
@@ -2521,7 +2521,7 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current window
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let current_window = Self::calculate_window(current_block, config.interval);
 
             // Can only report past windows
@@ -2688,7 +2688,7 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2749,7 +2749,7 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2798,7 +2798,7 @@ pub mod pallet {
             // Challengeability tracks genuine obligation: only while the
             // agreement is live (not into the settlement window).
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2854,7 +2854,7 @@ pub mod pallet {
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             ensure!(
                 current_block <= challenge_id.deadline,
                 Error::<T>::ChallengeExpired
@@ -3093,7 +3093,7 @@ pub mod pallet {
                             ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
                         };
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
 
                     // Check sync interval
                     if let Some(record) = last_sync {

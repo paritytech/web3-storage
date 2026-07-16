@@ -167,7 +167,7 @@ impl<T: Config> Pallet<T> {
 
         // Quote must not be stale and must not exceed the chain-enforced window.
         // `terms.valid_until` must in range [current_block, current_block + RequestTimeout]
-        let current_block = Self::current_block();
+        let current_block = Self::current_anchor_block();
         ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
         ensure!(
             terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
@@ -297,7 +297,7 @@ impl<T: Config> Pallet<T> {
         ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
         // Quote must not be stale and must not exceed the chain-enforced window.
-        let current_block = Self::current_block();
+        let current_block = Self::current_anchor_block();
         ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
         ensure!(
             terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),

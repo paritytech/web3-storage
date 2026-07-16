@@ -88,7 +88,8 @@ fn build_primary_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
@@ -108,7 +109,8 @@ fn build_replica_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
@@ -185,7 +187,7 @@ fn add_primary_to_bucket<T: Config>(
     bucket_id: BucketId,
     max_bytes: u64,
 ) {
-    let current_block = StorageProvider::<T>::current_block();
+    let current_block = StorageProvider::<T>::current_anchor_block();
     let duration: BlockNumberFor<T> = 100u32.into();
     let expires_at = current_block.saturating_add(duration);
 
@@ -331,7 +333,7 @@ mod benchmarks {
         let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
-        let announce_block = StorageProvider::<T>::current_block();
+        let announce_block = StorageProvider::<T>::current_anchor_block();
         let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
         set_block_number::<T>(complete_after);
 
@@ -611,7 +613,7 @@ mod benchmarks {
 
         // Advance block past agreement expiry + settlement timeout
         let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
-        let current_block = StorageProvider::<T>::current_block();
+        let current_block = StorageProvider::<T>::current_anchor_block();
         let target_block: BlockNumberFor<T> = agreement
             .expires_at
             .saturating_add(T::SettlementTimeout::get())

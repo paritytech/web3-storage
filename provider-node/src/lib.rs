@@ -92,7 +92,7 @@ pub struct ProviderState {
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_relay_block`, `constants`, `provider_info`, and
+    /// writer for `current_anchor_block`, `constants`, `provider_info`, and
     /// `nonce_counter`. `/negotiate` gates on all four before signing.
     pub chain_state: Arc<ChainState>,
 }
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(
             state
                 .chain_state
-                .current_relay_block
+                .current_anchor_block
                 .load(Ordering::Relaxed),
             0
         );

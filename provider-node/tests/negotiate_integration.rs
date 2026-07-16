@@ -43,7 +43,7 @@ impl TestServer {
         // Together these satisfy every `/negotiate` prerequisite.
         state
             .chain_state
-            .current_relay_block
+            .current_anchor_block
             .store(100, std::sync::atomic::Ordering::Relaxed);
         *state.chain_state.constants.write() = Some(PalletConstants {
             request_timeout: 200,
@@ -169,15 +169,15 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
 }
 
 #[tokio::test]
-async fn negotiate_valid_until_is_relay_block_plus_request_timeout() {
-    // `current_block` is the relay-chain block number — the clock the pallet
+async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
+    // `current_anchor_block` is the pallet's anchor clock — the block the pallet
     // checks `valid_until` against. Seed a Paseo-scale value to prove the
     // validity window is anchored to it (a parachain-height-based window
     // would be rejected on-chain as already expired).
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(29_123_456, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 3_600,
@@ -195,8 +195,8 @@ async fn negotiate_valid_until_is_relay_block_plus_request_timeout() {
 }
 
 #[tokio::test]
-async fn negotiate_503_when_current_block_unknown() {
-    // Everything ready except the relay-block clock (`current_block == 0`,
+async fn negotiate_503_when_anchor_block_unknown() {
+    // Everything ready except the anchor clock (`current_anchor_block == 0`,
     // i.e. the chain-state coordinator has not processed a finalized block
     // yet): signing would emit terms whose `valid_until` is meaningless on
     // the pallet's clock, so the handler must refuse.
@@ -223,7 +223,7 @@ async fn negotiate_503_when_request_timeout_unknown() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     let counter = std::sync::Arc::new(NonceCounter::new(1));
     counter.bootstrap_from_hsn(0);
@@ -319,7 +319,7 @@ async fn negotiate_503_when_provider_info_unavailable() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -405,7 +405,7 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -455,7 +455,7 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -498,7 +498,7 @@ async fn negotiate_503_when_nonce_counter_absent() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -522,7 +522,7 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_relay_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,

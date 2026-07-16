@@ -5,8 +5,8 @@
 //!
 //! [`ChainState`] is the single source of truth for all on-chain state the
 //! provider node needs at runtime:
-//! - [`ChainState::current_relay_block`] — relay-chain block anchored to the
-//!   latest finalized parachain block (the clock all on-chain durations use).
+//! - [`ChainState::current_anchor_block`] — the pallet's anchor block (the
+//!   clock all on-chain durations use), read via its runtime API.
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
 //! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
@@ -42,10 +42,13 @@ const PALLET_NAME: &str = "StorageProvider";
 /// Held behind `Arc` inside [`crate::ProviderState`] so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
 pub struct ChainState {
-    /// Relay-chain block anchored to the latest finalized parachain block —
-    /// the clock all on-chain durations (timeouts, `valid_until`, nonce age)
-    /// are measured against. `0` means not yet known.
-    pub current_relay_block: AtomicU32,
+    /// The pallet's anchor block — the clock all on-chain durations (timeouts,
+    /// `valid_until`, nonce age) are measured against — read via the
+    /// `StorageProviderApi::current_anchor_block` runtime API at the latest
+    /// finalized block. Whether that anchor is a relay, parachain, or other
+    /// block number is the pallet's concern, not the provider's. `0` means not
+    /// yet known.
+    pub current_anchor_block: AtomicU32,
     /// Pallet constants fetched once per connection. `None` until the first
     /// successful fetch; `/negotiate` returns 503 until this is `Some`.
     pub constants: RwLock<Option<PalletConstants>>,
@@ -67,7 +70,7 @@ pub struct ChainState {
 impl Default for ChainState {
     fn default() -> Self {
         Self {
-            current_relay_block: AtomicU32::new(0),
+            current_anchor_block: AtomicU32::new(0),
             constants: RwLock::new(None),
             provider_info: RwLock::new(None),
             nonce_counter: RwLock::new(None),
@@ -318,18 +321,19 @@ impl ChainStateCoordinator {
             let block_number = block.number();
 
             tracing::debug!("Finalized block: {}", block_number);
-            // All on-chain durations (RequestTimeout, MaxNonceAge, expiries)
-            // are denominated in relay-chain blocks, so `current_relay_block`
-            // must track the relay block anchored to this finalized block — not
-            // its parachain height.
-            match crate::subxt_client::fetch_last_relay_block_number(&block.storage()).await {
-                Ok(relay_block) => {
+            // Track the pallet's anchor block (the clock all on-chain durations
+            // are measured against) at this finalized block, via the runtime
+            // API — so the provider never needs to know which block notion the
+            // pallet uses.
+            let runtime_api = chain.api.runtime_api().at(block.reference());
+            match crate::subxt_client::fetch_current_anchor_block(&runtime_api).await {
+                Ok(anchor_block) => {
                     self.chain_state
-                        .current_relay_block
-                        .store(relay_block, std::sync::atomic::Ordering::Relaxed);
+                        .current_anchor_block
+                        .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
                 }
                 Err(e) => tracing::warn!(
-                    "chain-state coordinator: failed to fetch relay block for block \
+                    "chain-state coordinator: failed to fetch anchor block for block \
                      {block_number}: {e}; keeping previous value"
                 ),
             }
@@ -706,17 +710,17 @@ mod tests {
     #[test]
     fn chain_state_defaults_to_unknown() {
         let cs = ChainState::default();
-        assert_eq!(cs.current_relay_block.load(Ordering::Relaxed), 0);
+        assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
         assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
-    fn chain_state_current_relay_block_round_trips() {
+    fn chain_state_current_anchor_block_round_trips() {
         let cs = ChainState::default();
-        cs.current_relay_block.store(42, Ordering::Relaxed);
-        assert_eq!(cs.current_relay_block.load(Ordering::Relaxed), 42);
+        cs.current_anchor_block.store(42, Ordering::Relaxed);
+        assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]

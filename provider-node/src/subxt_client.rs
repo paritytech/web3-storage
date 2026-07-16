@@ -24,36 +24,35 @@ use storage_primitives::BucketId;
 use subxt::dynamic::Value;
 use subxt::ext::scale_value::value;
 
-/// Fetch and decode `ParachainSystem::LastRelayChainBlockNumber` from a storage
-/// view (`api.storage().at_latest()` or `block.storage()`). This is the relay
-/// clock every on-chain duration (timeouts, expiries, `valid_until`, nonces) is
-/// measured against, so off-chain actors must read it, not the parachain
-/// block height.
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
+/// age) is measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`, and the
+/// provider no longer reaches into a specific storage item.
 ///
-/// Inlined here so the provider node stays free of a `storage-client`
-/// dependency (see #275).
-pub(crate) async fn fetch_last_relay_block_number(
-    storage: &subxt::storage::Storage<
+/// Kept here (rather than in `storage-client`) so the provider node stays
+/// dependency-light (see #275).
+pub(crate) async fn fetch_current_anchor_block(
+    runtime_api: &subxt::runtime_api::RuntimeApi<
         subxt::PolkadotConfig,
         subxt::OnlineClient<subxt::PolkadotConfig>,
     >,
 ) -> Result<u32, Error> {
-    let addr = subxt::dynamic::storage(
-        "ParachainSystem",
-        "LastRelayChainBlockNumber",
+    let call = subxt::dynamic::runtime_api_call(
+        "StorageProviderApi",
+        "current_anchor_block",
         Vec::<Value>::new(),
     );
-    let thunk = storage
-        .fetch(&addr)
+    runtime_api
+        .call(call)
         .await
-        .map_err(|e| Error::Internal(format!("Failed to fetch relay block number: {e}")))?
-        .ok_or_else(|| Error::Internal("LastRelayChainBlockNumber not found".to_string()))?;
-    thunk
+        .map_err(|e| Error::Internal(format!("current_anchor_block runtime API call failed: {e}")))?
         .to_value()
-        .map_err(|e| Error::Internal(format!("Failed to decode relay block number: {e}")))?
+        .map_err(|e| Error::Internal(format!("Failed to decode anchor block: {e}")))?
         .as_u128()
         .map(|v| v as u32)
-        .ok_or_else(|| Error::Internal("relay block number is not an integer".to_string()))
+        .ok_or_else(|| Error::Internal("anchor block is not an integer".to_string()))
 }
 
 /// Production implementation that talks to the chain via subxt.
@@ -93,19 +92,21 @@ impl SubxtChainClient {
         Ok(Self { api, signer })
     }
 
-    /// Get the current relay-chain block number (the clock all on-chain
-    /// durations, in particular checkpoint windows, are measured against),
-    /// read at the latest parachain block.
+    /// Get the current anchor block (the clock all on-chain durations, in
+    /// particular checkpoint windows, are measured against), read at the latest
+    /// finalized state via the pallet's runtime API.
     ///
     /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
-    async fn current_block(&self) -> Result<u64, Error> {
-        let storage = self
+    async fn current_anchor_block(&self) -> Result<u64, Error> {
+        let runtime_api = self
             .api
-            .storage()
+            .runtime_api()
             .at_latest()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get latest storage: {e}")))?;
-        fetch_last_relay_block_number(&storage).await.map(u64::from)
+            .map_err(|e| Error::Internal(format!("Failed to get latest runtime API: {e}")))?;
+        fetch_current_anchor_block(&runtime_api)
+            .await
+            .map(u64::from)
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -456,7 +457,7 @@ impl SubxtChainClient {
 #[async_trait::async_trait]
 impl CheckpointChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_block().await
+        self.current_anchor_block().await
     }
 
     async fn fetch_checkpoint_config(
@@ -563,7 +564,7 @@ impl CheckpointChainClient for SubxtChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_block().await
+        self.current_anchor_block().await
     }
 
     async fn fetch_replica_agreements(
