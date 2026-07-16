@@ -250,7 +250,7 @@ pub mod pallet {
         ObjectKeyTooLong,
         /// Content type too long.
         ContentTypeTooLong,
-        /// Arithmetic overflow in bucket size accounting.
+        /// Bucket total size would exceed the maximum supported value.
         BucketSizeLimitReached,
     }
 
