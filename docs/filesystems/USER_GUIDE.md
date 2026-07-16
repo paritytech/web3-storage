@@ -54,7 +54,7 @@ The system handles all of this automatically!
 # Add to your Cargo.toml
 [dependencies]
 file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
+file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 ```
 
 ### Initialize Client

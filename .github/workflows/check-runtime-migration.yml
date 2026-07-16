@@ -53,7 +53,7 @@ jobs:
             runtime:
               - 'runtimes/**'
               - 'pallet/**'
-              - 'primitives/**'
+              - 'crates/primitives/**'
               - 'storage-interfaces/**/pallet-*/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'

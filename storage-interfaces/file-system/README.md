@@ -34,7 +34,7 @@ otherwise. Examples in `examples/`.
 
 ## Components
 
-### `primitives/`
+### `crates/primitives/file-system/` (repo root)
 Core data structures and types for the file system.
 
 **Key Types:**
