@@ -48,8 +48,8 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 
 /// Derive the SS58 address for a dev account by name ("alice", "bob", …).
 ///
-/// Avoids hardcoding addresses in tests. Uses the same derivation path as
-/// `Signer::dev`, so the account and signer always match.
+/// Avoids hardcoding addresses in tests. Delegates to [`Signer::dev`], so the
+/// account and signer always match.
 #[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
     dev_account(name).to_ss58check()
@@ -61,18 +61,8 @@ pub fn dev_ss58(name: &str) -> String {
 /// storage queries / parser APIs that take `&AccountId32` directly.
 #[allow(dead_code)]
 pub fn dev_account(name: &str) -> AccountId32 {
-    use subxt_signer::sr25519::dev;
-
-    let keypair = match name {
-        "alice" => dev::alice(),
-        "bob" => dev::bob(),
-        "charlie" => dev::charlie(),
-        "dave" => dev::dave(),
-        "eve" => dev::eve(),
-        "ferdie" => dev::ferdie(),
-        other => panic!("unknown dev account: {other}"),
-    };
-    AccountId32::from(keypair.public_key().0)
+    let signer = Signer::dev(name).expect("known dev account");
+    AccountId32::from(signer.keypair().public_key().0)
 }
 
 // ─── Chain client config ──────────────────────────────────────────────────────
@@ -156,11 +146,10 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     // Alice is both the provider (signs terms) and the bucket owner (redeems).
     // Nonces must be unique per provider, so we pick one based on the current
     // block-ish counter — using time-since-epoch nanos so reruns don't collide.
-    let mut admin = AdminClient::new(chain_config(), alice_ss58.clone()).ok()?;
+    let mut admin = AdminClient::new(chain_config(), Signer::dev("alice").ok()?).ok()?;
     if admin.connect().await.is_err() {
         return None;
     }
-    admin.set_signer(Signer::dev("alice").ok()?).ok()?;
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -195,11 +184,10 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 /// Build an `AdminClient` signed by Alice. Returns `None` if the chain is down.
 #[allow(dead_code)]
 pub async fn alice_admin() -> Option<AdminClient> {
-    let mut client = AdminClient::new(chain_config(), dev_ss58("alice")).ok()?;
+    let mut client = AdminClient::new(chain_config(), Signer::dev("alice").ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_signer(Signer::dev("alice").ok()?).ok()?;
     Some(client)
 }
 
@@ -244,8 +232,7 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
     let storage = Arc::new(Storage::new());
-    let alice_account =
-        sp_core::crypto::AccountId32::new(subxt_signer::sr25519::dev::alice().public_key().0);
+    let alice_account = dev_account("alice");
     let mut state = ProviderState::with_seed(storage, "//Alice").expect("//Alice is a valid SURI");
     let cache = Arc::new(MembershipCache::new(
         Box::new(StaticMembershipResolver(vec![(alice_account, Role::Admin)])),

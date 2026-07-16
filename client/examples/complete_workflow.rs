@@ -84,9 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Redeem the signed terms on-chain to open a bucket + primary agreement.
     println!("Establishing storage agreement on-chain...");
-    let mut admin = AdminClient::new(chain_config.clone(), user_ss58.clone())?;
+    let mut admin = AdminClient::new(chain_config.clone(), user_keypair.clone().into())?;
     admin.connect().await?;
-    admin.set_signer(user_keypair.clone().into())?;
     let bucket_id = admin
         .establish_storage_agreement(provider_ss58, signed)
         .await?;

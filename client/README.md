@@ -119,11 +119,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Create and manage buckets:
 
 ```rust
-use storage_client::AdminClient;
+use storage_client::{AdminClient, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+    let client = AdminClient::with_defaults(Signer::dev("alice")?)?;
 
     // Create bucket
     let bucket_id = client.create_bucket(2).await?; // min 2 providers

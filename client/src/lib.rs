@@ -51,10 +51,10 @@
 //! ### For Bucket Administrators
 //! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
 //! ```no_run
-//! use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
+//! use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = AdminClient::with_defaults(Signer::dev("alice")?)?;
 //!
 //! // 1. Ask the provider node to sign agreement terms over HTTP. The
 //! //    provider allocates the nonce + validity window and signs.
