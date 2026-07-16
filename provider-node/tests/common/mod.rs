@@ -11,12 +11,13 @@
 // dead-code analysis flags the rest.
 #![allow(dead_code)]
 
+use provider_negotiation::build_auth_header;
 use reqwest::{Method, RequestBuilder};
 use sp_core::{sr25519, Pair};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use storage_primitives::{build_auth_header, Role};
+use storage_primitives::Role;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{create_router, ProviderState};
 

@@ -14,8 +14,9 @@ use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
 use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use provider_negotiation::build_auth_header;
 use sp_core::H256;
-use storage_primitives::{blake2_256, build_auth_header, BucketId};
+use storage_primitives::{blake2_256, BucketId};
 
 /// Client for storage users (end users who store/retrieve data).
 pub struct StorageUserClient {

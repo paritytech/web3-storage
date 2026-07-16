@@ -375,7 +375,7 @@ pub fn verify_signature(
     );
 
     // Verify signature
-    let message = storage_primitives::auth_message(method, bucket_id, timestamp_str);
+    let message = provider_negotiation::auth_message(method, bucket_id, timestamp_str);
     if !sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey) {
         return Err(Error::AuthRequired);
     }
@@ -435,7 +435,7 @@ mod tests {
         bucket_id: u64,
         timestamp: u64,
     ) -> String {
-        storage_primitives::build_auth_header(
+        provider_negotiation::build_auth_header(
             &keypair.public().0,
             method,
             bucket_id,
