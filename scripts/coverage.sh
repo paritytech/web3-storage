@@ -40,6 +40,7 @@ COV_SKIP_PACKAGES=(
 	pallet-storage-provider-precompile # exercised out of process (`just sc-demo`)
 	pallet-drive-registry-precompile # exercised out of process (`just sc-demo`)
 	pallet-s3-registry-precompile # exercised out of process (`just sc-demo`)
+	storage-subxt # static codegen runtime bindings
 )
 
 # Fail when the two lists and the workspace members drift apart: every member

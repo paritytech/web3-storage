@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `try_state` invariant checks (compiled only under the `try-runtime`
-//! feature). They assert config and cross-storage invariants against live
-//! state on every try-runtime block and runtime-upgrade dry-run, catching
-//! violations that `integrity_test` (build-time only) and the extrinsic
-//! guards (bypassed by `setStorage`/migrations) cannot.
+//! `try_state` invariant checks. They assert config and cross-storage
+//! invariants against live state, catching violations that `integrity_test`
+//! (build-time only) and the extrinsic guards (bypassed by
+//! `setStorage`/migrations) cannot. The `Hooks::try_state` hook invoking them
+//! on every block / runtime-upgrade dry-run is still gated by `try-runtime`,
+//! but the checks themselves are always compiled and callable.
 //!
 //! Read-only, never panics: a violated invariant returns `TryRuntimeError`.
 
