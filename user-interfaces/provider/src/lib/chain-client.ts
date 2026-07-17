@@ -57,6 +57,10 @@ export async function refreshAnchorBlock(parachainBlock: number): Promise<void> 
       )
     } catch { /* pre-anchor runtime */ }
   }
+  // Publish only if we are still on the connection this answer came from —
+  // a call resolving after a disconnect/reconnect would resurrect a stale
+  // anchor from the previous chain.
+  if (getClient() !== client) return
   anchorBlock$.next(anchor)
 }
 

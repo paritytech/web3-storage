@@ -75,11 +75,19 @@ export async function connect(wsEndpoint?: string): Promise<void> {
       // runtime API (unsafe API: live metadata, no descriptor regeneration).
       // Runtimes without the API measured durations in parachain blocks, so
       // the parachain height is the right fallback there.
+      // Publish only if still on the connection the answer came from — a
+      // call resolving after a disconnect/reconnect would resurrect a stale
+      // anchor from the previous chain.
+      const stillConnected = () => client$.getValue() === client;
       void client
         .getUnsafeApi()
         .apis.StorageProviderApi.current_anchor_block()
-        .then((anchor: unknown) => anchorBlock$.next(Number(anchor)))
-        .catch(() => anchorBlock$.next(block.number));
+        .then((anchor: unknown) => {
+          if (stillConnected()) anchorBlock$.next(Number(anchor));
+        })
+        .catch(() => {
+          if (stillConnected()) anchorBlock$.next(block.number);
+        });
     });
 
     client$.next(client);
