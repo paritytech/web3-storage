@@ -76,6 +76,13 @@ impl<T: Config> Pallet<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
 
+    /// Milliseconds per anchor block; pairs with
+    /// [`Self::current_anchor_block`] so off-chain consumers can humanize
+    /// anchor-denominated durations.
+    pub fn anchor_block_time_millis() -> u64 {
+        T::AnchorBlockTimeMillis::get()
+    }
+
     /// Query provider information.
     pub fn query_provider_info(
         provider: &T::AccountId,

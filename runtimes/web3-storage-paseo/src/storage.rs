@@ -11,7 +11,9 @@ use frame_support::{
 use sp_runtime::traits::AccountIdConversion;
 
 use crate::{
-    paseo_constants::{currency::UNIT, relay_time::RC_HOURS},
+    paseo_constants::{
+        consensus::RELAY_CHAIN_SLOT_DURATION_MILLIS, currency::UNIT, relay_time::RC_HOURS,
+    },
     AccountId, Balance, Balances, BlockNumber, Runtime, RuntimeEvent,
 };
 
@@ -57,6 +59,10 @@ parameter_types! {
     /// challenges created while the chain sits on the same relay parent
     /// share a deadline.
     pub storage MaxChallengesPerDeadline: u16 = 1_000;
+    /// One anchor block = one relay slot: `BlockNumberProvider` below reads
+    /// the relay chain. `const` (not `storage`): a physical property of the
+    /// anchor clock, not a tunable.
+    pub const AnchorBlockTimeMillis: u64 = RELAY_CHAIN_SLOT_DURATION_MILLIS as u64;
 }
 
 /// Treasury account that receives slashed funds.
@@ -117,5 +123,6 @@ impl pallet_storage_provider::Config for Runtime {
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
     type MaxChallengesPerDeadline = MaxChallengesPerDeadline;
     type BlockNumberProvider = cumulus_pallet_parachain_system::RelaychainDataProvider<Runtime>;
+    type AnchorBlockTimeMillis = AnchorBlockTimeMillis;
     type WeightInfo = crate::weights::pallet_storage_provider::WeightInfo<Runtime>;
 }

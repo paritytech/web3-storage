@@ -14,16 +14,16 @@ impl<T: Config> Pallet<T> {
     ///
     /// Returns Error::InvalidSignature if verification fails.
     /// Reject a `CommitmentPayload::nonce` that is too far behind (or ahead
-    /// of) the current block. This prevents an attacker who captures one
+    /// of) the anchor block. This prevents an attacker who captures one
     /// signed commitment from replaying it forever.
     pub(crate) fn ensure_recent_nonce(nonce: u64) -> DispatchResult {
-        let current: u64 = Self::current_anchor_block().saturated_into();
+        let anchor_block: u64 = Self::current_anchor_block().saturated_into();
         let max_age: u64 = T::MaxNonceAge::get().saturated_into();
         // Future-dated nonces are nonsensical — the signer can only know
-        // the current block at sign-time. Allow exact equality.
-        ensure!(nonce <= current, Error::<T>::CommitmentNonceTooOld);
+        // the anchor block at sign-time. Allow exact equality.
+        ensure!(nonce <= anchor_block, Error::<T>::CommitmentNonceTooOld);
         ensure!(
-            current.saturating_sub(nonce) <= max_age,
+            anchor_block.saturating_sub(nonce) <= max_age,
             Error::<T>::CommitmentNonceTooOld
         );
         Ok(())

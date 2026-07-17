@@ -86,7 +86,7 @@ impl<T: Config> Pallet<T> {
         // Reserve stake
         T::Currency::reserve(who, stake)?;
 
-        let current_block = Self::current_anchor_block();
+        let anchor_block = Self::current_anchor_block();
 
         let provider_info = ProviderInfo {
             multiaddr,
@@ -95,7 +95,7 @@ impl<T: Config> Pallet<T> {
             committed_bytes: 0,
             settings,
             stats: ProviderStats {
-                registered_at: current_block,
+                registered_at: anchor_block,
                 ..Default::default()
             },
             deregister_at: None,

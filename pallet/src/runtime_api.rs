@@ -197,5 +197,10 @@ sp_api::decl_runtime_apis! {
         /// this instead of a specific storage item so they need not know whether
         /// the anchor is a relay, parachain, or other block number.
         fn current_anchor_block() -> BlockNumber;
+
+        /// Milliseconds per anchor block. Pairs with `current_anchor_block` so
+        /// off-chain consumers can humanize anchor-denominated durations
+        /// without knowing which clock the pallet measures them on.
+        fn anchor_block_time_millis() -> u64;
     }
 }

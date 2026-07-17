@@ -847,6 +847,10 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         fn current_anchor_block() -> BlockNumber {
             StorageProvider::current_anchor_block()
         }
+
+        fn anchor_block_time_millis() -> u64 {
+            StorageProvider::anchor_block_time_millis()
+        }
     }
 
     impl xcm_runtime_apis::fees::XcmPaymentApi<Block> for Runtime {

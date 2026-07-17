@@ -116,6 +116,7 @@ impl pallet_storage_provider::Config for Test {
     type DeregisterAnnouncementPeriod = ConstU64<150>;
     type MaxChallengesPerDeadline = ConstU16<1_000>;
     type BlockNumberProvider = System;
+    type AnchorBlockTimeMillis = ConstU64<6000>;
     type WeightInfo = ();
 }
 
