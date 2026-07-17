@@ -11,22 +11,8 @@ readme = "README.md"
 
 
 [dependencies]
-codec = { workspace = true }
-scale-info = { workspace = true }
-subxt = { workspace = true, features = ["jsonrpsee"], optional = true }
+codec = { workspace = true, features = ["std"] }
+scale-info = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+subxt = { workspace = true, features = ["jsonrpsee", "native"] }
 subxt-signer = { workspace = true, features = ["ecdsa", "sr25519", "subxt"] }
-serde = { workspace = true, features = ["derive"] }
-subxt-core = { workspace = true }
-
-[features]
-default = ["std"]
-std = [
-	"codec/std",
-	"dep:subxt",
-	"scale-info/std",
-	"serde/std",
-	"subxt-core/std",
-	"subxt-signer/std",
-	"subxt/jsonrpsee",
-	"subxt/native",
-]

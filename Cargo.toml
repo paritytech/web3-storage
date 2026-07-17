@@ -167,9 +167,9 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 
 # Subxt (chain interaction for off-chain clients)
-subxt = { version = "0.44.3" }
-subxt-core = { version = "0.44.3", default-features = false }
-subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+subxt = { version = "0.50.2" }
+subxt-rpcs = { version = "0.50.2" }
+subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }
