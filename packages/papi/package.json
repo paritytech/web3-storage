@@ -21,7 +21,7 @@
     "@multiformats/multiaddr-to-uri": "^12.0.0",
     "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-api/utils": "^0.4.0",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "polkadot-api": "^2.1.7"
   }
 }
