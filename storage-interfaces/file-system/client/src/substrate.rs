@@ -11,7 +11,7 @@ use sp_runtime::AccountId32;
 use std::str::FromStr;
 use storage_client::{scale_decode, EventParser, Signer};
 use storage_primitives::Role;
-use subxt::ext::scale_value::{At, Composite};
+use subxt::ext::scale_value::{At, Composite, Value};
 use subxt::{OnlineClient, PolkadotConfig};
 
 /// Pallet name in the runtime configuration.
@@ -107,41 +107,42 @@ pub mod extrinsics {
 }
 
 /// Storage queries for reading chain state.
+///
+/// Since subxt 0.50 a storage address no longer carries the keys, so each
+/// map query returns the address together with the key tuple to pass to
+/// `try_fetch`/`fetch`.
 #[allow(dead_code)]
 pub mod storage {
     use super::*;
-    use subxt::storage::Address;
+    use subxt::storage::DynamicAddress;
 
     /// Query drive info.
-    pub fn drive_info(drive_id: DriveId) -> impl Address {
-        subxt::dynamic::storage(
-            "DriveRegistry",
-            "Drives",
-            vec![subxt::dynamic::Value::u128(drive_id as u128)],
+    pub fn drive_info(drive_id: DriveId) -> (DynamicAddress<(Value,)>, (Value,)) {
+        (
+            subxt::dynamic::storage::<(Value,), Value>("DriveRegistry", "Drives"),
+            (subxt::dynamic::Value::u128(drive_id as u128),),
         )
     }
 
     /// Query user drives list.
-    pub fn user_drives(account: &AccountId32) -> impl Address {
-        subxt::dynamic::storage(
-            "DriveRegistry",
-            "UserDrives",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
+    pub fn user_drives(account: &AccountId32) -> (DynamicAddress<(Value,)>, (Value,)) {
+        (
+            subxt::dynamic::storage::<(Value,), Value>("DriveRegistry", "UserDrives"),
+            (subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),),
         )
     }
 
     /// Query bucket to drive mapping.
-    pub fn bucket_to_drive(bucket_id: u64) -> impl Address {
-        subxt::dynamic::storage(
-            "DriveRegistry",
-            "BucketToDrive",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+    pub fn bucket_to_drive(bucket_id: u64) -> (DynamicAddress<(Value,)>, (Value,)) {
+        (
+            subxt::dynamic::storage::<(Value,), Value>("DriveRegistry", "BucketToDrive"),
+            (subxt::dynamic::Value::u128(bucket_id as u128),),
         )
     }
 
     /// Query next drive ID.
-    pub fn next_drive_id() -> impl Address {
-        subxt::dynamic::storage("DriveRegistry", "NextDriveId", vec![])
+    pub fn next_drive_id() -> DynamicAddress<()> {
+        subxt::dynamic::storage::<(), Value>("DriveRegistry", "NextDriveId")
     }
 }
 
@@ -212,7 +213,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
     /// or has unexpected field structure. Unknown variants within the right pallet
     /// surface as [`FileSystemEvent::Unknown`].
     fn parse_event_detail(
-        event: &subxt::events::EventDetails<PolkadotConfig>,
+        event: &subxt::events::Event<'_, PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<FileSystemEvent> {
@@ -220,15 +221,15 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
             return None;
         }
 
-        let fields = match event.field_values() {
+        let fields = match event.decode_fields_unchecked_as::<Composite<()>>() {
             Ok(f) => f,
             Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.variant_name());
+                tracing::trace!("Failed to decode fields for {}: {e}", event.event_name());
                 return None;
             }
         };
 
-        match event.variant_name() {
+        match event.event_name() {
             "DriveCreated" => Some(FileSystemEvent::DriveCreated {
                 drive_id: scale_decode::field_u64(&fields, "drive_id")?,
                 owner: scale_decode::field_account(&fields, "owner")?,
@@ -267,7 +268,7 @@ impl EventParser<FileSystemEvent> for FileSystemEventParser {
 }
 
 /// Decode a `storage_primitives::Role`-shaped variant field.
-fn field_role(fields: &Composite<u32>, name: &str) -> Option<Role> {
+fn field_role(fields: &Composite<()>, name: &str) -> Option<Role> {
     match scale_decode::variant_name(fields.at(name)?)?.as_str() {
         "Admin" => Some(Role::Admin),
         "Writer" => Some(Role::Writer),

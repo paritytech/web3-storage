@@ -2,8 +2,8 @@
 
 //! Generic SCALE value decoders for use with subxt's dynamic event and storage APIs.
 //!
-//! Subxt's event API returns field values as `Composite<u32>` (field index as context);
-//! `.at(name)` on that composite yields `Option<&Value<u32>>`. The helpers here wrap the
+//! Subxt's event API decodes field values as `Composite<()>`;
+//! `.at(name)` on that composite yields `Option<&Value>`. The helpers here wrap the
 //! common access + decode patterns so callers don't repeat the same match arms.
 //!
 //! Only generic, domain-agnostic decoders belong here. Pallet-specific shapes (e.g. a
@@ -15,27 +15,27 @@ use storage_primitives::Commitment;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef};
 
 /// Read a named field as a `u64` (decoded from the underlying `u128`).
-pub fn field_u64(fields: &Composite<u32>, name: &str) -> Option<u64> {
+pub fn field_u64(fields: &Composite<()>, name: &str) -> Option<u64> {
     fields.at(name)?.as_u128().map(|v| v as u64)
 }
 
 /// Read a named field as a `u32` (decoded from the underlying `u128`).
-pub fn field_u32(fields: &Composite<u32>, name: &str) -> Option<u32> {
+pub fn field_u32(fields: &Composite<()>, name: &str) -> Option<u32> {
     fields.at(name)?.as_u128().map(|v| v as u32)
 }
 
 /// Read a named field as a `u128`.
-pub fn field_u128(fields: &Composite<u32>, name: &str) -> Option<u128> {
+pub fn field_u128(fields: &Composite<()>, name: &str) -> Option<u128> {
     fields.at(name)?.as_u128()
 }
 
 /// Read a named field and decode it as an [`AccountId32`].
-pub fn field_account(fields: &Composite<u32>, name: &str) -> Option<AccountId32> {
+pub fn field_account(fields: &Composite<()>, name: &str) -> Option<AccountId32> {
     decode_account(fields.at(name)?)
 }
 
 /// Read a named field and decode it as an [`H256`].
-pub fn field_h256(fields: &Composite<u32>, name: &str) -> Option<H256> {
+pub fn field_h256(fields: &Composite<()>, name: &str) -> Option<H256> {
     decode_h256(fields.at(name)?)
 }
 
@@ -44,7 +44,7 @@ pub fn field_h256(fields: &Composite<u32>, name: &str) -> Option<H256> {
 /// `Commitment` is a named-struct field (`mmr_root`/`start_seq`/`leaf_count`),
 /// so subxt decodes it as a nested `Composite::Named` — pull that inner
 /// composite out and reuse the flat-field decoders on it.
-pub fn field_commitment(fields: &Composite<u32>, name: &str) -> Option<Commitment> {
+pub fn field_commitment(fields: &Composite<()>, name: &str) -> Option<Commitment> {
     let inner = match &fields.at(name)?.value {
         ValueDef::Composite(c) => c,
         _ => return None,
@@ -58,12 +58,12 @@ pub fn field_commitment(fields: &Composite<u32>, name: &str) -> Option<Commitmen
 
 /// Read a named field as a `Vec<AccountId32>`. Missing or unparseable fields yield an
 /// empty vec.
-pub fn field_accounts(fields: &Composite<u32>, name: &str) -> Vec<AccountId32> {
+pub fn field_accounts(fields: &Composite<()>, name: &str) -> Vec<AccountId32> {
     fields.at(name).map(decode_account_vec).unwrap_or_default()
 }
 
 /// Read a named field as a `Vec<u8>` (e.g. a `BoundedVec<u8, _>` or raw `Vec<u8>`).
-pub fn field_bytes(fields: &Composite<u32>, name: &str) -> Option<Vec<u8>> {
+pub fn field_bytes(fields: &Composite<()>, name: &str) -> Option<Vec<u8>> {
     decode_bytes(fields.at(name)?)
 }
 
@@ -72,7 +72,7 @@ pub fn field_bytes(fields: &Composite<u32>, name: &str) -> Option<Vec<u8>> {
 /// `AccountId32` is a newtype struct in the SCALE type system, so subxt decodes it as
 /// `Composite::Unnamed([Composite::Unnamed([byte × 32])])`. [`collect_le_bytes`] handles
 /// arbitrary nesting depth.
-pub fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
+pub fn decode_account(v: &Value) -> Option<AccountId32> {
     let mut bytes = [0u8; 32];
     if collect_le_bytes(v, &mut bytes, 0) == 32 {
         Some(AccountId32::new(bytes))
@@ -82,7 +82,7 @@ pub fn decode_account(v: &Value<u32>) -> Option<AccountId32> {
 }
 
 /// Decode an [`H256`] from a SCALE value (same nesting shape as `AccountId32`).
-pub fn decode_h256(v: &Value<u32>) -> Option<H256> {
+pub fn decode_h256(v: &Value) -> Option<H256> {
     let mut bytes = [0u8; 32];
     if collect_le_bytes(v, &mut bytes, 0) == 32 {
         Some(H256::from(bytes))
@@ -96,7 +96,7 @@ pub fn decode_h256(v: &Value<u32>) -> Option<H256> {
 /// Handles a flat unnamed composite of byte-as-`u128` leaves and a single-element wrapper
 /// composite (e.g. `BoundedVec<u8, _>` decoded as `Composite::Unnamed([Composite::Unnamed([
 /// byte … ])])`). An empty unnamed composite decodes to an empty `Vec`.
-pub fn decode_bytes(v: &Value<u32>) -> Option<Vec<u8>> {
+pub fn decode_bytes(v: &Value) -> Option<Vec<u8>> {
     match &v.value {
         ValueDef::Composite(Composite::Unnamed(items)) => {
             if items.is_empty() {
@@ -122,7 +122,7 @@ pub fn decode_bytes(v: &Value<u32>) -> Option<Vec<u8>> {
 }
 
 /// Decode a `Vec<AccountId32>` from an unnamed composite of account composites.
-pub fn decode_account_vec(v: &Value<u32>) -> Vec<AccountId32> {
+pub fn decode_account_vec(v: &Value) -> Vec<AccountId32> {
     match &v.value {
         ValueDef::Composite(Composite::Unnamed(items)) => {
             items.iter().filter_map(decode_account).collect()
@@ -133,7 +133,7 @@ pub fn decode_account_vec(v: &Value<u32>) -> Vec<AccountId32> {
 
 /// Extract the variant name from a `ValueDef::Variant`. Returns `None` for non-variant
 /// values.
-pub fn variant_name(v: &Value<u32>) -> Option<String> {
+pub fn variant_name(v: &Value) -> Option<String> {
     match &v.value {
         ValueDef::Variant(var) => Some(var.name.clone()),
         _ => None,
@@ -145,7 +145,7 @@ pub fn variant_name(v: &Value<u32>) -> Option<String> {
 ///
 /// Treats `Primitive::U128` leaves as one byte each and recurses into `Composite::Unnamed`
 /// nodes — covering both flat byte arrays and newtype-wrapped arrays like `AccountId32`.
-pub fn collect_le_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> usize {
+pub fn collect_le_bytes(v: &Value, buf: &mut [u8; 32], offset: usize) -> usize {
     match &v.value {
         ValueDef::Primitive(Primitive::U128(n)) => {
             if offset < 32 {
@@ -170,35 +170,35 @@ pub fn collect_le_bytes(v: &Value<u32>, buf: &mut [u8; 32], offset: usize) -> us
 mod tests {
     use super::*;
 
-    fn u64_leaf(n: u64) -> Value<u32> {
+    fn u64_leaf(n: u64) -> Value {
         Value {
             value: ValueDef::Primitive(Primitive::u128(n as u128)),
-            context: 0,
+            context: (),
         }
     }
 
     /// `H256`/`AccountId32` decode as a newtype wrapping a fixed-size byte array,
     /// i.e. `Composite::Unnamed([Composite::Unnamed([byte × 32])])` — see
     /// `decode_h256`'s doc comment.
-    fn h256_leaf(byte: u8) -> Value<u32> {
+    fn h256_leaf(byte: u8) -> Value {
         let bytes = Composite::Unnamed((0..32).map(|_| u64_leaf(byte as u64)).collect());
         Value {
             value: ValueDef::Composite(Composite::Unnamed(vec![Value {
                 value: ValueDef::Composite(bytes),
-                context: 0,
+                context: (),
             }])),
-            context: 0,
+            context: (),
         }
     }
 
-    fn commitment_leaf(mmr_root_byte: u8, start_seq: u64, leaf_count: u64) -> Value<u32> {
+    fn commitment_leaf(mmr_root_byte: u8, start_seq: u64, leaf_count: u64) -> Value {
         Value {
             value: ValueDef::Composite(Composite::named([
                 ("mmr_root", h256_leaf(mmr_root_byte)),
                 ("start_seq", u64_leaf(start_seq)),
                 ("leaf_count", u64_leaf(leaf_count)),
             ])),
-            context: 0,
+            context: (),
         }
     }
 
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn field_commitment_none_when_field_missing() {
-        let fields: Composite<u32> = Composite::named(Vec::<(String, Value<u32>)>::new());
+        let fields: Composite<()> = Composite::named(Vec::<(String, Value)>::new());
 
         assert!(field_commitment(&fields, "commitment").is_none());
     }
@@ -238,7 +238,7 @@ mod tests {
                 ("mmr_root", h256_leaf(0xAB)),
                 ("start_seq", u64_leaf(10)),
             ])),
-            context: 0,
+            context: (),
         };
         let fields = Composite::named([("commitment", incomplete)]);
 

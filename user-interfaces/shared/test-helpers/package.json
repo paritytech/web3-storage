@@ -13,7 +13,7 @@
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.20.3",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/sdk": "workspace:*",
     "polkadot-api": "^2.1.7"
   },

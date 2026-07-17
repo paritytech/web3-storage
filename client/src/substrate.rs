@@ -64,8 +64,7 @@ impl SubstrateClient {
     ) -> Result<impl StreamExt<Item = Result<H256, ClientError>>, ClientError> {
         let stream = self
             .api
-            .blocks()
-            .subscribe_finalized()
+            .stream_blocks()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to subscribe: {e}")))?;
 
@@ -705,46 +704,45 @@ pub mod constants {
     /// Dynamic constant address for `StorageProvider::RequestTimeout`,
     /// the validity window (in blocks) the chain enforces on provider-signed
     /// agreement terms.
-    pub fn request_timeout() -> subxt::constants::DynamicAddress {
+    pub fn request_timeout() -> subxt::constants::DynamicAddress<subxt::dynamic::Value> {
         subxt::dynamic::constant(PALLET_NAME, "RequestTimeout")
     }
 }
 
 /// Storage queries for reading chain state.
+///
+/// Keyed helpers return `(address, keys)` pairs: pass the keys to
+/// `try_fetch`/`iter` at call time (subxt 0.50 moves keys out of the address).
 pub mod storage {
     use super::*;
+
+    /// Dynamic storage address with `KeyParts` keys, decoding to a dynamic `Value`.
+    pub type DynamicAddress<KeyParts> =
+        subxt::storage::DynamicAddress<KeyParts, subxt::dynamic::Value>;
 
     /// Query provider info.
     pub fn provider_info(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Providers",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value,)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "Providers"),
+            (subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),),
         )
     }
 
     /// Query bucket info.
     pub fn bucket_info(
         bucket_id: u64,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Buckets",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value,)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "Buckets"),
+            (subxt::dynamic::Value::u128(bucket_id as u128),),
         )
     }
 
@@ -752,20 +750,16 @@ pub mod storage {
     pub fn agreement_info(
         bucket_id: u64,
         provider: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "StorageAgreements",
-            vec![
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>,
+        (subxt::dynamic::Value, subxt::dynamic::Value),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "StorageAgreements"),
+            (
                 subxt::dynamic::Value::u128(bucket_id as u128),
                 subxt::dynamic::Value::from_bytes(provider.as_ref() as &[u8]),
-            ],
+            ),
         )
     }
 
@@ -774,34 +768,26 @@ pub mod storage {
     /// Key layout after prefix: [blake2_128(provider)=16][provider=32]; provider at offset 72 in full key.
     pub fn agreements_for_bucket(
         bucket_id: u64,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "StorageAgreements",
-            vec![subxt::dynamic::Value::u128(bucket_id as u128)],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "StorageAgreements"),
+            (subxt::dynamic::Value::u128(bucket_id as u128),),
         )
     }
 
     /// Query the list of bucket IDs that an account is a member of.
     pub fn member_buckets(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "MemberBuckets",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value,)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "MemberBuckets"),
+            (subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),),
         )
     }
 
@@ -809,75 +795,50 @@ pub mod storage {
     ///
     /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32];
     /// account at [48..80].
-    pub fn all_providers() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(PALLET_NAME, "Providers", vec![])
+    pub fn all_providers() -> DynamicAddress<(subxt::dynamic::Value,)> {
+        subxt::dynamic::storage(PALLET_NAME, "Providers")
     }
 
     /// Iterate all storage agreements (bucket_id × provider DoubleMap).
     ///
     /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]
     ///             [blake2_128(provider)=16][provider=32]; bucket_id at [48..56], provider at [72..104].
-    pub fn all_storage_agreements() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(PALLET_NAME, "StorageAgreements", vec![])
+    pub fn all_storage_agreements() -> DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>
+    {
+        subxt::dynamic::storage(PALLET_NAME, "StorageAgreements")
     }
 
     /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
     ///
     /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4];
     /// deadline block at [48..52].
-    pub fn all_challenges() -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(PALLET_NAME, "Challenges", vec![])
+    pub fn all_challenges() -> DynamicAddress<(subxt::dynamic::Value,)> {
+        subxt::dynamic::storage(PALLET_NAME, "Challenges")
     }
 
     /// Query challenges at a deadline block.
     pub fn challenges(
         deadline_block: u32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "Challenges",
-            vec![subxt::dynamic::Value::u128(deadline_block as u128)],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value,)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "Challenges"),
+            (subxt::dynamic::Value::u128(deadline_block as u128),),
         )
     }
 
     /// Query the provider's replay-window state.
     pub fn provider_replay_state(
         account: &AccountId32,
-    ) -> subxt::storage::DefaultAddress<
-        Vec<subxt::dynamic::Value>,
-        subxt::dynamic::DecodedValueThunk,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-        subxt::utils::Yes,
-    > {
-        subxt::dynamic::storage(
-            PALLET_NAME,
-            "ProviderReplayStates",
-            vec![subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8])],
+    ) -> (
+        DynamicAddress<(subxt::dynamic::Value,)>,
+        (subxt::dynamic::Value,),
+    ) {
+        (
+            subxt::dynamic::storage(PALLET_NAME, "ProviderReplayStates"),
+            (subxt::dynamic::Value::from_bytes(account.as_ref() as &[u8]),),
         )
     }
 }
