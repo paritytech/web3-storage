@@ -226,6 +226,11 @@ pub mod pallet {
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
+            assert!(
+                T::AnchorBlockTimeMillis::get() > 0,
+                "AnchorBlockTimeMillis must be non-zero; off-chain consumers \
+                convert anchor-denominated durations to wall-clock time with it"
+            );
         }
 
         #[cfg(feature = "try-runtime")]
@@ -354,6 +359,13 @@ pub mod pallet {
         type BlockNumberProvider: sp_runtime::traits::BlockNumberProvider<
             BlockNumber = BlockNumberFor<Self>,
         >;
+
+        /// Milliseconds per anchor block — the tick of
+        /// [`Config::BlockNumberProvider`]. Exposed via the
+        /// `anchor_block_time_millis` runtime API so off-chain consumers can
+        /// humanize anchor-denominated durations.
+        #[pallet::constant]
+        type AnchorBlockTimeMillis: Get<u64>;
 
         /// Weight information for extrinsics in this pallet.
         type WeightInfo: WeightInfo;

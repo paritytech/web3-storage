@@ -104,6 +104,7 @@ impl pallet_storage_provider::Config for Test {
     // thousands of challenges.
     type MaxChallengesPerDeadline = ConstU16<5>;
     type BlockNumberProvider = System;
+    type AnchorBlockTimeMillis = ConstU64<6000>;
     type WeightInfo = ();
 }
 

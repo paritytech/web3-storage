@@ -839,9 +839,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         }
 
         fn anchor_block_time_millis() -> u64 {
-            // The anchor is the relay chain (`RelaychainDataProvider`), so one
-            // anchor block is one relay slot.
-            RELAY_CHAIN_SLOT_DURATION_MILLIS as u64
+            StorageProvider::anchor_block_time_millis()
         }
     }
 
