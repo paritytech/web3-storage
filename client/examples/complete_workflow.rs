@@ -93,12 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Upload + download against the provider node, verifying integrity.
     println!("Uploading and downloading data...");
-    let user_config = ClientConfig {
+    let user_client_config = ClientConfig {
         chain_ws_url: chain_ws.to_string(),
         provider_urls: vec![provider_url.to_string()],
         ..Default::default()
     };
-    let user = StorageUserClient::new(user_config, user_keypair.into())?;
+    let user = StorageUserClient::new(user_client_config, user_keypair.into())?;
     let data = b"hello e2e".to_vec();
     let data_root = user
         .upload(bucket_id, &data, ChunkingStrategy::default())
