@@ -3,8 +3,9 @@ name: Security
 on:
   push:
     branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
   pull_request:
-    branches: [main, dev]
   merge_group:
   # Daily re-scan of unchanged code for newly-published advisories / leaks.
   schedule:
@@ -34,7 +35,7 @@ jobs:
           persist-credentials: false
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@bffeee26d4db9be238a4ea78d8826604ebcb594d # v2.82.5
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
         with:
           tool: cargo-deny
 

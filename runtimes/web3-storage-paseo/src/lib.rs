@@ -843,6 +843,10 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         ) -> Vec<(AccountId, pallet_storage_provider::runtime_api::ProviderInfoResponse)> {
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
         }
+
+        fn current_anchor_block() -> BlockNumber {
+            StorageProvider::current_anchor_block()
+        }
     }
 
     impl xcm_runtime_apis::fees::XcmPaymentApi<Block> for Runtime {

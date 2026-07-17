@@ -3,9 +3,11 @@ resolver = "2"
 members = [
 	# Layer 0: Scalable Web3 Storage
 	"client",
+	"crates/storage-subxt",
 	"pallet",
 	"primitives",
 	"provider-node",
+	"provider/negotiation",
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
 
@@ -37,10 +39,12 @@ pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompi
 pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
 pallet-storage-provider = { path = "pallet", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
+provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
+storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
 file-system-client = { path = "storage-interfaces/file-system/client" }
@@ -163,8 +167,9 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 
 # Subxt (chain interaction for off-chain clients)
-subxt = { version = "0.44.3" }
-subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+subxt = { version = "0.50.2" }
+subxt-rpcs = { version = "0.50.2" }
+subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }

@@ -148,18 +148,16 @@ impl MembershipResolver for ChainMembershipResolver {
 
         let api = self.api().await?;
 
-        let storage_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let storage_query =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let result = api
-            .storage()
-            .at_latest()
+        let at = api
+            .at_current_block()
             .await
-            .map_err(|e| format!("Failed to get storage: {e}"))?
-            .fetch(&storage_query)
+            .map_err(|e| format!("Failed to get storage: {e}"))?;
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::u128(bucket_id as u128),))
             .await
             .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
 
@@ -169,7 +167,7 @@ impl MembershipResolver for ChainMembershipResolver {
         };
 
         let decoded = bucket_value
-            .to_value()
+            .decode()
             .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
         let members_val = match decoded.at("members") {

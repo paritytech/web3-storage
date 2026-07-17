@@ -62,13 +62,17 @@ fn agreement_to_response<T: Config>(
 }
 
 impl<T: Config> Pallet<T> {
-    /// Current block number on the clock all pallet durations are measured
-    /// in: the relay chain in production, `System` in tests.
+    /// The anchor block: the clock every pallet duration (timeouts, expiries,
+    /// `valid_until`, nonce age) is measured against. Whether that is a relay
+    /// chain block, parachain block, or something else is a
+    /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
+    /// consumers via the `current_anchor_block` runtime API) need not care.
+    /// The relay chain in production, `System` in tests.
     ///
-    /// During `on_initialize` this returns the *previous* block's relay
-    /// parent (the validation-data inherent has not run yet); everywhere
-    /// else it is the current block's relay parent.
-    pub fn current_block() -> BlockNumberFor<T> {
+    /// During `on_initialize` this returns the *previous* block's anchor value
+    /// (the validation-data inherent has not run yet); everywhere else it is
+    /// the current block's.
+    pub fn current_anchor_block() -> BlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
 

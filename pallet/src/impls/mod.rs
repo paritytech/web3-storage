@@ -9,3 +9,4 @@ pub mod members;
 pub mod providers;
 pub mod queries;
 pub mod signatures;
+pub mod try_state;

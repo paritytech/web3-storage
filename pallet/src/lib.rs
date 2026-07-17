@@ -22,6 +22,7 @@ extern crate alloc;
 pub use pallet::*;
 
 pub mod impls;
+pub mod migrations;
 pub mod runtime_api;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -51,9 +52,13 @@ pub mod pallet {
         traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
+    #[cfg(feature = "try-runtime")]
+    use frame_system::pallet_prelude::BlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, One, Saturating, Zero};
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
         CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
@@ -71,57 +76,59 @@ pub mod pallet {
         BlockNumberFor<T>,
     >;
 
+    /// In-code storage version. v1 backfills the `commitment_nonce` field added
+    /// to `BucketSnapshot` by #125; see [`crate::migrations::v1`].
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
     #[pallet::pallet]
+    #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
-    /// Maximum number of deadline keys the challenge slash sweep drains per
-    /// block. Relay block numbers can jump by more than one between
-    /// consecutive parachain blocks (most drastically after a gap in block
-    /// production), so the sweep covers a range of keys; this cap bounds the
-    /// per-block key probing and the remainder carries over via
-    /// [`LastSweptChallengeBlock`]. The expensive part — slashing — is
-    /// bounded separately by the per-block challenge budget
-    /// (`MaxChallengesPerDeadline`) inside `on_initialize`.
+    /// Maximum deadline keys the slash sweep probes per block. Relay block
+    /// numbers can jump by more than one per parachain block, so the sweep
+    /// covers a range; this caps the probing and the remainder carries over via
+    /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
+    /// [`MAX_SWEEP_SLASH_BUDGET`].
     const MAX_SWEEP_SPAN: u32 = 32;
+
+    /// Maximum challenges the slash sweep slashes per block, across all deadline
+    /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
+    /// to 1000) because slashing that many in one block would consume the whole
+    /// block's PoV (~5 KB each). A fully loaded deadline instead drains over
+    /// several blocks via the [`LastSweptChallengeBlock`] carry-over. The
+    /// effective budget is `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)`,
+    /// so runtimes with a smaller per-deadline cap (e.g. tests) are unaffected.
+    pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         /// Slash providers whose challenges expired unanswered.
         ///
-        /// Challenge deadlines are relay-chain block numbers
-        /// ([`Config::BlockNumberProvider`]), which advance by a variable
-        /// amount (including zero) between consecutive parachain blocks, so
-        /// the sweep drains a *range* of deadline keys and tracks its
-        /// progress in [`LastSweptChallengeBlock`] instead of probing the
-        /// single key `n` the way a parachain-block-keyed sweep could.
+        /// Deadlines are relay-chain blocks ([`Config::BlockNumberProvider`]),
+        /// which can jump by more than one per parachain block, so this drains a
+        /// *range* of deadline keys, tracking progress in
+        /// [`LastSweptChallengeBlock`] rather than probing the single key `n`.
         ///
-        /// At `on_initialize` time the validation-data inherent has not run
-        /// yet, so [`Pallet::current_block`] returns the relay parent `p` of
-        /// the *previous* parachain block. A challenge with deadline `d` is
-        /// respondable in any block whose relay parent is `<= d`, and every
-        /// later block has relay parent `>= p`, so exactly the keys `< p`
-        /// are final here: unrespondable, with `NextChallengeIndex` frozen
-        /// (any new challenge gets `deadline = now + ChallengeTimeout >= p`).
-        /// Draining them cannot race a valid response. The flip side is a
-        /// one-parachain-block lag: a slash lands in the first block *after*
-        /// the relay parent passes the deadline. Escape hatches don't care —
-        /// `complete_deregister`/`end_agreement` are gated by the
-        /// [`PendingChallenges`] counters, not by the sweep having run.
-        ///
-        /// Two independent bounds keep the block budget safe: [`MAX_SWEEP_SPAN`]
-        /// caps how many keys are probed, and a challenge budget of
-        /// [`Config::MaxChallengesPerDeadline`] caps how many slashes run —
-        /// the same worst case a single fully-loaded deadline always had. On
-        /// budget exhaustion the cursor parks just below the partially
-        /// drained key and the remainder carries over to later blocks.
-        ///
-        /// Runs in `on_initialize` rather than `on_finalize` so the actual
-        /// work done can be returned as weight instead of pre-reserved.
+        /// - **Which keys are final.** In `on_initialize` the validation-data
+        ///   inherent has not run, so [`Pallet::current_block`] is the relay
+        ///   parent `p` of the *previous* parachain block. A challenge with
+        ///   deadline `d` stays respondable while some block has relay parent
+        ///   `<= d`; every future block has relay parent `>= p`; so keys `< p`
+        ///   are unrespondable and draining them cannot race a valid response.
+        ///   Cost: a one-block lag — the slash lands the block after `p` passes
+        ///   `d`. Escape hatches are unaffected; they gate on the
+        ///   [`PendingChallenges`] counters, not on the sweep.
+        /// - **Budget.** [`MAX_SWEEP_SPAN`] caps keys probed per block;
+        ///   [`MAX_SWEEP_SLASH_BUDGET`] caps slashes per block so one maturing
+        ///   deadline cannot eat the block's PoV. On exhaustion the cursor parks
+        ///   just below the partly drained key; the rest carries over.
+        /// - **Why `on_initialize`.** Work done is returned as weight instead of
+        ///   pre-reserved, which `on_finalize` cannot do.
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
             // Provider read + cursor read/write.
             let mut weight = T::DbWeight::get().reads_writes(2, 1);
 
-            let now = Self::current_block();
+            let now = Self::current_anchor_block();
             if now.is_zero() {
                 return weight;
             }
@@ -144,9 +151,11 @@ pub mod pallet {
                 return weight;
             }
             let end = sweepable.min(last.saturating_add(MAX_SWEEP_SPAN.into()));
-            // Per-block slash budget. `.max(1)` so a (nonsensical) zero cap
-            // cannot park the cursor forever.
-            let mut budget = u32::from(T::MaxChallengesPerDeadline::get()).max(1);
+            // Per-block slash budget, capped so one maturing deadline cannot eat
+            // the whole block's PoV. Lower bound of 1 so a (nonsensical) zero
+            // cap cannot park the cursor forever.
+            let mut budget =
+                u32::from(T::MaxChallengesPerDeadline::get()).clamp(1, MAX_SWEEP_SLASH_BUDGET);
             let mut key = last.saturating_add(One::one());
             while key <= end {
                 let mut count: u32 = 0;
@@ -217,6 +226,11 @@ pub mod pallet {
                 challenge created at the announcement block matures while the \
                 provider is still slashable"
             );
+        }
+
+        #[cfg(feature = "try-runtime")]
+        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
         }
     }
 
@@ -409,18 +423,16 @@ pub mod pallet {
     pub type NextChallengeIndex<T: Config> =
         StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
-    /// Highest deadline key (relay chain block) the `on_initialize` slash
-    /// sweep has already drained. The sweep covers the range from here up to
-    /// (but excluding) the previous block's relay parent, because relay block
-    /// numbers can advance by more than one between consecutive parachain
-    /// blocks. `None` until the first block after genesis/upgrade anchors it.
+    /// Highest deadline key the `on_initialize` slash sweep has drained. Each
+    /// block it sweeps up to (but excluding) the previous block's relay parent.
+    /// `None` until the first block after genesis/upgrade anchors it.
     #[pallet::storage]
     pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
 
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
     /// and decremented exactly once per resolution (defended/invalid-response
-    /// in `respond_to_challenge`, or timeout in `on_finalize`). Gates
+    /// in `respond_to_challenge`, or timeout in the `on_initialize` sweep). Gates
     /// `complete_deregister`: a provider cannot exit while still slashable for
     /// a pending challenge.
     #[pallet::storage]
@@ -1096,8 +1108,8 @@ pub mod pallet {
         /// resolves (defended, slashed, or timed out).
         AgreementHasPendingChallenge,
         /// `MaxChallengesPerDeadline` challenges have already been allocated
-        /// for the deadline this challenge would land on. Bounds the
-        /// `on_finalize` slash sweep so it stays within its reserved weight.
+        /// for the deadline this challenge would land on. Caps the total the
+        /// `on_initialize` sweep must eventually drain for a single key.
         TooManyChallengesThisBlock,
 
         // Checkpoint errors
@@ -1250,7 +1262,7 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::deregister_provider())]
         pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let complete_after =
                 current_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
 
@@ -1303,7 +1315,7 @@ pub mod pallet {
             let deregister_at = provider
                 .deregister_at
                 .ok_or(Error::<T>::DeregisterNotAnnounced)?;
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             ensure!(
                 current_block >= deregister_at,
                 Error::<T>::DeregisterPeriodNotElapsed
@@ -1459,7 +1471,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotFound
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
@@ -1787,7 +1799,7 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             let is_early_termination = current_block < agreement.expires_at;
 
@@ -1842,7 +1854,7 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
 
             ensure!(
                 current_block > agreement.expires_at,
@@ -1890,7 +1902,7 @@ pub mod pallet {
 
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
                     let remaining_duration = if current_block < agreement.expires_at {
                         agreement.expires_at.saturating_sub(current_block)
                     } else {
@@ -1994,7 +2006,7 @@ pub mod pallet {
                     // Validate duration
                     Self::validate_duration(&provider_info.settings, additional_duration)?;
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
 
                     // Check if price increased
                     let price_increased =
@@ -2168,7 +2180,7 @@ pub mod pallet {
                     Error::<T>::InsufficientSignatures
                 );
 
-                let current_block = Self::current_block();
+                let current_block = Self::current_anchor_block();
 
                 // Update historical roots
                 Self::update_historical_roots(bucket, current_block, commitment.mmr_root);
@@ -2312,7 +2324,7 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current block and calculate current window
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let current_window = Self::calculate_window(current_block, config.interval);
 
             // Validate window
@@ -2509,7 +2521,7 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current window
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             let current_window = Self::calculate_window(current_block, config.interval);
 
             // Can only report past windows
@@ -2676,7 +2688,7 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2737,7 +2749,7 @@ pub mod pallet {
             let agreement = StorageAgreements::<T>::get(bucket_id, &provider)
                 .ok_or(Error::<T>::AgreementNotFound)?;
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2786,7 +2798,7 @@ pub mod pallet {
             // Challengeability tracks genuine obligation: only while the
             // agreement is live (not into the settlement window).
             ensure!(
-                Self::current_block() < agreement.expires_at,
+                Self::current_anchor_block() < agreement.expires_at,
                 Error::<T>::AgreementExpired
             );
 
@@ -2842,7 +2854,7 @@ pub mod pallet {
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
-            let current_block = Self::current_block();
+            let current_block = Self::current_anchor_block();
             ensure!(
                 current_block <= challenge_id.deadline,
                 Error::<T>::ChallengeExpired
@@ -3081,7 +3093,7 @@ pub mod pallet {
                             ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
                         };
 
-                    let current_block = Self::current_block();
+                    let current_block = Self::current_anchor_block();
 
                     // Check sync interval
                     if let Some(record) = last_sync {

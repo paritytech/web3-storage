@@ -2,6 +2,8 @@
 
 //! Tests for S3 Registry pallet.
 
+mod try_state;
+
 use crate::{mock::*, Error, S3Buckets};
 use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
 use pallet_storage_provider::{AgreementTermsOf, ProviderSettings};
@@ -95,6 +97,28 @@ fn setup_provider_and_s3_bucket(owner: u64, nonce: u64) -> u64 {
         sig,
     ));
     0
+}
+
+/// Put an object owned by account 1 with the given key and size.
+fn put_sized_object(s3_bucket_id: u64, key: &[u8], size: u64) -> sp_runtime::DispatchResult {
+    S3Registry::put_object_metadata(
+        RuntimeOrigin::signed(1),
+        s3_bucket_id,
+        key.to_vec(),
+        sp_core::H256::repeat_byte(0xAB),
+        size,
+        b"application/octet-stream".to_vec(),
+        vec![],
+    )
+}
+
+/// (object_count, total_size) of a bucket. Also re-checks the pallet's
+/// try_state invariants, so every accounting assertion doubles as an
+/// invariant check.
+fn checked_bucket_stats(s3_bucket_id: u64) -> (u64, u64) {
+    assert_ok!(S3Registry::do_try_state());
+    let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+    (bucket.object_count, bucket.total_size)
 }
 
 #[test]
@@ -321,5 +345,260 @@ fn delete_nonempty_bucket_fails() {
             S3Registry::delete_s3_bucket(RuntimeOrigin::signed(1), s3_bucket_id),
             Error::<Test>::BucketNotEmpty
         );
+    });
+}
+
+#[test]
+fn put_object_metadata_fails_on_total_size_overflow() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // A second object of any size would overflow total_size - the call
+        // must fail instead of silently saturating.
+        assert_noop!(
+            S3Registry::put_object_metadata(
+                RuntimeOrigin::signed(1),
+                s3_bucket_id,
+                b"one-more-byte.bin".to_vec(),
+                cid,
+                1,
+                b"application/octet-stream".to_vec(),
+                vec![],
+            ),
+            Error::<Test>::BucketSizeLimitReached
+        );
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert!(S3Registry::get_object(s3_bucket_id, b"one-more-byte.bin").is_none());
+    });
+}
+
+#[test]
+fn put_object_metadata_overwrite_at_max_size_works() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // Overwriting the same key subtracts the old size first, so replacing
+        // a u64::MAX object with another u64::MAX object must not overflow.
+        let new_cid = sp_core::H256::repeat_byte(0xCD);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            new_cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert_eq!(
+            S3Registry::get_object(s3_bucket_id, b"huge.bin")
+                .unwrap()
+                .cid,
+            new_cid
+        );
+    });
+}
+
+#[test]
+fn copy_object_metadata_fails_on_total_size_overflow() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+        let cid = sp_core::H256::repeat_byte(0xAB);
+        assert_ok!(S3Registry::put_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+            cid,
+            u64::MAX,
+            b"application/octet-stream".to_vec(),
+            vec![],
+        ));
+
+        // Copying the object within the same bucket would double-count its
+        // size and overflow total_size.
+        assert_noop!(
+            S3Registry::copy_object_metadata(
+                RuntimeOrigin::signed(1),
+                s3_bucket_id,
+                b"huge.bin".to_vec(),
+                s3_bucket_id,
+                b"huge-copy.bin".to_vec(),
+            ),
+            Error::<Test>::BucketSizeLimitReached
+        );
+
+        let bucket = S3Buckets::<Test>::get(s3_bucket_id).unwrap();
+        assert_eq!(bucket.object_count, 1);
+        assert_eq!(bucket.total_size, u64::MAX);
+        assert!(S3Registry::get_object(s3_bucket_id, b"huge-copy.bin").is_none());
+    });
+}
+
+// The tests below try to force the accounting saturating_subs into an
+// underflow through real extrinsic sequences. They document why those subs
+// don't need checked_sub: with the adds checked, total_size is always the
+// exact sum of stored sizes, and every subtracted size is a member of that
+// sum, so the subtrahend can never exceed total_size.
+
+#[test]
+fn saturated_total_size_underflow_recipe_is_blocked() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+
+        // Pre-fix recipe: clamp total_size at u64::MAX with a huge object,
+        // sneak in a small one (silently saturated away), delete the huge
+        // one, and the next delete would compute 0 - 5 and underflow.
+        // The second put is now rejected, so the recipe never starts.
+        assert_ok!(put_sized_object(s3_bucket_id, b"huge.bin", u64::MAX));
+        assert_noop!(
+            put_sized_object(s3_bucket_id, b"small.bin", 5),
+            Error::<Test>::BucketSizeLimitReached
+        );
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (1, u64::MAX));
+
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"huge.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (0, 0));
+    });
+}
+
+#[test]
+fn overwrite_and_delete_accounting_is_exact() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+
+        assert_ok!(put_sized_object(s3_bucket_id, b"a.bin", 1024));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (1, 1024));
+
+        // Same-key overwrite shrinking to zero: sub 1024, then add 0.
+        assert_ok!(put_sized_object(s3_bucket_id, b"a.bin", 0));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (1, 0));
+
+        assert_ok!(put_sized_object(s3_bucket_id, b"b.bin", 500));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (2, 500));
+
+        // Deleting the zero-size object must not disturb the total.
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"a.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (1, 500));
+
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"b.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (0, 0));
+    });
+}
+
+#[test]
+fn copy_overwrite_churn_accounting_is_exact() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+
+        assert_ok!(put_sized_object(s3_bucket_id, b"src.bin", 300));
+        assert_ok!(put_sized_object(s3_bucket_id, b"dst.bin", 700));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (2, 1000));
+
+        // Copy over an existing key: sub the old dst size (700), add the
+        // src size (300).
+        assert_ok!(S3Registry::copy_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"src.bin".to_vec(),
+            s3_bucket_id,
+            b"dst.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (2, 600));
+
+        // Grow the source, then copy over dst again (sub 300, add 900).
+        assert_ok!(put_sized_object(s3_bucket_id, b"src.bin", 900));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (2, 1200));
+
+        assert_ok!(S3Registry::copy_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"src.bin".to_vec(),
+            s3_bucket_id,
+            b"dst.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (2, 1800));
+
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"src.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (1, 900));
+
+        assert_ok!(S3Registry::delete_object_metadata(
+            RuntimeOrigin::signed(1),
+            s3_bucket_id,
+            b"dst.bin".to_vec(),
+        ));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (0, 0));
+    });
+}
+
+#[test]
+fn delete_largest_first_accounting_is_exact() {
+    new_test_ext().execute_with(|| {
+        let s3_bucket_id = setup_provider_and_s3_bucket(1, 1);
+
+        // Fill the bucket to exactly u64::MAX so every subsequent step runs
+        // at the boundary where a clamped total would betray itself.
+        assert_ok!(put_sized_object(s3_bucket_id, b"huge.bin", u64::MAX - 10));
+        assert_ok!(put_sized_object(s3_bucket_id, b"a.bin", 4));
+        assert_ok!(put_sized_object(s3_bucket_id, b"b.bin", 3));
+        assert_ok!(put_sized_object(s3_bucket_id, b"c.bin", 3));
+        assert_eq!(checked_bucket_stats(s3_bucket_id), (4, u64::MAX));
+
+        // Worst-case order: remove the huge object first, leaving a small
+        // remainder that the following deletes must subtract from exactly.
+        for (key, count, total) in [
+            (&b"huge.bin"[..], 3, 10),
+            (&b"a.bin"[..], 2, 6),
+            (&b"b.bin"[..], 1, 3),
+            (&b"c.bin"[..], 0, 0),
+        ] {
+            assert_ok!(S3Registry::delete_object_metadata(
+                RuntimeOrigin::signed(1),
+                s3_bucket_id,
+                key.to_vec(),
+            ));
+            assert_eq!(checked_bucket_stats(s3_bucket_id), (count, total));
+        }
     });
 }

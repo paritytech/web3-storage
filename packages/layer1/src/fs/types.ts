@@ -62,6 +62,12 @@ export interface UploadResult {
   size: number;
 }
 
+export interface FileWithType {
+  bytes: Uint8Array;
+  /** MIME type from the provider's `Content-Type` header, or a generic fallback. */
+  contentType: string;
+}
+
 export interface IndexRoot {
   indexRoot: string;
   fileCount: number;

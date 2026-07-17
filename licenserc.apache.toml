@@ -16,11 +16,13 @@ includes = [
 	"precompiles/**/*.rs",
 	"precompiles/**/*.sol",
 	"primitives/**/*.rs",
+	"provider/**/*.rs",
 	"storage-interfaces/**/*.rs",
 	"user-interfaces/photos/contracts/**/*.sol",
 ]
 excludes = [
 	"**/*.bin.ts",
+	"crates/storage-subxt/**/*.rs",
 	"runtimes/*/src/weights/**",
 ]
 

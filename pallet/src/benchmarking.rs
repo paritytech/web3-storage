@@ -88,7 +88,8 @@ fn build_primary_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
@@ -108,7 +109,8 @@ fn build_replica_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: StorageProvider::<T>::current_block().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
@@ -185,7 +187,7 @@ fn add_primary_to_bucket<T: Config>(
     bucket_id: BucketId,
     max_bytes: u64,
 ) {
-    let current_block = StorageProvider::<T>::current_block();
+    let current_block = StorageProvider::<T>::current_anchor_block();
     let duration: BlockNumberFor<T> = 100u32.into();
     let expires_at = current_block.saturating_add(duration);
 
@@ -331,7 +333,7 @@ mod benchmarks {
         let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
-        let announce_block = StorageProvider::<T>::current_block();
+        let announce_block = StorageProvider::<T>::current_anchor_block();
         let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
         set_block_number::<T>(complete_after);
 
@@ -611,7 +613,7 @@ mod benchmarks {
 
         // Advance block past agreement expiry + settlement timeout
         let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
-        let current_block = StorageProvider::<T>::current_block();
+        let current_block = StorageProvider::<T>::current_anchor_block();
         let target_block: BlockNumberFor<T> = agreement
             .expires_at
             .saturating_add(T::SettlementTimeout::get())
@@ -1243,15 +1245,29 @@ mod benchmarks {
         );
     }
 
-    /// `on_finalize` slash sweep: drains and slashes every challenge expiring
-    /// at a deadline. Linear in the challenge count `c`; each entry is drained,
-    /// its pending counters decremented, and its provider slashed. The cost is
-    /// charged up front in `on_initialize` via
-    /// `WeightInfo::on_initialize_slash_challenges(c)`. The upper bound is the
-    /// runtime cap `MaxChallengesPerDeadline` itself, so the linear fit covers
-    /// the true worst case rather than extrapolating to it.
+    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
+    /// at a single deadline key. Linear in the challenge count `c`; each entry
+    /// is drained, its pending counters decremented, and its provider slashed.
+    /// The upper bound is the effective per-block slash budget
+    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
+    /// sweep ever slashes for one key in a block — so the linear fit covers the
+    /// true worst case rather than extrapolating to it. The sweep applies this
+    /// per key, so a small fixed hook overhead is counted here and again in the
+    /// hook's base weight — conservative.
     #[benchmark]
-    fn on_initialize_slash_challenges(c: Linear<0, { T::MaxChallengesPerDeadline::get() as u32 }>) {
+    fn on_initialize_slash_challenges(
+        c: Linear<
+            0,
+            {
+                let cap = T::MaxChallengesPerDeadline::get() as u32;
+                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
+                    cap
+                } else {
+                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
+                }
+            },
+        >,
+    ) {
         let deadline: BlockNumberFor<T> = 200u32.into();
         let deposit: BalanceOf<T> = 100u32.into();
         for i in 0..c {
@@ -1281,10 +1297,25 @@ mod benchmarks {
         }
         NextChallengeIndex::<T>::insert(deadline, c as u16);
 
+        // Drive the real sweep over exactly one key. Anchor the cursor one
+        // below `deadline`, then set the relay clock so the sweepable range
+        // (keys < previous relay parent) is exactly `{deadline}`:
+        // `sweepable = current_block() - 1 = deadline`, `end = deadline`.
+        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
+        let now = deadline.saturating_add(1u32.into());
+        set_block_number::<T>(now);
+
         #[block]
         {
-            StorageProvider::<T>::on_finalize(deadline);
+            StorageProvider::<T>::on_initialize(now);
         }
+
+        // Guard against the sweep silently no-op'ing (the bug this benchmark
+        // had while it still called the dropped `on_finalize`): every challenge
+        // at the deadline must have been drained. (At the worst-case component
+        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
+        // the cursor parks at `deadline - 1` and carries over — expected.)
+        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

@@ -167,7 +167,7 @@ fn primary_terms(
         price_per_byte: 0,
         // `valid_until` is checked against the pallet's relay-chain clock,
         // not the parachain height.
-        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_block()
+        valid_until: pallet_storage_provider::Pallet::<Runtime>::current_anchor_block()
             + <Runtime as pallet_storage_provider::Config>::RequestTimeout::get(),
         nonce,
         bucket_id: None,
@@ -506,7 +506,7 @@ fn should_deregister_provider() {
         );
 
         // Step 3: fast-forward through the announcement period. Jump close to
-        // the boundary with `set_clocks` (the period is `48 * HOURS`
+        // the boundary with `set_clocks` (the period is `48 * RC_HOURS`
         // ≈ 28,800 blocks, far too many to iterate one-by-one) then cross it
         // via `advance_block` so the `on_finalize` / `on_initialize` hooks
         // fire at the maturing block.

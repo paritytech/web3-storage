@@ -28,7 +28,7 @@ impl<T: Config> Pallet<T> {
 
         T::Currency::reserve(&challenger, deposit)?;
 
-        let current_block = Self::current_block();
+        let current_block = Self::current_anchor_block();
         let deadline = current_block.saturating_add(T::ChallengeTimeout::get());
 
         let challenge = Challenge {

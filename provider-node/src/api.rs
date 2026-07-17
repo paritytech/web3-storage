@@ -897,8 +897,8 @@ async fn get_historical_roots(
 ///
 /// Returns one of several `503`s when a prerequisite is missing:
 /// - `signing_unavailable` — no `--keyfile`.
-/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
-///   known from the chain yet.
+/// - `chain_state_not_ready` — `current_anchor_block` and `request_timeout` are
+///   not both known from the chain yet.
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
@@ -912,11 +912,11 @@ async fn negotiate_terms(
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
 
-    // Both current_block and RequestTimeout must be known before we can sign —
-    // otherwise we'd emit unbounded or already-expired terms.
-    let current_block = state
+    // Both the anchor block and RequestTimeout must be known before we can sign
+    // — otherwise we'd emit unbounded or already-expired terms.
+    let anchor_block = state
         .chain_state
-        .current_block
+        .current_anchor_block
         .load(std::sync::atomic::Ordering::Relaxed);
     let request_timeout = state
         .chain_state
@@ -925,7 +925,7 @@ async fn negotiate_terms(
         .as_ref()
         .map(|c| c.request_timeout)
         .unwrap_or(0);
-    if current_block == 0 || request_timeout == 0 {
+    if anchor_block == 0 || request_timeout == 0 {
         return Err(Error::ChainStateNotReady);
     }
 
@@ -966,14 +966,12 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        valid_until: current_block.saturating_add(request_timeout),
+        valid_until: anchor_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    let signature = storage_client::sign_terms(keypair, &terms);
-
-    Ok(Json(SignedTerms { terms, signature }))
+    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
 }
 
 /// Get replica sync status for a bucket.

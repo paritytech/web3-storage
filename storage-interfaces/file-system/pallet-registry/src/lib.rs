@@ -36,7 +36,7 @@ extern crate alloc;
 pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
-pub mod bechmarking;
+pub mod benchmarking;
 pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -46,6 +46,8 @@ mod mock;
 
 #[cfg(test)]
 mod tests;
+
+pub mod try_state;
 
 #[frame_support::pallet]
 #[allow(clippy::let_unit_value)]
@@ -59,6 +61,8 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use pallet_storage_provider;
     use sp_runtime::BoundedVec;
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
     use storage_primitives::Role;
 
     /// In-code storage version. v1 drops the `payment` field from
@@ -68,6 +72,14 @@ pub mod pallet {
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
+
+    #[pallet::hooks]
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        #[cfg(feature = "try-runtime")]
+        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
+        }
+    }
 
     /// Configuration trait
     #[pallet::config]
@@ -237,7 +249,7 @@ pub mod pallet {
             let next_id = drive_id.checked_add(1).ok_or(Error::<T>::DriveIdOverflow)?;
 
             // Calculate expiry block
-            let current_block = pallet_storage_provider::Pallet::<T>::current_block();
+            let current_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
             let expires_at = current_block + storage_period;
 
             // Create drive info

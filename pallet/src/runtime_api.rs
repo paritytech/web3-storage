@@ -191,5 +191,11 @@ sp_api::decl_runtime_apis! {
 
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+
+        /// The anchor block every on-chain duration (timeouts, expiries,
+        /// `valid_until`, nonce age) is measured against. Off-chain actors read
+        /// this instead of a specific storage item so they need not know whether
+        /// the anchor is a relay, parachain, or other block number.
+        fn current_anchor_block() -> BlockNumber;
     }
 }

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod try_state;
+
 use crate::{
     mock::{MaxMultiaddrLength, *},
     Error, Event,
