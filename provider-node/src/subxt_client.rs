@@ -987,8 +987,14 @@ impl ChallengeChainClient for SubxtChainClient {
     ) -> Result<Option<DetectedChallenge>, Error> {
         let our_bytes: [u8; 32] = self.signer.public_key().0;
 
-        let storage_address =
-            subxt::dynamic::storage::<(Value, Value), Value>("StorageProvider", "Challenges");
+        // Typed read via the static bindings. `unvalidated`: the bindings are
+        // generated from the paseo runtime, and the local runtime shares the
+        // pallet — exact-hash validation would couple the binary to a single
+        // runtime build for no safety gain (a shape mismatch fails decoding).
+        let storage_address = storage_subxt::api::storage()
+            .storage_provider()
+            .challenges()
+            .unvalidated();
         let at = self
             .api()?
             .at_current_block()
@@ -997,35 +1003,31 @@ impl ChallengeChainClient for SubxtChainClient {
 
         let Some(value) = at
             .storage()
-            .try_fetch(
-                storage_address,
-                (Value::u128(deadline as u128), Value::u128(index as u128)),
-            )
+            .try_fetch(storage_address, (deadline, index))
             .await
             .map_err(|e| Error::Internal(format!("Failed to fetch challenge: {e}")))?
         else {
             return Ok(None);
         };
 
-        let challenge = match decode_challenge_for_provider(value.bytes(), &our_bytes) {
-            Ok(Some(c)) => c,
-            Ok(None) => return Ok(None),
-            Err(e) => {
-                return Err(Error::Internal(format!(
-                    "Failed to decode challenge at {deadline}/{index}: {e}"
-                )))
-            }
-        };
+        let challenge = value.decode().map_err(|e| {
+            Error::Internal(format!(
+                "Failed to decode challenge at {deadline}/{index}: {e}"
+            ))
+        })?;
+        if challenge.provider.0 != our_bytes {
+            return Ok(None);
+        }
 
         Ok(Some(DetectedChallenge {
             bucket_id: challenge.bucket_id,
             deadline,
             index,
-            mmr_root: challenge.mmr_root,
+            mmr_root: H256::from(challenge.mmr_root.0),
             start_seq: challenge.start_seq,
-            leaf_index: challenge.leaf_index,
-            chunk_index: challenge.chunk_index,
-            challenger: sp_core::crypto::AccountId32::from(challenge.challenger).to_ss58check(),
+            leaf_index: challenge.target.leaf_index,
+            chunk_index: challenge.target.chunk_index,
+            challenger: sp_core::crypto::AccountId32::from(challenge.challenger.0).to_ss58check(),
         }))
     }
 

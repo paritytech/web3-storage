@@ -2,14 +2,14 @@
 
 //! Integration tests for the challenge responder.
 
-use super::{test_state, wait_for, ALICE_SS58};
+use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::BucketId;
 use storage_provider_node::{
-    build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponseResult, DetectedChallenge, Error, ProviderState, Storage,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
+    DetectedChallenge, Error,
 };
 
 struct MockChallengeChainClient {
@@ -169,42 +169,6 @@ async fn test_stop_command() {
 }
 
 // --- Tests with realistic storage data ---
-
-/// Create a provider state with a bucket containing a single committed chunk,
-/// and return the state along with a matching challenge.
-fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
-    let storage = Arc::new(Storage::new());
-    storage.init_bucket(1, 1024 * 1024);
-
-    let chunk_data = b"test-chunk-data-for-challenge";
-    let chunk_hash = blake2_256(chunk_data);
-    storage
-        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
-        .unwrap();
-
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
-    assert_eq!(data_root, chunk_hash);
-
-    let (mmr_root, start_seq, leaf_indices) = storage.commit(1, vec![data_root]).unwrap();
-    assert_eq!(leaf_indices, vec![0]);
-
-    let challenge = DetectedChallenge {
-        bucket_id: 1,
-        deadline: 1000,
-        index: 0,
-        mmr_root,
-        start_seq,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
-    };
-
-    let state = Arc::new(ProviderState::with_provider_id(
-        storage,
-        ALICE_SS58.to_string(),
-    ));
-    (state, challenge)
-}
 
 #[tokio::test(start_paused = true)]
 async fn test_successful_challenge_response() {

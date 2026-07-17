@@ -3,6 +3,7 @@ resolver = "2"
 members = [
 	# Layer 0: Scalable Web3 Storage
 	"client",
+	"crates/storage-subxt",
 	"pallet",
 	"primitives",
 	"provider-node",
@@ -43,6 +44,7 @@ storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
+storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
 file-system-client = { path = "storage-interfaces/file-system/client" }

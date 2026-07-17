@@ -4,44 +4,23 @@
 //! reacting to [`BlockEvent`]s fanned out by the chain-state coordinator,
 //! including the bootstrap scan on `Resubscribed` and lag recovery.
 
+use super::{test_state, test_state_with_data, wait_for, ALICE_SS58};
 use sp_core::H256;
 use sp_runtime::AccountId32;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use storage_primitives::{blake2_256, BucketId};
+use storage_primitives::BucketId;
 use storage_provider_node::chain_events::BlockEvent;
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    DetectedChallenge, Error, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, Storage,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, DetectedChallenge, Error,
+    ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
 };
 
-/// Full Alice SS58 address (substrate prefix 42) and its raw account bytes.
-const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
-
 fn alice_account() -> AccountId32 {
-    use std::str::FromStr;
     AccountId32::from_str(ALICE_SS58).unwrap()
-}
-
-fn test_state() -> Arc<ProviderState> {
-    Arc::new(ProviderState::with_provider_id(
-        Arc::new(Storage::new()),
-        ALICE_SS58.to_string(),
-    ))
-}
-
-async fn wait_for<F: FnMut() -> bool>(timeout: Duration, mut f: F) -> bool {
-    let deadline = tokio::time::Instant::now() + timeout;
-    while tokio::time::Instant::now() < deadline {
-        if f() {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    false
 }
 
 // ── challenge responder ───────────────────────────────────────────────────────
@@ -52,6 +31,17 @@ struct MockChallengeClient {
     fetched: AtomicUsize,
     scanned: AtomicUsize,
     submitted: Mutex<Vec<(u32, u16)>>,
+}
+
+impl MockChallengeClient {
+    fn new(challenge: DetectedChallenge) -> Arc<Self> {
+        Arc::new(Self {
+            challenge,
+            fetched: AtomicUsize::new(0),
+            scanned: AtomicUsize::new(0),
+            submitted: Mutex::new(Vec::new()),
+        })
+    }
 }
 
 #[async_trait::async_trait]
@@ -86,75 +76,45 @@ impl ChallengeChainClient for MockChallengeClient {
     }
 }
 
-/// A state with one committed chunk in bucket 1 plus the matching challenge,
-/// so proof generation for `(leaf 0, chunk 0)` succeeds.
-fn state_with_chunk() -> (Arc<ProviderState>, DetectedChallenge) {
-    let storage = Arc::new(Storage::new());
-    storage.init_bucket(1, 1024 * 1024);
-
-    let chunk_data = b"event-fanout-test-data";
-    let chunk_hash = blake2_256(chunk_data);
-    storage
-        .store_node(1, chunk_hash, chunk_data.to_vec(), None)
-        .unwrap();
-    let data_root = build_padded_merkle_tree(storage.as_ref(), 1, &[chunk_hash]);
-    let (mmr_root, start_seq, _) = storage.commit(1, vec![data_root]).unwrap();
-
-    let challenge = DetectedChallenge {
-        bucket_id: 1,
-        deadline: 500,
-        index: 3,
-        mmr_root,
-        start_seq,
-        leaf_index: 0,
-        chunk_index: 0,
-        challenger: ALICE_SS58.to_string(),
-    };
-    let state = Arc::new(ProviderState::with_provider_id(
-        storage,
-        ALICE_SS58.to_string(),
-    ));
-    (state, challenge)
+/// Config with the safety net disabled: only the event path may act.
+fn event_only_config() -> ChallengeResponderConfig {
+    ChallengeResponderConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    }
 }
 
 #[tokio::test]
 async fn challenge_event_triggers_point_read_and_response() {
-    let (state, challenge) = state_with_chunk();
-    let mock = Arc::new(MockChallengeClient {
-        challenge,
-        fetched: AtomicUsize::new(0),
-        scanned: AtomicUsize::new(0),
-        submitted: Mutex::new(Vec::new()),
-    });
-    let config = ChallengeResponderConfig {
-        // Safety net disabled: only the event path may drive the response.
-        poll_interval: Duration::ZERO,
-        ..Default::default()
-    };
-    let responder = ChallengeResponder::new(config, state, Box::new(mock.clone()));
+    let (state, challenge) = test_state_with_data();
+    let (deadline, index) = (challenge.deadline, challenge.index);
+    let bucket_id = challenge.bucket_id;
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
 
     events_tx
         .send(BlockEvent::ChallengeCreated {
-            deadline: 500,
-            index: 3,
-            bucket_id: 1,
+            deadline,
+            index,
+            bucket_id,
             provider: alice_account(),
         })
         .unwrap();
 
+    let mock_ref = Arc::clone(&mock);
     assert!(
-        wait_for(Duration::from_secs(5), || !mock
-            .submitted
-            .lock()
-            .unwrap()
-            .is_empty())
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
         .await,
         "challenge event should trigger an autonomous response"
     );
-    assert_eq!(mock.submitted.lock().unwrap()[0], (500, 3));
+    assert_eq!(mock.submitted.lock().unwrap()[0], (deadline, index));
     assert_eq!(mock.fetched.load(Ordering::SeqCst), 1);
     assert_eq!(
         mock.scanned.load(Ordering::SeqCst),
@@ -167,27 +127,21 @@ async fn challenge_event_triggers_point_read_and_response() {
 
 #[tokio::test]
 async fn foreign_challenge_event_is_ignored() {
-    let (state, challenge) = state_with_chunk();
-    let mock = Arc::new(MockChallengeClient {
-        challenge,
-        fetched: AtomicUsize::new(0),
-        scanned: AtomicUsize::new(0),
-        submitted: Mutex::new(Vec::new()),
-    });
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::ZERO,
-        ..Default::default()
-    };
-    let responder = ChallengeResponder::new(config, state, Box::new(mock.clone()));
+    let (state, challenge) = test_state_with_data();
+    let (deadline, index) = (challenge.deadline, challenge.index);
+    let bucket_id = challenge.bucket_id;
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
 
     events_tx
         .send(BlockEvent::ChallengeCreated {
-            deadline: 500,
-            index: 3,
-            bucket_id: 1,
+            deadline,
+            index,
+            bucket_id,
             provider: AccountId32::new([9u8; 32]), // someone else's challenge
         })
         .unwrap();
@@ -205,18 +159,10 @@ async fn foreign_challenge_event_is_ignored() {
 
 #[tokio::test]
 async fn resubscribe_triggers_bootstrap_scan() {
-    let (state, challenge) = state_with_chunk();
-    let mock = Arc::new(MockChallengeClient {
-        challenge,
-        fetched: AtomicUsize::new(0),
-        scanned: AtomicUsize::new(0),
-        submitted: Mutex::new(Vec::new()),
-    });
-    let config = ChallengeResponderConfig {
-        poll_interval: Duration::ZERO,
-        ..Default::default()
-    };
-    let responder = ChallengeResponder::new(config, state, Box::new(mock.clone()));
+    let (state, challenge) = test_state_with_data();
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = responder.start(events_rx, None).await.unwrap();
@@ -225,11 +171,12 @@ async fn resubscribe_triggers_bootstrap_scan() {
         .send(BlockEvent::Resubscribed { at_block: 42 })
         .unwrap();
 
+    let mock_ref = Arc::clone(&mock);
     assert!(
-        wait_for(Duration::from_secs(5), || mock
-            .scanned
-            .load(Ordering::SeqCst)
-            > 0)
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { m.scanned.load(Ordering::SeqCst) > 0 }
+        })
         .await,
         "resubscribe should trigger a full reconciliation scan"
     );
@@ -289,7 +236,8 @@ async fn replica_agreement_event_triggers_duty_pass() {
         poll_interval: Duration::ZERO,
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, test_state(), Box::new(mock.clone()));
+    let coordinator =
+        ReplicaSyncCoordinator::new(config, test_state(), Box::new(Arc::clone(&mock)));
 
     let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
     let handle = coordinator.start(events_rx, None).await.unwrap();
@@ -311,11 +259,12 @@ async fn replica_agreement_event_triggers_duty_pass() {
             provider: alice_account(),
         })
         .unwrap();
+    let mock_ref = Arc::clone(&mock);
     assert!(
-        wait_for(Duration::from_secs(5), || mock
-            .duty_passes
-            .load(Ordering::SeqCst)
-            > 0)
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { m.duty_passes.load(Ordering::SeqCst) > 0 }
+        })
         .await,
         "own replica agreement should trigger a duty pass"
     );

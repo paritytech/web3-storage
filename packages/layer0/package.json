@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-labs/hdkd": "^0.0.28",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@polkadot-labs/hdkd": "^0.0.29",
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/core": "workspace:*",
     "@web3-storage/papi": "workspace:*",
     "polkadot-api": "^2.1.7",
@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "viem": "^2.54.1",
     "vitest": "^4.1.9"
   },

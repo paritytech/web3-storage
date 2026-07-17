@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod try_state;
+
 use crate::{
     mock::{MaxMultiaddrLength, *},
     Error, Event,
@@ -499,34 +501,5 @@ fn delete_drive_removes_from_list() {
         assert_ok!(DriveRegistry::delete_drive(RuntimeOrigin::signed(alice), 0));
 
         assert!(DriveRegistry::list_user_drives(&alice).is_empty());
-    });
-}
-
-#[cfg(feature = "try-runtime")]
-#[test]
-fn try_state_holds_and_detects_corruption() {
-    new_test_ext().execute_with(|| {
-        advance_to_block_1();
-
-        let (provider_pk, provider) = setup_provider();
-        let terms = primary_terms(1, 100, 500, 1, 100);
-        let sig = sign_terms(&provider_pk, &terms);
-
-        assert_ok!(DriveRegistry::create_drive(
-            RuntimeOrigin::signed(1),
-            None,
-            provider,
-            terms,
-            sig
-        ));
-
-        // Index invariants hold on real state.
-        assert_ok!(DriveRegistry::do_try_state());
-
-        // UserDrives now references a non-existent drive.
-        crate::UserDrives::<Test>::mutate(1u64, |ds| {
-            ds.try_push(999).expect("bound not reached");
-        });
-        assert!(DriveRegistry::do_try_state().is_err());
     });
 }
