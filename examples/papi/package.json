@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
-    "@polkadot-labs/hdkd": "^0.0.28",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
+    "@polkadot-labs/hdkd": "^0.0.29",
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
     "@web3-storage/sdk": "workspace:*",
     "@web3-storage/test-helpers": "workspace:*",
     "polkadot-api": "^2.1.7",
@@ -26,6 +26,6 @@
     "@types/node": "^26.0.1",
     "c8": "^11.0.0",
     "tsx": "^4.22.5",
-    "typescript": "~6.0.3"
+    "typescript": "~7.0.2"
   }
 }
