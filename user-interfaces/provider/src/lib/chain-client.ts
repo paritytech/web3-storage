@@ -47,7 +47,7 @@ export function disconnectFromChain(): void {
 export async function getChainProperties(): Promise<{
   tokenDecimals: number
   tokenSymbol: string
-  blockTimeMs: number
+  anchorBlockTimeMs: number
   minProviderStake: bigint
   ss58Prefix: number
   specName: string
@@ -58,7 +58,7 @@ export async function getChainProperties(): Promise<{
   // them via constants / spec data.
   let tokenDecimals = 12
   let tokenSymbol = 'UNIT'
-  let blockTimeMs = 6000
+  let anchorBlockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
   let ss58Prefix = getSs58Prefix()
   let specName = ''
@@ -98,13 +98,21 @@ export async function getChainProperties(): Promise<{
       minProviderStake = await api.constants.StorageProvider.MinProviderStake()
     } catch { /* use default */ }
 
+    // Anchor-clock tick — deliberately NOT Aura.SlotDuration: every duration
+    // this UI formats (agreement duration, checkpoint interval/grace, provider
+    // min/max duration) is anchor-denominated (relay blocks), which the
+    // parachain block time will stop matching when it changes. The unsafe API
+    // resolves against live metadata, so no descriptor regeneration is needed;
+    // runtimes without the API keep the 6s default.
     try {
-      const period = await api.constants.Aura.SlotDuration()
-      blockTimeMs = Number(period)
+      const millis = await client
+        .getUnsafeApi()
+        .apis.StorageProviderApi.anchor_block_time_millis()
+      anchorBlockTimeMs = Number(millis)
     } catch { /* use default */ }
   }
 
-  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
+  return { tokenDecimals, tokenSymbol, anchorBlockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
 }
 
 export async function getGenesisHash(): Promise<string> {
