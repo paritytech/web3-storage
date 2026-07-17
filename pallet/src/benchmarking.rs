@@ -187,9 +187,9 @@ fn add_primary_to_bucket<T: Config>(
     bucket_id: BucketId,
     max_bytes: u64,
 ) {
-    let current_block = StorageProvider::<T>::current_anchor_block();
+    let anchor_block = StorageProvider::<T>::current_anchor_block();
     let duration: BlockNumberFor<T> = 100u32.into();
-    let expires_at = current_block.saturating_add(duration);
+    let expires_at = anchor_block.saturating_add(duration);
 
     Buckets::<T>::mutate(bucket_id, |maybe| {
         if let Some(b) = maybe {
@@ -205,7 +205,7 @@ fn add_primary_to_bucket<T: Config>(
         expires_at,
         extensions_blocked: false,
         role: ProviderRole::Primary,
-        started_at: current_block,
+        started_at: anchor_block,
     };
     StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
@@ -613,11 +613,11 @@ mod benchmarks {
 
         // Advance block past agreement expiry + settlement timeout
         let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
-        let current_block = StorageProvider::<T>::current_anchor_block();
+        let anchor_block = StorageProvider::<T>::current_anchor_block();
         let target_block: BlockNumberFor<T> = agreement
             .expires_at
             .saturating_add(T::SettlementTimeout::get())
-            .saturating_add(current_block)
+            .saturating_add(anchor_block)
             .saturating_add(1u32.into());
         set_block_number::<T>(target_block);
 
@@ -843,7 +843,7 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Report window 1 — must satisfy current_block > window_start_block(window+1, interval).
+        // Report window 1 — must satisfy anchor_block > window_start_block(window+1, interval).
         // Target: interval * (window + 1) + 1
         let window = 1u64;
         let interval = T::DefaultCheckpointInterval::get();
@@ -1300,7 +1300,7 @@ mod benchmarks {
         // Drive the real sweep over exactly one key. Anchor the cursor one
         // below `deadline`, then set the relay clock so the sweepable range
         // (keys < previous relay parent) is exactly `{deadline}`:
-        // `sweepable = current_block() - 1 = deadline`, `end = deadline`.
+        // `sweepable = current_anchor_block() - 1 = deadline`, `end = deadline`.
         LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
         let now = deadline.saturating_add(1u32.into());
         set_block_number::<T>(now);

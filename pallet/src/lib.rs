@@ -110,7 +110,7 @@ pub mod pallet {
         /// [`LastSweptChallengeBlock`] rather than probing the single key `n`.
         ///
         /// - **Which keys are final.** In `on_initialize` the validation-data
-        ///   inherent has not run, so [`Pallet::current_block`] is the relay
+        ///   inherent has not run, so [`Pallet::current_anchor_block`] is the relay
         ///   parent `p` of the *previous* parachain block. A challenge with
         ///   deadline `d` stays respondable while some block has relay parent
         ///   `<= d`; every future block has relay parent `>= p`; so keys `< p`
@@ -1262,9 +1262,9 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::deregister_provider())]
         pub fn deregister_provider(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
             let complete_after =
-                current_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
+                anchor_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
 
             Providers::<T>::try_mutate(&who, |maybe_provider| -> DispatchResult {
                 let provider = maybe_provider
@@ -1315,9 +1315,9 @@ pub mod pallet {
             let deregister_at = provider
                 .deregister_at
                 .ok_or(Error::<T>::DeregisterNotAnnounced)?;
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
             ensure!(
-                current_block >= deregister_at,
+                anchor_block >= deregister_at,
                 Error::<T>::DeregisterPeriodNotElapsed
             );
             ensure!(
@@ -1471,7 +1471,7 @@ pub mod pallet {
                 Error::<T>::ProviderNotFound
             );
 
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
 
             StorageAgreements::<T>::try_mutate(
                 bucket_id,
@@ -1481,7 +1481,7 @@ pub mod pallet {
                         .as_mut()
                         .ok_or(Error::<T>::AgreementNotFound)?;
                     ensure!(
-                        current_block < agreement.expires_at,
+                        anchor_block < agreement.expires_at,
                         Error::<T>::AgreementExpired
                     );
                     agreement.extensions_blocked = blocked;
@@ -1799,9 +1799,9 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
 
-            let is_early_termination = current_block < agreement.expires_at;
+            let is_early_termination = anchor_block < agreement.expires_at;
 
             if is_early_termination {
                 // Only admin can early-terminate, and only primaries
@@ -1820,7 +1820,7 @@ pub mod pallet {
                     .expires_at
                     .saturating_add(T::SettlementTimeout::get());
                 ensure!(
-                    current_block <= settlement_deadline,
+                    anchor_block <= settlement_deadline,
                     Error::<T>::SettlementWindowPassed
                 );
             }
@@ -1854,10 +1854,10 @@ pub mod pallet {
                 Error::<T>::AgreementHasPendingChallenge
             );
 
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
 
             ensure!(
-                current_block > agreement.expires_at,
+                anchor_block > agreement.expires_at,
                 Error::<T>::AgreementNotExpired
             );
 
@@ -1865,7 +1865,7 @@ pub mod pallet {
                 .expires_at
                 .saturating_add(T::SettlementTimeout::get());
             ensure!(
-                current_block > settlement_deadline,
+                anchor_block > settlement_deadline,
                 Error::<T>::AgreementNotExpired
             );
 
@@ -1902,9 +1902,9 @@ pub mod pallet {
 
                     ensure!(agreement.owner == who, Error::<T>::NotAgreementOwner);
 
-                    let current_block = Self::current_anchor_block();
-                    let remaining_duration = if current_block < agreement.expires_at {
-                        agreement.expires_at.saturating_sub(current_block)
+                    let anchor_block = Self::current_anchor_block();
+                    let remaining_duration = if anchor_block < agreement.expires_at {
+                        agreement.expires_at.saturating_sub(anchor_block)
                     } else {
                         return Err(Error::<T>::AgreementExpired.into());
                     };
@@ -2006,7 +2006,7 @@ pub mod pallet {
                     // Validate duration
                     Self::validate_duration(&provider_info.settings, additional_duration)?;
 
-                    let current_block = Self::current_anchor_block();
+                    let anchor_block = Self::current_anchor_block();
 
                     // Check if price increased
                     let price_increased =
@@ -2019,9 +2019,9 @@ pub mod pallet {
                     // If price same or decreased, anyone can extend (permissionless persistence)
 
                     // Settle current period
-                    let elapsed = current_block.saturating_sub(agreement.started_at);
-                    let _remaining = if current_block < agreement.expires_at {
-                        agreement.expires_at.saturating_sub(current_block)
+                    let elapsed = anchor_block.saturating_sub(agreement.started_at);
+                    let _remaining = if anchor_block < agreement.expires_at {
+                        agreement.expires_at.saturating_sub(anchor_block)
                     } else {
                         Zero::zero()
                     };
@@ -2064,8 +2064,8 @@ pub mod pallet {
                     T::Currency::reserve(&who, extension_payment)?;
 
                     // Update agreement
-                    agreement.expires_at = current_block.saturating_add(additional_duration);
-                    agreement.started_at = current_block;
+                    agreement.expires_at = anchor_block.saturating_add(additional_duration);
+                    agreement.started_at = anchor_block;
                     agreement.price_per_byte = provider_info.settings.price_per_byte;
 
                     // For replicas, also update sync_price and handle sync_balance
@@ -2180,14 +2180,14 @@ pub mod pallet {
                     Error::<T>::InsufficientSignatures
                 );
 
-                let current_block = Self::current_anchor_block();
+                let anchor_block = Self::current_anchor_block();
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, current_block, commitment.mmr_root);
+                Self::update_historical_roots(bucket, anchor_block, commitment.mmr_root);
 
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
-                    checkpoint_block: current_block,
+                    checkpoint_block: anchor_block,
                     primary_signers,
                     commitment_nonce: nonce,
                 });
@@ -2324,8 +2324,8 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current block and calculate current window
-            let current_block = Self::current_anchor_block();
-            let current_window = Self::calculate_window(current_block, config.interval);
+            let anchor_block = Self::current_anchor_block();
+            let current_window = Self::calculate_window(anchor_block, config.interval);
 
             // Validate window
             ensure!(
@@ -2352,7 +2352,7 @@ pub mod pallet {
                     .ok_or(Error::<T>::ProviderNotInSnapshot)?;
 
                 // Check caller authorization
-                let within_grace = Self::is_within_grace_period(current_block, window, &config);
+                let within_grace = Self::is_within_grace_period(anchor_block, window, &config);
                 if within_grace {
                     // Only leader can submit during grace period
                     ensure!(&who == expected_leader, Error::<T>::NotCheckpointLeader);
@@ -2410,7 +2410,7 @@ pub mod pallet {
                 );
 
                 // Update historical roots
-                Self::update_historical_roots(bucket, current_block, mmr_root);
+                Self::update_historical_roots(bucket, anchor_block, mmr_root);
 
                 // Update bucket snapshot.
                 //
@@ -2424,7 +2424,7 @@ pub mod pallet {
                 // two schemes.
                 bucket.snapshot = Some(BucketSnapshot {
                     commitment,
-                    checkpoint_block: current_block,
+                    checkpoint_block: anchor_block,
                     primary_signers,
                     commitment_nonce: 0,
                 });
@@ -2521,8 +2521,8 @@ pub mod pallet {
             ensure!(config.enabled, Error::<T>::ProviderCheckpointsDisabled);
 
             // Get current window
-            let current_block = Self::current_anchor_block();
-            let current_window = Self::calculate_window(current_block, config.interval);
+            let anchor_block = Self::current_anchor_block();
+            let current_window = Self::calculate_window(anchor_block, config.interval);
 
             // Can only report past windows
             ensure!(window < current_window, Error::<T>::InvalidCheckpointWindow);
@@ -2534,7 +2534,7 @@ pub mod pallet {
 
             // Ensure we're past the grace period of the reported window
             let window_end = Self::window_start_block(window.saturating_add(1), config.interval);
-            ensure!(current_block > window_end, Error::<T>::WithinGracePeriod);
+            ensure!(anchor_block > window_end, Error::<T>::WithinGracePeriod);
 
             // Calculate leader for the missed window
             let num_providers = bucket.primary_providers.len() as u32;
@@ -2854,9 +2854,9 @@ pub mod pallet {
 
             ensure!(challenge.provider == who, Error::<T>::NotChallengeProvider);
 
-            let current_block = Self::current_anchor_block();
+            let anchor_block = Self::current_anchor_block();
             ensure!(
-                current_block <= challenge_id.deadline,
+                anchor_block <= challenge_id.deadline,
                 Error::<T>::ChallengeExpired
             );
 
@@ -2977,7 +2977,7 @@ pub mod pallet {
             let challenge_created_at = challenge_id
                 .deadline
                 .saturating_sub(T::ChallengeTimeout::get());
-            let response_time = current_block.saturating_sub(challenge_created_at);
+            let response_time = anchor_block.saturating_sub(challenge_created_at);
 
             // Calculate cost split based on response time
             // Per design:
@@ -3093,12 +3093,12 @@ pub mod pallet {
                             ProviderRole::Primary => return Err(Error::<T>::NotReplica.into()),
                         };
 
-                    let current_block = Self::current_anchor_block();
+                    let anchor_block = Self::current_anchor_block();
 
                     // Check sync interval
                     if let Some(record) = last_sync {
                         let min_next_block = record.block.saturating_add(*min_sync_interval);
-                        ensure!(current_block >= min_next_block, Error::<T>::SyncTooFrequent);
+                        ensure!(anchor_block >= min_next_block, Error::<T>::SyncTooFrequent);
                     }
 
                     // Find matching root position
@@ -3146,7 +3146,7 @@ pub mod pallet {
                             start_seq,
                             leaf_count,
                         },
-                        block: current_block,
+                        block: anchor_block,
                     });
 
                     // Transfer sync payment to provider

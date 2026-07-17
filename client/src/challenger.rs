@@ -385,7 +385,7 @@ impl ChallengerClient {
             // `checkpoint_block` is on the pallet's anchor clock (relay
             // blocks), so measure the age on that clock, not the parachain
             // height.
-            let current_block = fetch_current_anchor_block(&at).await?;
+            let anchor_block = fetch_current_anchor_block(&at).await?;
 
             let (addr, keys) = storage::bucket_info(bucket_id);
             let bucket_thunk = at
@@ -411,7 +411,7 @@ impl ChallengerClient {
                     .and_then(|v| v.as_u128())
                     .unwrap_or(0) as u32;
 
-                current_block.saturating_sub(checkpoint_block)
+                anchor_block.saturating_sub(checkpoint_block)
             } else {
                 0
             }

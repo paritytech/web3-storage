@@ -166,11 +166,11 @@ impl<T: Config> Pallet<T> {
         ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
         // Quote must not be stale and must not exceed the chain-enforced window.
-        // `terms.valid_until` must in range [current_block, current_block + RequestTimeout]
-        let current_block = Self::current_anchor_block();
-        ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+        // `terms.valid_until` must in range [anchor_block, anchor_block + RequestTimeout]
+        let anchor_block = Self::current_anchor_block();
+        ensure!(terms.valid_until >= anchor_block, Error::<T>::TermsExpired);
         ensure!(
-            terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
+            terms.valid_until <= anchor_block.saturating_add(T::RequestTimeout::get()),
             Error::<T>::TermsValidityTooLong
         );
 
@@ -233,7 +233,7 @@ impl<T: Config> Pallet<T> {
         // `BucketCreated` for us.
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
 
-        let expires_at = current_block.saturating_add(terms.duration);
+        let expires_at = anchor_block.saturating_add(terms.duration);
         let agreement = StorageAgreement {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
@@ -242,7 +242,7 @@ impl<T: Config> Pallet<T> {
             expires_at,
             extensions_blocked: false,
             role: ProviderRole::Primary,
-            started_at: current_block,
+            started_at: anchor_block,
         };
 
         Providers::<T>::mutate(provider, |maybe_provider| {
@@ -297,10 +297,10 @@ impl<T: Config> Pallet<T> {
         ensure!(terms.max_bytes > 0, Error::<T>::InvalidMaxBytesRequest);
 
         // Quote must not be stale and must not exceed the chain-enforced window.
-        let current_block = Self::current_anchor_block();
-        ensure!(terms.valid_until >= current_block, Error::<T>::TermsExpired);
+        let anchor_block = Self::current_anchor_block();
+        ensure!(terms.valid_until >= anchor_block, Error::<T>::TermsExpired);
         ensure!(
-            terms.valid_until <= current_block.saturating_add(T::RequestTimeout::get()),
+            terms.valid_until <= anchor_block.saturating_add(T::RequestTimeout::get()),
             Error::<T>::TermsValidityTooLong
         );
 
@@ -381,7 +381,7 @@ impl<T: Config> Pallet<T> {
             .ok_or(Error::<T>::ArithmeticOverflow)?;
         T::Currency::reserve(owner, total_lock)?;
 
-        let expires_at = current_block.saturating_add(terms.duration);
+        let expires_at = anchor_block.saturating_add(terms.duration);
         let agreement = StorageAgreement {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
@@ -395,7 +395,7 @@ impl<T: Config> Pallet<T> {
                 min_sync_interval: replica_terms.min_sync_interval,
                 last_sync: None,
             },
-            started_at: current_block,
+            started_at: anchor_block,
         };
 
         Providers::<T>::mutate(provider, |maybe_provider| {

@@ -355,7 +355,7 @@ impl CheckpointCoordinator {
             return Ok(None);
         }
 
-        let current_block = self.chain_client.get_current_block().await?;
+        let anchor_block = self.chain_client.get_current_block().await?;
 
         let (interval, grace_period) = self
             .chain_client
@@ -364,7 +364,7 @@ impl CheckpointCoordinator {
             .unwrap_or((100u32, 20u32));
 
         let window = if interval > 0 {
-            current_block / interval as u64
+            anchor_block / interval as u64
         } else {
             0
         };
@@ -372,7 +372,7 @@ impl CheckpointCoordinator {
         tracing::info!(
             "Checkpoint duty: bucket={} block={} interval={} window={} mmr_root=0x{} leaves={}",
             bucket_id,
-            current_block,
+            anchor_block,
             interval,
             window,
             hex::encode(&bucket.mmr_root.as_bytes()[..4]),

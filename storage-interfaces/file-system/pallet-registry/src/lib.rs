@@ -249,14 +249,14 @@ pub mod pallet {
             let next_id = drive_id.checked_add(1).ok_or(Error::<T>::DriveIdOverflow)?;
 
             // Calculate expiry block
-            let current_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
-            let expires_at = current_block + storage_period;
+            let anchor_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
+            let expires_at = anchor_block + storage_period;
 
             // Create drive info
             let drive_info = DriveInfo {
                 owner: who.clone(),
                 bucket_id,
-                created_at: current_block,
+                created_at: anchor_block,
                 name: bounded_name,
                 max_capacity,
                 storage_period,
