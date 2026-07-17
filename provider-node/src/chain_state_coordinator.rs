@@ -1039,33 +1039,53 @@ mod tests {
             ])
         }
 
-        /// `System::Events` bytes holding one `StorageProvider::ProviderRegistered`
-        /// event for `provider`, encoded against the real runtime types.
-        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
-            let record = Value::named_composite([
+        /// Wrap a `StorageProvider` event value in an `EventRecord`.
+        fn event_record(event: Value) -> Value {
+            Value::named_composite([
                 ("phase", Value::unnamed_variant("Initialization", vec![])),
                 (
                     "event",
-                    Value::unnamed_variant(
-                        "StorageProvider",
-                        vec![Value::named_variant(
-                            "ProviderRegistered",
-                            [
-                                (
-                                    "provider",
-                                    Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(
-                                        provider,
-                                    )),
-                                ),
-                                ("stake", Value::u128(1_000)),
-                            ],
-                        )],
-                    ),
+                    Value::unnamed_variant("StorageProvider", vec![event]),
                 ),
                 ("topics", Value::unnamed_composite(Vec::<Value>::new())),
-            ]);
+            ])
+        }
+
+        /// `System::Events` bytes holding a `ProviderRegistered` (exercising
+        /// the dynamic lifecycle decoding) and a `ChallengeCreated`
+        /// (exercising the static fan-out decoding) for `provider`, encoded
+        /// against the real runtime types.
+        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
+            let provider_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(provider);
+            let registered = event_record(Value::named_variant(
+                "ProviderRegistered",
+                [
+                    ("provider", Value::from_bytes(provider_bytes)),
+                    ("stake", Value::u128(1_000)),
+                ],
+            ));
+            let challenge_created = event_record(Value::named_variant(
+                "ChallengeCreated",
+                [
+                    (
+                        "challenge_id",
+                        Value::named_composite([
+                            ("deadline", Value::u128(777)),
+                            ("index", Value::u128(3)),
+                        ]),
+                    ),
+                    ("bucket_id", Value::u128(9)),
+                    ("provider", Value::from_bytes(provider_bytes)),
+                    ("challenger", Value::from_bytes([8u8; 32])),
+                    ("respond_by", Value::u128(777)),
+                ],
+            ));
             let ty = storage_value_type(md, "System", "Events");
-            encode_value(md, ty, &Value::unnamed_composite([record]))
+            encode_value(
+                md,
+                ty,
+                &Value::unnamed_composite([registered, challenge_created]),
+            )
         }
 
         fn header_json(number: u32) -> serde_json::Value {
@@ -1306,20 +1326,32 @@ mod tests {
             assert!(chain_state.constants.read().is_some());
             assert!(chain_state.nonce_counter.read().is_some());
 
-            // The connection was published and the block fanned out.
+            // The connection was published and the block fanned out, including
+            // the statically-decoded ChallengeCreated from the block's events.
             assert!(chain_rx.borrow().is_some());
             use crate::chain_events::BlockEvent;
             let mut saw_resubscribed = false;
             let mut saw_new_block = false;
+            let mut saw_challenge = false;
             while let Ok(event) = events_rx.try_recv() {
                 match event {
                     BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
                     BlockEvent::NewBlock { number: 42 } => saw_new_block = true,
+                    BlockEvent::ChallengeCreated {
+                        deadline: 777,
+                        index: 3,
+                        bucket_id: 9,
+                        ref provider,
+                    } if *provider == provider_account() => saw_challenge = true,
                     _ => {}
                 }
             }
             assert!(saw_resubscribed, "follow should broadcast Resubscribed");
             assert!(saw_new_block, "follow should broadcast the block clock");
+            assert!(
+                saw_challenge,
+                "follow should statically decode and broadcast ChallengeCreated"
+            );
         }
     }
 }

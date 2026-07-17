@@ -133,7 +133,68 @@ fn decode<E: subxt::events::DecodeAsEvent>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_subxt::api::runtime_types::storage_primitives::ChallengeId;
+    use storage_subxt::api::runtime_types::storage_primitives::{
+        agreement_term::AgreementTerms, ChallengeId, Commitment,
+    };
+
+    #[test]
+    fn replica_agreement_established_maps_bucket_and_account() {
+        let ev = provider_events::ReplicaAgreementEstablished {
+            bucket_id: 11,
+            provider: subxt::utils::AccountId32([4u8; 32]),
+            owner: subxt::utils::AccountId32([2u8; 32]),
+            terms: AgreementTerms {
+                owner: subxt::utils::AccountId32([2u8; 32]),
+                max_bytes: 1024,
+                duration: 100,
+                price_per_byte: 1,
+                valid_until: 50,
+                nonce: 1,
+                bucket_id: Some(11),
+                replica_params: None,
+            },
+            expires_at: 150,
+        };
+        let BlockEvent::ReplicaAgreementEstablished {
+            bucket_id,
+            provider,
+        } = BlockEvent::from(ev)
+        else {
+            panic!("expected ReplicaAgreementEstablished");
+        };
+        assert_eq!(bucket_id, 11);
+        assert_eq!(provider, AccountId32::new([4u8; 32]));
+    }
+
+    #[test]
+    fn checkpoint_events_map_to_bucket_update() {
+        let submitted = provider_events::ProviderCheckpointSubmitted {
+            bucket_id: 21,
+            mmr_root: subxt::utils::H256([1u8; 32]),
+            window: 3,
+            leader: subxt::utils::AccountId32([4u8; 32]),
+            signers: vec![subxt::utils::AccountId32([4u8; 32])],
+            reward: 1_000,
+        };
+        assert!(matches!(
+            BlockEvent::from(submitted),
+            BlockEvent::BucketCheckpointUpdated { bucket_id: 21 }
+        ));
+
+        let checkpointed = provider_events::BucketCheckpointed {
+            bucket_id: 22,
+            commitment: Commitment {
+                mmr_root: subxt::utils::H256([1u8; 32]),
+                start_seq: 0,
+                leaf_count: 1,
+            },
+            providers: vec![subxt::utils::AccountId32([4u8; 32])],
+        };
+        assert!(matches!(
+            BlockEvent::from(checkpointed),
+            BlockEvent::BucketCheckpointUpdated { bucket_id: 22 }
+        ));
+    }
 
     #[test]
     fn challenge_created_maps_id_and_account() {
