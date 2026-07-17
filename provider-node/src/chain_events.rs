@@ -7,10 +7,15 @@
 //! coordinator-relevant subset as [`BlockEvent`]s. Coordinators react to
 //! events instead of polling storage maps; a slow safety-net scan (and a
 //! bootstrap scan on every (re)subscribe) covers anything missed.
+//!
+//! Events decode through the static `storage-subxt` bindings, so a runtime
+//! change that reshapes one of these events surfaces as a decode failure
+//! (logged, backstopped by the safety-net scans) instead of silently
+//! yielding `None` on dynamic field lookups.
 
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
-use subxt::ext::scale_value::{At, Value};
+use storage_subxt::api::storage_provider::events as provider_events;
 use subxt::PolkadotConfig;
 
 /// Broadcast-channel capacity. Events per 6s block are few; coordinators
@@ -46,85 +51,108 @@ pub enum BlockEvent {
     Resubscribed { at_block: u32 },
 }
 
+impl From<provider_events::ChallengeCreated> for BlockEvent {
+    fn from(ev: provider_events::ChallengeCreated) -> Self {
+        BlockEvent::ChallengeCreated {
+            deadline: ev.challenge_id.deadline,
+            index: ev.challenge_id.index,
+            bucket_id: ev.bucket_id,
+            provider: AccountId32::new(ev.provider.0),
+        }
+    }
+}
+
+impl From<provider_events::ReplicaAgreementEstablished> for BlockEvent {
+    fn from(ev: provider_events::ReplicaAgreementEstablished) -> Self {
+        BlockEvent::ReplicaAgreementEstablished {
+            bucket_id: ev.bucket_id,
+            provider: AccountId32::new(ev.provider.0),
+        }
+    }
+}
+
+impl From<provider_events::ProviderCheckpointSubmitted> for BlockEvent {
+    fn from(ev: provider_events::ProviderCheckpointSubmitted) -> Self {
+        BlockEvent::BucketCheckpointUpdated {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
+impl From<provider_events::BucketCheckpointed> for BlockEvent {
+    fn from(ev: provider_events::BucketCheckpointed) -> Self {
+        BlockEvent::BucketCheckpointUpdated {
+            bucket_id: ev.bucket_id,
+        }
+    }
+}
+
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
 pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BlockEvent> {
     events
         .iter()
         .filter_map(|event| event.ok())
-        .filter(|event| event.pallet_name() == "StorageProvider")
         .filter_map(|event| {
-            let name = event.event_name().to_string();
-            let fields = event.decode_fields_unchecked_as::<Value>().ok()?;
-            block_event_from(&name, &fields)
+            decode::<provider_events::ChallengeCreated>(&event)
+                .map(BlockEvent::from)
+                .or_else(|| {
+                    decode::<provider_events::ReplicaAgreementEstablished>(&event)
+                        .map(BlockEvent::from)
+                })
+                .or_else(|| {
+                    decode::<provider_events::ProviderCheckpointSubmitted>(&event)
+                        .map(BlockEvent::from)
+                })
+                .or_else(|| {
+                    decode::<provider_events::BucketCheckpointed>(&event).map(BlockEvent::from)
+                })
         })
         .collect()
 }
 
-/// Map a decoded `StorageProvider` event to a [`BlockEvent`], if relevant.
-///
-/// Split out from [`decode_block_events`] so it can be unit-tested against
-/// hand-built values without runtime metadata.
-fn block_event_from(name: &str, fields: &Value) -> Option<BlockEvent> {
-    match name {
-        "ChallengeCreated" => {
-            let challenge_id = fields.at("challenge_id")?;
-            Some(BlockEvent::ChallengeCreated {
-                deadline: field_u128(challenge_id, "deadline")? as u32,
-                index: field_u128(challenge_id, "index")? as u16,
-                bucket_id: field_u128(fields, "bucket_id")? as BucketId,
-                provider: field_account(fields, "provider")?,
-            })
+/// Statically decode `event` as `E` when its pallet/event identity matches;
+/// `None` otherwise. An event that matches but fails to decode (a runtime
+/// whose event shape drifted from the bindings) is logged and skipped — the
+/// coordinators' safety-net scans cover the miss.
+fn decode<E: subxt::events::DecodeAsEvent>(
+    event: &subxt::events::Event<'_, PolkadotConfig>,
+) -> Option<E> {
+    match event.decode_fields_as::<E>()? {
+        Ok(decoded) => Some(decoded),
+        Err(e) => {
+            tracing::warn!(
+                "failed to decode {}::{} against the static bindings: {e}",
+                event.pallet_name(),
+                event.event_name(),
+            );
+            None
         }
-        "ReplicaAgreementEstablished" => Some(BlockEvent::ReplicaAgreementEstablished {
-            bucket_id: field_u128(fields, "bucket_id")? as BucketId,
-            provider: field_account(fields, "provider")?,
-        }),
-        "ProviderCheckpointSubmitted" | "BucketCheckpointed" => {
-            Some(BlockEvent::BucketCheckpointUpdated {
-                bucket_id: field_u128(fields, "bucket_id")? as BucketId,
-            })
-        }
-        _ => None,
     }
-}
-
-fn field_u128(value: &Value, field: &str) -> Option<u128> {
-    value.at(field)?.as_u128()
-}
-
-fn field_account(value: &Value, field: &str) -> Option<AccountId32> {
-    crate::chain_state_coordinator::decode_account(value.at(field)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn challenge_created_fields(provider: [u8; 32]) -> Value {
-        Value::named_composite([
-            (
-                "challenge_id",
-                Value::named_composite([
-                    ("deadline", Value::u128(1234)),
-                    ("index", Value::u128(7)),
-                ]),
-            ),
-            ("bucket_id", Value::u128(42)),
-            ("provider", Value::from_bytes(provider)),
-            ("challenger", Value::from_bytes([9u8; 32])),
-            ("respond_by", Value::u128(1234)),
-        ])
-    }
+    use storage_subxt::api::runtime_types::storage_primitives::ChallengeId;
 
     #[test]
-    fn decodes_challenge_created() {
-        let fields = challenge_created_fields([5u8; 32]);
-        let Some(BlockEvent::ChallengeCreated {
+    fn challenge_created_maps_id_and_account() {
+        let ev = provider_events::ChallengeCreated {
+            challenge_id: ChallengeId {
+                deadline: 1234,
+                index: 7,
+            },
+            bucket_id: 42,
+            provider: subxt::utils::AccountId32([5u8; 32]),
+            challenger: subxt::utils::AccountId32([9u8; 32]),
+            respond_by: 1234,
+        };
+        let BlockEvent::ChallengeCreated {
             deadline,
             index,
             bucket_id,
             provider,
-        }) = block_event_from("ChallengeCreated", &fields)
+        } = BlockEvent::from(ev)
         else {
             panic!("expected ChallengeCreated");
         };
@@ -132,43 +160,5 @@ mod tests {
         assert_eq!(index, 7);
         assert_eq!(bucket_id, 42);
         assert_eq!(provider, AccountId32::new([5u8; 32]));
-    }
-
-    #[test]
-    fn decodes_replica_agreement_established() {
-        let fields = Value::named_composite([
-            ("bucket_id", Value::u128(3)),
-            ("provider", Value::from_bytes([2u8; 32])),
-        ]);
-        let Some(BlockEvent::ReplicaAgreementEstablished {
-            bucket_id,
-            provider,
-        }) = block_event_from("ReplicaAgreementEstablished", &fields)
-        else {
-            panic!("expected ReplicaAgreementEstablished");
-        };
-        assert_eq!(bucket_id, 3);
-        assert_eq!(provider, AccountId32::new([2u8; 32]));
-    }
-
-    #[test]
-    fn decodes_checkpoint_events_to_bucket_update() {
-        let fields = Value::named_composite([("bucket_id", Value::u128(11))]);
-        for name in ["ProviderCheckpointSubmitted", "BucketCheckpointed"] {
-            let Some(BlockEvent::BucketCheckpointUpdated { bucket_id }) =
-                block_event_from(name, &fields)
-            else {
-                panic!("expected BucketCheckpointUpdated for {name}");
-            };
-            assert_eq!(bucket_id, 11);
-        }
-    }
-
-    #[test]
-    fn irrelevant_or_malformed_events_are_skipped() {
-        let fields = Value::named_composite([("bucket_id", Value::u128(1))]);
-        assert!(block_event_from("ProviderRegistered", &fields).is_none());
-        // ChallengeCreated with missing fields must not panic, just skip.
-        assert!(block_event_from("ChallengeCreated", &fields).is_none());
     }
 }

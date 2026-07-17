@@ -21,6 +21,8 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub mod try_state;
+
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
@@ -35,6 +37,8 @@ use sp_runtime::{BoundedVec, SaturatedConversion};
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
 
     /// S3 bucket info type alias.
     pub type S3BucketInfoOf<T> =
@@ -48,6 +52,14 @@ pub mod pallet {
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
+
+    #[pallet::hooks]
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        #[cfg(feature = "try-runtime")]
+        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
+        }
+    }
 
     #[pallet::config]
     pub trait Config:
@@ -163,6 +175,8 @@ pub mod pallet {
         ObjectKeyTooLong,
         /// Content type too long.
         ContentTypeTooLong,
+        /// Bucket total size would exceed the maximum supported value.
+        BucketSizeLimitReached,
     }
 
     #[pallet::call]
@@ -351,7 +365,10 @@ pub mod pallet {
             }
 
             // Update bucket stats
-            bucket_info.total_size = bucket_info.total_size.saturating_add(size);
+            bucket_info.total_size = bucket_info
+                .total_size
+                .checked_add(size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(s3_bucket_id, bucket_info);
 
             // Create metadata
@@ -469,7 +486,10 @@ pub mod pallet {
                 }
             }
 
-            dst_bucket.total_size = dst_bucket.total_size.saturating_add(metadata.size);
+            dst_bucket.total_size = dst_bucket
+                .total_size
+                .checked_add(metadata.size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(dst_bucket_id, dst_bucket);
 
             // Store copy

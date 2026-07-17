@@ -60,6 +60,14 @@ build-paseo-runtime:
 build-provider:
     cargo build --release -p storage-provider-node
 
+# Reproduce the CI Rust coverage gate locally (needs cargo-llvm-cov + diff-cover).
+# For a PR not based on dev: git fetch origin <base> && COMPARE_BRANCH=origin/<base> just coverage
+coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch --no-tags origin dev
+    scripts/coverage.sh all
+
 [private]
 _download BIN URL SHA256="":
     #!/usr/bin/env bash
@@ -240,6 +248,34 @@ stats:
 generate-chain-spec: build-runtime
     ./scripts/build-chain-spec.sh > chain-spec.json
     @echo "Chain spec generated: chain-spec.json"
+
+# Generate subxt code from runtime metadata (paseo runtime).
+# Requires a running node (`just start-paseo-chain` in another terminal) and
+# the `subxt` CLI (`cargo install subxt-cli --force --locked`) + `rustfmt` on PATH.
+subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtime.rs" METADATA="crates/storage-subxt/metadata/storage_paseo_runtime.scale":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Downloading metadata from {{ URL }}..."
+    mkdir -p "$(dirname "{{ METADATA }}")" "$(dirname "{{ OUTPUT }}")"
+    subxt metadata -f bytes --url "{{ URL }}" > "{{ METADATA }}"
+    echo "Generating subxt code..."
+    printf '// SPDX-License-Identifier: Apache-2.0\n\n' > "{{ OUTPUT }}"
+    subxt codegen --file "{{ METADATA }}" \
+        --derive Clone \
+        --derive Eq \
+        --derive PartialEq \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderInfo=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderSettings=serde::Deserialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Serialize" \
+        --derive-for-type "pallet_storage_provider::pallet::ProviderStats=serde::Deserialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Serialize" \
+        --derive-for-type "bounded_collections::bounded_vec::BoundedVec=serde::Deserialize" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Encode" \
+        --derive-for-type "sp_runtime::MultiSignature=codec::Decode" \
+        | rustfmt --edition=2021 --emit=stdout >> "{{ OUTPUT }}"
+    echo "Generated {{ OUTPUT }}"
 
 # Demo: full integration test (PAPI-based)
 # Runs setup, upload, 2 challenges + responses, and asserts 2 ChallengeDefended events.

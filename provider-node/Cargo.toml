@@ -10,6 +10,7 @@ description = "Off-chain provider node for scalable Web3 storage"
 [dependencies]
 provider-negotiation = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-subxt = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
@@ -37,4 +38,5 @@ async-trait = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 serde_json = { workspace = true }
+subxt-rpcs = { workspace = true, features = ["mock-rpc-client"] }
 tempfile = { workspace = true }

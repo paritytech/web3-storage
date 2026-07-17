@@ -9881,7 +9881,9 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-primitives",
+ "storage-subxt",
  "subxt",
+ "subxt-rpcs",
  "subxt-signer 0.50.2",
  "tempfile",
  "thiserror 2.0.18",
@@ -9890,6 +9892,17 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "storage-subxt"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "subxt",
+ "subxt-signer 0.50.2",
 ]
 
 [[package]]
@@ -10189,6 +10202,7 @@ dependencies = [
  "serde_json",
  "subxt-lightclient",
  "thiserror 2.0.18",
+ "tokio",
  "tokio-util",
  "tracing",
  "url",
