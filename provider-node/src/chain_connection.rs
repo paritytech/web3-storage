@@ -57,3 +57,28 @@ pub fn current_api(chain_rx: &ChainWatch) -> Result<OnlineClient<PolkadotConfig>
         .map(|h| h.api.clone())
         .ok_or_else(|| Error::Internal("Chain connection not established yet".to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rpc_connect_to_unreachable_chain_errors() {
+        // Port 1 on loopback refuses immediately.
+        let result = connect(&ChainTransport::Rpc {
+            url: "ws://127.0.0.1:1".to_string(),
+        })
+        .await;
+        let Err(err) = result else {
+            panic!("connect must fail against a closed port");
+        };
+        assert!(err.to_string().contains("Failed to connect to chain"));
+    }
+
+    #[test]
+    fn current_api_errors_before_first_connect() {
+        let (_tx, rx) = tokio::sync::watch::channel(None);
+        let err = current_api(&rx).expect_err("no connection published yet");
+        assert!(err.to_string().contains("not established"));
+    }
+}

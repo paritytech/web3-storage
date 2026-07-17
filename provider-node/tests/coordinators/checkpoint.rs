@@ -13,7 +13,7 @@ use storage_provider_node::{
     CheckpointResult, Error, ProviderState, Storage,
 };
 
-struct MockCheckpointChainClient {
+pub(crate) struct MockCheckpointChainClient {
     block_number: Mutex<u64>,
     config: Mutex<Option<(u32, u32)>>,
     submitted: Mutex<Vec<(BucketId, u64)>>,
@@ -21,7 +21,7 @@ struct MockCheckpointChainClient {
 }
 
 impl MockCheckpointChainClient {
-    fn new(block: u64) -> Self {
+    pub(crate) fn new(block: u64) -> Self {
         Self {
             block_number: Mutex::new(block),
             config: Mutex::new(Some((100, 20))),

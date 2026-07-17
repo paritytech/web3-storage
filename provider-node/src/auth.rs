@@ -477,4 +477,17 @@ mod tests {
         let unknown = AccountId32::new([4u8; 32]);
         assert_eq!(find_role(&members, &unknown), None);
     }
+
+    #[tokio::test]
+    async fn chain_resolver_fails_cleanly_before_first_connect() {
+        // Before the chain-state coordinator publishes a connection, lookups
+        // must surface a retryable error rather than panic or hang.
+        let (_tx, rx) = tokio::sync::watch::channel(None);
+        let resolver = ChainMembershipResolver::new(rx);
+        let err = resolver
+            .fetch_members(1)
+            .await
+            .expect_err("no connection published yet");
+        assert!(err.contains("not established"), "unexpected error: {err}");
+    }
 }

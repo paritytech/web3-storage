@@ -186,9 +186,14 @@ async fn resubscribe_triggers_bootstrap_scan() {
 
 // ── replica sync coordinator ──────────────────────────────────────────────────
 
-/// Mock counting duty passes (each pass calls `fetch_replica_agreements`).
+/// Mock counting duty passes (each pass calls `fetch_replica_agreements`),
+/// optionally serving one agreement + bucket snapshot so a duty reaches
+/// `sync_and_confirm` (with no primary endpoints, it returns without any
+/// network access).
 struct MockReplicaClient {
     duty_passes: AtomicUsize,
+    agreement: Option<ReplicaAgreementInfo>,
+    snapshot_root: H256,
 }
 
 #[async_trait::async_trait]
@@ -203,13 +208,13 @@ impl ReplicaSyncChainClient for MockReplicaClient {
         _local_buckets: Vec<BucketId>,
     ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
         self.duty_passes.fetch_add(1, Ordering::SeqCst);
-        Ok(vec![])
+        Ok(self.agreement.clone().into_iter().collect())
     }
 
     async fn fetch_bucket_snapshot(&self, _bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
         Ok(BucketSnapshot {
-            mmr_root: H256::zero(),
-            leaf_count: 0,
+            mmr_root: self.snapshot_root,
+            leaf_count: 1,
         })
     }
 
@@ -230,6 +235,8 @@ impl ReplicaSyncChainClient for MockReplicaClient {
 async fn replica_agreement_event_triggers_duty_pass() {
     let mock = Arc::new(MockReplicaClient {
         duty_passes: AtomicUsize::new(0),
+        agreement: None,
+        snapshot_root: H256::zero(),
     });
     let config = ReplicaSyncCoordinatorConfig {
         // Safety net disabled: only the event path may trigger duty passes.
@@ -269,5 +276,109 @@ async fn replica_agreement_event_triggers_duty_pass() {
         "own replica agreement should trigger a duty pass"
     );
 
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn checkpoint_updated_event_drives_duty_through_sync_attempt() {
+    // A checkpoint on a bucket we hold locally must trigger a duty pass, and
+    // the resulting duty (new root, no reachable primaries) must surface as
+    // PrimaryUnavailable through the callback — all without any network.
+    let state = test_state();
+    state.storage.init_bucket(7, 1024 * 1024).unwrap();
+
+    let mock = Arc::new(MockReplicaClient {
+        duty_passes: AtomicUsize::new(0),
+        agreement: Some(ReplicaAgreementInfo {
+            bucket_id: 7,
+            sync_balance: 10,
+            sync_price: 1,
+            min_sync_interval: 0,
+            last_sync: None,
+        }),
+        snapshot_root: H256::repeat_byte(0xAB),
+    });
+    let config = ReplicaSyncCoordinatorConfig {
+        poll_interval: Duration::ZERO,
+        ..Default::default()
+    };
+    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+    let results: Arc<Mutex<Vec<storage_provider_node::SyncResult>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let results_cb = Arc::clone(&results);
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator
+        .start(
+            events_rx,
+            Some(Arc::new(move |result| {
+                results_cb.lock().unwrap().push(result);
+            })),
+        )
+        .await
+        .unwrap();
+
+    // A checkpoint on a bucket we do NOT hold is irrelevant.
+    events_tx
+        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 999 })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mock.duty_passes.load(Ordering::SeqCst), 0);
+
+    // One on bucket 7 drives the full duty pass.
+    events_tx
+        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 7 })
+        .unwrap();
+    let results_ref = Arc::clone(&results);
+    assert!(
+        wait_for(5, 10, || {
+            let r = Arc::clone(&results_ref);
+            async move { !r.lock().unwrap().is_empty() }
+        })
+        .await,
+        "duty result should reach the callback"
+    );
+    assert!(
+        matches!(
+            results.lock().unwrap()[0],
+            storage_provider_node::SyncResult::PrimaryUnavailable { bucket_id: 7, .. }
+        ),
+        "unexpected result: {:?}",
+        results.lock().unwrap()[0]
+    );
+
+    handle.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn checkpoint_coordinator_ticks_on_block_events() {
+    use storage_provider_node::{CheckpointCoordinator, CheckpointCoordinatorConfig};
+
+    let mock = Arc::new(super::checkpoint::MockCheckpointChainClient::new(100));
+    let coordinator = CheckpointCoordinator::new(
+        CheckpointCoordinatorConfig::default(),
+        test_state(),
+        Box::new(Arc::clone(&mock)),
+    );
+
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = coordinator.start(events_rx, None).await.unwrap();
+
+    // Irrelevant event kind: skipped. Block/resubscribe: a duty check runs
+    // (the duty source is the pre-existing stub, so no submission results).
+    events_tx
+        .send(BlockEvent::BucketCheckpointUpdated { bucket_id: 1 })
+        .unwrap();
+    events_tx.send(BlockEvent::NewBlock { number: 1 }).unwrap();
+    events_tx
+        .send(BlockEvent::Resubscribed { at_block: 1 })
+        .unwrap();
+
+    // Paused: block ticks are ignored.
+    handle.pause().await.unwrap();
+    events_tx.send(BlockEvent::NewBlock { number: 2 }).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(handle.is_running());
     handle.stop().await.unwrap();
 }
