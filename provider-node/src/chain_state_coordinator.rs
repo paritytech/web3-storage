@@ -1295,7 +1295,7 @@ mod tests {
             // `follow` bootstraps, processes the block (decoding the
             // ProviderRegistered event and refreshing state), and returns.
             coordinator
-                .follow(ChainHandle { api })
+                .follow(ChainHandle::from_api(api))
                 .await
                 .expect("follow runs to stream end");
 

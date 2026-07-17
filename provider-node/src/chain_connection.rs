@@ -85,6 +85,14 @@ pub struct ChainHandle {
     _light: Option<LightClient>,
 }
 
+impl ChainHandle {
+    /// Handle over an existing client with no embedded light client to keep
+    /// alive: the RPC transport, and tests driving a mock connection.
+    pub(crate) fn from_api(api: OnlineClient<PolkadotConfig>) -> Self {
+        Self { api, _light: None }
+    }
+}
+
 /// Receiver side of the connection watch channel. `None` until the first
 /// successful connect.
 pub type ChainWatch = tokio::sync::watch::Receiver<Option<ChainHandle>>;
@@ -100,7 +108,7 @@ pub async fn connect(transport: &ChainTransport) -> Result<ChainHandle, Error> {
             let api = OnlineClient::<PolkadotConfig>::from_url(url)
                 .await
                 .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-            Ok(ChainHandle { api, _light: None })
+            Ok(ChainHandle::from_api(api))
         }
         ChainTransport::Light {
             relay_spec,
