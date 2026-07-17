@@ -23,6 +23,10 @@ const initialNetwork = loadSelectedNetwork();
 
 const connectionStatus$ = new BehaviorSubject<ConnectionStatus>("disconnected");
 const blockNumber$ = new BehaviorSubject<number>(0);
+// The pallet's anchor block — the clock every on-chain duration (challenge
+// deadlines, checkpoint windows, agreement expiry) is measured against; NOT
+// the parachain height, which differs by millions of blocks on live networks.
+const anchorBlock$ = new BehaviorSubject<number>(0);
 const endpoint$ = new BehaviorSubject<string>(initialNetwork.config.parachainWs);
 const connectionError$ = new BehaviorSubject<string | undefined>(undefined);
 const client$ = new BehaviorSubject<PolkadotClient | null>(null);
@@ -32,6 +36,8 @@ let blockSubscription: Subscription | null = null;
 
 export const [useConnectionStatus] = bind(connectionStatus$, "disconnected");
 export const [useBlockNumber] = bind(blockNumber$, 0);
+/** Use this (never `useBlockNumber`) for pallet-clock comparisons. */
+export const [useAnchorBlock] = bind(anchorBlock$, 0);
 export const [useEndpoint] = bind(endpoint$, initialNetwork.config.parachainWs);
 export const [useConnectionError] = bind(connectionError$, undefined);
 export const [useIsConnected] = bind(
@@ -65,6 +71,15 @@ export async function connect(wsEndpoint?: string): Promise<void> {
 
     blockSubscription = client.finalizedBlock$.subscribe((block) => {
       blockNumber$.next(block.number);
+      // Refresh the pallet's anchor clock via the `current_anchor_block`
+      // runtime API (unsafe API: live metadata, no descriptor regeneration).
+      // Runtimes without the API measured durations in parachain blocks, so
+      // the parachain height is the right fallback there.
+      void client
+        .getUnsafeApi()
+        .apis.StorageProviderApi.current_anchor_block()
+        .then((anchor: unknown) => anchorBlock$.next(Number(anchor)))
+        .catch(() => anchorBlock$.next(block.number));
     });
 
     client$.next(client);
@@ -106,6 +121,7 @@ export function disconnect(): void {
   client$.next(null);
   api$.next(null);
   blockNumber$.next(0);
+  anchorBlock$.next(0);
   connectionStatus$.next("disconnected");
 }
 

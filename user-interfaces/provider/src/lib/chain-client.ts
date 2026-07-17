@@ -33,11 +33,36 @@ export { clientReady$, connectToChain, getClient, subscribeToBlocks }
 // The generic connection lifecycle lives in the shared @web3-storage/chain-client
 // package (imported/re-exported above); only provider-specific state stays here.
 
-export const blockNumber$ = new BehaviorSubject<number | undefined>(undefined)
+/**
+ * The pallet's anchor block — the clock every on-chain duration (agreement
+ * expiry, challenge deadlines, checkpoint windows, deregister cooldown) is
+ * measured against. NOT the parachain height: on live networks the two clocks
+ * differ by millions of blocks, so pallet-clock comparisons must read this.
+ */
+export const anchorBlock$ = new BehaviorSubject<number | undefined>(undefined)
+
+/**
+ * Refresh [`anchorBlock$`] from the `current_anchor_block` runtime API. The
+ * unsafe API resolves against live metadata, so no descriptor regeneration is
+ * needed; on runtimes without the API the parachain height is the pallet
+ * clock, so fall back to it.
+ */
+export async function refreshAnchorBlock(parachainBlock: number): Promise<void> {
+  let anchor = parachainBlock
+  const client = getClient()
+  if (client) {
+    try {
+      anchor = Number(
+        await client.getUnsafeApi().apis.StorageProviderApi.current_anchor_block()
+      )
+    } catch { /* pre-anchor runtime */ }
+  }
+  anchorBlock$.next(anchor)
+}
 
 export function disconnectFromChain(): void {
   disconnectChain()
-  blockNumber$.next(undefined)
+  anchorBlock$.next(undefined)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,7 +364,8 @@ export async function getAccountBalance(address: string): Promise<{
 
 export async function getProviderAgreements(address: string): Promise<OnChainAgreement[]> {
   const entries = await requireApi().query.StorageProvider.StorageAgreements.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // expires_at is on the pallet's anchor clock, so the comparison must be too.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const out: OnChainAgreement[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
@@ -348,7 +374,7 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
     const expiresAt = value.expires_at
     let status: 'active' | 'expired' | 'terminated' = 'active'
     if (value.extensions_blocked) status = 'terminated'
-    else if (currentBlock > expiresAt && expiresAt > 0) status = 'expired'
+    else if (anchorBlock > expiresAt && expiresAt > 0) status = 'expired'
     out.push({
       id: bucketId,
       bucketId,
@@ -490,7 +516,8 @@ export async function getBucketDetails(
 
 export async function getProviderChallenges(address: string): Promise<OnChainChallenge[]> {
   const entries = await requireApi().query.StorageProvider.Challenges.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // Challenge deadlines are on the pallet's anchor clock.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const challenges: OnChainChallenge[] = []
   // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry is
   // a single challenge with keyArgs = [deadline, index] and value = Challenge.
@@ -507,7 +534,7 @@ export async function getProviderChallenges(address: string): Promise<OnChainCha
       chunkIndex: Number(ch.target.chunk_index),
       mmrRoot: ch.mmr_root,
       startSeq: Number(ch.start_seq),
-      status: currentBlock > deadline ? 'expired' : 'pending',
+      status: anchorBlock > deadline ? 'expired' : 'pending',
       createdAt: 0,
       deadline,
     })
