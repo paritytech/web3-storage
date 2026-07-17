@@ -168,4 +168,63 @@ mod tests {
         let err = current_api(&rx).expect_err("no connection published yet");
         assert!(err.to_string().contains("not established"));
     }
+
+    #[tokio::test]
+    async fn light_with_missing_spec_file_errors() {
+        let result = connect(&ChainTransport::Light {
+            relay_spec: SpecSource::File(PathBuf::from("/nonexistent/relay.json")),
+            para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
+        })
+        .await;
+        let Err(err) = result else {
+            panic!("connect must fail when the relay spec file is missing");
+        };
+        assert!(
+            err.to_string().contains("Failed to read relay chain spec"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn light_with_invalid_spec_errors() {
+        // The file loads (covering the File happy path) but smoldot rejects
+        // the contents as a chain spec.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("relay.json");
+        std::fs::write(&path, "{\"not\": \"a chain spec\"}").unwrap();
+
+        let result = connect(&ChainTransport::Light {
+            relay_spec: SpecSource::File(path),
+            para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
+        })
+        .await;
+        let Err(err) = result else {
+            panic!("connect must fail on an invalid relay spec");
+        };
+        // The para spec is never reached: either the relay spec parse fails,
+        // or (if smoldot were lenient) the missing para file errors next.
+        assert!(
+            err.to_string().contains("Failed to start light client")
+                || err
+                    .to_string()
+                    .contains("Failed to read parachain chain spec"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn light_spec_fetch_from_unreachable_node_errors() {
+        let result = connect(&ChainTransport::Light {
+            relay_spec: SpecSource::FetchFromRpc("ws://127.0.0.1:1".to_string()),
+            para_spec: SpecSource::File(PathBuf::from("/nonexistent/para.json")),
+        })
+        .await;
+        let Err(err) = result else {
+            panic!("connect must fail when the spec fetch node is unreachable");
+        };
+        assert!(
+            err.to_string().contains("Failed to fetch relay chain spec"),
+            "unexpected error: {err}"
+        );
+    }
 }
