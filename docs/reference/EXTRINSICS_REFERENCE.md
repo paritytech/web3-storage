@@ -733,9 +733,11 @@ amount: 100000000000000   // 100 tokens
 > **Who may challenge, and what it costs** (applies to `challengeCheckpoint`,
 > `challengeOffchain`, and `challengeReplica`). Any signed account may
 > challenge, with one restriction: on a `Private` bucket, challenging a
-> **primary** provider requires bucket membership (`NotBucketMember`). The gate
-> keys on the challenged provider's role, whichever extrinsic is used;
-> challenging a replica is open to everyone.
+> **primary** provider requires being a bucket member or the owner of a primary
+> agreement on the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement
+> owners deliberately excluded). The gate keys on the challenged provider's
+> role in its current agreement, whichever extrinsic is used; challenging a
+> replica is open to everyone.
 > The challenger locks a deposit covering the provider's on-chain response
 > (over-estimated; excess refunded on resolution). On a valid response the
 > provider's **stake is never touched**—only its response tx fee is at issue:
@@ -772,7 +774,7 @@ chunkIndex: 3
 **Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotBucketMember` (private bucket, non-member caller)
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotAuthorizedForPrivateBucket` (private bucket; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -801,7 +803,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotBucketMember` (private bucket, primary target, non-member caller)
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotAuthorizedForPrivateBucket` (private bucket, primary target; caller neither member nor primary-agreement owner)
 
 ---
 
@@ -1077,6 +1079,7 @@ Common errors you might encounter:
 | `BucketNotFound` | Invalid bucket ID | Check bucket exists |
 | `BucketFrozen` / `BucketNotFrozen` | Operation requires opposite state | — |
 | `NotBucketAdmin` / `NotBucketMember` / `NotBucketWriter` | Caller lacks role | Have an admin assign the role |
+| `NotAuthorizedForPrivateBucket` | Private bucket: primary challenged by caller who is neither member nor primary-agreement owner | Become a member, or challenge a replica |
 | `MemberNotFound` | Member not in bucket | Add first via `setMember` |
 | `CannotDemoteAdmin` | Tried to demote/remove **another** admin | Only an admin can demote themselves |
 | `LastAdminCannotBeRemoved` | Demote/remove would leave bucket with zero admins | Promote another admin first |

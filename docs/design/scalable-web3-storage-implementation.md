@@ -30,8 +30,8 @@ A **bucket** is the fundamental unit of storage organization. It defines:
 serve reads only to members; on a public bucket, to anyone. This is a cooperative
 request to honest primaries, **not enforced on-chain**, and it does not constrain
 replicas (which always serve everyone). Its single on-chain effect: on a
-`Private` bucket, only members may challenge primaries (replicas stay
-challengeable by anyone).
+`Private` bucket, only members and primary-agreement owners may challenge
+primaries (replicas stay challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
@@ -345,8 +345,8 @@ pub enum Visibility {
     /// Primaries serve reads only to members (Admin/Writer/Reader). This
     /// members-only restriction is a cooperative request to honest primaries,
     /// not on-chain-enforced; replicas serve everyone regardless. On-chain,
-    /// `Private` restricts primary challenges to members. Full semantics:
-    /// design doc, "Bucket Visibility & Access".
+    /// `Private` restricts primary challenges to members and primary-agreement
+    /// owners. Full semantics: design doc, "Bucket Visibility & Access".
     Private,
 }
 
@@ -354,7 +354,8 @@ pub struct Bucket<T: Config> {
     /// Members who can interact with this bucket
     pub members: BoundedVec<Member<T>, T::MaxMembers>,
     /// Read visibility (see `Visibility`). On-chain, only the challenge
-    /// extrinsics read it: `Private` restricts primary challenges to members.
+    /// extrinsics read it: `Private` restricts primary challenges to members
+    /// and primary-agreement owners.
     pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
@@ -1581,8 +1582,12 @@ impl<T: Config> Pallet<T> {
     // **Who may challenge, and at what cost (all three modes):**
     // Any signed account may challenge, with one restriction: on a `Private`
     // bucket, challenging a provider whose agreement role is `Primary`
-    // requires bucket membership (`NotBucketMember`). The gate keys on the
-    // challenged provider's *role* in this bucket.
+    // requires being a bucket member or the owner of a primary agreement on
+    // the bucket (`NotAuthorizedForPrivateBucket`; replica-agreement owners
+    // deliberately excluded—rationale in the design doc, "The Challenge
+    // Game"). The gate reads the challenged provider's role from its *current*
+    // agreement—the same lookup that yields `AgreementNotFound`—so an ended
+    // agreement means no challenge, never a stale role.
     // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
@@ -1619,7 +1624,9 @@ impl<T: Config> Pallet<T> {
 
     /// Challenge on-chain checkpoint (no signatures needed).
     /// Provider must be in current snapshot's provider list.
-    /// On a `Private` bucket the caller must be a member (`NotBucketMember`).
+    /// On a `Private` bucket the caller must be a member or primary-agreement
+    /// owner (`NotAuthorizedForPrivateBucket`); snapshot providers are
+    /// primaries by construction, so the gate always applies here.
     /// 
     /// NOTE: May race with new checkpoints in hot buckets. If the provider is
     /// no longer in the snapshot when the transaction executes, this fails.
@@ -1634,8 +1641,9 @@ impl<T: Config> Pallet<T> {
     /// Challenge off-chain commitment (requires provider signature).
     /// Works regardless of current snapshot state - the signature proves
     /// the provider committed to this data.
-    /// On a `Private` bucket, membership is required iff the challenged
-    /// provider is a primary (`NotBucketMember`; role-based gate, see above).
+    /// On a `Private` bucket, the gate applies iff the challenged provider's
+    /// current agreement has role `Primary`
+    /// (`NotAuthorizedForPrivateBucket`; role-based gate, see above).
     /// 
     /// Preferred for hot buckets where snapshots change frequently.
     pub fn challenge_offchain(

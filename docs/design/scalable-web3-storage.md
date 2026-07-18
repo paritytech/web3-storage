@@ -11,7 +11,7 @@
 
 | Version | Changes |
 |---------|---------|
-| 2.3 | Private buckets clarified (visibility flag, Reader role, member-only primary challenges, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
+| 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
 ---
@@ -265,7 +265,7 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges from members only). Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges only from members and primary-agreement owners). Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
@@ -429,7 +429,7 @@ parties from even the ciphertext. On-chain metadata
 (MMR root, sizes, leaf counts, checkpoints, challenge events) stays public
 regardless, and a challenge response posts the challenged chunk on-chain,
 publicly, forever. Strangers cannot trigger that—private-bucket primary
-challenges are members-only (see
+challenges are restricted to members and primary-agreement owners (see
 [The Challenge Game](#the-challenge-game))—but a member challenging leaks the
 chunk by choice. Encryption makes the leak worthless.
 
@@ -511,7 +511,7 @@ client's data. This signature is the client's guarantee:
 
 2. **After checkpoint**: The MMR root is on-chain, establishing the canonical bucket state. This adds:
    - **Synchronization**: All parties agree on the bucket's state at that point
-   - **Public verifiability**: Anyone (for a private bucket's primaries: any member) can challenge based on the on-chain commitment, not just signature holders
+   - **Public verifiability**: Anyone (for a private bucket's primaries: members and primary-agreement owners) can challenge based on the on-chain commitment, not just signature holders
    - **Multi-provider attestation**: Multiple primaries signed the same state
    - **Durability**: The commitment is in chain history—can't be lost if client loses the signature
 
@@ -595,7 +595,8 @@ stake.
 ### The Challenge Game
 
 When a provider doesn't serve data, anyone can challenge on-chain (private
-buckets restrict primary challenges to members—see below):
+buckets restrict primary challenges to members and primary-agreement owners—see
+below):
 
 ```
 1. Challenger initiates
@@ -632,12 +633,11 @@ challenge—becoming a member or agreement owner afterwards does not upgrade an
 open challenge (nor does losing the status downgrade one).
 
 **Visibility gates who may challenge primaries**—the flag's only on-chain
-effect. On a `Private` bucket, challenging a *primary* requires membership
-(keyed on the challenged provider's role, whichever extrinsic is used): the
+effect. On a `Private` bucket, challenging a *primary* requires being a member
+or the owner of a primary agreement on the bucket (keyed on the challenged
+provider's role in its current agreement, whichever extrinsic is used): the
 public has no legitimate reliance on data it cannot read, and must not be able
-to force private bytes on-chain via the response. Deliberately membership-only,
-stricter than the cost-tier—buying a permissionless replica agreement must not
-open an extraction channel into the primaries. Replicas stay challengeable by
+to force private bytes on-chain via the response. Replicas stay challengeable by
 *anyone*: their content is public, and this carries the anti-censorship
 guarantee.
 
