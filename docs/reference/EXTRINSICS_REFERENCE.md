@@ -184,10 +184,12 @@ Create an empty bucket; caller becomes its sole admin.
 
 **Parameters:**
 - `minProviders`: `u32` - minimum primary-provider signatures required for a valid checkpoint
+- `visibility`: `Public | Private` - whether primaries serve reads to anyone or only to members (cooperative, not on-chain-enforced; full semantics in the design doc's "Bucket Visibility & Access"). Wrappers omitting the choice must default to `Private` (fail-safe).
 
 **Example:**
 ```
 minProviders: 2
+visibility: Private
 ```
 
 **Returns:** Emits `BucketCreated` event with assigned `bucketId`.
@@ -205,12 +207,14 @@ One-shot helper: create a bucket, find the cheapest matching provider, and accep
 - `maxBytes`: `u64` - desired storage size
 - `duration`: `BlockNumber` - agreement duration
 - `maxPricePerByte`: `Balance` - cap on provider's `pricePerByte`
+- `visibility`: `Public | Private` - see `createBucket`
 
 **Example:**
 ```
 maxBytes: 1073741824   // 1 GB
 duration: 500
 maxPricePerByte: 1000000
+visibility: Private
 ```
 
 **Events:** `BucketCreated`, `AgreementAccepted`, `ProviderAddedToBucket`
@@ -255,6 +259,24 @@ bucketId: 0
 
 ---
 
+### `setBucketVisibility`
+
+Flip a bucket between `Public` and `Private` (admin only). Always allowed in both directions; effects are asymmetric—privatizing does not recall data already replicated, publicizing cannot be undone. See "Transitions" in the design doc's Bucket Visibility & Access section.
+
+**Parameters:**
+- `bucketId`: `BucketId` (u64)
+- `visibility`: `Public | Private`
+
+**Example:**
+```
+bucketId: 0
+visibility: Public
+```
+
+**Errors:** `BucketNotFound`, `NotBucketAdmin`
+
+---
+
 ### `setMember`
 
 Add a member or update an existing member's role.
@@ -262,7 +284,7 @@ Add a member or update an existing member's role.
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `member`: `AccountId` - account to add or update
-- `role`: `Role` - one of `Admin`, `Writer`, `Reader`
+- `role`: `Role` - one of `Admin`, `Writer`, `Reader`. `Admin` and `Writer` can read; `Reader` grants read-only access (meaningful on private buckets, where membership is the read access list). Adding a Reader does not by itself make a bucket private—use `setBucketVisibility`.
 
 **Example:**
 ```
@@ -350,6 +372,8 @@ replicaParams: {
 ```
 
 Funds reserved on request: storage payment **plus** `syncBalance`. The request expires if not accepted within `RequestTimeout`.
+
+**No syncability check:** the chain does not validate that a sync source exists (a private bucket with no replicas is still accepted)—content addressing lets a replica obtain the data from any holder, so no one but the funder can judge fulfillability (the client may even push the data itself). A replica that never obtains data is the funder's loss. Rationale: design doc, "Replicas and visibility: no on-chain gate".
 
 **Events:** `AgreementRequested`
 **Errors:** `BucketNotFound`, `ProviderNotFound`, `DeregisterAnnounced`, `ProviderNotAcceptingReplicas`, `DurationTooShort`, `DurationTooLong`, `PaymentExceedsMax`, `AgreementRequestAlreadyExists`
@@ -706,6 +730,27 @@ amount: 100000000000000   // 100 tokens
 
 ---
 
+> **Who may challenge, and what it costs** (applies to `challengeCheckpoint`,
+> `challengeOffchain`, and `challengeReplica`). Any signed account may
+> challenge, with one restriction: on a `Private` bucket, challenging a
+> **primary** provider requires bucket membership (`NotBucketMember`). The gate
+> keys on the challenged provider's role, whichever extrinsic is used;
+> challenging a replica is open to everyone.
+> The challenger locks a deposit covering the provider's on-chain response
+> (over-estimated; excess refunded on resolution). On a valid response the
+> provider's **stake is never touched**—only its response tx fee is at issue:
+> - **Authorized** (bucket member—Admin/Writer/Reader—or owner of any storage
+>   agreement on the bucket): the provider bears a fraction per the
+>   `respondToChallenge` cost-split table; the challenger pays the rest, never
+>   less than 50%.
+> - **General public** (everyone else): pays the fee in full; the provider
+>   loses no money.
+>
+> The tier is fixed at challenge creation (stored in the challenge). A
+> failed/absent response slashes the provider's full stake regardless of tier.
+> Rationale (leverage-not-recovery, anti-DoS, visibility gating): design doc,
+> "The Challenge Game".
+
 ### `challengeCheckpoint`
 
 Challenge a primary provider against the **current snapshot** on chain. No signature needed: the snapshot itself is proof of commitment.
@@ -724,10 +769,10 @@ leafIndex: 7
 chunkIndex: 3
 ```
 
-**Deposit required:** challenger must deposit collateral.
+**Deposit required:** see the challenge cost note above.
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`
+**Errors:** `BucketNotFound`, `NoSnapshot`, `ProviderNotInSnapshot`, `NotBucketMember` (private bucket, non-member caller)
 
 ---
 
@@ -756,7 +801,7 @@ providerSignature: 0xsig...
 ```
 
 **Events:** `ChallengeCreated`
-**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`
+**Errors:** `BucketNotFound`, `AgreementNotFound`, `InvalidSignature`, `NotBucketMember` (private bucket, primary target, non-member caller)
 
 ---
 
@@ -804,9 +849,11 @@ response: Proof {
 }
 ```
 
-**Cost split by response speed** (challenger : provider):
+**Cost split by response speed** (challenger funds : provider bears) — applies
+only to **authorized** challengers; for the general public it is always 100 / 0.
+Numbers are illustrative.
 
-| Response time | Split |
+| Response time | Split (challenger : provider) |
 |---|---|
 | Block 1 | 90 / 10 |
 | Blocks 2-5 | 80 / 20 |

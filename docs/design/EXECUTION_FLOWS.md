@@ -471,6 +471,12 @@ sequenceDiagram
     C->>C: provider_idx = bucket.primary_providers.position(provider)?
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
+    Note over C: Determine cost tier (once, at creation)
+    C->>C: authorized = is_authorized(challenger, bucket)
+    Note over C: (authorized = member or agreement owner; stored in the
+    Note over C:  challenge so later membership changes don't alter the fee
+    Note over C:  split on a valid response — see respond_to_challenge)
+
     Note over C: Create challenge
     C->>C: deadline = current_block + ChallengePeriod
     C->>C: challenge = Challenge {
@@ -481,7 +487,8 @@ sequenceDiagram
     Note over C:   start_seq: snapshot.start_seq,
     Note over C:   leaf_index,
     Note over C:   chunk_index,
-    Note over C:   deposit
+    Note over C:   deposit,
+    Note over C:   authorized
     Note over C: }
 
     C->>C: Challenges::append(deadline, challenge)
@@ -524,9 +531,11 @@ sequenceDiagram
     C->>C: verify_merkle_proof(chunk_hash, chunk_proof, data_root)?
     C->>C: verify_mmr_proof(mmr_proof, mmr_root)?
 
-    Note over C: Challenge defended!
+    Note over C: Challenge defended! Stake untouched.
     C->>C: Remove challenge
-    C->>C: Return challenger's deposit
+    Note over C: Reimburse provider's response fee from deposit:
+    Note over C:   public challenger → 100%; authorized → split fraction
+    C->>C: Return remaining deposit to challenger
 
     C-->>P: Event::ChallengeDefended { challenge_id }
 ```

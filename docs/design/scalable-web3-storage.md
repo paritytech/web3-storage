@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.2 |
+| **Version** | 2.3 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.3 | Private buckets clarified (visibility flag, Reader role, member-only primary challenges, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
 ---
@@ -242,7 +243,7 @@ remember to verify. The software does it continuously, invisibly, as part of nor
 All this subjective verification aggregates into objective reliability. There are two trust questions:
 
 **Trusting a provider (for your own bucket)**: Providers have on-chain track records—agreements completed, extensions,
-burns, challenges received and failed. A provider with 100 successful agreements, 80% extension rate, and zero failed
+burns, challenges received (counted per challenger tier) and failed. A provider with 100 successful agreements, 80% extension rate, and zero failed
 challenges is probably reliable—not because they claim to be, but because 100 paying clients verified them over time.
 (See [Client Strategies](#client-strategies) for practical selection criteria.)
 
@@ -264,7 +265,7 @@ What if you don't trust aggregate metrics? What if you have strict requirements?
 trust, pay them directly, verify them yourself. Now you have at least one replica whose reliability you've personally
 established.
 
-Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for. Don't trust
+Or simply **challenge directly.** Anyone can challenge any provider for any data they have a commitment for (exception: a private bucket's primaries accept challenges from members only). Don't trust
 that a provider still has the data? Fetch one random chunk. If they respond, you've verified (and recovered that chunk).
 If they don't, you challenge, they get slashed, and the world learns they're unreliable.
 
@@ -404,6 +405,141 @@ This creates a spectrum:
 - **Federated**: Admin with primaries, community-funded replicas
 - **Permissionless**: Frozen bucket, anyone can add replicas, admin has no special power
 
+### Bucket Visibility & Access
+
+> On a **private** bucket, primary providers serve reads only to **members**
+> (Admin, Writers, Readers). On a **public** bucket they serve anyone.
+
+That is the whole mechanism. Everything below is consequence, and the
+consequences are subtle—so read carefully before relying on `private`.
+
+**Members are the access list; the Reader role earns its keep here.** Admins and
+Writers can already read, so on a public bucket a Reader member would be
+redundant—anyone can read. The Reader role exists precisely for private buckets:
+it grants read access *without* write access, to accounts the admin chooses.
+Adding a Reader to a public bucket is harmless and—read-wise—inert until the
+bucket is made private. Not *entirely* inert, though: membership of any role also
+confers the authorized challenger tier (see
+[The Challenge Game](#the-challenge-game)), on public buckets too.
+
+**Privacy is a property of primaries only—replicas always serve everyone.** A
+replica does not gate reads; the flag is not a replica's concern. The only thing
+`private` changes for a replica is operational: it knows the primaries will
+refuse it, so it syncs from other replicas—or any data holder—instead. This is not a leak to be
+patched—it is deliberate, and it is the source of the anti-censorship guarantee
+below. (It also means a replica funder never needs read access to the primaries:
+they read their own replica, which is public.)
+
+**`private` is not enforceable, and it is not confidentiality.** The chain cannot
+observe off-chain serving, so a primary that ignores the flag and serves a
+non-member faces no on-chain penalty. `private` is therefore a *cooperative
+request* honored by honest primaries, not a guarantee the protocol enforces. The
+real confidentiality guarantee is **client-side encryption** (providers see only
+encrypted bytes; see [Data Model](#data-model)). `private` is defense-in-depth on
+top of that: it keeps honest and casual parties from fetching even the
+ciphertext, hides read access patterns from non-members, and lets an admin
+restrict who an honest primary serves. It is access control, not a cryptographic
+seal. Note also that on-chain metadata—the MMR root, sizes, leaf counts,
+checkpoints, challenge events—is public regardless of the flag; `private` gates
+only the off-chain serving of bytes. The bytes themselves can still surface
+on-chain through challenges: a valid response posts the challenged chunk
+publicly, forever. On a private bucket only *members* may challenge primaries
+(see [The Challenge Game](#the-challenge-game))—strangers cannot force private
+bytes onto the chain—but any member doing so leaks that chunk by choice.
+Encryption makes the leak worthless.
+
+**It hardens freeloading only in one narrow case—don't rely on it.** A
+freeloading provider (stores nothing, proxies from others at read or challenge
+time) needs a live source. Provider accounts are not members, so on a private
+bucket honest primaries refuse them like any other non-member—a freeloader's
+only honest source is a replica (replicas serve everyone). Consequently:
+whenever any replica exists, freeloaders of either kind have a source and the
+flag does nothing. On a born-private bucket with no replicas, though, a
+freeloading primary has no honest source at all and the first member challenge
+catches it—effectively a permanent form of
+[Isolation Mode](#isolation-mode). Still not a defense to *rely* on: it is
+cooperative (a colluding provider ignores the flag and serves its partner) and
+it evaporates the moment one replica appears. Freeloading is properly addressed
+by latency measurement, stake, and isolation (see
+[Freeloading Prevention](#freeloading-prevention)), not by visibility.
+
+#### Replicas and visibility: no on-chain gate
+
+A replica is only useful if it can obtain the data, which suggests a tempting
+rule: allow a replica agreement only if a sync source exists (the bucket is
+public, or a replica already exists). We deliberately do **not** enforce
+this—the chain performs no syncability check at all, for three reasons:
+
+1. **The chain cannot see the sources.** Everything is content-addressed:
+   chunks self-verify against the committed MMR root, so a replica can obtain
+   the data from *anyone* who holds it—the client itself, a member, an
+   ex-replica whose agreement expired, a friendly stranger who fetched it while
+   the bucket was public. Syncing from primaries or other replicas is the
+   default transport, not the only channel; a replica can just as well accept a
+   push from any data holder, verifying every byte trustlessly. On-chain
+   agreements are a poor proxy for this set: a rule based on them rejects
+   fulfillable agreements (data available off-chain) and admits doomed ones
+   (the one listed replica may be dead, or expire tomorrow).
+
+2. **A gate would help the censor.** Consider the worst case replicas exist
+   for: a hostile admin, a private bucket, and the last replica agreement
+   expiring. A sync-source rule would then forbid new replicas *forever*—the
+   chain itself would finish the censorship job. Without a gate, any party
+   still holding the bytes can seed a fresh replica at any time.
+
+3. **Fulfillability is the funder's own business.** The client has the money at
+   stake and is the last mover (it submits the provider-signed terms,
+   `establish_replica_agreement`)—and only the client knows the sourcing plan,
+   which need not be visible to anyone else: it can push the data to the
+   replica itself, or arrange for a third party to. If the replica never
+   obtains data, that is the funder's loss and no one else's; the chain has no
+   reason to intervene, and neither could it—or the provider—judge
+   fulfillability better than the client. Client software *should* surface
+   this, though: when no sync source is visible on-chain (private bucket, no
+   replicas), warn the funder and ask for confirmation that they have a
+   sourcing plan.
+
+So replica creation is never gated. For serving, the flag remains a purely
+cooperative signal to honest primaries; its single on-chain effect lives in the
+challenge rules instead (members-only challenges against a private bucket's
+primaries—see [The Challenge Game](#the-challenge-game)). A born-private bucket
+remains the strongest privacy configuration, not because anything forbids
+replicas but because no honest source for one exists (only the admin-controlled
+primaries ever held the data). And if the data does leak, no on-chain rule
+could have stopped a replica anyway: real secrecy is encryption.
+
+#### Transitions
+
+Both transitions are always allowed (no preconditions), but they are not
+symmetric in effect:
+
+- **Public → private.** Primaries start gating going forward. This does **not**
+  recall anything: any replica that already synced keeps serving the data it
+  holds—to everyone—and can even seed further replicas from itself. New content
+  appended after the switch does not reach non-members through honest primaries,
+  and therefore cannot reach the replica set at all (no replica can cross the
+  primary gate to fetch it—unless the admin itself has made a replica provider's
+  account a member, which is the admin's own choice, not a hole). So with honest
+  primaries the replica set is frozen at the content that existed when the switch
+  happened: **old content stays public, only new appends become member-only.**
+
+- **Private → public.** Discloses everything going forward and hands new
+  replicas an easy sync source (the primaries). The flag itself can be flipped
+  back, but the disclosure cannot be undone—data served or replicated while
+  public stays out.
+
+**Anti-censorship is the one guarantee that *is* enforced—and it cuts against
+privacy.** Enforced by two on-chain rules, not by cooperative serving: replica
+agreements cannot be early-terminated (the admin has no special rights over
+them—they run to expiry), and a replica must answer challenges from *anyone*
+(`challenge_replica`) or lose its entire stake. So an admin cannot silence
+content a replica already holds by flipping the bucket private. That is intentional: replicas exist partly to protect the public against
+a compromised or hostile admin (see "Why this split?" above). The honest
+user-facing rule is therefore: **be careful what you make public.** Strong
+privacy is only achievable by creating the bucket private and keeping it that
+way—then a replica never gets a source through honest primaries (nothing
+on-chain forbids one; it simply has nothing to sync from unless the data leaks).
+
 ### The Chain as Credible Threat
 
 In normal operation, clients and providers interact directly:
@@ -431,7 +567,7 @@ client's data. This signature is the client's guarantee:
 
 2. **After checkpoint**: The MMR root is on-chain, establishing the canonical bucket state. This adds:
    - **Synchronization**: All parties agree on the bucket's state at that point
-   - **Public verifiability**: Anyone can challenge based on the on-chain commitment, not just signature holders
+   - **Public verifiability**: Anyone (for a private bucket's primaries: any member) can challenge based on the on-chain commitment, not just signature holders
    - **Multi-provider attestation**: Multiple primaries signed the same state
    - **Durability**: The commitment is in chain history—can't be lost if client loses the signature
 
@@ -501,7 +637,11 @@ Providers register with a global stake that covers all their agreements:
 Provider
 ├── stake: Balance          // total locked stake
 ├── committed_bytes: u64    // sum of max_bytes across agreements
-├── stats: { agreements, extensions, burns, challenges_received, challenges_failed }
+├── stats: { agreements, extensions, burns,
+│            challenges_received_authorized,  // responded-to, from counterparties
+│            challenges_received_public,      // responded-to, from strangers
+│            challenges_failed }              // slashed — tier-independent
+
 ```
 
 **Full stake at risk**: A single failed challenge slashes the provider's *entire stake*, not just the stake for that
@@ -510,7 +650,8 @@ stake.
 
 ### The Challenge Game
 
-When a provider doesn't serve data, anyone can challenge on-chain:
+When a provider doesn't serve data, anyone can challenge on-chain (private
+buckets restrict primary challenges to members—see below):
 
 ```
 1. Challenger initiates
@@ -542,7 +683,22 @@ who is challenging.
 **Two tiers of challenger.** Every bucket has a set of **authorized accounts**:
 its members (Admin, Writers, Readers) plus the owner of any storage agreement on
 the bucket (so replica funders count too). Everyone else is the **general
-public**.
+public**. The tier is evaluated once, at challenge creation, and stored in the
+challenge—becoming a member or agreement owner afterwards does not upgrade an
+open challenge (nor does losing the status downgrade one).
+
+**Visibility gates who may challenge primaries.** On a `Private` bucket,
+challenges against *primary* providers are restricted to members (keyed on the
+challenged provider's role, whichever challenge extrinsic is used): the general
+public cannot read the data, so it has no legitimate reliance to verify—and an
+unrestricted challenge would let any stranger force private bytes onto the
+public chain (a challenge response is public, forever). Note this permission
+check is membership-only, stricter than the cost-tier: owning a (permissionless)
+replica agreement must not buy a stranger an extraction channel into the
+primaries. Replicas remain challengeable by *anyone* regardless of visibility:
+their content is public anyway (they serve everyone), and their public
+challengeability is what carries the anti-censorship guarantee. This is the only
+on-chain effect of the visibility flag.
 
 - **Authorized accounts** get a *split*: the provider is made to bear part of the
   response cost, the challenger's deposit covers the rest. The challenger's share
@@ -764,7 +920,7 @@ Clients should evaluate providers on:
 **Track record**: Check on-chain stats:
 - Total agreements vs. agreements extended (extension = client satisfaction)
 - Agreements burned (burn = client dissatisfaction)
-- Challenges received vs. failed (failed = catastrophic failure)
+- Challenges received (authorized vs. public) vs. failed (failed = catastrophic failure)
 - Provider age (longer = more track record)
 
 **Stake homogeneity**: Don't mix high-stake and low-stake providers for the same bucket. A 1000 DOT provider alongside a
@@ -1137,9 +1293,11 @@ This is exactly why the general public gets no cost split—it closes the floodi
 
 2. **Only counterparties get the split**: A provider is made to bear a fraction of the cost only for its own members or agreement owners—accounts it *chose* to deal with (it accepted their agreement) or that the admin added.
 
-3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain.
+3. **Challenge cancellation**: Any challenger can cancel before the response, paying only the tx fee. If the provider serves off-chain after a challenge is initiated, the challenger cancels and the provider never even responds on-chain. Cancelled challenges leave no trace in the provider's stats (see next point).
 
-4. **Reputation damage**: A provider with many challenges (even successful responses) signals problems. Clients migrate to better providers—so even costless-to-defend public challenges should be avoided, but they can't *bleed* an honest provider.
+4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
+
+5. **Response capacity, not money, is the binding constraint**: the guarantees above hold only while the provider actually responds to every challenge within the ~48-hour window—a missed deadline costs the full stake regardless of the challenger's tier. Flood scale is bounded on the attack side (challenge creation is weight-limited per block, and each challenge locks a deposit covering a full response), but a provider must still provision its response pipeline—fee liquidity and transaction submission—for worst-case bursts.
 
 ### Collusion: Providers Sharing Storage
 

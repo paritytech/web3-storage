@@ -19,10 +19,22 @@ A **bucket** is the fundamental unit of storage organization. It defines:
 
 **Per-bucket MMR**: The bucket has ONE canonical MMR state. Multiple providers may store the bucket, and they should all converge to this state. The MMR is not per-provider.
 
-**Roles**:
+**Roles** (Admin implies Writer implies Reader—each can do everything the next can):
 - **Admin**: Can modify members, manage settings, delete data (if not frozen)
-- **Writer**: Can append data
-- **Reader**: Can read data (relevant for private/access-controlled buckets where providers only serve to authorized members)
+- **Writer**: Can append data (and read)
+- **Reader**: Read-only. Only meaningful on a **private** bucket, where it grants
+  read access without write. Membership is the read access list for private
+  buckets; see **Visibility** below.
+
+**Visibility**: A bucket is `Public` or `Private`. On a private bucket, primaries
+serve reads only to members; on a public bucket, to anyone. This is a cooperative
+request to honest primaries, **not enforced on-chain**, and it does not constrain
+replicas (which always serve everyone). Its single on-chain effect: on a
+`Private` bucket, only members may challenge primaries (replicas stay
+challengeable by anyone). Replica creation is deliberately not gated on it
+(content addressing lets any data holder seed a replica, so the chain cannot
+judge syncability). Full semantics (including the anti-censorship consequence):
+design doc, "Bucket Visibility & Access".
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
@@ -65,7 +77,8 @@ Users who create conflicts without checkpointing waste their quota—providers m
 **Adding a replica provider (optional, permissionless):**
 1. Anyone calls `request_agreement` with the provider and sync_balance
 2. Provider calls `accept_agreement` → `StorageAgreement` created with `ProviderRole::Replica`
-3. Replica syncs data autonomously from primaries or other replicas
+3. Replica syncs data autonomously from primaries, other replicas, or any data
+   holder willing to push it (everything is content-addressed and self-verifying)
 4. Replica calls `confirm_replica_sync` on-chain → receives per-sync payment, becomes challengeable
 
 **Binding contract:**
@@ -260,9 +273,16 @@ pub struct ProviderStats<T: Config> {
     pub agreements_burned: u32,
     /// Total bytes ever committed across all agreements (historical volume)
     pub total_bytes_committed: u64,
-    /// Number of challenges received
-    pub challenges_received: u32,
-    /// Number of challenges where provider was slashed (critical failure)
+    /// Challenges from authorized challengers (member/agreement owner at
+    /// challenge creation) that the provider responded to. Counted at
+    /// resolution—cancelled challenges are not counted.
+    pub challenges_received_authorized: u32,
+    /// Same, for general-public challengers.
+    pub challenges_received_public: u32,
+    /// Number of challenges where provider was slashed (critical failure).
+    /// Tier-independent and disjoint from the received counters: a challenge
+    /// resolves into exactly one of received_authorized / received_public
+    /// (successfully defended), failed (slashed), or nothing (cancelled).
     pub challenges_failed: u32,
 }
 
@@ -311,17 +331,34 @@ pub struct Member<T: Config> {
 }
 
 pub enum Role {
-    /// Can modify members, manage settings, delete data (if not frozen)
+    /// Can modify members, manage settings, delete data (if not frozen).
+    /// Implicitly can also read and write.
     Admin,
-    /// Can append data
+    /// Can append data. Implicitly can also read.
     Writer,
-    /// Can read data (for private buckets)
+    /// Read-only access. Only meaningful on a private bucket: it grants reading
+    /// without writing (see "Roles" / "Visibility" in Bucket Semantics).
     Reader,
+}
+
+/// Whether primaries serve reads to anyone, or only to members.
+pub enum Visibility {
+    /// Primaries serve reads to anyone.
+    Public,
+    /// Primaries serve reads only to members (Admin/Writer/Reader). This
+    /// members-only restriction is a cooperative request to honest primaries,
+    /// not on-chain-enforced; replicas serve everyone regardless. On-chain,
+    /// `Private` restricts primary challenges to members. Full semantics:
+    /// design doc, "Bucket Visibility & Access".
+    Private,
 }
 
 pub struct Bucket<T: Config> {
     /// Members who can interact with this bucket
     pub members: BoundedVec<Member<T>, T::MaxMembers>,
+    /// Read visibility (see `Visibility`). On-chain, only the challenge
+    /// extrinsics read it: `Private` restricts primary challenges to members.
+    pub visibility: Visibility,
     /// If Some, bucket is append-only from this start_seq.
     /// Checkpoints with start_seq < frozen_start_seq are rejected (prevents deletions).
     pub frozen_start_seq: Option<u64>,
@@ -521,6 +558,11 @@ pub struct Challenge<T: Config> {
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
     /// returned with compensation if the provider is slashed.
     pub deposit: BalanceOf<T>,
+    /// Whether the challenger was authorized (bucket member or agreement owner,
+    /// via `is_authorized`) at challenge creation. Snapshotted here so
+    /// membership/agreement changes between creation and response cannot alter
+    /// the fee split applied in `respond_to_challenge`.
+    pub authorized: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1051,8 +1093,15 @@ impl<T: Config> Pallet<T> {
     /// 
     /// Parameters:
     /// - `min_providers`: Minimum primary provider signatures required for checkpoints
+    /// - `visibility`: `Public` or `Private` (see `Visibility`). Wrappers that
+    ///   omit the choice must default to `Private` (fail-safe: an unset choice
+    ///   should protect data, not expose it).
     #[pallet::weight(...)]
-    pub fn create_bucket(origin: OriginFor<T>, min_providers: u32) -> DispatchResult;
+    pub fn create_bucket(
+        origin: OriginFor<T>,
+        min_providers: u32,
+        visibility: Visibility,
+    ) -> DispatchResult;
 
     /// Create a bucket and an agreement with an auto-selected provider in one call.
     ///
@@ -1073,6 +1122,7 @@ impl<T: Config> Pallet<T> {
         max_bytes: u64,
         duration: BlockNumberFor<T>,
         max_price_per_byte: BalanceOf<T>,
+        visibility: Visibility,
     ) -> DispatchResult;
 
     /// Set minimum providers required for checkpoint (admin only).
@@ -1094,6 +1144,20 @@ impl<T: Config> Pallet<T> {
     /// Requires snapshot with min_providers acknowledgments
     pub fn freeze_bucket(origin: OriginFor<T>, bucket_id: BucketId) -> DispatchResult;
 
+    /// Set bucket read visibility (admin only).
+    ///
+    /// Flips `Public` ⇄ `Private` unconditionally in both directions—a
+    /// precondition on existing replicas would hand third parties a veto over
+    /// the admin. Effects are asymmetric: privatizing does not recall data
+    /// already replicated, publicizing cannot be undone. Full semantics:
+    /// design doc, "Transitions" under Bucket Visibility & Access.
+    #[pallet::weight(...)]
+    pub fn set_bucket_visibility(
+        origin: OriginFor<T>,
+        bucket_id: BucketId,
+        visibility: Visibility,
+    ) -> DispatchResult;
+
     /// Add or update a member's role (admin only).
     /// 
     /// Admins cannot demote other admins - they can only:
@@ -1102,6 +1166,10 @@ impl<T: Config> Pallet<T> {
     /// - Demote themselves (remove own admin status)
     /// 
     /// This prevents a single compromised admin from seizing control.
+    ///
+    /// Adding a `Reader` is what makes membership the read access list for a
+    /// private bucket. Visibility is set separately via `set_bucket_visibility`—
+    /// adding a Reader does not by itself make a bucket private.
     #[pallet::weight(...)]
     pub fn set_member(
         origin: OriginFor<T>,
@@ -1143,7 +1211,8 @@ impl<T: Config> Pallet<T> {
     /// - Cannot be early-terminated (runs to expiry)
     /// - Unlimited number of replicas per bucket
     /// 
-    /// The requester becomes the agreement owner (can top up, transfer ownership).
+    /// The requester becomes the agreement owner (can top up, transfer
+    /// ownership).
     /// 
     /// Parameters:
     /// - `bucket_id`: The bucket to add a replica for
@@ -1509,7 +1578,11 @@ impl<T: Config> Pallet<T> {
     // where nobody has recent signatures or doesn't bother to dig them up.
     //
     // **Who may challenge, and at what cost (all three modes):**
-    // Any signed account may challenge. The challenger's deposit must cover the
+    // Any signed account may challenge, with one restriction: on a `Private`
+    // bucket, challenging a provider whose agreement role is `Primary`
+    // requires bucket membership (`NotBucketMember`). The gate keys on the
+    // challenged provider's *role* in this bucket.
+    // The challenger's deposit must cover the
     // provider's on-chain response cost (generously over-estimated; excess is
     // refunded on resolution). On a valid response the provider's stake is
     // never touched—only its response transaction fee is at issue, and the
@@ -1533,6 +1606,10 @@ impl<T: Config> Pallet<T> {
     //     evidence of fault; (2) anti-DDoS—if strangers got the split, a crowd
     //     could each pay little while collectively draining the provider.
     //
+    // The tier is evaluated once at challenge creation and snapshotted in the
+    // `Challenge` (see `Challenge.authorized`); membership or agreement changes
+    // afterwards do not affect an open challenge.
+    //
     // `is_authorized` is the single authorization predicate shared with
     // private-bucket read access control. No per-challenge rate limiting or
     // stored "last challenge" timestamp is needed: full-cost public challenges
@@ -1541,6 +1618,7 @@ impl<T: Config> Pallet<T> {
 
     /// Challenge on-chain checkpoint (no signatures needed).
     /// Provider must be in current snapshot's provider list.
+    /// On a `Private` bucket the caller must be a member (`NotBucketMember`).
     /// 
     /// NOTE: May race with new checkpoints in hot buckets. If the provider is
     /// no longer in the snapshot when the transaction executes, this fails.
@@ -1555,6 +1633,8 @@ impl<T: Config> Pallet<T> {
     /// Challenge off-chain commitment (requires provider signature).
     /// Works regardless of current snapshot state - the signature proves
     /// the provider committed to this data.
+    /// On a `Private` bucket, membership is required iff the challenged
+    /// provider is a primary (`NotBucketMember`; role-based gate, see above).
     /// 
     /// Preferred for hot buckets where snapshots change frequently.
     pub fn challenge_offchain(
@@ -1570,6 +1650,7 @@ impl<T: Config> Pallet<T> {
     /// Challenge a replica based on their on-chain sync confirmation.
     /// Uses the replica's last_synced_root stored in their agreement.
     /// No signature needed - the chain already has their commitment.
+    /// Open to everyone regardless of bucket visibility (role-based gate).
     pub fn challenge_replica(
         origin: OriginFor<T>,
         bucket_id: BucketId,
