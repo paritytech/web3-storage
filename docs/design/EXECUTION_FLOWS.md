@@ -471,6 +471,9 @@ sequenceDiagram
     C->>C: provider_idx = bucket.primary_providers.position(provider)?
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
+    Note over C: Visibility gate (challenged provider is a primary)
+    C->>C: if bucket.visibility == Private: ensure!(is_member(challenger))
+
     Note over C: Determine cost tier (once, at creation)
     C->>C: authorized = is_authorized(challenger, bucket)
     Note over C: (authorized = member or agreement owner; stored in the

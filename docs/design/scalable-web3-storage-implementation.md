@@ -31,10 +31,7 @@ serve reads only to members; on a public bucket, to anyone. This is a cooperativ
 request to honest primaries, **not enforced on-chain**, and it does not constrain
 replicas (which always serve everyone). Its single on-chain effect: on a
 `Private` bucket, only members may challenge primaries (replicas stay
-challengeable by anyone). Replica creation is deliberately not gated on it
-(content addressing lets any data holder seed a replica, so the chain cannot
-judge syncability). Full semantics (including the anti-censorship consequence):
-design doc, "Bucket Visibility & Access".
+challengeable by anyone).
 
 **Redundancy**: A bucket can have storage agreements with multiple providers. The `min_providers` setting controls how many providers must acknowledge a state before it can be checkpointed. This ensures minimum redundancy for critical data.
 
@@ -1210,6 +1207,10 @@ impl<T: Config> Pallet<T> {
     /// - Syncs data autonomously from primaries or other replicas
     /// - Cannot be early-terminated (runs to expiry)
     /// - Unlimited number of replicas per bucket
+    ///
+    /// No syncability check—a private bucket with zero replicas is accepted;
+    /// an unfulfillable agreement is the funder's own risk. Rationale: design
+    /// doc, "No on-chain gate on replica creation".
     /// 
     /// The requester becomes the agreement owner (can top up, transfer
     /// ownership).

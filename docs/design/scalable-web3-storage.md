@@ -406,139 +406,83 @@ This creates a spectrum:
 - **Permissionless**: Frozen bucket, anyone can add replicas, admin has no special power
 
 ### Bucket Visibility & Access
-
 > On a **private** bucket, primary providers serve reads only to **members**
 > (Admin, Writers, Readers). On a **public** bucket they serve anyone.
 
-That is the whole mechanism. Everything below is consequence, and the
-consequences are subtle—so read carefully before relying on `private`.
+Everything below is consequence.
 
-**Members are the access list; the Reader role earns its keep here.** Admins and
-Writers can already read, so on a public bucket a Reader member would be
-redundant—anyone can read. The Reader role exists precisely for private buckets:
-it grants read access *without* write access, to accounts the admin chooses.
-Adding a Reader to a public bucket is harmless and—read-wise—inert until the
-bucket is made private. Not *entirely* inert, though: membership of any role also
-confers the authorized challenger tier (see
-[The Challenge Game](#the-challenge-game)), on public buckets too.
+**The Reader role earns its keep here**: read access without write access. Only
+meaningful on a private bucket—on a public one it is read-wise inert (though
+membership of any role confers the authorized challenger tier, see
+[The Challenge Game](#the-challenge-game)).
 
-**Privacy is a property of primaries only—replicas always serve everyone.** A
-replica does not gate reads; the flag is not a replica's concern. The only thing
-`private` changes for a replica is operational: it knows the primaries will
-refuse it, so it syncs from other replicas—or any data holder—instead. This is not a leak to be
-patched—it is deliberate, and it is the source of the anti-censorship guarantee
-below. (It also means a replica funder never needs read access to the primaries:
-they read their own replica, which is public.)
+**Replicas always serve everyone—visibility concerns primaries only.** For a
+replica, `private` changes nothing except where it syncs from (other replicas
+or any data holder, instead of the primaries). Deliberate: this is the source
+of the anti-censorship guarantee below.
 
-**`private` is not enforceable, and it is not confidentiality.** The chain cannot
-observe off-chain serving, so a primary that ignores the flag and serves a
-non-member faces no on-chain penalty. `private` is therefore a *cooperative
-request* honored by honest primaries, not a guarantee the protocol enforces. The
-real confidentiality guarantee is **client-side encryption** (providers see only
-encrypted bytes; see [Data Model](#data-model)). `private` is defense-in-depth on
-top of that: it keeps honest and casual parties from fetching even the
-ciphertext, hides read access patterns from non-members, and lets an admin
-restrict who an honest primary serves. It is access control, not a cryptographic
-seal. Note also that on-chain metadata—the MMR root, sizes, leaf counts,
-checkpoints, challenge events—is public regardless of the flag; `private` gates
-only the off-chain serving of bytes. The bytes themselves can still surface
-on-chain through challenges: a valid response posts the challenged chunk
-publicly, forever. On a private bucket only *members* may challenge primaries
-(see [The Challenge Game](#the-challenge-game))—strangers cannot force private
-bytes onto the chain—but any member doing so leaks that chunk by choice.
-Encryption makes the leak worthless.
+**`private` is access control, not confidentiality.** The chain cannot observe
+off-chain serving, so the flag is a cooperative request honored by honest
+primaries—real confidentiality is **client-side encryption** (see
+[Data Model](#data-model)). On top of encryption, `private` keeps casual
+parties from even the ciphertext. On-chain metadata
+(MMR root, sizes, leaf counts, checkpoints, challenge events) stays public
+regardless, and a challenge response posts the challenged chunk on-chain,
+publicly, forever. Strangers cannot trigger that—private-bucket primary
+challenges are members-only (see
+[The Challenge Game](#the-challenge-game))—but a member challenging leaks the
+chunk by choice. Encryption makes the leak worthless.
 
-**It hardens freeloading only in one narrow case—don't rely on it.** A
-freeloading provider (stores nothing, proxies from others at read or challenge
-time) needs a live source. Provider accounts are not members, so on a private
-bucket honest primaries refuse them like any other non-member—a freeloader's
-only honest source is a replica (replicas serve everyone). Consequently:
-whenever any replica exists, freeloaders of either kind have a source and the
-flag does nothing. On a born-private bucket with no replicas, though, a
-freeloading primary has no honest source at all and the first member challenge
-catches it—effectively a permanent form of
-[Isolation Mode](#isolation-mode). Still not a defense to *rely* on: it is
-cooperative (a colluding provider ignores the flag and serves its partner) and
-it evaporates the moment one replica appears. Freeloading is properly addressed
-by latency measurement, stake, and isolation (see
-[Freeloading Prevention](#freeloading-prevention)), not by visibility.
+**Freeloading is hardened a bit for private buckets.** Provider
+accounts are not members, so on a private bucket a freeloader's only honest
+source is a replica. Born-private with zero replicas, a freeloading primary is
+sourceless and the first member challenge catches it—a permanent
+[Isolation Mode](#isolation-mode).
 
-#### Replicas and visibility: no on-chain gate
+#### No on-chain gate on replica creation
 
-A replica is only useful if it can obtain the data, which suggests a tempting
-rule: allow a replica agreement only if a sync source exists (the bucket is
-public, or a replica already exists). We deliberately do **not** enforce
-this—the chain performs no syncability check at all, for three reasons:
+The obvious rule—reject a replica agreement unless a sync source exists (bucket
+public, or a replica already there)—is deliberately absent, for three reasons:
 
-1. **The chain cannot see the sources.** Everything is content-addressed:
-   chunks self-verify against the committed MMR root, so a replica can obtain
-   the data from *anyone* who holds it—the client itself, a member, an
-   ex-replica whose agreement expired, a friendly stranger who fetched it while
-   the bucket was public. Syncing from primaries or other replicas is the
-   default transport, not the only channel; a replica can just as well accept a
-   push from any data holder, verifying every byte trustlessly. On-chain
-   agreements are a poor proxy for this set: a rule based on them rejects
-   fulfillable agreements (data available off-chain) and admits doomed ones
-   (the one listed replica may be dead, or expire tomorrow).
+1. **The chain cannot see the sources.** Chunks self-verify against the
+   committed MMR root, so any data holder can seed a replica, by sync or by
+   push—the client itself, an ex-replica, a stranger who fetched while public.
+   On-chain agreements are a poor proxy: the rule would reject fulfillable
+   agreements and admit doomed ones (the one listed replica may be dead, or
+   expire tomorrow).
+2. **It would help the censor.** Private bucket, last replica agreement
+   expires: new replicas forbidden forever—by the chain itself.
+3. **Fulfillability is the funder's business.** The client pays, submits the
+   provider-signed terms last, and alone knows the sourcing plan (it may push
+   the data itself). Client software should warn when no source is visible
+   on-chain (private, zero replicas).
 
-2. **A gate would help the censor.** Consider the worst case replicas exist
-   for: a hostile admin, a private bucket, and the last replica agreement
-   expiring. A sync-source rule would then forbid new replicas *forever*—the
-   chain itself would finish the censorship job. Without a gate, any party
-   still holding the bytes can seed a fresh replica at any time.
-
-3. **Fulfillability is the funder's own business.** The client has the money at
-   stake and is the last mover (it submits the provider-signed terms,
-   `establish_replica_agreement`)—and only the client knows the sourcing plan,
-   which need not be visible to anyone else: it can push the data to the
-   replica itself, or arrange for a third party to. If the replica never
-   obtains data, that is the funder's loss and no one else's; the chain has no
-   reason to intervene, and neither could it—or the provider—judge
-   fulfillability better than the client. Client software *should* surface
-   this, though: when no sync source is visible on-chain (private bucket, no
-   replicas), warn the funder and ask for confirmation that they have a
-   sourcing plan.
-
-So replica creation is never gated. For serving, the flag remains a purely
-cooperative signal to honest primaries; its single on-chain effect lives in the
-challenge rules instead (members-only challenges against a private bucket's
-primaries—see [The Challenge Game](#the-challenge-game)). A born-private bucket
-remains the strongest privacy configuration, not because anything forbids
-replicas but because no honest source for one exists (only the admin-controlled
-primaries ever held the data). And if the data does leak, no on-chain rule
-could have stopped a replica anyway: real secrecy is encryption.
+A born-private bucket is thus the strongest privacy configuration not because
+anything forbids replicas, but because no honest source for one exists—and if
+the data leaks, no on-chain rule would have stopped a replica anyway.
 
 #### Transitions
 
-Both transitions are always allowed (no preconditions), but they are not
-symmetric in effect:
+Both directions always allowed, but asymmetric:
 
-- **Public → private.** Primaries start gating going forward. This does **not**
-  recall anything: any replica that already synced keeps serving the data it
-  holds—to everyone—and can even seed further replicas from itself. New content
-  appended after the switch does not reach non-members through honest primaries,
-  and therefore cannot reach the replica set at all (no replica can cross the
-  primary gate to fetch it—unless the admin itself has made a replica provider's
-  account a member, which is the admin's own choice, not a hole). So with honest
-  primaries the replica set is frozen at the content that existed when the switch
-  happened: **old content stays public, only new appends become member-only.**
+- **Public → private** gates primaries going forward; it recalls nothing.
+  Replicas that already synced keep serving everyone and can seed further
+  replicas; new appends cannot cross the primary gate into the replica set—
+  assuming honest primaries, and unless the admin members a replica provider
+  (its own choice). Net effect: **old content stays public, only new appends
+  become member-only.**
 
-- **Private → public.** Discloses everything going forward and hands new
-  replicas an easy sync source (the primaries). The flag itself can be flipped
-  back, but the disclosure cannot be undone—data served or replicated while
-  public stays out.
+- **Private → public** discloses going forward (and gives new replicas the
+  primaries as sync source). The flag can be flipped back; the disclosure
+  cannot.
 
-**Anti-censorship is the one guarantee that *is* enforced—and it cuts against
-privacy.** Enforced by two on-chain rules, not by cooperative serving: replica
-agreements cannot be early-terminated (the admin has no special rights over
-them—they run to expiry), and a replica must answer challenges from *anyone*
-(`challenge_replica`) or lose its entire stake. So an admin cannot silence
-content a replica already holds by flipping the bucket private. That is intentional: replicas exist partly to protect the public against
-a compromised or hostile admin (see "Why this split?" above). The honest
-user-facing rule is therefore: **be careful what you make public.** Strong
-privacy is only achievable by creating the bucket private and keeping it that
-way—then a replica never gets a source through honest primaries (nothing
-on-chain forbids one; it simply has nothing to sync from unless the data leaks).
+**Anti-censorship is enforced—and cuts against privacy.** Two on-chain rules:
+replica agreements cannot be early-terminated (the admin has no rights over
+them), and a replica must answer challenges from *anyone* or lose its stake.
+So flipping private cannot silence what a replica already holds—intentional,
+replicas exist partly to protect the public against a hostile admin (see "Why
+this split?" above). The user-facing rule: **be careful what you make
+public**; strong privacy means born private and kept private.
 
 ### The Chain as Credible Threat
 
@@ -687,18 +631,15 @@ public**. The tier is evaluated once, at challenge creation, and stored in the
 challenge—becoming a member or agreement owner afterwards does not upgrade an
 open challenge (nor does losing the status downgrade one).
 
-**Visibility gates who may challenge primaries.** On a `Private` bucket,
-challenges against *primary* providers are restricted to members (keyed on the
-challenged provider's role, whichever challenge extrinsic is used): the general
-public cannot read the data, so it has no legitimate reliance to verify—and an
-unrestricted challenge would let any stranger force private bytes onto the
-public chain (a challenge response is public, forever). Note this permission
-check is membership-only, stricter than the cost-tier: owning a (permissionless)
-replica agreement must not buy a stranger an extraction channel into the
-primaries. Replicas remain challengeable by *anyone* regardless of visibility:
-their content is public anyway (they serve everyone), and their public
-challengeability is what carries the anti-censorship guarantee. This is the only
-on-chain effect of the visibility flag.
+**Visibility gates who may challenge primaries**—the flag's only on-chain
+effect. On a `Private` bucket, challenging a *primary* requires membership
+(keyed on the challenged provider's role, whichever extrinsic is used): the
+public has no legitimate reliance on data it cannot read, and must not be able
+to force private bytes on-chain via the response. Deliberately membership-only,
+stricter than the cost-tier—buying a permissionless replica agreement must not
+open an extraction channel into the primaries. Replicas stay challengeable by
+*anyone*: their content is public, and this carries the anti-censorship
+guarantee.
 
 - **Authorized accounts** get a *split*: the provider is made to bear part of the
   response cost, the challenger's deposit covers the rest. The challenger's share
@@ -1297,7 +1238,7 @@ This is exactly why the general public gets no cost split—it closes the floodi
 
 4. **Reputation**: Challenge stats count only *responded-to* challenges (at resolution, never creation) and are split by tier—`challenges_received_authorized` vs `challenges_received_public`—so clients can weigh the two as they see fit. The challenges-*failed* count (the one that actually signals data loss) is unaffected, since the provider defends every one.
 
-5. **Response capacity, not money, is the binding constraint**: the guarantees above hold only while the provider actually responds to every challenge within the ~48-hour window—a missed deadline costs the full stake regardless of the challenger's tier. Flood scale is bounded on the attack side (challenge creation is weight-limited per block, and each challenge locks a deposit covering a full response), but a provider must still provision its response pipeline—fee liquidity and transaction submission—for worst-case bursts.
+5. **Response capacity, not money, is the binding constraint**: all of the above holds only while the provider responds to every challenge within the ~48-hour window—a miss costs the full stake. Flood scale is bounded (per-block weight limits, full-cost deposit per challenge), but providers must provision fee liquidity and tx submission for worst-case bursts.
 
 ### Collusion: Providers Sharing Storage
 

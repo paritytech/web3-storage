@@ -373,7 +373,7 @@ replicaParams: {
 
 Funds reserved on request: storage payment **plus** `syncBalance`. The request expires if not accepted within `RequestTimeout`.
 
-**No syncability check:** the chain does not validate that a sync source exists (a private bucket with no replicas is still accepted)—content addressing lets a replica obtain the data from any holder, so no one but the funder can judge fulfillability (the client may even push the data itself). A replica that never obtains data is the funder's loss. Rationale: design doc, "Replicas and visibility: no on-chain gate".
+**No syncability check:** a private bucket with no replicas is still accepted—an unfulfillable agreement is the funder's own risk. Rationale: design doc, "No on-chain gate on replica creation".
 
 **Events:** `AgreementRequested`
 **Errors:** `BucketNotFound`, `ProviderNotFound`, `DeregisterAnnounced`, `ProviderNotAcceptingReplicas`, `DurationTooShort`, `DurationTooLong`, `PaymentExceedsMax`, `AgreementRequestAlreadyExists`
