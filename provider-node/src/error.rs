@@ -103,7 +103,9 @@ pub enum Error {
     #[error("Provider is deregistering; not accepting new agreements")]
     ProviderDeregistering,
 
-    #[error("Chain state not ready: current_block and request_timeout must both be non-zero")]
+    #[error(
+        "Chain state not ready: current_anchor_block and request_timeout must both be non-zero"
+    )]
     ChainStateNotReady,
 
     #[error("Storage agreement requested 0 byte")]
@@ -338,7 +340,7 @@ impl IntoResponse for Error {
                 ErrorResponse {
                     error: "chain_state_not_ready".to_string(),
                     details: Some(serde_json::json!({
-                        "message": "current_block or request_timeout is 0; \
+                        "message": "current_anchor_block or request_timeout is 0; \
                                     the node has not yet synced with the chain"
                     })),
                 },

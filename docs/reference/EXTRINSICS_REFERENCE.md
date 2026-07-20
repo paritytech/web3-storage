@@ -388,7 +388,7 @@ Request a **primary** storage agreement. Caller must be a bucket admin.
 - `bucketId`: `BucketId` (u64)
 - `provider`: `AccountId`
 - `maxBytes`: `u64` - maximum storage size
-- `duration`: `BlockNumber` - agreement duration in blocks
+- `duration`: `BlockNumber` - agreement duration in anchor (relay-chain) blocks
 - `maxPayment`: `Balance` - maximum payment willing to pay (safety cap)
 
 **Example:**
@@ -1125,7 +1125,9 @@ Common errors you might encounter:
 
 ## Configuration Parameters
 
-Runtime configuration (see [runtimes/web3-storage-local/src/lib.rs](../../runtimes/web3-storage-local/src/lib.rs)):
+Runtime configuration (see [runtimes/web3-storage-local/src/storage.rs](../../runtimes/web3-storage-local/src/storage.rs)).
+All durations are in **anchor (relay-chain) blocks** — 6 s each, `RC_HOURS` —
+not parachain blocks:
 
 ```rust
 // Token configuration
@@ -1133,21 +1135,21 @@ UNIT = 1_000_000_000_000       // 1 token (12 decimals)
 
 // Provider
 MinProviderStake             = 1_000 * UNIT       // 1000 tokens = 1,000,000,000,000,000
-MinStakePerByte              = 1_000_000          // per byte of declared capacity (1 token per MB)
-DeregisterAnnouncementPeriod                       // ≥ ChallengeTimeout
+MinStakePerByte              = 1_000              // per byte of declared capacity (1 token per GB)
+DeregisterAnnouncementPeriod = 54 * RC_HOURS      // > ChallengeTimeout: 48h window + 6h grace
 
 // Bucket / members
 MaxMembers, MaxPrimaryProviders, MaxBucketsPerMember, MaxMultiaddrLength
 
 // Agreement lifecycle
-RequestTimeout       = 6 * HOURS    // pending request expiry
-SettlementTimeout    = 24 * HOURS   // owner's window after expiry
-ChallengeTimeout     = 48 * HOURS   // provider's window to respond
-MaxChunkSize         = 256 * 1024   // challenge response chunk cap (256 KiB)
+RequestTimeout       = 6 * RC_HOURS    // pending request expiry
+SettlementTimeout    = 24 * RC_HOURS   // owner's window after expiry
+ChallengeTimeout     = 48 * RC_HOURS   // provider's window to respond
+MaxChunkSize         = 256 * 1024      // challenge response chunk cap (256 KiB)
 
 // Provider-initiated checkpoints
-DefaultCheckpointInterval = 100
-DefaultCheckpointGrace    = 20
+DefaultCheckpointInterval = 100         // anchor blocks (~10 min)
+DefaultCheckpointGrace    = 20          // anchor blocks (~2 min)
 CheckpointReward          = 1 token
 CheckpointMissPenalty     = 0.5 token   // reporter gets 10%
 ```
@@ -1165,8 +1167,8 @@ required_stake = max_capacity × MinStakePerByte
 
 Example:
   max_capacity = 1 TB = 1,099,511,627,776 bytes
-  MinStakePerByte = 1,000,000
-  required_stake = 1,099,511,627,776 × 1,000,000 = ~1.1 × 10^18 units
+  MinStakePerByte = 1,000
+  required_stake = 1,099,511,627,776 × 1,000 = ~1.1 × 10^15 units (~1100 tokens)
 ```
 
 **Capacity rules:**

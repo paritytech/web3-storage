@@ -15,7 +15,7 @@ import {
   useOpenChallenges,
   useOpenChallengesLoading,
   refreshOpenChallenges,
-  useBlockNumber,
+  useAnchorBlock,
 } from "@/state";
 import { useActiveChallenge, useChallengeStatus, useChallengeHistory } from "@/state/challenge.state";
 import { truncateHash } from "@/lib/utils";
@@ -38,7 +38,8 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
   const activeChallenge = useActiveChallenge();
   const openChallenges = useOpenChallenges();
   const challengesLoading = useOpenChallengesLoading();
-  const blockNumber = useBlockNumber();
+  // Challenge deadlines are on the pallet's anchor clock.
+  const anchorBlock = useAnchorBlock();
 
   const allHistory = useChallengeHistory();
 
@@ -180,7 +181,7 @@ export default function CheckpointPanel({ onShowHistory }: CheckpointPanelProps)
             </p>
             <div className="space-y-1.5">
               {openChallenges.map((c) => {
-                const blocksLeft = blockNumber ? c.deadline - blockNumber : null;
+                const blocksLeft = anchorBlock ? c.deadline - anchorBlock : null;
                 const isExpired = blocksLeft !== null && blocksLeft <= 0;
                 const isWatching =
                   activeChallenge?.status === "submitted" &&

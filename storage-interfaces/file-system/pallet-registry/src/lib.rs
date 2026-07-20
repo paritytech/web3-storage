@@ -59,10 +59,11 @@ pub mod pallet {
     use file_system_primitives::{DriveId, DriveInfo};
     use frame_support::{pallet_prelude::*, traits::Get};
     use frame_system::pallet_prelude::*;
-    use pallet_storage_provider;
-    use sp_runtime::BoundedVec;
+    // Anchor clock + parachain height, canonically named by the storage pallet.
+    use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
+    use sp_runtime::{traits::Saturating, BoundedVec};
     use storage_primitives::Role;
 
     /// In-code storage version. v1 drops the `payment` field from
@@ -74,9 +75,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }
@@ -249,14 +250,14 @@ pub mod pallet {
             let next_id = drive_id.checked_add(1).ok_or(Error::<T>::DriveIdOverflow)?;
 
             // Calculate expiry block
-            let current_block = <frame_system::Pallet<T>>::block_number();
-            let expires_at = current_block + storage_period;
+            let anchor_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
+            let expires_at = anchor_block.saturating_add(storage_period);
 
             // Create drive info
             let drive_info = DriveInfo {
                 owner: who.clone(),
                 bucket_id,
-                created_at: current_block,
+                created_at: anchor_block,
                 name: bounded_name,
                 max_capacity,
                 storage_period,

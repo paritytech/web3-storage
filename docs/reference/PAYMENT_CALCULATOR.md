@@ -8,6 +8,10 @@ Quick reference for calculating payment amounts when creating storage agreements
 payment = price_per_byte × max_bytes × duration
 ```
 
+`duration` is measured in **anchor (relay-chain) blocks** — 6 s each — not
+parachain blocks, so agreement costs keep their wall-clock meaning if the
+parachain block time changes.
+
 ## Common Values
 
 ### Token Decimals
@@ -21,7 +25,7 @@ payment = price_per_byte × max_bytes × duration
 - 1 GB = 1,073,741,824 bytes
 - 10 GB = 10,737,418,240 bytes
 
-### Duration (at 6 seconds per block)
+### Duration (anchor blocks, 6 seconds each)
 - 1 hour ≈ 600 blocks
 - 1 day ≈ 14,400 blocks
 - 1 week ≈ 100,800 blocks
