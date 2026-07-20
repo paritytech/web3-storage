@@ -105,6 +105,20 @@ Primary providers don't sync with each other. Clients are responsible for upload
 
 ## On-Chain: Pallet Interface
 
+### The anchor clock (block-number denomination)
+
+Every duration, deadline and timeout in this pallet is measured against the
+**anchor block** — sourced from `Config::BlockNumberProvider` (the relay chain in
+production) — not the parachain block height, so wall-clock durations stay stable
+when the parachain block time changes (#233).
+
+Read it via `Pallet::current_anchor_block()` on-chain, or the
+`current_anchor_block` / `anchor_block_time_millis` runtime APIs off-chain — never
+a raw `frame_system::block_number()`, which is the parachain height and unrelated
+to the anchor on any network where the clocks differ. Pseudocode below that still
+shows `frame_system::block_number()` is illustrative; the implementation uses the
+anchor.
+
 ### Pallet Config
 
 ```rust
@@ -142,7 +156,8 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
-    /// Timeout for challenge response (e.g., ~48 hours in blocks).
+    /// Timeout for challenge response (e.g., ~48 hours, in anchor blocks — see
+    /// the anchor-clock note above).
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
@@ -2326,7 +2341,8 @@ pub struct CommitmentPayload {
     pub bucket_id: BucketId,
     /// MMR commitment being signed over
     pub commitment: Commitment,
-    /// Replay-protection nonce — block number at the time the signer signed.
+    /// Replay-protection nonce — the anchor (relay-chain) block number at the
+    /// time the signer signed. Checked against `current_anchor_block()`.
     pub nonce: u64,
 }
 
