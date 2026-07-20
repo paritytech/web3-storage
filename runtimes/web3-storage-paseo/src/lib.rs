@@ -775,7 +775,11 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
         }
     }
 
-    impl pallet_storage_provider::runtime_api::StorageProviderApi<Block, AccountId, BlockNumber, Balance> for Runtime {
+    // The API's `BlockNumber` slot carries anchor-clock values (`challenges_at`
+    // deadlines, `current_anchor_block`), so it is instantiated with the
+    // pallet's anchor-denominated `BlockNumberFor` — the same concrete type as
+    // the runtime's `BlockNumber`, per the pallet's `Config` pin.
+    impl pallet_storage_provider::runtime_api::StorageProviderApi<Block, AccountId, pallet_storage_provider::BlockNumberFor<Runtime>, Balance> for Runtime {
         fn provider_info(provider: AccountId) -> Option<pallet_storage_provider::runtime_api::ProviderInfoResponse> {
             StorageProvider::query_provider_info(&provider)
         }
@@ -808,7 +812,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_provider_agreements(&provider)
         }
 
-        fn challenges_at(block: BlockNumber) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
+        fn challenges_at(block: pallet_storage_provider::BlockNumberFor<Runtime>) -> Vec<pallet_storage_provider::runtime_api::ChallengeResponse> {
             StorageProvider::query_challenges_at(block)
         }
 
@@ -843,7 +847,7 @@ pallet_revive::impl_runtime_apis_plus_revive_traits!(
             StorageProvider::query_providers_with_capacity(bytes_needed, offset, limit)
         }
 
-        fn current_anchor_block() -> BlockNumber {
+        fn current_anchor_block() -> pallet_storage_provider::BlockNumberFor<Runtime> {
             StorageProvider::current_anchor_block()
         }
 
