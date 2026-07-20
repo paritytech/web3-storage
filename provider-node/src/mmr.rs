@@ -309,8 +309,13 @@ mod tests {
         }
     }
 
+    // Golden values for the commitment format: pins blake2-256 of the raw
+    // chunk, the SCALE encoding of `MmrLeaf`, and the bagged root for 1- and
+    // 2-leaf MMRs. Any accidental change to the leaf encoding or hashing
+    // scheme (which would silently invalidate every existing on-chain
+    // commitment) fails these constants.
     #[test]
-    fn hello_world_mmr_values() {
+    fn mmr_golden_values() {
         use codec::Encode;
         use storage_primitives::{hash_children, MmrLeaf};
 
@@ -325,11 +330,6 @@ mod tests {
 
         let mut mmr = Mmr::new();
         mmr.push(l0);
-
-        println!("h0            = {h0:x}");
-        println!("encode(leaf0) = {:02x?}", leaf0.encode());
-        println!("L0            = {l0:x}");
-        println!("MMR root(n=1) = {:x}", mmr.root());
 
         assert_eq!(
             format!("{h0:x}"),
@@ -351,9 +351,6 @@ mod tests {
         let l1 = blake2_256(&leaf1.encode());
         mmr.push(l1);
 
-        println!("L1            = {l1:x}");
-        println!("MMR root(n=2) = {:x}", mmr.root());
-
         assert_eq!(mmr.root(), hash_children(l0, l1));
         assert_eq!(
             format!("{:x}", mmr.root()),
@@ -361,8 +358,13 @@ mod tests {
         );
     }
 
+    // A client that keeps only the MMR peaks (~log2(n) hashes) can follow
+    // appends and modify-as-append, but not a front-remove (`delete_before`
+    // rebuilds the tree, so the new root is unrelated to the old peaks);
+    // following removes requires the full leaf-hash list. This is the state
+    // model the SDK's local root tracking is built on.
     #[test]
-    fn poc_client_tracks_append_modify_remove() {
+    fn peaks_only_client_tracks_appends_not_removes() {
         use codec::Encode;
         use storage_primitives::{blake2_256, hash_children, MmrLeaf};
 
@@ -464,23 +466,14 @@ mod tests {
             truth.root(),
             "=> peaks-only is WRONG after a remove; only the leaf-hash list can rebuild"
         );
-
-        // (4) APPEND E after the delete — leaf-list keeps tracking.
-        truth.append(b"E");
-
-        println!("append + modify + remove + append:");
-        println!("  peaks-only client: tracks append & modify, BREAKS on remove");
-        println!(
-            "  leaf-hash client : tracks ALL (kept {} leaf hashes, start={}, NO data)",
-            truth.leaves.len(),
-            truth.start
-        );
-        println!("  root before remove        = {before_delete:x}");
-        println!("  root after remove+append  = {:x}", truth.root());
     }
 
+    // A client holding only peaks + two counters (no old file bytes) computes
+    // the exact post-append root the provider will report, and can verify
+    // provider-supplied peaks against a previously trusted root via
+    // `bag_peaks` before appending.
     #[test]
-    fn poc_client_appends_root_without_old_data() {
+    fn client_computes_next_root_from_peaks() {
         use codec::Encode;
         use storage_primitives::{blake2_256, hash_children, MmrLeaf};
 
@@ -554,14 +547,6 @@ mod tests {
             mmr.push(leaf_hash(f, total));
         }
         let actual_root = mmr.root();
-
-        println!(
-            "client kept {} peaks + 2 counters, NO file data",
-            kept_peaks.len()
-        );
-        println!("root after A,B,C      = {root_after_3:x}");
-        println!("client EXPECTED root  = {expected_root:x}");
-        println!("provider ACTUAL root  = {actual_root:x}");
 
         assert_eq!(
             expected_root, actual_root,
