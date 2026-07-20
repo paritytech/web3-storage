@@ -56,7 +56,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::BlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{Bounded, CheckedAdd, One, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
@@ -103,7 +103,7 @@ pub mod pallet {
     /// covers a range; this caps the probing and the remainder carries over via
     /// [`LastSweptChallengeBlock`]. Slashing is bounded separately by
     /// [`MAX_SWEEP_SLASH_BUDGET`].
-    const MAX_SWEEP_SPAN: u32 = 32;
+    pub(crate) const MAX_SWEEP_SPAN: u32 = 32;
 
     /// Maximum challenges the slash sweep slashes per block, across all deadline
     /// keys it touches. Decoupled from [`Config::MaxChallengesPerDeadline`] (up
@@ -138,85 +138,12 @@ pub mod pallet {
         ///   just below the partly drained key; the rest carries over.
         /// - **Why `on_initialize`.** Work done is returned as weight instead of
         ///   pre-reserved, which `on_finalize` cannot do.
+        ///
+        /// The algorithm lives in [`Pallet::sweep_expired_challenges`] (and its
+        /// `challenge_sweep_range` / `slash_expired_at` helpers) so the range
+        /// resolution and the per-key drain read as separate, testable steps.
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
-            // Provider read + cursor read/write.
-            let mut weight = T::DbWeight::get().reads_writes(2, 1);
-
-            let now = Self::current_anchor_block();
-            if now.is_zero() {
-                return weight;
-            }
-            let sweepable = now.saturating_sub(One::one());
-            let last = match LastSweptChallengeBlock::<T>::get() {
-                Some(last) => last,
-                None => {
-                    // First run: anchor the cursor here instead of scanning
-                    // up from zero (relay numbers start in the millions on
-                    // live networks). On a fresh chain nothing can be pending
-                    // below it; upgrading a live chain with in-flight
-                    // parachain-denominated challenges instead needs a
-                    // migration re-keying them above the anchor, or they are
-                    // stranded below the cursor and never swept.
-                    LastSweptChallengeBlock::<T>::put(sweepable);
-                    return weight;
-                }
-            };
-            if sweepable <= last {
-                return weight;
-            }
-            let end = sweepable.min(last.saturating_add(MAX_SWEEP_SPAN.into()));
-            // Per-block slash budget, capped so one maturing deadline cannot eat
-            // the whole block's PoV. Lower bound of 1 so a (nonsensical) zero
-            // cap cannot park the cursor forever.
-            let mut budget =
-                u32::from(T::MaxChallengesPerDeadline::get()).clamp(1, MAX_SWEEP_SLASH_BUDGET);
-            let mut key = last.saturating_add(One::one());
-            while key <= end {
-                let mut count: u32 = 0;
-                // Drain every challenge expiring at this key by its stable
-                // per-deadline index and slash the provider for failing to
-                // respond. `drain_prefix` removes the entries as it iterates.
-                for (index, challenge) in Challenges::<T>::drain_prefix(key) {
-                    let challenge_id = ChallengeId {
-                        deadline: key,
-                        index,
-                    };
-                    // Timeout is a resolution: decrement the pending counters
-                    // exactly once here, mirroring the increment in
-                    // `create_challenge`. (The slash helper is shared with the
-                    // invalid-response path, so it must NOT touch the counters.)
-                    Self::decrement_pending(challenge.bucket_id, &challenge.provider);
-                    Self::slash_provider_for_failed_challenge(
-                        &challenge,
-                        challenge_id,
-                        SlashReason::Timeout,
-                    );
-                    count = count.saturating_add(1);
-                    if count >= budget {
-                        break;
-                    }
-                }
-                budget = budget.saturating_sub(count);
-                // Benchmarked for a single key's drain; applying it per key
-                // over-charges the fixed overhead. Conservative.
-                weight =
-                    weight.saturating_add(T::WeightInfo::on_initialize_slash_challenges(count));
-                if budget == 0 {
-                    // Budget exhausted, possibly mid-key (`drain_prefix`
-                    // removed the entries already visited). Keep the key's
-                    // `NextChallengeIndex` allocator and park the cursor just
-                    // below it; the remainder and the allocator cleanup drain
-                    // on later blocks.
-                    LastSweptChallengeBlock::<T>::put(key.saturating_sub(One::one()));
-                    return weight;
-                }
-                // Clear the per-deadline index allocator now the deadline has
-                // passed; no further challenges can target this key.
-                NextChallengeIndex::<T>::remove(key);
-                key = key.saturating_add(One::one());
-            }
-            LastSweptChallengeBlock::<T>::put(end);
-            weight
+            Self::sweep_expired_challenges()
         }
 
         fn integrity_test() {
