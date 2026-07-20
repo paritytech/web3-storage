@@ -3,12 +3,11 @@
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use frame_system::pallet_prelude::BlockNumberFor;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
 use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, ReplicaSyncRecord};
 
 fn challenge_to_response<T: Config>(
-    deadline: BlockNumberFor<T>,
+    deadline: AnchorBlockNumberFor<T>,
     index: u16,
     c: Challenge<T>,
 ) -> crate::runtime_api::ChallengeResponse {
@@ -245,9 +244,10 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
-    /// Query challenges expiring at a specific block.
+    /// Query challenges expiring at a specific deadline. `block` is an anchor
+    /// block (see [`Self::current_anchor_block`]), not a parachain height.
     pub fn query_challenges_at(
-        block: BlockNumberFor<T>,
+        block: AnchorBlockNumberFor<T>,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
         Challenges::<T>::iter_prefix(block)
             .map(|(index, challenge)| challenge_to_response::<T>(block, index, challenge))
