@@ -103,6 +103,8 @@ impl pallet_storage_provider::Config for Test {
     // Small cap so the cap-enforcement test can hit it without creating
     // thousands of challenges.
     type MaxChallengesPerDeadline = ConstU16<5>;
+    type BlockNumberProvider = System;
+    type AnchorBlockTimeMillis = ConstU64<6000>;
     type WeightInfo = ();
 }
 
@@ -184,12 +186,10 @@ pub fn new_test_ext_with_genesis_providers(
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         let current = System::block_number();
-        if current > 1 {
-            <StorageProvider as Hooks<u64>>::on_finalize(current);
-        }
         <System as Hooks<u64>>::on_finalize(current);
         System::set_block_number(current + 1);
         <System as Hooks<u64>>::on_initialize(current + 1);
+        <StorageProvider as Hooks<u64>>::on_initialize(current + 1);
     }
 }
 
@@ -388,7 +388,7 @@ pub fn setup_replica_agreement(
 /// a fresh single-primary bucket, so multi-primary shapes are synthesized.
 #[allow(dead_code)]
 pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_bytes: u64) {
-    let current_block = System::block_number();
+    let anchor_block = System::block_number();
     crate::Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
             let _ = bucket.primary_providers.try_push(provider);
@@ -402,10 +402,10 @@ pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_byte
             max_bytes,
             payment_locked: 0,
             price_per_byte: 0,
-            expires_at: current_block + 200,
+            expires_at: anchor_block + 200,
             extensions_blocked: false,
             role: storage_primitives::ProviderRole::Primary,
-            started_at: current_block,
+            started_at: anchor_block,
         },
     );
     crate::Providers::<Test>::mutate(provider, |maybe_p| {

@@ -67,3 +67,34 @@ fn try_state_detects_member_index_gap() {
         assert!(StorageProvider::do_try_state().is_err());
     });
 }
+
+/// P1.5: a challenge still pending at a deadline the sweep cursor claims to have
+/// passed is caught — it means the challenge was stranded unslashed.
+#[test]
+fn try_state_detects_challenge_below_sweep_cursor() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(StorageProvider::do_try_state());
+
+        let deadline = 100u64;
+        Challenges::<Test>::insert(
+            deadline,
+            0u16,
+            Challenge::<Test> {
+                bucket_id: 0,
+                provider: 2,
+                challenger: 1,
+                mmr_root: sp_core::H256::zero(),
+                start_seq: 0,
+                target: storage_primitives::ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+                deposit: 0,
+            },
+        );
+        // Cursor claims everything up to `deadline` is swept, yet a challenge is
+        // still pending there.
+        LastSweptChallengeBlock::<Test>::put(deadline);
+        assert!(StorageProvider::do_try_state().is_err());
+    });
+}

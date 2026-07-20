@@ -24,6 +24,37 @@ use storage_primitives::BucketId;
 use subxt::dynamic::Value;
 use subxt::ext::scale_value::value;
 
+/// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
+/// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
+/// age) is measured against. Reading it through the runtime API keeps the
+/// provider agnostic to whether the anchor is a relay, parachain, or other
+/// block number: the pallet decides via its `BlockNumberProvider`, and the
+/// provider no longer reaches into a specific storage item.
+///
+/// Kept here (rather than in `storage-client`) so the provider node stays
+/// dependency-light (see #275).
+pub(crate) async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+) -> Result<u32, Error>
+where
+    C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+{
+    use codec::Decode;
+    // Invoke by the runtime API's `state_call` name and decode the raw SCALE
+    // response directly as the block number. Decoding by hand (rather than
+    // through the dynamic value path) avoids depending on this API being
+    // present in the node's metadata snapshot.
+    let bytes = at
+        .runtime_apis()
+        .call_raw("StorageProviderApi_current_anchor_block", None)
+        .await
+        .map_err(|e| {
+            Error::Internal(format!("current_anchor_block runtime API call failed: {e}"))
+        })?;
+    u32::decode(&mut &bytes[..])
+        .map_err(|e| Error::Internal(format!("Failed to decode anchor block: {e}")))
+}
+
 /// Production implementation that talks to the chain via subxt.
 ///
 /// Cloning is cheap: `OnlineClient` shares one connection behind an `Arc`, and
@@ -61,16 +92,18 @@ impl SubxtChainClient {
         Ok(Self { api, signer })
     }
 
-    /// Get the current (latest) block number.
+    /// Get the current anchor block (the clock all on-chain durations, in
+    /// particular checkpoint windows, are measured against), read at the latest
+    /// finalized state via the pallet's runtime API.
     ///
     /// Backs `get_current_block` on both the checkpoint and replica-sync traits.
-    async fn current_block(&self) -> Result<u64, Error> {
+    async fn current_anchor_block(&self) -> Result<u64, Error> {
         let at = self
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get latest block: {e}")))?;
-        Ok(at.block_number())
+            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?;
+        fetch_current_anchor_block(&at).await.map(u64::from)
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
@@ -428,7 +461,7 @@ impl SubxtChainClient {
 #[async_trait::async_trait]
 impl CheckpointChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_block().await
+        self.current_anchor_block().await
     }
 
     async fn fetch_checkpoint_config(
@@ -535,7 +568,7 @@ impl CheckpointChainClient for SubxtChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_block().await
+        self.current_anchor_block().await
     }
 
     async fn fetch_replica_agreements(

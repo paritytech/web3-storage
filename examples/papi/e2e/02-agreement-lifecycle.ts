@@ -24,7 +24,7 @@ import {
   negotiateTerms,
   READ_OPTS,
   sameAddress,
-  waitForBlock,
+  waitForRelayBlock,
 } from "@web3-storage/sdk";
 import {
   getFree,
@@ -90,7 +90,7 @@ async function main() {
       ))!;
       const expiresAt = Number(agreement.expires_at);
       console.log("    Waiting for expiry at block %d...", expiresAt);
-      await waitForBlock(papi, expiresAt);
+      await waitForRelayBlock(papi, api, expiresAt);
       const provBefore = await getFree(api, provider);
       await endAgreement(api, client, provider, bucketId, "Pay");
       const provAfter = await getFree(api, provider);
@@ -117,7 +117,7 @@ async function main() {
         READ_OPTS
       ))!;
       console.log("    Waiting for expiry at block %d...", Number(agreement.expires_at));
-      await waitForBlock(papi, Number(agreement.expires_at));
+      await waitForRelayBlock(papi, api, Number(agreement.expires_at));
       const result = await endAgreement(api, client, provider, bucketId, "Burn", {
         burn_percent: 100,
       });

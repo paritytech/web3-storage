@@ -44,8 +44,8 @@ impl<T: Config> Pallet<T> {
 
         for (provider, agreement) in agreements {
             // Calculate prorated refund based on remaining time
-            let current_block = frame_system::Pallet::<T>::block_number();
-            let remaining_blocks = agreement.expires_at.saturating_sub(current_block);
+            let anchor_block = Self::current_anchor_block();
+            let remaining_blocks = agreement.expires_at.saturating_sub(anchor_block);
 
             // If there's remaining time, calculate prorated refund
             let refund_to_owner = if remaining_blocks > Zero::zero() {
