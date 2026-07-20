@@ -356,7 +356,7 @@ pub mod pallet {
     pub type Challenges<T: Config> = StorageDoubleMap<
         _,
         Blake2_128Concat,
-        BlockNumberFor<T>,
+        AnchorBlockNumberFor<T>,
         Twox64Concat,
         u16,
         Challenge<T>,
@@ -368,7 +368,7 @@ pub mod pallet {
     /// challenge is resolved, guaranteeing index stability for siblings.
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
-        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+        StorageMap<_, Blake2_128Concat, AnchorBlockNumberFor<T>, u16, ValueQuery>;
 
     /// Highest deadline key the `on_initialize` slash sweep has drained. Each
     /// block it sweeps up to (but excluding) the previous block's relay parent.
@@ -916,21 +916,21 @@ pub mod pallet {
 
         // Challenge events
         ChallengeCreated {
-            challenge_id: ChallengeId<BlockNumberFor<T>>,
+            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
             bucket_id: BucketId,
             provider: T::AccountId,
             challenger: T::AccountId,
-            respond_by: BlockNumberFor<T>,
+            respond_by: AnchorBlockNumberFor<T>,
         },
         ChallengeDefended {
-            challenge_id: ChallengeId<BlockNumberFor<T>>,
+            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
             provider: T::AccountId,
-            response_time_blocks: BlockNumberFor<T>,
+            response_time_blocks: AnchorBlockNumberFor<T>,
             challenger_cost: BalanceOf<T>,
             provider_cost: BalanceOf<T>,
         },
         ChallengeSlashed {
-            challenge_id: ChallengeId<BlockNumberFor<T>>,
+            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
             provider: T::AccountId,
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
@@ -2779,7 +2779,7 @@ pub mod pallet {
         })]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
-            challenge_id: ChallengeId<BlockNumberFor<T>>,
+            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
             response: ChallengeResponse<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;

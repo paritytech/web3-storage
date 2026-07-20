@@ -5,7 +5,6 @@ use frame_support::{
     pallet_prelude::*,
     traits::{Currency, ReservableCurrency},
 };
-use frame_system::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{One, Saturating, Zero};
 use storage_primitives::{BucketId, ChallengeId, ChunkLocation, SlashReason};
@@ -225,7 +224,7 @@ impl<T: Config> Pallet<T> {
     /// reading the event log.
     pub(crate) fn slash_provider_for_failed_challenge(
         challenge: &Challenge<T>,
-        challenge_id: ChallengeId<BlockNumberFor<T>>,
+        challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
         reason: SlashReason,
     ) {
         // Get provider info

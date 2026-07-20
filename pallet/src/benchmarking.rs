@@ -226,8 +226,8 @@ fn insert_challenge<T: Config>(
     provider: &T::AccountId,
     challenger: &T::AccountId,
     mmr_root: H256,
-) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
-    let deadline: BlockNumberFor<T> = 200u32.into();
+) -> storage_primitives::ChallengeId<AnchorBlockNumberFor<T>> {
+    let deadline: AnchorBlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
