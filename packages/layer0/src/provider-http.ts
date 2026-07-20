@@ -159,9 +159,10 @@ export async function uploadChunk(
     },
     sign,
   });
-  // `nonce` is the block at which the caller intends to submit the extrinsic
-  // consuming the resulting `provider_signature`. The pallet rejects signatures
-  // whose nonce is older than `MaxNonceAge`, so thread it into /commit.
+  // `nonce` is the relay-chain block (see `currentRelayBlock`) at which the
+  // caller intends to submit the extrinsic consuming the resulting
+  // `provider_signature`. The pallet rejects signatures whose nonce is older
+  // than `MaxNonceAge`, so thread it into /commit.
   const commit = await providerFetch(providerUrl, "/commit", {
     method: "POST",
     body: { bucket_id: Number(bucketId), data_roots: [hash], nonce: Number(nonce) },
@@ -185,8 +186,9 @@ export async function fetchCheckpointSignature(
   bucketId: bigint | number,
   nonce: bigint | number,
 ): Promise<any> {
-  // The provider signs the CommitmentPayload including `nonce`; pass the block
-  // the caller will submit at so the on-chain recency check passes.
+  // The provider signs the CommitmentPayload including `nonce`; pass the
+  // relay block (see `currentRelayBlock`) the caller will submit at so the
+  // on-chain recency check passes.
   return providerFetch(providerUrl, "/checkpoint-signature", {
     params: { bucket_id: bucketId, nonce: Number(nonce) },
   });

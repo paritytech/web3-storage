@@ -24,6 +24,7 @@ import {
   challengeCheckpoint,
   challengeOffchain,
   connect,
+  currentRelayBlock,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
@@ -37,7 +38,7 @@ import {
   respondToChallenge,
   submitClientCheckpoint,
   uploadChunk,
-  waitForBlock,
+  waitForRelayBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -65,10 +66,10 @@ async function setupAgreement(
   provider: ChainSigner
 ): Promise<bigint> {
   const maxBytes = 1_073_741_824n; // 1 GiB
-  // Must outlast Step 6's checkpoint challenge, which requires a live agreement:
-  // the finalized establish + off-chain challenge land it at ~block 16, so 15
-  // expired too soon. 30 leaves ~14 blocks of margin for finality jitter.
-  const duration = 30;
+  // Relay-chain blocks (6s each). The relay clock keeps ticking while the
+  // parachain onboards or skips slots, so this needs headroom for steps 2-7
+  // before the step-8 expiry wait.
+  const duration = 40;
   console.log(
     "  Negotiating signed terms with provider (max_bytes=%s, duration=%d)...",
     maxBytes,
@@ -99,7 +100,7 @@ async function setupAgreement(
 
 async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const nonce = Number(await api.query.System.Number.getValue());
+  const nonce = await currentRelayBlock(api);
   const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
@@ -136,7 +137,7 @@ async function claimPaymentAfterExpiry(api: ParachainApi, papi: PolkadotClient, 
   console.log("  Provider balance before:", freeBefore.toString());
 
   console.log("  Waiting for agreement to expire...");
-  await waitForBlock(papi, expiresAt);
+  await waitForRelayBlock(papi, api, expiresAt);
   await endAgreement(api, client, provider, bucketId, "Pay");
 
   const freeAfter = (
@@ -216,7 +217,7 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ckNonce = Number(await api.query.System.Number.getValue());
+    const ckNonce = await currentRelayBlock(api);
     const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);

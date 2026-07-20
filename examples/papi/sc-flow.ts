@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import {
   challengeOffchain,
   connect,
+  currentRelayBlock,
   downloadChunk,
   ensureProviderRegistered,
   fetchChallengeProof,
@@ -175,7 +176,7 @@ async function main() {
     // the provider's finalized view, so an in-block grant would race it.
     await callContract(api, client, deployed.addressBytes, grantData, { finalized: true });
     const payload = `Hello via SC! ${new Date().toISOString()}`;
-    const uploadNonce = Number(await api.query.System.Number.getValue());
+    const uploadNonce = await currentRelayBlock(api);
     const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce, client);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(

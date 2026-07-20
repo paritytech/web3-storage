@@ -845,6 +845,30 @@ pub mod storage {
 
 // Helper functions for common operations
 
+/// The pallet's anchor block — the clock every on-chain duration is measured
+/// against — via the `StorageProviderApi::current_anchor_block` runtime API.
+/// Compare anchor-denominated values (deadlines, expiries, `checkpoint_block`)
+/// against this, never the parachain height.
+pub async fn fetch_current_anchor_block<C>(
+    at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+) -> Result<u32, ClientError>
+where
+    C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+{
+    use codec::Decode;
+    // Raw `state_call` + manual decode so the API needn't be in the node's
+    // metadata snapshot.
+    let bytes = at
+        .runtime_apis()
+        .call_raw("StorageProviderApi_current_anchor_block", None)
+        .await
+        .map_err(|e| {
+            ClientError::Chain(format!("current_anchor_block runtime API call failed: {e}"))
+        })?;
+    u32::decode(&mut &bytes[..])
+        .map_err(|e| ClientError::Chain(format!("Failed to decode anchor block: {e}")))
+}
+
 /// Parse a hex string to H256.
 pub fn parse_h256(hex: &str) -> Result<H256, ClientError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);

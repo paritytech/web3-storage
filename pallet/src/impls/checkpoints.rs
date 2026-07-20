@@ -2,7 +2,6 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
-use frame_system::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating};
 use storage_primitives::{BucketId, HISTORICAL_ROOT_PRIMES};
@@ -10,10 +9,10 @@ use storage_primitives::{BucketId, HISTORICAL_ROOT_PRIMES};
 impl<T: Config> Pallet<T> {
     pub(crate) fn update_historical_roots(
         bucket: &mut Bucket<T>,
-        current_block: BlockNumberFor<T>,
+        anchor_block: BlockNumberFor<T>,
         mmr_root: H256,
     ) {
-        let block_num: u32 = current_block.try_into().unwrap_or(0u32);
+        let block_num: u32 = anchor_block.try_into().unwrap_or(0u32);
 
         for (i, &prime) in HISTORICAL_ROOT_PRIMES.iter().enumerate() {
             let quotient = block_num / prime;
@@ -103,14 +102,14 @@ impl<T: Config> Pallet<T> {
         })
     }
 
-    /// Check if the current block is within the grace period for a window.
+    /// Check if the anchor block is within the grace period for a window.
     pub(crate) fn is_within_grace_period(
-        current_block: BlockNumberFor<T>,
+        anchor_block: BlockNumberFor<T>,
         window: u64,
         config: &storage_primitives::CheckpointWindowConfig<BlockNumberFor<T>>,
     ) -> bool {
         let window_start = Self::window_start_block(window, config.interval);
         let grace_end = window_start.saturating_add(config.grace_period);
-        current_block <= grace_end
+        anchor_block <= grace_end
     }
 }

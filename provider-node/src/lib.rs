@@ -100,7 +100,7 @@ pub struct ProviderState {
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_block`, `constants`, `provider_info`, and
+    /// writer for `current_anchor_block`, `constants`, `provider_info`, and
     /// `nonce_counter`. `/negotiate` gates on all four before signing.
     pub chain_state: Arc<ChainState>,
 }
@@ -329,7 +329,13 @@ mod tests {
             auth_max_skew: Duration::from_secs(300),
         };
         let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
-        assert_eq!(state.chain_state.current_block.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            state
+                .chain_state
+                .current_anchor_block
+                .load(Ordering::Relaxed),
+            0
+        );
         assert!(state.chain_state.provider_info.read().is_none());
     }
 }
