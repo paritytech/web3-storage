@@ -72,7 +72,7 @@ impl<T: Config> Pallet<T> {
     /// During `on_initialize` this returns the *previous* block's anchor value
     /// (the validation-data inherent has not run yet); everywhere else it is
     /// the current block's.
-    pub fn current_anchor_block() -> BlockNumberFor<T> {
+    pub fn current_anchor_block() -> AnchorBlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
 

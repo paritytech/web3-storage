@@ -68,6 +68,20 @@ pub mod pallet {
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
+    /// The anchor block-number type: the clock every on-chain duration in this
+    /// pallet (timeouts, expiries, `valid_until`, nonce age, challenge
+    /// deadlines) is measured against, sourced from
+    /// [`Config::BlockNumberProvider`] — the relay chain in production.
+    ///
+    /// The `Config` bound pins this equal to `BlockNumberFor<T>` (the parachain
+    /// block-number type), so it is a readability marker, not a distinct
+    /// compile-time type: it documents, in signatures and storage, which values
+    /// live on the anchor clock versus the parachain height (e.g.
+    /// `frame_system::Pallet::block_number()`), which are numerically unrelated
+    /// on any network where the two clocks differ.
+    pub type AnchorBlockNumberFor<T> = <<T as Config>::BlockNumberProvider as
+        sp_runtime::traits::BlockNumberProvider>::BlockNumber;
+
     /// Provider-signed agreement quote bound to this pallet's account, balance,
     /// and block-number types.
     pub type AgreementTermsOf<T> = storage_primitives::AgreementTerms<
@@ -437,9 +451,11 @@ pub mod pallet {
 
     /// Highest deadline key the `on_initialize` slash sweep has drained. Each
     /// block it sweeps up to (but excluding) the previous block's relay parent.
-    /// `None` until the first block after genesis/upgrade anchors it.
+    /// `None` until the first block after genesis/upgrade anchors it. A cursor
+    /// over anchor-denominated deadline keys, hence [`AnchorBlockNumberFor`].
     #[pallet::storage]
-    pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
+    pub type LastSweptChallengeBlock<T: Config> =
+        StorageValue<_, AnchorBlockNumberFor<T>, OptionQuery>;
 
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
