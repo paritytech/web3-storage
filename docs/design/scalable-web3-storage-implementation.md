@@ -193,18 +193,36 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     type MaxBucketsPerMember: Get<u32>;
 
     /// Minimum number of blocks between announcing a deregistration and
-    /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
-    /// challenge created up to the announcement block matures while the
-    /// provider is still slashable.
+    /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
+    /// so any challenge created up to the announcement block matures while
+    /// the provider is still slashable, and `> RequestTimeout` so a
+    /// pre-deregistration agreement quote expires before re-registration.
     #[pallet::constant]
     type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+    /// Caps the challenges sharing one deadline (anchor block) and the
+    /// `on_initialize` sweep's per-block slash budget.
+    #[pallet::constant]
+    type MaxChallengesPerDeadline: Get<u16>;
+
+    /// The anchor clock: source of the block number every duration and
+    /// deadline above is measured against (the relay chain in production,
+    /// `frame_system` in tests). Pinned to the parachain block-number type.
+    type BlockNumberProvider: BlockNumberProvider<BlockNumber = SystemBlockNumberFor<Self>>;
+
+    /// Milliseconds per anchor block (6000 for a relay-chain anchor).
+    /// Exposed via the `anchor_block_time_millis` runtime API.
+    #[pallet::constant]
+    type AnchorBlockTimeMillis: Get<u64>;
 
     /// Weight information for extrinsics.
     type WeightInfo: WeightInfo;
 }
 ```
 
-Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`):
+Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`).
+All durations are in anchor (relay-chain) blocks — `RC_HOURS`, not the
+parachain `HOURS`:
 
 | Constant | Value |
 |---|---|
@@ -214,15 +232,17 @@ Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`):
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
 | `MaxChunkSize` | `262_144` (256 KiB) |
-| `ChallengeTimeout` | `48 * HOURS` |
-| `SettlementTimeout` | `24 * HOURS` |
-| `RequestTimeout` | `6 * HOURS` |
-| `DefaultCheckpointInterval` | `100` blocks |
-| `DefaultCheckpointGrace` | `20` blocks |
+| `ChallengeTimeout` | `48 * RC_HOURS` |
+| `SettlementTimeout` | `24 * RC_HOURS` |
+| `RequestTimeout` | `6 * RC_HOURS` |
+| `DefaultCheckpointInterval` | `100` anchor blocks (~10 min) |
+| `DefaultCheckpointGrace` | `20` anchor blocks (~2 min) |
 | `CheckpointReward` | `1_000_000_000_000` (1 token) |
 | `CheckpointMissPenalty` | `500_000_000_000` (0.5 token) |
 | `MaxBucketsPerMember` | `1_000` |
-| `DeregisterAnnouncementPeriod` | `48 * HOURS` |
+| `DeregisterAnnouncementPeriod` | `54 * RC_HOURS` (48h challenge window + 6h grace) |
+| `MaxChallengesPerDeadline` | `1_000` |
+| `AnchorBlockTimeMillis` | `6_000` |
 | `Treasury` | derived from `PalletId(*b"py/trsry")` |
 
 ### Storage Items
@@ -499,15 +519,30 @@ pub struct ReplicaRequestParams<T: Config> {
     pub min_sync_interval: BlockNumberFor<T>,
 }
 
-/// Pending challenges indexed by deadline block.
-/// Challenges per block are bounded by weight limits (creating challenges consumes weight).
+/// Pending challenges, keyed by (deadline anchor block, per-deadline index).
+/// At most `MaxChallengesPerDeadline` challenges share a deadline; expired
+/// deadlines are drained by the `on_initialize` slash sweep.
 #[pallet::storage]
-pub type Challenges<T: Config> = StorageMap<
+pub type Challenges<T: Config> = StorageDoubleMap<
     _,
-    Blake2_128Concat,
-    BlockNumberFor<T>,
-    Vec<Challenge<T>>,
+    Blake2_128Concat, BlockNumberFor<T>, // deadline (anchor block)
+    Blake2_128Concat, u16,               // index within the deadline
+    Challenge<T>,
 >;
+
+/// Per-deadline index allocator for `Challenges` (monotone; never reused
+/// within a deadline, cleared when the sweep drains the deadline).
+#[pallet::storage]
+pub type NextChallengeIndex<T: Config> =
+    StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+
+/// Cursor of the `on_initialize` slash sweep: every deadline up to and
+/// including this anchor block has been drained. Each block the sweep
+/// advances it toward the current anchor (exclusive), slashing expired
+/// challenges as it goes, capped per block by a span and slash budget.
+#[pallet::storage]
+pub type LastSweptChallengeBlock<T: Config> =
+    StorageValue<_, BlockNumberFor<T>, OptionQuery>;
 
 /// Challenge identifier combining deadline and index.
 /// Challenges are stored by deadline block for efficient expiry processing.
@@ -534,7 +569,8 @@ pub struct Challenge<T: Config> {
     pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
-    /// returned with compensation if the provider is slashed.
+    /// refunded in full — with no reward — if the provider is slashed (the
+    /// slash goes to the Treasury; see "no reward beyond actual costs").
     pub deposit: BalanceOf<T>,
 }
 

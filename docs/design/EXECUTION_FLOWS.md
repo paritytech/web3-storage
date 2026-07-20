@@ -2,6 +2,13 @@
 
 This document provides detailed sequence diagrams for all major extrinsics in the Scalable Web3 Storage system, explaining the flow of data between clients, providers, and the blockchain.
 
+Every on-chain block quantity in these diagrams (deadlines, expiries,
+timeouts, `current_block`) is denominated on the **anchor clock** — the relay
+chain in production, read via `current_anchor_block()`. Pseudocode showing
+`frame_system::block_number()` or `current_block` is illustrative; the
+implementation reads the anchor. See the anchor-clock section in
+[scalable-web3-storage-implementation.md](scalable-web3-storage-implementation.md).
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -472,7 +479,7 @@ sequenceDiagram
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
     Note over C: Create challenge
-    C->>C: deadline = current_block + ChallengePeriod
+    C->>C: deadline = current_anchor_block + ChallengeTimeout
     C->>C: challenge = Challenge {
     Note over C:   challenger,
     Note over C:   bucket_id,
@@ -484,7 +491,7 @@ sequenceDiagram
     Note over C:   deposit
     Note over C: }
 
-    C->>C: Challenges::append(deadline, challenge)
+    C->>C: Challenges::insert(deadline, next_index, challenge)
 
     C-->>U: Event::ChallengeCreated { challenge_id, deadline }
     C-->>P: Event::ChallengeCreated { ... }  // Provider monitors events

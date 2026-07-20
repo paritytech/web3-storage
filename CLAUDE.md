@@ -389,7 +389,12 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/storage.rs)
+
+All durations are measured in **anchor (relay-chain) blocks** (`RC_HOURS`,
+6 s each), not parachain blocks — the pallet reads its clock from
+`Config::BlockNumberProvider` (see the anchor-clock section in
+[docs/design/scalable-web3-storage-implementation.md](docs/design/scalable-web3-storage-implementation.md)):
 
 ```rust
 // Token decimals
@@ -401,14 +406,14 @@ pub const MinProviderStake: Balance = 1_000 * UNIT;
 // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
 pub const MinStakePerByte: Balance = 1_000;
 
-// Challenge response deadline (provider must respond within this many blocks)
-pub const ChallengeTimeout: BlockNumber = 48 * HOURS;
-pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-pub const RequestTimeout: BlockNumber = 6 * HOURS;
+// Challenge response deadline (provider must respond within this many anchor blocks)
+pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
+pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
+pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
 
 // Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100;
-pub const DefaultCheckpointGrace: BlockNumber = 20;
+pub const DefaultCheckpointInterval: BlockNumber = 100; // anchor blocks (~10 min)
+pub const DefaultCheckpointGrace: BlockNumber = 20;     // anchor blocks (~2 min)
 pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
 pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
@@ -432,13 +437,13 @@ pub struct ProviderSettings {
 Providers must stake tokens proportional to their declared capacity:
 
 ```rust
-// Minimum stake per byte of declared capacity
-pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+// Minimum stake per byte of declared capacity (1 token per GB)
+pub const MinStakePerByte: Balance = 1_000;
 
 // Required stake calculation
 required_stake = max_capacity * MinStakePerByte
 
-// Example: 1 TB capacity requires 1,000,000,000,000 units stake
+// Example: 1 TB capacity requires ~1.1e15 units (~1100 tokens) stake
 ```
 
 ## Key Concepts
@@ -684,7 +689,8 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 - Token decimals: 12 (like Polkadot)
 - Minimum stake: 1000 tokens
-- Challenge period: 100 blocks
+- Challenge response window: 48h (`48 * RC_HOURS` anchor blocks)
+- All on-chain durations are anchor (relay-chain) blocks, 6 s each
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes
