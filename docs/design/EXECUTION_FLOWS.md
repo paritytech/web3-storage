@@ -477,7 +477,7 @@ sequenceDiagram
 
     Note over C: Determine cost tier (once, at creation)
     C->>C: authorized = is_authorized(challenger, bucket)
-    Note over C: (authorized = member or agreement owner; stored in the
+    Note over C: (authorized = member or agreement owner, stored in the
     Note over C:  challenge so later membership changes don't alter the fee
     Note over C:  split on a valid response — see respond_to_challenge)
 
@@ -538,7 +538,7 @@ sequenceDiagram
     Note over C: Challenge defended! Stake untouched.
     C->>C: Remove challenge
     Note over C: Reimburse provider's response fee from deposit:
-    Note over C:   public challenger → 100%; authorized → split fraction
+    Note over C:   public challenger → 100%, authorized → split fraction
     C->>C: Return remaining deposit to challenger
 
     C-->>P: Event::ChallengeDefended { challenge_id }
