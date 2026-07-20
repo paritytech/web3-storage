@@ -540,27 +540,26 @@ sequenceDiagram
 
     Note over C: on_initialize(n) slash sweep
 
-    Note over C: Deadlines are relay-chain blocks. Drain every deadline key in<br/>(LastSweptChallengeBlock, previous relay parent], budget-capped.
+    Note over C: Deadlines are anchor (relay-chain) blocks. Drain every deadline<br/>key after LastSweptChallengeBlock and before the current anchor<br/>block (exclusive — challenges at the anchor itself are still<br/>respondable), budget-capped.
 
     C->>C: expired = Challenges::drain_prefix(deadline_key)
 
     loop For each expired challenge
         Note over C: Provider failed to respond!
 
-        C->>C: Slash provider stake
-        C->>B: Currency::slash(provider, slash_amount)
+        C->>C: Slash provider's entire stake
+        C->>B: Currency::slash_reserved(provider, stake)
+        C->>B: resolve_creating(Treasury, slashed)
 
-        C->>C: Reward challenger
-        C->>B: Currency::transfer(slash, challenger)
+        C->>C: Refund challenger deposit (no reward)
+        C->>B: Currency::unreserve(challenger, deposit)
 
-        C->>C: Remove provider from bucket
-        C->>C: bucket.primary_providers.remove(provider)
+        C->>C: Update provider + challenger stats
 
-        C->>C: End storage agreement
-        C->>C: StorageAgreements::remove((bucket_id, provider))
-
-        C-->>C: Event::ProviderSlashed { provider, amount }
+        C-->>C: Event::ChallengeSlashed { challenge_id, provider,<br/>slashed_amount, challenger_reward: 0, reason: Timeout }
     end
+
+    Note over C: Bucket membership and agreement teardown are NOT part of the<br/>sweep — anyone triggers them afterwards via the permissionless<br/>remove_slashed extrinsic.
 ```
 
 ---

@@ -213,8 +213,8 @@ impl<T: Config> Pallet<T> {
     /// Slash a provider for failing a challenge.
     ///
     /// This:
-    /// 1. Slashes the provider's entire stake
-    /// 2. Refunds the challenger's deposit plus a 10% slash reward
+    /// 1. Slashes the provider's entire stake, routing it to the Treasury
+    /// 2. Refunds the challenger's deposit (no reward — see body)
     /// 3. Updates provider statistics
     /// 4. Emits `ChallengeSlashed` with the supplied `SlashReason`
     ///
