@@ -324,7 +324,7 @@ fn challenge_slashes_provider_on_timeout() {
         ));
 
         // Challenge deadline = block 1 + ChallengeTimeout(100) = 101
-        // run_to_block(102) finalises block 101, triggering pallet on_finalize
+        // run_to_block(102): the on_initialize sweep at 102 covers deadline 101
         run_to_block(102);
 
         // Provider should be slashed
@@ -591,7 +591,7 @@ fn respond_to_challenge_superseded_cost_split_block_96_plus() {
 }
 
 #[test]
-fn challenge_slashes_multiple_challenges_on_finalize() {
+fn challenge_slashes_multiple_challenges_in_sweep() {
     new_test_ext().execute_with(|| {
         frame_system::Pallet::<Test>::set_block_number(1);
 
@@ -645,7 +645,7 @@ fn challenge_slashes_multiple_challenges_on_finalize() {
         assert!(Challenges::<Test>::get(101, 0).is_some());
         assert!(Challenges::<Test>::get(101, 1).is_some());
 
-        // Advance past deadline — run_to_block(102) finalises block 101
+        // Advance past deadline — the sweep at block 102 covers deadline 101
         run_to_block(102);
 
         // Both providers should be slashed
@@ -765,7 +765,7 @@ fn responding_to_sibling_preserves_other_challenge_index() {
         ));
         assert!(Challenges::<Test>::get(101, 1).is_none());
         assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 0);
-        // Allocator still untouched by responses (only `on_finalize` clears it).
+        // Allocator still untouched by responses (only the sweep clears it).
         assert_eq!(NextChallengeIndex::<Test>::get(101), 2);
     });
 }
@@ -797,7 +797,7 @@ fn challenge_slashes_routes_full_slash_to_treasury() {
         // Challenger deposit (100) was reserved
         assert_eq!(Balances::free_balance(3), challenger_balance_before - 100);
 
-        // run_to_block(102) finalises block 101, triggering slash
+        // run_to_block(102): the sweep covers deadline 101, triggering the slash
         run_to_block(102);
 
         // Per the design the challenger receives NO reward — only their
@@ -1101,19 +1101,6 @@ mod challenge_tests {
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
-
-    /// Run blocks forward, invoking both system and pallet hooks each block so
-    /// `on_finalize` for the storage provider fires (the default `run_to_block`
-    /// in `mock.rs` only invokes system hooks).
-    fn advance_to(n: u64) {
-        while System::block_number() < n {
-            <StorageProvider as Hooks<u64>>::on_finalize(System::block_number());
-            <System as Hooks<u64>>::on_finalize(System::block_number());
-            System::set_block_number(System::block_number() + 1);
-            <System as Hooks<u64>>::on_initialize(System::block_number());
-            <StorageProvider as Hooks<u64>>::on_initialize(System::block_number());
-        }
-    }
 
     /// Build a valid (MMR root, MMR proof, chunk merkle proof) for a single-leaf
     /// MMR containing a single chunk. With one chunk, the data_root collapses to
@@ -1655,7 +1642,7 @@ mod challenge_tests {
 
             // Walk forward one block past the deadline. (Don't invoke pallet
             // hooks here — we want to observe the rejection branch in
-            // `respond_to_challenge`, not the timeout slashing in `on_finalize`.)
+            // `respond_to_challenge`, not the timeout slashing in the sweep.)
             System::set_block_number(102);
             assert_noop!(
                 StorageProvider::respond_to_challenge(
@@ -1676,7 +1663,7 @@ mod challenge_tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Timeout slashing via on_finalize
+    // Timeout slashing via the on_initialize sweep
     // ─────────────────────────────────────────────────────────────────────────
 
     #[test]
@@ -1703,8 +1690,8 @@ mod challenge_tests {
             // Provider has stake of 200 reserved at registration.
             assert_eq!(Balances::reserved_balance(2), 200);
 
-            // Advance one block past the deadline; `on_finalize(101)` slashes.
-            advance_to(102);
+            // Advance one block past the deadline; the sweep at 102 slashes.
+            run_to_block(102);
 
             // Provider stake is zero post-slash.
             let provider = Providers::<Test>::get(2).unwrap();
@@ -1742,7 +1729,7 @@ mod challenge_tests {
 
             // Walk close to the deadline (101), then jump well past it in a
             // single step and run one on_initialize.
-            advance_to(100);
+            run_to_block(100);
             assert_eq!(
                 Providers::<Test>::get(2).unwrap().stats.challenges_failed,
                 0
@@ -1779,7 +1766,7 @@ mod challenge_tests {
             ));
 
             // Anchor the cursor at 1, then jump far past the deadline (101).
-            advance_to(2);
+            run_to_block(2);
             assert_eq!(LastSweptChallengeBlock::<Test>::get(), Some(1));
             System::set_block_number(500);
 
@@ -1902,7 +1889,7 @@ mod challenge_tests {
                 },
             ));
 
-            advance_to(102);
+            run_to_block(102);
             let provider = Providers::<Test>::get(2).unwrap();
             assert_eq!(provider.stats.challenges_failed, 1);
             assert_eq!(PendingChallenges::<Test>::get(2), 0);
@@ -2284,7 +2271,7 @@ mod challenge_tests {
                     chunk_index: 0,
                 },
             ));
-            advance_to(102);
+            run_to_block(102);
             let stats = ChallengerStats::<Test>::get(3);
             assert_eq!(stats.total_challenges, 1);
             assert_eq!(stats.successful_challenges, 1);
@@ -2444,7 +2431,7 @@ mod challenge_tests {
         });
     }
 
-    /// A timeout slash (deadline passes → `on_finalize` drains the challenge)
+    /// A timeout slash (deadline passes → the sweep drains the challenge)
     /// returns both counters to 0.
     #[test]
     fn pending_counters_zero_after_timeout_slash() {
@@ -2466,7 +2453,7 @@ mod challenge_tests {
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
             // Deadline = 1 + ChallengeTimeout(100) = 101; advance past it.
-            advance_to(102);
+            run_to_block(102);
             assert_eq!(
                 Providers::<Test>::get(2).unwrap().stats.challenges_failed,
                 1
@@ -2683,8 +2670,8 @@ mod challenge_tests {
 
             // Move past expiry (101) + SettlementTimeout (50) = 151 so the
             // claim's own gates pass. Crossing block 101 fires the challenge
-            // timeout via on_finalize, clearing the pending counter.
-            advance_to(152);
+            // timeout via the on_initialize sweep, clearing the pending counter.
+            run_to_block(152);
             // The timeout slash at block 101 cleared the pending counter.
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 0);
 
@@ -2719,7 +2706,7 @@ mod challenge_tests {
             ));
             assert_eq!(PendingChallengesByBucket::<Test>::get(0, 2), 1);
 
-            // Plain set_block_number (no on_finalize) keeps the challenge
+            // Plain set_block_number (no hooks, so no sweep) keeps the challenge
             // pending. The pending gate precedes the expiry check, so the
             // rejection is `AgreementHasPendingChallenge`.
             System::set_block_number(60);
@@ -2769,10 +2756,10 @@ mod challenge_tests {
                 p.deregister_at = Some(101); // period elapsed at block 101
             });
 
-            // advance_to(102) finalises block 101, firing the challenge timeout
-            // (deadline 101) via on_finalize — clearing the pending counter and
-            // slashing provider 2. Block 102 is also >= deregister_at (101).
-            advance_to(102);
+            // At block 102 the on_initialize sweep has passed deadline 101 —
+            // clearing the pending counter and slashing provider 2. Block 102
+            // is also >= deregister_at (101).
+            run_to_block(102);
             assert_eq!(PendingChallenges::<Test>::get(2), 0);
 
             // With the challenge resolved and committed_bytes zero, completion
@@ -2787,7 +2774,7 @@ mod challenge_tests {
     /// Directly assert the `ProviderHasPendingChallenges` rejection on
     /// `complete_deregister` while a real challenge is live (announce
     /// preconditions stamped directly, window elapsed, but the challenge still
-    /// pending because no `on_finalize` has fired).
+    /// pending because the sweep has not run).
     #[test]
     fn complete_deregister_rejects_pending_challenge_error() {
         new_test_ext().execute_with(|| {
@@ -2814,7 +2801,7 @@ mod challenge_tests {
                 p.deregister_at = Some(101);
             });
 
-            // Plain set_block_number (no on_finalize) keeps the challenge
+            // Plain set_block_number (no hooks, so no sweep) keeps the challenge
             // pending. Period elapsed (101 >= 101), committed_bytes zero, so the
             // rejection is `ProviderHasPendingChallenges`.
             System::set_block_number(101);
