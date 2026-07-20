@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Assign N coretime cores to a parachain on the relay chain via sudo.
 //
 // Usage:
