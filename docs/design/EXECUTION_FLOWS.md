@@ -20,6 +20,7 @@ This document provides detailed sequence diagrams for all major extrinsics in th
 ## Overview
 
 The system has a clear separation between:
+
 - **On-chain operations**: Executed as blockchain extrinsics (transactions)
 - **Off-chain operations**: HTTP requests to provider nodes
 
@@ -52,6 +53,7 @@ The system has a clear separation between:
 ### The Problem
 
 When a client uploads data to a provider, how do we ensure the provider actually stores it? The provider could:
+
 1. Accept the data, discard it, and claim storage payment
 2. Store it initially but delete it later
 3. Serve data only when convenient
@@ -85,6 +87,7 @@ Provider signatures on checkpoints create **non-repudiable evidence**:
 ### Why Not Just Trust the Client?
 
 The client could submit a checkpoint claiming the provider stored data, but:
+
 - The provider might not have the data
 - There's no evidence linking the provider to the commitment
 - Challenges would be unfair (provider didn't agree to store)
@@ -138,14 +141,8 @@ sequenceDiagram
     C->>B: Currency::reserve(provider, stake)
     Note over B: Lock stake tokens
 
-    C->>C: Create ProviderInfo {
-    Note over C: multiaddr,
-    Note over C: public_key,
-    Note over C: stake,
-    Note over C: committed_bytes: 0,
-    Note over C: settings: Default,
-    Note over C: stats: Empty
-    Note over C: }
+    C->>C: Create ProviderInfo
+    Note right of C: ProviderInfo {<br/>multiaddr, <br/> public_key,<br/> stake,<br/> committed_bytes: 0, <br/> settings: Default, <br/>stats: Empty <br/>}<br/>
 
     C->>C: Providers::insert(provider, info)
 
@@ -161,14 +158,7 @@ sequenceDiagram
 
     P->>C: update_provider_settings(settings)
 
-    Note over C: settings = {
-    Note over C:   min_duration: 100,
-    Note over C:   max_duration: 100000,
-    Note over C:   price_per_byte: 1000000,
-    Note over C:   accepting_primary: true,
-    Note over C:   replica_sync_price: Some(10M),
-    Note over C:   accepting_extensions: true
-    Note over C: }
+    Note over C: settings = {<br/> min_duration: 100,<br/> max_duration: 100000,<br/> price_per_byte: 1000000,<br/> accepting_primary: true,<br/> replica_sync_price: Some(10M),<br/> accepting_extensions: true<br/>}
 
     C->>C: info = Providers::get(provider)?
     C->>C: info.settings = new_settings
@@ -195,14 +185,7 @@ sequenceDiagram
     C->>C: NextBucketId::put(bucket_id + 1)
 
     Note over C: Create bucket structure
-    C->>C: bucket = Bucket {
-    Note over C:   admin: caller,
-    Note over C:   is_private,
-    Note over C:   min_providers,
-    Note over C:   primary_providers: vec![],
-    Note over C:   snapshot: None,
-    Note over C:   members: BTreeMap::new()
-    Note over C: }
+    Note over C: bucket = Bucket {<br/> admin: caller,<br/> is_private,<br/> min_providers,<br/> primary_providers: vec![],<br/> snapshot: None,<br/> members: BTreeMap::new()<br/>}
 
     C->>C: Buckets::insert(bucket_id, bucket)
     C->>C: AdminBuckets::append(admin, bucket_id)
@@ -256,15 +239,7 @@ sequenceDiagram
     C->>C: request = AgreementRequests::take((bucket_id, caller))?
 
     Note over C: Create agreement
-    C->>C: agreement = StorageAgreement {
-    Note over C:   provider: caller,
-    Note over C:   bucket_id,
-    Note over C:   max_bytes: request.max_bytes,
-    Note over C:   start_block: current_block,
-    Note over C:   end_block: current_block + duration,
-    Note over C:   payment: request.payment,
-    Note over C:   role: ProviderRole::Primary
-    Note over C: }
+    Note over C: agreement = StorageAgreement {<br/> provider: caller,<br/> bucket_id,<br/> max_bytes: request.max_bytes,<br/> start_block: current_block,<br/> end_block: current_block + duration,<br/> payment: request.payment,<br/> role: ProviderRole::Primary<br/>}
 
     C->>C: StorageAgreements::insert((bucket_id, provider), agreement)
 
@@ -311,12 +286,7 @@ sequenceDiagram
     PN->>S: Update MMR root
     PN->>PN: Sign commitment payload
 
-    Note over PN: CommitmentPayload {
-    Note over PN:   bucket_id,
-    Note over PN:   mmr_root,
-    Note over PN:   start_seq,
-    Note over PN:   leaf_count: 0
-    Note over PN: }
+    Note over PN: CommitmentPayload {<br/> bucket_id,<br/> mmr_root,<br/> start_seq,<br/> leaf_count: 0<br/>}
 
     PN-->>SC: { mmr_root, start_seq, leaf_indices, provider_signature }
 
@@ -375,13 +345,7 @@ sequenceDiagram
     C->>C: ensure!(signing_count >= bucket.min_providers * 51%)
 
     Note over C: Create/update snapshot
-    C->>C: bucket.snapshot = Some(BucketSnapshot {
-    Note over C:   mmr_root,
-    Note over C:   start_seq,
-    Note over C:   leaf_count,
-    Note over C:   checkpoint_block: current_block,
-    Note over C:   primary_signers
-    Note over C: })
+    Note over C: bucket.snapshot = Some(BucketSnapshot {<br/> mmr_root,<br/> start_seq,<br/> leaf_count,<br/> checkpoint_block: current_block,<br/> primary_signers<br/>})
 
     C-->>U: Event::CommitmentSubmitted { bucket_id, mmr_root, signers }
 ```
@@ -477,23 +441,11 @@ sequenceDiagram
 
     Note over C: Determine cost tier (once, at creation)
     C->>C: authorized = is_authorized(challenger, bucket)
-    Note over C: (authorized = member or agreement owner, stored in the
-    Note over C:  challenge so later membership changes don't alter the fee
-    Note over C:  split on a valid response — see respond_to_challenge)
+    Note over C: (authorized = member or agreement owner, stored in the<br/>challenge so later membership changes don't alter the fee<br/>split on a valid response — see respond_to_challenge)
 
     Note over C: Create challenge
     C->>C: deadline = current_block + ChallengePeriod
-    C->>C: challenge = Challenge {
-    Note over C:   challenger,
-    Note over C:   bucket_id,
-    Note over C:   provider,
-    Note over C:   mmr_root: snapshot.mmr_root,
-    Note over C:   start_seq: snapshot.start_seq,
-    Note over C:   leaf_index,
-    Note over C:   chunk_index,
-    Note over C:   deposit,
-    Note over C:   authorized
-    Note over C: }
+    Note over C: challenge = Challenge {<br/> challenger,<br/> bucket_id,<br/> provider,<br/> mmr_root: snapshot.mmr_root,<br/> start_seq: snapshot.start_seq,<br/> leaf_index,<br/> chunk_index,<br/> deposit,<br/> authorized<br/>}
 
     C->>C: Challenges::append(deadline, challenge)
 
@@ -524,11 +476,7 @@ sequenceDiagram
 
     P->>C: respond_to_challenge(challenge_id, response)
 
-    Note over C: response = ChallengeResponse::Proof {
-    Note over C:   chunk_data,
-    Note over C:   chunk_proof,  // Merkle proof chunk → data_root
-    Note over C:   mmr_proof     // MMR proof data_root → mmr_root
-    Note over C: }
+    Note over C: response = ChallengeResponse::Proof {<br/> chunk_data,<br/> chunk_proof, // Merkle proof chunk → data_root<br/> mmr_proof // MMR proof data_root → mmr_root<br/>}
 
     Note over C: Verify proofs
     C->>C: chunk_hash = blake2_256(chunk_data)
@@ -537,8 +485,7 @@ sequenceDiagram
 
     Note over C: Challenge defended! Stake untouched.
     C->>C: Remove challenge
-    Note over C: Reimburse provider's response fee from deposit:
-    Note over C:   public challenger → 100%, authorized → split fraction
+    Note over C: Reimburse provider's response fee from deposit:<br/>public challenger → 100%, authorized → split fraction
     C->>C: Return remaining deposit to challenger
 
     C-->>P: Event::ChallengeDefended { challenge_id }
