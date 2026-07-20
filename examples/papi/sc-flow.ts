@@ -181,7 +181,6 @@ async function main() {
       startSeq: upload.commit.start_seq,
       leafCount: upload.commit.leaf_count,
       leafIndex: upload.commit.leaf_indices[0],
-      leafCount: upload.commit.leaf_count,
       providerSignature: upload.commit.provider_signature,
       nonce: upload.commit.nonce,
     });

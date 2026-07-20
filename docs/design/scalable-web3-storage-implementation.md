@@ -477,12 +477,12 @@ pub enum ProviderRole<T: Config> {
         /// 0 means no time-based limit (only "new root" check applies).
         min_sync_interval: BlockNumberFor<T>,
         /// Last confirmed sync. None if the replica hasn't confirmed sync yet.
-        last_sync: Option<ReplicaSync<BlockNumberFor<T>>>,
+        last_sync: Option<ReplicaSyncRecord<BlockNumberFor<T>>>,
     },
 }
 
 /// A replica's last confirmed sync.
-pub struct ReplicaSync<BlockNumber> {
+pub struct ReplicaSyncRecord<BlockNumber> {
     /// MMR root the replica synced to.
     root: H256,
     /// (start_seq, leaf_count) of the synced root, recorded only when it was the
@@ -2511,7 +2511,7 @@ fn verify_challenge_response(
             let chunk_hash = blake2_256(chunk_data);
             
             // 2. Verify chunk is in data_root
-            verify_merkle_proof(chunk_hash, challenge.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
+            verify_merkle_proof(chunk_hash, challenge.target.chunk_index, chunk_proof, &mmr_proof.leaf.data_root)?;
             
             // 3. Verify data_root is in MMR, bound to the EXACT challenged leaf.
             //    `leaf_count` (from the Challenge — the snapshot's for
@@ -2520,7 +2520,7 @@ fn verify_challenge_response(
             //    a provider cannot answer with a proof for a different leaf.
             verify_mmr_proof(
                 &mmr_proof,
-                challenge.leaf_index,
+                challenge.target.leaf_index,
                 challenge.leaf_count,
                 &challenge.mmr_root,
             )?;

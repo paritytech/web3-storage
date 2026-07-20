@@ -365,7 +365,6 @@ pub mod extrinsics {
     /// Create a challenge_offchain extrinsic payload.
     ///
     /// Uses the provider's off-chain signature instead of an on-chain checkpoint.
-    #[allow(clippy::too_many_arguments)]
     pub fn challenge_offchain(
         bucket_id: u64,
         provider: AccountId32,

@@ -738,22 +738,18 @@ Challenge a provider using an **off-chain commitment signature**. Works even whe
 **Parameters:**
 - `bucketId`: `BucketId` (u64)
 - `provider`: `AccountId`
-- `mmrRoot`: `H256`
-- `startSeq`: `u64`
-- `leafCount`: `u64` - leaf count of the committed MMR. Must equal the `leaf_count` the provider signed (e.g. from `GET /commitment`); the chain verifies the signature over it and uses it to bind the proof to `leafIndex`.
-- `leafIndex`: `u64`
-- `chunkIndex`: `u64`
-- `providerSignature`: `MultiSignature` - provider's signature over the commitment payload `(bucketId, mmrRoot, startSeq, leafCount)`
+- `commitment`: `Commitment` - the `(mmrRoot, startSeq, leafCount)` triplet the provider signed. Must equal the signed values (e.g. from `GET /commitment`); the chain verifies the signature over it and uses `leafCount` to bind the proof to `target.leafIndex`.
+- `target`: `ChunkLocation` - the `(leafIndex, chunkIndex)` being challenged within the commitment
+- `nonce`: `u64` - the nonce the provider signed over (echoed from the commitment response); recency-checked to prevent replay
+- `providerSignature`: `MultiSignature` - provider's signature over the commitment payload `(bucketId, commitment, nonce)`
 
 **Example:**
 ```
 bucketId: 0
 provider: 5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
-mmrRoot: 0x1234567890abcdef...
-startSeq: 0
-leafCount: 12
-leafIndex: 7
-chunkIndex: 3
+commitment: { mmrRoot: 0x1234567890abcdef..., startSeq: 0, leafCount: 12 }
+target: { leafIndex: 7, chunkIndex: 3 }
+nonce: 123456
 providerSignature: 0xsig...
 ```
 
@@ -983,7 +979,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 challengeCheckpoint(bucketId, provider, leafIndex, chunkIndex)
 
 // against an off-chain commitment (hot buckets):
-challengeOffchain(bucketId, provider, mmrRoot, startSeq, leafCount, leafIndex, chunkIndex, providerSignature)
+challengeOffchain(bucketId, provider, commitment, target, nonce, providerSignature)
 
 // against a replica:
 challengeReplica(bucketId, provider, leafIndex, chunkIndex)
