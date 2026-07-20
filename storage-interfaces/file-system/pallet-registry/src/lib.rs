@@ -61,7 +61,7 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     // Anchor clock + parachain height, canonically named by the storage pallet.
     use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
-    use sp_runtime::BoundedVec;
+    use sp_runtime::{traits::Saturating, BoundedVec};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::Role;
@@ -251,7 +251,7 @@ pub mod pallet {
 
             // Calculate expiry block
             let anchor_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
-            let expires_at = anchor_block + storage_period;
+            let expires_at = anchor_block.saturating_add(storage_period);
 
             // Create drive info
             let drive_info = DriveInfo {
