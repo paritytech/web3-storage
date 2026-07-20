@@ -52,8 +52,9 @@ pub mod pallet {
         traits::{BalanceStatus, Currency, ExistenceRequirement, ReservableCurrency},
         CloneNoBound, DebugNoBound, DefaultNoBound, EqNoBound, PartialEqNoBound,
     };
-    #[cfg(feature = "try-runtime")]
-    use frame_system::pallet_prelude::BlockNumberFor;
+    /// The parachain block height. Re-exported so dependent pallets get the
+    /// same pair of names from one place; hooks-only — see [`BlockNumberFor`].
+    pub use frame_system::pallet_prelude::BlockNumberFor as SystemBlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
     use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
@@ -68,12 +69,13 @@ pub mod pallet {
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-    /// The anchor block-number type — the clock every pallet duration is
-    /// measured against ([`Config::BlockNumberProvider`], the relay chain in
-    /// production). The `Config` bound pins it equal to `BlockNumberFor<T>`, so
-    /// it is a readability marker (not a distinct type): it flags which values
-    /// live on the anchor clock rather than the parachain height.
-    pub type AnchorBlockNumberFor<T> = <<T as Config>::BlockNumberProvider as
+    /// The anchor clock ([`Config::BlockNumberProvider`], relay chain in
+    /// production) that every duration, deadline and expiry in this pallet is
+    /// measured against. Deliberately shadows the `frame_system` name,
+    /// treasury-style: the habitual spelling yields the correct clock, and the
+    /// parachain height is only reachable as [`SystemBlockNumberFor`] (hooks
+    /// only). The `Config` bound pins the two equal.
+    pub type BlockNumberFor<T> = <<T as Config>::BlockNumberProvider as
         sp_runtime::traits::BlockNumberProvider>::BlockNumber;
 
     /// Provider-signed agreement quote bound to this pallet's account, balance,
@@ -109,7 +111,7 @@ pub mod pallet {
     pub(crate) const MAX_SWEEP_SLASH_BUDGET: u32 = 100;
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         /// Slash providers whose challenges expired unanswered.
         ///
         /// Deadlines are relay-chain blocks ([`Config::BlockNumberProvider`]),
@@ -136,7 +138,7 @@ pub mod pallet {
         /// The algorithm lives in [`Pallet::sweep_expired_challenges`] (and its
         /// `challenge_sweep_range` / `slash_expired_at` helpers) so the range
         /// resolution and the per-key drain read as separate, testable steps.
-        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+        fn on_initialize(_do_not_use_local_block_number: SystemBlockNumberFor<T>) -> Weight {
             Self::sweep_expired_challenges()
         }
 
@@ -169,7 +171,7 @@ pub mod pallet {
         }
 
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }
@@ -210,7 +212,7 @@ pub mod pallet {
         /// Timeout for challenge response (e.g., ~48 hours in relay chain
         /// blocks).
         #[pallet::constant]
-        type ChallengeTimeout: Get<AnchorBlockNumberFor<Self>>;
+        type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
         /// Deposit required to open a challenge. Reserved from the challenger
         /// on `challenge_*` and refunded (minus a response-time-proportional
@@ -229,27 +231,27 @@ pub mod pallet {
         /// values older than this are rejected to prevent indefinite
         /// signature replay.
         #[pallet::constant]
-        type MaxNonceAge: Get<AnchorBlockNumberFor<Self>>;
+        type MaxNonceAge: Get<BlockNumberFor<Self>>;
 
         /// Settlement window (in relay chain blocks) after agreement expiry
         /// for owner to call end_agreement.
         #[pallet::constant]
-        type SettlementTimeout: Get<AnchorBlockNumberFor<Self>>;
+        type SettlementTimeout: Get<BlockNumberFor<Self>>;
 
         /// Maximum duration (in relay chain blocks) for agreement requests
         /// before expiry.
         #[pallet::constant]
-        type RequestTimeout: Get<AnchorBlockNumberFor<Self>>;
+        type RequestTimeout: Get<BlockNumberFor<Self>>;
 
         /// Default interval between provider-initiated checkpoints (e.g., 100
         /// relay chain blocks).
         #[pallet::constant]
-        type DefaultCheckpointInterval: Get<AnchorBlockNumberFor<Self>>;
+        type DefaultCheckpointInterval: Get<BlockNumberFor<Self>>;
 
         /// Default grace period for checkpoint leader (e.g., 20 relay chain
         /// blocks).
         #[pallet::constant]
-        type DefaultCheckpointGrace: Get<AnchorBlockNumberFor<Self>>;
+        type DefaultCheckpointGrace: Get<BlockNumberFor<Self>>;
 
         /// Reward paid to provider for submitting a checkpoint.
         #[pallet::constant]
@@ -269,7 +271,7 @@ pub mod pallet {
         /// challenge against this provider that was created up to the
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
-        type DeregisterAnnouncementPeriod: Get<AnchorBlockNumberFor<Self>>;
+        type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
 
         /// Maximum number of challenges that may share a single deadline
         /// (relay chain block), and the per-block slash budget of the
@@ -291,8 +293,10 @@ pub mod pallet {
         /// (`cumulus_pallet_parachain_system::RelaychainDataProvider`) so
         /// durations stay independent of parachain block time; tests supply
         /// `frame_system::Pallet`.
+        // Pinned to the parachain block-number type so the anchor and
+        // parachain clocks share one concrete type (`u32` throughout).
         type BlockNumberProvider: sp_runtime::traits::BlockNumberProvider<
-            BlockNumber = BlockNumberFor<Self>,
+            BlockNumber = SystemBlockNumberFor<Self>,
         >;
 
         /// Milliseconds per anchor block — the tick of
@@ -356,7 +360,7 @@ pub mod pallet {
     pub type Challenges<T: Config> = StorageDoubleMap<
         _,
         Blake2_128Concat,
-        AnchorBlockNumberFor<T>,
+        BlockNumberFor<T>,
         Twox64Concat,
         u16,
         Challenge<T>,
@@ -368,15 +372,14 @@ pub mod pallet {
     /// challenge is resolved, guaranteeing index stability for siblings.
     #[pallet::storage]
     pub type NextChallengeIndex<T: Config> =
-        StorageMap<_, Blake2_128Concat, AnchorBlockNumberFor<T>, u16, ValueQuery>;
+        StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
 
     /// Highest deadline key the `on_initialize` slash sweep has drained. Each
     /// block it sweeps up to (but excluding) the previous block's relay parent.
     /// `None` until the first block after genesis/upgrade anchors it. A cursor
-    /// over anchor-denominated deadline keys, hence [`AnchorBlockNumberFor`].
+    /// over anchor-denominated deadline keys, hence [`BlockNumberFor`].
     #[pallet::storage]
-    pub type LastSweptChallengeBlock<T: Config> =
-        StorageValue<_, AnchorBlockNumberFor<T>, OptionQuery>;
+    pub type LastSweptChallengeBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, OptionQuery>;
 
     /// Number of unresolved challenges currently outstanding against a
     /// provider, summed across every bucket. Incremented in `create_challenge`
@@ -916,21 +919,21 @@ pub mod pallet {
 
         // Challenge events
         ChallengeCreated {
-            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
             bucket_id: BucketId,
             provider: T::AccountId,
             challenger: T::AccountId,
-            respond_by: AnchorBlockNumberFor<T>,
+            respond_by: BlockNumberFor<T>,
         },
         ChallengeDefended {
-            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
             provider: T::AccountId,
-            response_time_blocks: AnchorBlockNumberFor<T>,
+            response_time_blocks: BlockNumberFor<T>,
             challenger_cost: BalanceOf<T>,
             provider_cost: BalanceOf<T>,
         },
         ChallengeSlashed {
-            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
             provider: T::AccountId,
             slashed_amount: BalanceOf<T>,
             challenger_reward: BalanceOf<T>,
@@ -2779,7 +2782,7 @@ pub mod pallet {
         })]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
-            challenge_id: ChallengeId<AnchorBlockNumberFor<T>>,
+            challenge_id: ChallengeId<BlockNumberFor<T>>,
             response: ChallengeResponse<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;

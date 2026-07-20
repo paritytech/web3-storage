@@ -7,7 +7,7 @@ use sp_runtime::traits::{CheckedMul, SaturatedConversion};
 use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, ReplicaSyncRecord};
 
 fn challenge_to_response<T: Config>(
-    deadline: AnchorBlockNumberFor<T>,
+    deadline: BlockNumberFor<T>,
     index: u16,
     c: Challenge<T>,
 ) -> crate::runtime_api::ChallengeResponse {
@@ -71,7 +71,7 @@ impl<T: Config> Pallet<T> {
     /// During `on_initialize` this returns the *previous* block's anchor value
     /// (the validation-data inherent has not run yet); everywhere else it is
     /// the current block's.
-    pub fn current_anchor_block() -> AnchorBlockNumberFor<T> {
+    pub fn current_anchor_block() -> BlockNumberFor<T> {
         <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
     }
 
@@ -247,7 +247,7 @@ impl<T: Config> Pallet<T> {
     /// Query challenges expiring at a specific deadline. `block` is an anchor
     /// block (see [`Self::current_anchor_block`]), not a parachain height.
     pub fn query_challenges_at(
-        block: AnchorBlockNumberFor<T>,
+        block: BlockNumberFor<T>,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {
         Challenges::<T>::iter_prefix(block)
             .map(|(index, challenge)| challenge_to_response::<T>(block, index, challenge))

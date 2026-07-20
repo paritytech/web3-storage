@@ -9,7 +9,7 @@ use frame_support::{
     pallet_prelude::*,
     traits::{Currency, Hooks, ReservableCurrency},
 };
-use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
+use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
@@ -226,8 +226,8 @@ fn insert_challenge<T: Config>(
     provider: &T::AccountId,
     challenger: &T::AccountId,
     mmr_root: H256,
-) -> storage_primitives::ChallengeId<AnchorBlockNumberFor<T>> {
-    let deadline: AnchorBlockNumberFor<T> = 200u32.into();
+) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
+    let deadline: BlockNumberFor<T> = 200u32.into();
     let challenge = pallet::Challenge::<T> {
         bucket_id,
         provider: provider.clone(),
@@ -266,7 +266,6 @@ fn register_sr25519_key<T: Config>(
 #[benchmarks]
 mod benchmarks {
     use super::*;
-    use frame_system::pallet_prelude::BlockNumberFor;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider Management

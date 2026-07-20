@@ -2,7 +2,6 @@
 
 use crate::*;
 use frame_support::pallet_prelude::*;
-use frame_system::pallet_prelude::*;
 use sp_core::H256;
 use sp_runtime::traits::{SaturatedConversion, Saturating};
 use storage_primitives::{BucketId, HISTORICAL_ROOT_PRIMES};

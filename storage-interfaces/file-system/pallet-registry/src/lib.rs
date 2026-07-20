@@ -59,7 +59,8 @@ pub mod pallet {
     use file_system_primitives::{DriveId, DriveInfo};
     use frame_support::{pallet_prelude::*, traits::Get};
     use frame_system::pallet_prelude::*;
-    use pallet_storage_provider;
+    // Anchor clock + parachain height, canonically named by the storage pallet.
+    use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
     use sp_runtime::BoundedVec;
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
@@ -74,9 +75,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }

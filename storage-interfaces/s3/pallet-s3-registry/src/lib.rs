@@ -26,6 +26,8 @@ pub mod try_state;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
+// Anchor clock + parachain height, canonically named by the storage pallet.
+use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
 use s3_primitives::{
     validate_bucket_name, validate_object_key, BucketName, MaxContentTypeLen, MaxEtagLen,
     MaxMetadataEntries, MaxMetadataKeyLen, MaxMetadataValueLen, MetadataEntry, ObjectKey,
@@ -54,9 +56,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }
