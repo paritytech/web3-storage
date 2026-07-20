@@ -37,6 +37,9 @@ pub struct Cli {
     pub replica_sync: ReplicaSyncParams,
 
     #[clap(flatten)]
+    pub challenge_responder: ChallengeResponderParams,
+
+    #[clap(flatten)]
     pub auth: AuthParams,
 }
 
@@ -83,6 +86,17 @@ pub struct RpcParams {
     /// `/dns4/example.com/tcp/443/tls/http/http-path/web3-storage-provider`.
     #[arg(long, value_name = "MULTIADDR", env = "PUBLIC_MULTIADDR")]
     pub public_multiaddr: Option<String>,
+
+    /// Comma-separated list of browser origins allowed via CORS
+    /// (e.g. "https://app.example.com,http://localhost:5174").
+    /// When unset, all origins are allowed (permissive) — set this in production.
+    #[arg(
+        long,
+        value_name = "ORIGIN",
+        env = "CORS_ALLOWED_ORIGINS",
+        value_delimiter = ','
+    )]
+    pub cors_allowed_origins: Option<Vec<String>>,
 }
 
 /// Parameters for provider identity and signing keys.
@@ -165,12 +179,17 @@ pub struct CheckpointParams {
 }
 
 /// Parameters for authentication and authorization.
+///
+/// Authentication and role-based access control are enforced by default. The
+/// only way to turn them off is the deliberately verbose
+/// `--disable-auth-i-know-what-i-am-doing` flag below.
 #[derive(Debug, clap::Args)]
 pub struct AuthParams {
-    /// Enable authentication and role-based access control.
-    /// When disabled (default), all requests are allowed without auth headers.
-    #[arg(long, env = "ENABLE_AUTH")]
-    pub enable_auth: bool,
+    /// Disable ALL authentication and role-based access control. Every endpoint
+    /// becomes publicly readable AND writable by anyone. Intended only for
+    /// throwaway local experiments — never run a real provider this way.
+    #[arg(long)]
+    pub disable_auth_i_know_what_i_am_doing: bool,
 
     /// Cache TTL in seconds for membership lookups from the chain.
     #[arg(
@@ -189,6 +208,26 @@ pub struct AuthParams {
         env = "AUTH_MAX_SKEW"
     )]
     pub auth_max_skew: u64,
+}
+
+/// Parameters for the challenge responder background service.
+#[derive(Debug, clap::Args)]
+pub struct ChallengeResponderParams {
+    /// Enable the autonomous challenge responder. Without this flag, the
+    /// provider relies on an external orchestrator (e.g. the client SDK
+    /// driving challenges) to surface incoming challenges via HTTP proof
+    /// endpoints. With this flag, the provider polls chain state itself.
+    #[arg(long, env = "ENABLE_CHALLENGE_RESPONDER")]
+    pub enable_challenge_responder: bool,
+
+    /// Seconds between `Challenges` storage poll cycles.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 6,
+        env = "CHALLENGE_POLL_INTERVAL"
+    )]
+    pub challenge_poll_interval: u64,
 }
 
 /// Parameters for replica synchronization.
@@ -243,6 +282,8 @@ mod tests {
         assert_eq!(cli.replica_sync.replica_poll_interval, 12);
         assert_eq!(cli.replica_sync.replica_sync_timeout, 300);
         assert_eq!(cli.replica_sync.replica_max_concurrent, 3);
+        assert!(!cli.challenge_responder.enable_challenge_responder);
+        assert_eq!(cli.challenge_responder.challenge_poll_interval, 6);
     }
 
     #[test]

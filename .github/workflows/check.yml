@@ -3,8 +3,9 @@ name: Basic checks
 on:
   push:
     branches: [main, dev]
+  # No base-branch filter: stacked PRs (base = another feature branch)
+  # must get the same CI as dev-targeted PRs.
   pull_request:
-    branches: [main, dev]
   merge_group:
   workflow_dispatch:
 
@@ -28,12 +29,12 @@ jobs:
     outputs:
       rust: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.rust == 'true' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
       - if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v3
         id: filter
         with:
           filters: |
@@ -55,7 +56,7 @@ jobs:
     container:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -77,6 +78,33 @@ jobs:
             exit 1
           fi
 
+      - name: Check license headers
+        run: |
+          cargo install --locked hawkeye && hawkeye --version
+          if ! hawkeye check --config licenserc.apache.toml; then
+            echo "Please run 'hawkeye format --config licenserc.apache.toml' to fix any license header issues"
+            exit 1
+          fi
+          if ! hawkeye check --config licenserc.gpl.toml; then
+            echo "Please run 'hawkeye format --config licenserc.gpl.toml' to fix any license header issues"
+            exit 1
+          fi
+
+  check-workspace-inheritance:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Check workspace dependency inheritance
+        uses: RomarQ/cargo-workspace-inheritance-check@ca470feb48c8ca8d62c25c72bc5a4cad4a1775b5 # v1.3.0
+        with:
+          promotion-failure: true
+          promotion-threshold: 1
+
   check:
     name: Cargo check
     runs-on: parity-large
@@ -86,7 +114,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -113,7 +141,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -139,7 +167,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -164,7 +192,7 @@ jobs:
       SKIP_WASM_BUILD: 1
     steps:
       - name: Checkout sources
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -197,9 +225,12 @@ jobs:
     env:
       SKIP_WASM_BUILD: 1
       CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout PR sources (with base branch history)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -211,134 +242,89 @@ jobs:
           save-if: false
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        uses: taiki-e/install-action@2ca9b94c269419b7b0c711c09d0b21c4e1d51145 # v2.83.1
         with:
           tool: cargo-llvm-cov
 
-      - name: Measure PR coverage
+      - name: Install diff-cover
+        # Drives the patch-coverage gate. Minimum version comes from
+        # .github/env, shared with the local check in scripts/coverage.sh.
+        # The bullseye CI image ships an unmanaged pip and runs as root, so
+        # a plain system-wide install works.
         run: |
-          PALLET_COV=$(cargo llvm-cov --lib \
-            -p pallet-storage-provider \
-            -p pallet-drive-registry \
-            -p pallet-s3-registry \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          if [ -z "$PALLET_COV" ]; then
-            echo "ERROR: Failed to measure pallet coverage (build or test failure?)"
-            exit 1
-          fi
-          echo "PR_PALLET_COV=$PALLET_COV" >> $GITHUB_ENV
-          echo "PR pallet coverage: ${PALLET_COV}%"
+          source .github/env
+          python3 -m pip install --quiet "diff-cover>=${DIFF_COVER_MIN_VERSION}"
 
-          cargo llvm-cov clean --workspace 2>/dev/null || true
+      - name: Measure coverage
+        # Package list + exclusions live in scripts/coverage.sh, shared with
+        # `just coverage` so the gate is reproducible locally.
+        run: |
+          set -euo pipefail
+          scripts/coverage.sh measure
 
-          # Discover available integration test targets from filesystem
-          TEST_FLAGS=""
-          for f in provider-node/tests/*_integration.rs; do
-            [ -f "$f" ] || continue
-            t=$(basename "$f" .rs)
-            TEST_FLAGS="$TEST_FLAGS --test $t"
-          done
+          # Per-module table + collapsed per-file table -> job summary.
+          {
+            echo "## Rust coverage (per module)"
+            echo ""
+            cat coverage-modules.md
+            echo ""
+            echo "<details><summary>Per-file table</summary>"
+            echo ""
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "## Integration-only coverage (public-API view)"
+            echo ""
+            cat coverage-integration.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ -n "$TEST_FLAGS" ]; then
-            PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
-              -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
-              --summary-only 2>&1 \
-              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          else
-            PROVIDER_COV=0
-          fi
-          echo "PR_PROVIDER_COV=$PROVIDER_COV" >> $GITHUB_ENV
-          echo "PR provider coverage: ${PROVIDER_COV}%"
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage
+          path: |
+            lcov.info
+            lcov-integration.info
+            target/llvm-cov-html
+          if-no-files-found: warn
 
-      - name: Measure base branch coverage
+      - name: Patch coverage gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Minimum coverage of the lines this PR changes. Tune as the suite grows.
+          MIN_PATCH_COV: '80'
         run: |
-          # Container user differs from repo owner; allow git operations
+          set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git stash --include-untracked 2>/dev/null || true
-          git checkout "$BASE_SHA"
+          # Make origin/<base> available for the diff. The checkout is full-depth
+          # (fetch-depth: 0), so this stays unshallow and the merge-base is reachable.
+          git fetch --no-tags origin "$BASE_REF"
 
-          cargo llvm-cov clean --workspace 2>/dev/null || true
+          set +e
+          COMPARE_BRANCH="origin/${BASE_REF}" scripts/coverage.sh gate
+          STATUS=$?
+          set -e
 
-          BASE_PALLET_COV=$(cargo llvm-cov --lib \
-            -p pallet-storage-provider \
-            -p pallet-drive-registry \
-            -p pallet-s3-registry \
-            --ignore-filename-regex='(weights\.rs|runtime_api\.rs|mock\.rs|primitives/|benchmarking\.rs|bechmarking\.rs)' \
-            --summary-only 2>&1 \
-            | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          if [ -z "$BASE_PALLET_COV" ]; then
-            echo "ERROR: Failed to measure base pallet coverage (build or test failure?)"
+          {
+            echo "## Patch coverage vs \`${BASE_REF}\` (gate: ${MIN_PATCH_COV}%)"
+            echo ""
+            if [ -s patch-coverage.md ]; then cat patch-coverage.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::Patch coverage below ${MIN_PATCH_COV}% — add tests for the new/changed lines listed in the job summary."
             exit 1
           fi
-          echo "BASE_PALLET_COV=$BASE_PALLET_COV" >> $GITHUB_ENV
-          echo "Base pallet coverage: ${BASE_PALLET_COV}%"
-
-          cargo llvm-cov clean --workspace 2>/dev/null || true
-
-          # Discover available integration test targets from filesystem
-          TEST_FLAGS=""
-          for f in provider-node/tests/*_integration.rs; do
-            [ -f "$f" ] || continue
-            t=$(basename "$f" .rs)
-            TEST_FLAGS="$TEST_FLAGS --test $t"
-          done
-
-          if [ -n "$TEST_FLAGS" ]; then
-            BASE_PROVIDER_COV=$(cargo llvm-cov $TEST_FLAGS \
-              -p storage-provider-node \
-              --ignore-filename-regex='(\.cargo|rustc|_subxt\.rs|command\.rs|cli\.rs|main\.rs)' \
-              --summary-only 2>&1 \
-              | grep '^TOTAL' | awk '{print $10}' | tr -d '%')
-          else
-            BASE_PROVIDER_COV=0
-          fi
-          echo "BASE_PROVIDER_COV=$BASE_PROVIDER_COV" >> $GITHUB_ENV
-          echo "Base provider coverage: ${BASE_PROVIDER_COV}%"
-
-          git checkout -
-          git stash pop 2>/dev/null || true
-
-      - name: Compare coverage
-        run: |
-          echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "  Rust Coverage (PR vs base)"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
-
-          FAILED=0
-          for COMPONENT in PALLET PROVIDER; do
-            eval "PR_VAL=\$PR_${COMPONENT}_COV"
-            eval "BASE_VAL=\$BASE_${COMPONENT}_COV"
-            LABEL=$(echo "$COMPONENT" | tr '[:upper:]' '[:lower:]')
-            # Treat empty values as 0
-            PR_VAL="${PR_VAL:-0}"
-            BASE_VAL="${BASE_VAL:-0}"
-            DECREASED=$(awk "BEGIN { print ($PR_VAL < $BASE_VAL) ? 1 : 0 }")
-            if [ "$DECREASED" = "1" ]; then
-              echo "FAIL: $LABEL coverage decreased: ${BASE_VAL}% → ${PR_VAL}%"
-              FAILED=1
-            else
-              echo "PASS: $LABEL coverage: ${BASE_VAL}% → ${PR_VAL}%"
-            fi
-          done
-
-          echo ""
-          if [ "$FAILED" = "1" ]; then
-            echo "Coverage decreased — add tests to cover new or modified code."
-            exit 1
-          fi
+          echo "Patch coverage meets the ${MIN_PATCH_COV}% threshold."
 
   # Aggregate gate — the stable check to require in branch protection, instead
   # of pinning each job (fmt/check/clippy/test/benchmarks) individually.
   basic-checks:
     name: Basic checks
-    needs: [changes, check-fmt, check, clippy, test, benchmarks, coverage]
+    needs: [changes, check-fmt, check-workspace-inheritance, check, clippy, test, benchmarks, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:

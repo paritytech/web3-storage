@@ -148,18 +148,16 @@ impl MembershipResolver for ChainMembershipResolver {
 
         let api = self.api().await?;
 
-        let storage_query = subxt::dynamic::storage(
-            "StorageProvider",
-            "Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let storage_query =
+            subxt::dynamic::storage::<(Value,), Value>("StorageProvider", "Buckets");
 
-        let result = api
-            .storage()
-            .at_latest()
+        let at = api
+            .at_current_block()
             .await
-            .map_err(|e| format!("Failed to get storage: {e}"))?
-            .fetch(&storage_query)
+            .map_err(|e| format!("Failed to get storage: {e}"))?;
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::u128(bucket_id as u128),))
             .await
             .map_err(|e| format!("Failed to fetch bucket: {e}"))?;
 
@@ -169,7 +167,7 @@ impl MembershipResolver for ChainMembershipResolver {
         };
 
         let decoded = bucket_value
-            .to_value()
+            .decode()
             .map_err(|e| format!("Failed to decode bucket: {e}"))?;
 
         let members_val = match decoded.at("members") {
@@ -238,10 +236,32 @@ fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
     }
 }
 
-/// Verify an sr25519 signature from an Authorization header.
+/// Verify an sr25519 signature from an `Authorization` header.
 ///
-/// Header format: `Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>`
-/// Signed message: `web3storage:<METHOD>:<bucket_id>:<timestamp>`
+/// The client signs the request by building the message
+///
+/// ```text
+/// web3storage:<METHOD>:<bucket_id>:<timestamp>
+/// ```
+///
+/// and sending the signature back in the `Authorization` header
+///
+/// ```text
+/// Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+/// ```
+///
+/// where:
+/// - `METHOD` is the upper-case HTTP verb of the request (`GET`, `PUT`, …).
+/// - `bucket_id` is the decimal bucket id the request targets.
+/// - `timestamp` is the client's current Unix time in **seconds**; the same
+///   string is used in both the signed message and the header. It must be
+///   within `max_skew` of the server clock or the request is rejected with
+///   [`Error::TimestampExpired`].
+/// - `pubkey_hex` / `signature_hex` are hex (optionally `0x`-prefixed) encodings
+///   of the 32-byte sr25519 public key and 64-byte signature.
+///
+/// On success returns the [`AccountId32`] derived from the recovered public key;
+/// the caller maps that account to a bucket role in [`require_role`].
 pub fn verify_signature(
     auth_header: &str,
     method: &str,
@@ -308,7 +328,9 @@ pub fn verify_signature(
 
 /// Check that the caller has sufficient permissions.
 ///
-/// If auth is disabled, this is a no-op (returns Ok).
+/// Auth is enforced by default. This is a no-op (returns `Ok`) only when the
+/// operator started the node with `--disable-auth-i-know-what-i-am-doing`, which
+/// strips the membership config from the state.
 pub async fn require_role(
     state: &ProviderState,
     auth_header: Option<&str>,

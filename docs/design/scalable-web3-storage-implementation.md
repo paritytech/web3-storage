@@ -105,6 +105,20 @@ Primary providers don't sync with each other. Clients are responsible for upload
 
 ## On-Chain: Pallet Interface
 
+### The anchor clock (block-number denomination)
+
+Every duration, deadline and timeout in this pallet is measured against the
+**anchor block** — sourced from `Config::BlockNumberProvider` (the relay chain in
+production) — not the parachain block height, so wall-clock durations stay stable
+when the parachain block time changes.
+
+Read it via `Pallet::current_anchor_block()` on-chain, or the
+`current_anchor_block` / `anchor_block_time_millis` runtime APIs off-chain — never
+a raw `frame_system::block_number()`, which is the parachain height and unrelated
+to the anchor on any network where the clocks differ. Pseudocode below that still
+shows `frame_system::block_number()` is illustrative; the implementation uses the
+anchor.
+
 ### Pallet Config
 
 ```rust
@@ -142,7 +156,8 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type MaxChunkSize: Get<u32>;
 
-    /// Timeout for challenge response (e.g., ~48 hours in blocks).
+    /// Timeout for challenge response (e.g., ~48 hours, in anchor blocks — see
+    /// the anchor-clock note above).
     #[pallet::constant]
     type ChallengeTimeout: Get<BlockNumberFor<Self>>;
 
@@ -178,18 +193,36 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     type MaxBucketsPerMember: Get<u32>;
 
     /// Minimum number of blocks between announcing a deregistration and
-    /// being allowed to complete it. Must be `>= ChallengeTimeout` so any
-    /// challenge created up to the announcement block matures while the
-    /// provider is still slashable.
+    /// being allowed to complete it. Must be strictly `> ChallengeTimeout`
+    /// so any challenge created up to the announcement block matures while
+    /// the provider is still slashable, and `> RequestTimeout` so a
+    /// pre-deregistration agreement quote expires before re-registration.
     #[pallet::constant]
     type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+
+    /// Caps the challenges sharing one deadline (anchor block) and the
+    /// `on_initialize` sweep's per-block slash budget.
+    #[pallet::constant]
+    type MaxChallengesPerDeadline: Get<u16>;
+
+    /// The anchor clock: source of the block number every duration and
+    /// deadline above is measured against (the relay chain in production,
+    /// `frame_system` in tests). Pinned to the parachain block-number type.
+    type BlockNumberProvider: BlockNumberProvider<BlockNumber = SystemBlockNumberFor<Self>>;
+
+    /// Milliseconds per anchor block (6000 for a relay-chain anchor).
+    /// Exposed via the `anchor_block_time_millis` runtime API.
+    #[pallet::constant]
+    type AnchorBlockTimeMillis: Get<u64>;
 
     /// Weight information for extrinsics.
     type WeightInfo: WeightInfo;
 }
 ```
 
-Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`):
+Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`).
+All durations are in anchor (relay-chain) blocks — `RC_HOURS`, not the
+parachain `HOURS`:
 
 | Constant | Value |
 |---|---|
@@ -199,15 +232,17 @@ Reference runtime values (see `runtimes/web3-storage-local/src/storage.rs`):
 | `MaxMembers` | `100` |
 | `MaxPrimaryProviders` | `5` |
 | `MaxChunkSize` | `262_144` (256 KiB) |
-| `ChallengeTimeout` | `48 * HOURS` |
-| `SettlementTimeout` | `24 * HOURS` |
-| `RequestTimeout` | `6 * HOURS` |
-| `DefaultCheckpointInterval` | `100` blocks |
-| `DefaultCheckpointGrace` | `20` blocks |
+| `ChallengeTimeout` | `48 * RC_HOURS` |
+| `SettlementTimeout` | `24 * RC_HOURS` |
+| `RequestTimeout` | `6 * RC_HOURS` |
+| `DefaultCheckpointInterval` | `100` anchor blocks (~10 min) |
+| `DefaultCheckpointGrace` | `20` anchor blocks (~2 min) |
 | `CheckpointReward` | `1_000_000_000_000` (1 token) |
 | `CheckpointMissPenalty` | `500_000_000_000` (0.5 token) |
 | `MaxBucketsPerMember` | `1_000` |
-| `DeregisterAnnouncementPeriod` | `48 * HOURS` |
+| `DeregisterAnnouncementPeriod` | `54 * RC_HOURS` (48h challenge window + 6h grace) |
+| `MaxChallengesPerDeadline` | `1_000` |
+| `AnchorBlockTimeMillis` | `6_000` |
 | `Treasury` | derived from `PalletId(*b"py/trsry")` |
 
 ### Storage Items
@@ -368,12 +403,8 @@ pub struct Bucket<T: Config> {
 }
 
 pub struct BucketSnapshot<BlockNumber> {
-    /// Canonical MMR root
-    pub mmr_root: H256,
-    /// Start sequence number
-    pub start_seq: u64,
-    /// Number of leaves in the MMR
-    pub leaf_count: u64,
+    /// Canonical MMR commitment at this checkpoint
+    pub commitment: Commitment,
     /// Block at which checkpointed
     pub checkpoint_block: BlockNumber,
     /// Bitfield indicating which primary providers signed this snapshot.
@@ -384,6 +415,11 @@ pub struct BucketSnapshot<BlockNumber> {
     /// indices are stable within a checkpoint; if it changes between checkpoints
     /// the bitfield is regenerated at the next checkpoint.
     pub primary_signers: Vec<u8>,
+    /// The `nonce` value from the `CommitmentPayload` that the original
+    /// signers signed. Required by `extend_checkpoint` so a late-arriving
+    /// signature can be verified against the same payload the initial
+    /// signers committed to.
+    pub commitment_nonce: u64,
 }
 // Canonical range is [start_seq, start_seq + leaf_count)
 // Destructive writes (new MMR that allows pruning old) must set start_seq >= old_start_seq + old_leaf_count
@@ -495,15 +531,30 @@ pub struct ReplicaRequestParams<T: Config> {
     pub min_sync_interval: BlockNumberFor<T>,
 }
 
-/// Pending challenges indexed by deadline block.
-/// Challenges per block are bounded by weight limits (creating challenges consumes weight).
+/// Pending challenges, keyed by (deadline anchor block, per-deadline index).
+/// At most `MaxChallengesPerDeadline` challenges share a deadline; expired
+/// deadlines are drained by the `on_initialize` slash sweep.
 #[pallet::storage]
-pub type Challenges<T: Config> = StorageMap<
+pub type Challenges<T: Config> = StorageDoubleMap<
     _,
-    Blake2_128Concat,
-    BlockNumberFor<T>,
-    Vec<Challenge<T>>,
+    Blake2_128Concat, BlockNumberFor<T>, // deadline (anchor block)
+    Blake2_128Concat, u16,               // index within the deadline
+    Challenge<T>,
 >;
+
+/// Per-deadline index allocator for `Challenges` (monotone; never reused
+/// within a deadline, cleared when the sweep drains the deadline).
+#[pallet::storage]
+pub type NextChallengeIndex<T: Config> =
+    StorageMap<_, Blake2_128Concat, BlockNumberFor<T>, u16, ValueQuery>;
+
+/// Cursor of the `on_initialize` slash sweep: every deadline up to and
+/// including this anchor block has been drained. Each block the sweep
+/// advances it toward the current anchor (exclusive), slashing expired
+/// challenges as it goes, capped per block by a span and slash budget.
+#[pallet::storage]
+pub type LastSweptChallengeBlock<T: Config> =
+    StorageValue<_, BlockNumberFor<T>, OptionQuery>;
 
 /// Challenge identifier combining deadline and index.
 /// Challenges are stored by deadline block for efficient expiry processing.
@@ -524,20 +575,19 @@ pub struct Challenge<T: Config> {
     pub challenger: T::AccountId,
     /// MMR root the provider committed to
     pub mmr_root: H256,
-    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + leaf_index)
+    /// Start sequence of the commitment (needed to compute challenged_seq = start_seq + target.leaf_index)
     pub start_seq: u64,
     /// Leaf count of the committed MMR, used by `respond_to_challenge` to bind the
     /// proof to the exact `leaf_index` via `verify_mmr_proof`. Every challenge path
     /// supplies it: the snapshot's (challenge_checkpoint), the signed one
     /// (challenge_offchain), or the replica's synced range (challenge_replica).
     pub leaf_count: u64,
-    /// Leaf index within the MMR (relative to start_seq)
-    pub leaf_index: u64,
-    /// Chunk index within the leaf's data
-    pub chunk_index: u64,
+    /// Leaf + chunk being challenged (see `ChunkLocation`)
+    pub target: ChunkLocation,
     /// Deposit locked by the challenger when the challenge was created.
     /// Returned (in part) on successful defense, forfeited on invalid challenge,
-    /// returned with compensation if the provider is slashed.
+    /// refunded in full — with no reward — if the provider is slashed (the
+    /// slash goes to the Treasury; see "no reward beyond actual costs").
     pub deposit: BalanceOf<T>,
 }
 
@@ -611,11 +661,13 @@ provider can use any of the supported schemes.
 Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
 
-- `CommitmentPayload { version, bucket_id, mmr_root, start_seq, leaf_count }` —
-  what providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
-  `challenge_offchain`. For `challenge_offchain` the provider signs with
-  `leaf_count = 0` so the signature is reusable as the off-chain commitment.
-- `CheckpointProposal { version, bucket_id, mmr_root, start_seq, leaf_count, window }` —
+- `CommitmentPayload { version, bucket_id, commitment, nonce }` — what
+  providers sign for `commit`, `checkpoint`, `extend_checkpoint`, and
+  `challenge_offchain` (`commitment: Commitment` is defined in [Data
+  Structures](#data-structures)). For `challenge_offchain` the challenger
+  passes the signed `commitment` through unchanged so the pallet's payload
+  reconstruction matches the signature.
+- `CheckpointProposal { version, bucket_id, commitment, window }` —
   what providers sign for `provider_checkpoint`. The `window` field prevents
   cross-window replay.
 - The replica sync `roots` array (`[Option<H256>; 7]`) — signed for
@@ -693,9 +745,7 @@ pub enum Event<T: Config> {
     },
     BucketCheckpointed {
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         providers: Vec<T::AccountId>,
     },
     ProviderAddedToBucket {
@@ -811,7 +861,13 @@ pub enum Event<T: Config> {
         challenger: T::AccountId,
         respond_by: BlockNumberFor<T>,
     },
-    /// Provider responded successfully to a challenge
+    /// Provider responded successfully to a challenge.
+    /// `provider_cost` is the fraction of the response tx fee the provider
+    /// bears itself (paid from its account, never its stake): a share per the
+    /// cost-split table for authorized challengers, and always 0 for public
+    /// challengers (who fund the provider's fee in full). `challenger_cost` is
+    /// what the challenger's deposit ultimately funded; any excess deposit is
+    /// returned.
     ChallengeDefended {
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         provider: T::AccountId,
@@ -916,9 +972,10 @@ sp_api::decl_runtime_apis! {
         fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
 
         // ── Challenges ────────────────────────────────────────────────────
-        /// Challenges expiring at a specific block. Used by provider nodes
-        /// and challengers to track outstanding challenges.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
+        fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+        fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
+        fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
     }
 }
 ```
@@ -1374,15 +1431,14 @@ impl<T: Config> Pallet<T> {
 
     /// Submit a new checkpoint with provider signatures (writers/admin only).
     /// 
-    /// Creates a new canonical state (new mmr_root, start_seq, leaf_count).
+    /// Creates a new canonical state (new `Commitment`).
     /// Requires at least min_providers signatures from providers in bucket.primary_providers.
     /// For frozen buckets: start_seq must equal frozen_start_seq (only leaf_count can increase).
     pub fn checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
+        nonce: u64,
         signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
@@ -1398,7 +1454,7 @@ impl<T: Config> Pallet<T> {
     pub fn extend_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
+        additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -1434,9 +1490,7 @@ impl<T: Config> Pallet<T> {
     pub fn provider_checkpoint(
         origin: OriginFor<T>,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
         window: u64,
         signatures: BoundedVec<
             (T::AccountId, MultiSignature),
@@ -1521,6 +1575,37 @@ impl<T: Config> Pallet<T> {
     // but this is acceptable: active writers have signatures and can use
     // challenge_offchain. The snapshot primarily protects cold/archival data
     // where nobody has recent signatures or doesn't bother to dig them up.
+    //
+    // **Who may challenge, and at what cost (all three modes):**
+    // Any signed account may challenge. The challenger's deposit must cover the
+    // provider's on-chain response cost (generously over-estimated; excess is
+    // refunded on resolution). On a valid response the provider's stake is
+    // never touched—only its response transaction fee is at issue, and the
+    // deposit reimburses it. How much of that cost the provider is made to bear
+    // depends on the challenger:
+    //
+    //   - **Authorized accounts** — `is_authorized(who, bucket)` is true:
+    //     bucket members (Admin/Writer/Reader) or the owner of any storage
+    //     agreement on the bucket (so replica funders qualify). The provider is
+    //     made to bear a fraction of the cost per the cost-split table
+    //     (response-time based); the challenger's deposit covers the rest. The
+    //     challenger's share never drops below 50%, so the split is leverage to
+    //     pressure the provider into serving—not a cheap recovery channel, even
+    //     for the owner.
+    //
+    //   - **General public** — everyone else: the challenger pays 100%; the
+    //     provider is reimbursed in full and loses no money on a valid response.
+    //     Still able to detect and slash a dead provider, and to recover a
+    //     chunk—at full cost. No split for two reasons: (1) a provider can't
+    //     serve everyone equally well, so a stranger being made to wait isn't
+    //     evidence of fault; (2) anti-DDoS—if strangers got the split, a crowd
+    //     could each pay little while collectively draining the provider.
+    //
+    // `is_authorized` is the single authorization predicate shared with
+    // private-bucket read access control. No per-challenge rate limiting or
+    // stored "last challenge" timestamp is needed: full-cost public challenges
+    // are self-limiting (the challenger pays in full every time) and leave an
+    // honest provider financially unharmed.
 
     /// Challenge on-chain checkpoint (no signatures needed).
     /// Provider must be in current snapshot's provider list.
@@ -1532,8 +1617,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> DispatchResult;
 
     /// Challenge off-chain commitment (requires provider signature).
@@ -1545,10 +1629,9 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_index: u64,
-        chunk_index: u64,
+        commitment: Commitment,
+        target: ChunkLocation,
+        nonce: u64,
         provider_signature: Signature,
     ) -> DispatchResult;
 
@@ -1559,8 +1642,7 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         provider: T::AccountId,
-        leaf_index: u64,
-        chunk_index: u64,
+        target: ChunkLocation,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -1687,6 +1769,10 @@ pub enum ChallengeResponse<T: Config> {
     Deleted {
         new_mmr_root: H256,
         new_start_seq: u64,
+        /// Block at which the admin signed the deletion commitment. Used as
+        /// the `nonce` in `CommitmentPayload` and recency-checked by the
+        /// pallet to prevent signature replay.
+        nonce: u64,
         admin: T::AccountId,
         admin_signature: Signature,
     },
@@ -1737,8 +1823,10 @@ Rules:
   `Writer` for uploads/commits, `Admin` for delete and other destructive ops.
 - The membership cache uses stale-while-revalidate: if the chain is briefly
   unreachable, cached membership keeps working.
-- When the provider node is launched without auth (`--auth-disabled`), all
-  endpoints are permissive — useful for local demos, never in production.
+- Authentication is enforced by default. The only way to turn it off is the
+  deliberately verbose `--disable-auth-i-know-what-i-am-doing` flag, which makes
+  every endpoint publicly readable and writable. It exists for throwaway local
+  experiments only and must never be used for a real provider.
 
 ### Content-Addressed Storage
 
@@ -1810,15 +1898,18 @@ POST /commit
 Request:
 {
   "bucket_id": "0x1234...",
-  "data_roots": ["0xroot1...", "0xroot2..."]  // roots to add to MMR
+  "data_roots": ["0xroot1...", "0xroot2..."],  // roots to add to MMR
+  "nonce": 12345  // CommitmentPayload nonce (block at expected submission)
 }
 
 Response (200 OK):
 {
   "mmr_root": "0xfed...",
   "start_seq": 0,
+  "leaf_count": 7,  // number of leaves after the commit
   "leaf_indices": [5, 6],  // indices assigned to each data_root
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345  // echo of the nonce the provider signed over
 }
 
 Response (400 Bad Request):
@@ -1874,7 +1965,7 @@ Response (404 Not Found):
 
 Get Commitment (for challenge_offchain)
 ───────────────────────────────────────
-GET /commitment?bucket_id=1234
+GET /commitment?bucket_id=1234&nonce=12345
 
 Response:
 {
@@ -1882,19 +1973,22 @@ Response:
   "mmr_root": "0xfed...",
   "start_seq": 0,
   "leaf_count": 42,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
 Note: The returned signature covers a `CommitmentPayload` with the **real**
-`leaf_count`, so it can back a bound `challenge_offchain` — the pallet verifies the
-signature over that `leaf_count` and uses it to bind the proof to `leaf_index` in
-`respond_to_challenge`. The `/commit` and `/delete` responses sign the same way and
-also return `leaf_count`; `/checkpoint-signature` is equivalent and is used for the
-on-chain `checkpoint` extrinsic.
+`leaf_count` (and `nonce`), so it can back a bound `challenge_offchain` — the
+pallet reconstructs the payload from the `commitment` the challenger passes and
+verifies the signature over it, then uses that `leaf_count` to bind the proof to
+`leaf_index` in `respond_to_challenge`. The values returned here must therefore be
+passed on-chain unchanged. The `/commit` and `/delete` responses sign the same way
+and also return `leaf_count`; `/checkpoint-signature` is equivalent and is used for
+the on-chain `checkpoint` extrinsic.
 
 Get Checkpoint Signature (for checkpoint extrinsic)
 ───────────────────────────────────────────────────
-GET /checkpoint-signature?bucket_id=1234
+GET /checkpoint-signature?bucket_id=1234&nonce=12345
 
 Response:
 {
@@ -1902,11 +1996,12 @@ Response:
   "mmr_root": "0xfed...",
   "start_seq": 0,
   "leaf_count": 42,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
-Note: Unlike `/commitment`, this signs the payload with the real
-`leaf_count` so the signature can be used as part of the
+Note: Signs the same payload as `/commitment`; kept as a separate endpoint
+for the checkpoint workflow, where the signature goes into the
 `checkpoint`/`extend_checkpoint` signatures BoundedVec.
 
 Get MMR Proof
@@ -1935,12 +2030,15 @@ Response (404 Not Found):
 Delete Data (admin only)
 ────────────────────────
 POST /delete
+Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<timestamp>
+  // admin-signed header (same scheme as other mutating endpoints);
+  // the signer must be an Admin member of the bucket
 
 Request:
 {
   "bucket_id": "0x1234...",
   "new_start_seq": 10,
-  "admin_signature": "0x..."  // signs {bucket_id, new_start_seq}
+  "nonce": 12345  // CommitmentPayload nonce for the post-deletion signature
 }
 
 Response (200 OK):
@@ -1948,7 +2046,8 @@ Response (200 OK):
   "mmr_root": "0xnew...",
   "start_seq": 10,
   "leaf_count": 5,
-  "provider_signature": "0x..."
+  "provider_signature": "0x...",
+  "nonce": 12345
 }
 
 Response (400 Bad Request):
@@ -2251,40 +2350,66 @@ confirm using an older historical root they successfully synced to.
 
 ## Data Structures
 
+### Commitment & ChunkLocation
+
+`Commitment` groups the `(mmr_root, start_seq, leaf_count)` triplet that
+identifies an MMR commitment over a contiguous range of leaves. It is a field
+group inside `CommitmentPayload`, `CheckpointProposal`, and `BucketSnapshot`,
+and the single argument the checkpoint/challenge extrinsics take in place of
+three loose fields.
+
+```rust
+pub struct Commitment {
+    /// Root of MMR containing all data_roots
+    pub mmr_root: H256,
+    /// Sequence number of the first leaf covered by this commitment
+    pub start_seq: u64,
+    /// Number of leaves covered by this commitment
+    pub leaf_count: u64,
+}
+
+// Canonical range: [start_seq, start_seq + leaf_count)
+```
+
+`ChunkLocation` is the companion *position* type (`Commitment` is a *range*):
+the exact chunk a challenge targets.
+
+```rust
+pub struct ChunkLocation {
+    /// Index of the challenged leaf within the MMR
+    pub leaf_index: u64,
+    /// Index of the challenged chunk within the leaf's data
+    pub chunk_index: u64,
+}
+```
+
 ### Signed Commitment
 
 Both payloads live in `storage_primitives` so the pallet, provider node, and
-client SDK encode/decode identically. They each carry a `version: u8`
-(currently `1`) for forward compatibility.
+client SDK encode/decode identically. They each carry a `version: u8` for
+forward compatibility.
 
 ```rust
 pub struct CommitmentPayload {
-    /// Protocol version for future compatibility (CURRENT_VERSION = 1)
+    /// Protocol version for future compatibility (CURRENT_VERSION = 2)
     pub version: u8,
     /// Reference to on-chain bucket. Mandatory — there is no anonymous /
     /// "best-effort" commitment mode in the current implementation.
     pub bucket_id: BucketId,
-    /// Root of MMR containing all data_roots
-    pub mmr_root: H256,
-    /// Sequence number of first leaf in this MMR
-    pub start_seq: u64,
-    /// Number of leaves in this MMR. Conventionally 0 when the signature is
-    /// produced for `challenge_offchain`, so the same signature is reusable
-    /// across multiple challenged leaf indices.
-    pub leaf_count: u64,
+    /// MMR commitment being signed over
+    pub commitment: Commitment,
+    /// Replay-protection nonce — the anchor (relay-chain) block number at the
+    /// time the signer signed. Checked against `current_anchor_block()`.
+    pub nonce: u64,
 }
 
 pub struct CheckpointProposal {
     pub version: u8,            // CURRENT_VERSION = 1
     pub bucket_id: BucketId,
-    pub mmr_root: H256,
-    pub start_seq: u64,
-    pub leaf_count: u64,
+    pub commitment: Commitment,
     /// Window number this proposal is for — prevents cross-window replay.
     pub window: u64,
 }
-
-// Canonical range for both: [start_seq, start_seq + leaf_count)
 ```
 
 ### MMR Leaf
@@ -2326,41 +2451,51 @@ pub struct MmrProof {
 ### Timeline
 
 ```
-1. Client initiates challenge on-chain
+1. Challenger initiates challenge on-chain
    └─ Provides: signed commitment, leaf_index, chunk_index
-   └─ Locks 100% of estimated challenge cost as deposit (margin for price fluctuations)
+   └─ Locks a generously over-estimated deposit covering the provider's
+      on-chain response cost (margin for fee fluctuations)
+   └─ Tier determined by is_authorized(challenger, bucket):
+      authorized (member or agreement owner) vs. general public
 
 2. Challenge window opens (1-2 days)
    └─ Provider must respond within window
-   └─ Cost split calculated based on response time (in blocks)
+   └─ Provider pays its response tx fee from its own account—NOT its stake
 
 3a. Provider responds with valid proof
-    └─ Challenge rejected
-    └─ Base cost split: 75% client / 25% provider (from stake)
-    └─ Dynamic adjustment based on response time:
-       • Fast response → provider pays less (e.g., 15%), client refunded more
-       • Slow response → provider pays more (e.g., 50%), client refunded less
-    └─ Client's deposit: pays their share, remainder refunded
-    └─ Client recovers data via the on-chain proof
+    └─ Challenge rejected; stake untouched
+    └─ Provider's response fee is reimbursed from the challenger's deposit:
+       • General public  → 100% reimbursed; provider bears nothing (money)
+       • Authorized      → reimbursed per the cost-split table; provider
+         is made to bear the remaining fraction (response-time based:
+         fast → provider bears less; slow → more). The challenger's
+         share never drops below 50%.
+    └─ Any deposit beyond what was used is returned to the challenger
+    └─ Challenger obtains the chunk via the on-chain proof (full on-chain
+       cost applies—a last-resort recovery path, not a cheap bulk channel)
 
 3b. Provider responds with deletion proof
     └─ Shows newer admin-signed commitment with start_seq > challenged seq
-    └─ Challenge rejected
-    └─ Challenger loses deposit (invalid challenge)
+    └─ Challenge rejected (data was legitimately deleted)
+    └─ Treated as a valid response: provider's fee reimbursed as in 3a,
+       remainder returned to challenger; stake untouched
 
 3c. Provider fails to respond / invalid proof
     └─ Provider's contract stake fully slashed
     └─ Challenger made whole from the slash: deposit refunded, tx fees
        reimbursed—but no reward beyond actual costs (no profit motive
-       for forcing slashes)
+       for forcing slashes), regardless of tier
     └─ Clear on-chain evidence of provider fault
 ```
 
-**Why this cost split?**
-- Provider always pays *something* when challenged (deterrent for ignoring off-chain requests)
-- Attacker pays more than victim in base case (griefing is expensive)
-- Fast responses are rewarded, slow responses penalized
-- The on-chain path is expensive for both parties, incentivizing off-chain resolution
+**Why this cost model?**
+- **Strangers can't drain a provider (anti-DDoS)**: A public challenge leaves an honest provider whole in money terms (fee fully reimbursed, stake untouched). If strangers got the split instead, a crowd could each pay little while collectively draining the provider; full-cost-per-stranger makes the attackers' cost scale with the damage. A stranger can still impose on-chain work and a reputation hit, but cannot extract value or grind down stake.
+- **A provider can't serve everyone equally**: so a stranger being made to wait (e.g. under a lot of load) isn't evidence of fault—unlike a paying counterparty's unanswered request.
+- **Owners get leverage, not cheap recovery**: the split lets a counterparty pressure the provider into serving, but with the challenger's share floored at 50% of a high on-chain cost, it stays a last-resort tool—recovering data at scale this way is unreasonably expensive even for the owner.
+- **Monetary exposure is bounded to chosen counterparties**: a provider is made to bear cost only for accounts it accepted agreements with (or the admin added)—it controls that risk by vetting whom it signs with.
+- **Off-chain resolution preferred**: answering on-chain means posting the data as a transaction—far costlier than serving the same bytes off-chain (the bandwidth is spent either way)—plus in-window hassle and reputation damage, even when the fee is reimbursed. So the provider serves directly.
+
+> **Note on the deposit/fee mechanic.** The deposit is sized to the *transaction cost* of the provider's response, not a slice of stake. A simple implementation: the provider pays the response fee from its account when it submits the proof, and the challenge-resolution logic refunds that fee out of the locked deposit (in full for public challengers, or the table fraction for authorized ones), returning any remainder to the challenger. No stake movement occurs on a valid response—stake is only ever touched by the slash in 3c.
 
 ### Verification
 

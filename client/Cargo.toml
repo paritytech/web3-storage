@@ -8,29 +8,29 @@ repository.workspace = true
 description = "Client library for scalable Web3 storage"
 
 [dependencies]
+provider-negotiation = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
 codec = { workspace = true, features = ["std"] }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
-serde_with = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
-base64 = "0.22"
-thiserror = "2.0"
+base64 = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rand = "0.8"
-chacha20poly1305 = "0.10"
-hex = "0.4"
-async-trait = "0.1"
+rand = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hex = { workspace = true, features = ["std"] }
+async-trait = { workspace = true }
 subxt = { workspace = true }
 subxt-signer = { workspace = true }
-futures = "0.3"
+futures = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 storage-provider-node = { workspace = true }
 axum = { workspace = true }
-tempfile = "3.10"
+tempfile = { workspace = true }

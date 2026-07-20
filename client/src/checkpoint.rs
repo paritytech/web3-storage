@@ -40,7 +40,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::BucketId;
+use storage_primitives::{BucketId, ChunkLocation};
 use subxt::dynamic::Value;
 use tokio::sync::{mpsc, RwLock};
 
@@ -860,17 +860,18 @@ impl CheckpointManager {
         bucket_storage_key.extend_from_slice(&key_hash);
         bucket_storage_key.extend_from_slice(&key_bytes);
 
-        let storage = api
-            .storage()
-            .at_latest()
+        let at = api
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let bucket_bytes = storage
-            .fetch_raw(bucket_storage_key)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
-            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
+        let bucket_bytes = match at.storage().fetch_raw(bucket_storage_key).await {
+            Ok(bytes) => bytes,
+            Err(subxt::error::StorageError::NoValueFound) => {
+                return Err(ClientError::Chain(format!("Bucket {bucket_id} not found")))
+            }
+            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch bucket: {e}"))),
+        };
 
         // Extract primary_providers from bucket raw bytes
         let provider_accounts = self.extract_primary_providers_from_raw(&bucket_bytes)?;
@@ -923,19 +924,20 @@ impl CheckpointManager {
         provider_storage_key.extend_from_slice(&key_hash);
         provider_storage_key.extend_from_slice(key_bytes);
 
-        let storage = api
-            .storage()
-            .at_latest()
+        let at = api
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let provider_bytes = storage
-            .fetch_raw(provider_storage_key)
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?
-            .ok_or_else(|| {
-                ClientError::Chain(format!("Provider {account_id:?} not found on chain"))
-            })?;
+        let provider_bytes = match at.storage().fetch_raw(provider_storage_key).await {
+            Ok(bytes) => bytes,
+            Err(subxt::error::StorageError::NoValueFound) => {
+                return Err(ClientError::Chain(format!(
+                    "Provider {account_id:?} not found on chain"
+                )))
+            }
+            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch provider: {e}"))),
+        };
 
         // Extract multiaddr and public_key from provider raw bytes
         let (multiaddr_bytes, public_key) =
@@ -1469,7 +1471,10 @@ impl CheckpointManager {
 
         // Submit and wait for finalization
         let tx_progress = api
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit: {e}")))?;
@@ -2056,7 +2061,14 @@ impl CheckpointManager {
 
             // Submit the challenge
             match challenger
-                .challenge_checkpoint(bucket_id, provider_ss58, leaf_index, chunk_index)
+                .challenge_checkpoint(
+                    bucket_id,
+                    provider_ss58,
+                    ChunkLocation {
+                        leaf_index,
+                        chunk_index,
+                    },
+                )
                 .await
             {
                 Ok(challenge_id) => {

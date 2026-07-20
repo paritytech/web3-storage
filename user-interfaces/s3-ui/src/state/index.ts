@@ -6,6 +6,7 @@ export {
   useIsConnected,
   useIsConnecting,
   useBlockNumber,
+  useAnchorBlock,
   useEndpoint,
   useConnectionError,
   connect,

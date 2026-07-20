@@ -6,19 +6,19 @@
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./playwright": "./src/playwright.ts"
   },
   "scripts": {},
   "dependencies": {
     "@polkadot-api/descriptors": "workspace:*",
     "@polkadot-api/substrate-bindings": "^0.20.3",
-    "@polkadot-labs/hdkd": "^0.0.28",
-    "@polkadot-labs/hdkd-helpers": "^0.0.30",
-    "@web3-storage/papi": "workspace:*",
-    "polkadot-api": "^2.1.6"
+    "@polkadot-labs/hdkd-helpers": "^0.0.31",
+    "@web3-storage/sdk": "workspace:*",
+    "polkadot-api": "^2.1.7"
   },
   "devDependencies": {
-    "@types/node": "^25.9.2"
+    "@types/node": "^26.0.1"
   },
   "peerDependencies": {
     "@playwright/test": "^1.60.0"

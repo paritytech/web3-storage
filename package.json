@@ -1,0 +1,19 @@
+{
+  "name": "web3-storage",
+  "private": true,
+  "devDependencies": {
+    "c8": "^11.0.0",
+    "tsx": "^4.22.5"
+  },
+  "scripts": {
+    "postinstall": "pnpm --filter @web3-storage/papi run papi:install",
+    "papi:generate": "pnpm --filter @web3-storage/papi run papi:generate",
+    "test:unit": "pnpm --filter @web3-storage/core --filter @web3-storage/layer0 --filter @web3-storage/layer1 --filter @web3-storage/drive-ui --filter provider-dashboard --if-present run test:unit",
+    "test:e2e:drive-ui": "pnpm --filter @web3-storage/drive-ui run test",
+    "test:e2e:provider": "pnpm --filter provider-dashboard run test:e2e",
+    "e2e": "pnpm --filter web3-storage-papi-demo run e2e",
+    "demo": "pnpm --filter web3-storage-papi-demo run demo",
+    "typecheck:packages": "pnpm --filter './packages/*' --filter web3-storage-papi-demo run typecheck"
+  },
+  "packageManager": "pnpm@11.11.0+sha512.4463f65fd80ed80d69bc1d4bf163ee94f605c7380fc318bb5b2ebe15f8cd12d49c51a4d59e951b401e764d3b6ca751cbf51bc50ed7001a6bcb4935e684c34882"
+}

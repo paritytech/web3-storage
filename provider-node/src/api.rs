@@ -26,7 +26,7 @@ use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use storage_primitives::AgreementTerms;
-use storage_primitives::{CheckpointProposal, CommitmentPayload};
+use storage_primitives::{CheckpointProposal, Commitment, CommitmentPayload};
 use tokio_rate_limit::RateLimiter;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -47,6 +47,29 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
             .build()
             .expect("static `/negotiate` rate-limit config is valid"),
     );
+
+    // Restrict CORS to the configured origins, or stay permissive when unset.
+    let cors = match &state.cors_allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let allowed: Vec<axum::http::HeaderValue> =
+                origins.iter().filter_map(|o| o.parse().ok()).collect();
+            CorsLayer::new()
+                .allow_origin(allowed)
+                // Only the verbs and request headers the API actually serves.
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::PUT,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::HEAD,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                ])
+        }
+        _ => CorsLayer::permissive(),
+    };
 
     Router::new()
         // Health and info
@@ -108,7 +131,7 @@ pub fn create_router(state: Arc<ProviderState>) -> Router {
         .route("/fs/:bucket_id/index_root", get(fs_api::fs_index_root))
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256 MB
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
 }
 
@@ -242,8 +265,18 @@ async fn get_node(
 
 async fn upload_node(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<UploadNodeRequest>,
 ) -> Result<Json<UploadNodeResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "PUT",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     // Decode hash
     let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
         expected: request.hash.clone(),
@@ -319,8 +352,18 @@ async fn check_exists(
 
 async fn commit(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CommitRequest>,
 ) -> Result<Json<CommitResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     let data_roots: Vec<H256> = request
         .data_roots
         .iter()
@@ -336,10 +379,19 @@ async fn commit(
     let (mmr_root, start_seq, leaf_count, leaf_indices) =
         state.storage.commit(request.bucket_id, data_roots)?;
 
-    // leaf_count is returned atomically by `commit` (consistent with mmr_root under
-    // the same lock) and signed into the commitment so the signature can back a
-    // bound `challenge_offchain`.
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, leaf_count);
+    // `leaf_count` is returned atomically by `commit` (consistent with
+    // `mmr_root`/`start_seq` under the same lock) and signed into the
+    // commitment so the signature matches what the pallet reconstructs from the
+    // challenger's args and can back a bound `challenge_offchain`.
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        request.nonce,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
@@ -348,6 +400,7 @@ async fn commit(
         leaf_count,
         leaf_indices,
         provider_signature: signature,
+        nonce: request.nonce,
     }))
 }
 
@@ -404,13 +457,16 @@ async fn get_commitment(
         .ok_or(Error::BucketNotFound(query.bucket_id))?;
 
     // Create commitment payload and sign it. The real `leaf_count` is signed so
-    // the returned signature can back a bound `challenge_offchain` (the pallet now
+    // the returned signature can back a bound `challenge_offchain` (the pallet
     // verifies the signature over the real leaf_count and binds the leaf_index).
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        bucket.leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count: bucket.leaf_count,
+        },
+        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -420,13 +476,14 @@ async fn get_commitment(
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
+        nonce: query.nonce,
     }))
 }
 
 /// Return a checkpoint-compatible signature.
 ///
-/// Signs the same `CommitmentPayload` (with the real `leaf_count`) as `/commitment`
-/// — the two differ only in response shape. This one returns a
+/// Signs the same `CommitmentPayload` (with the real `leaf_count`) as
+/// `/commitment` — the two differ only in response shape. This one returns a
 /// `CheckpointSignatureResponse` intended for the on-chain `checkpoint` extrinsic.
 async fn get_checkpoint_signature(
     State(state): State<Arc<ProviderState>>,
@@ -439,12 +496,15 @@ async fn get_checkpoint_signature(
 
     let leaf_count = bucket.leaf_count;
 
-    // Sign with real leaf_count for on-chain checkpoint verification
+    // Sign with real leaf_count for on-chain checkpoint verification.
     let payload = CommitmentPayload::new(
         query.bucket_id,
-        bucket.mmr_root,
-        bucket.start_seq,
-        leaf_count,
+        Commitment {
+            mmr_root: bucket.mmr_root,
+            start_seq: bucket.start_seq,
+            leaf_count,
+        },
+        query.nonce,
     );
     let signature = state.sign(&payload.encode())?;
 
@@ -454,6 +514,7 @@ async fn get_checkpoint_signature(
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
+        nonce: query.nonce,
     }))
 }
 
@@ -529,18 +590,39 @@ async fn list_buckets(State(state): State<Arc<ProviderState>>) -> Json<ListBucke
 
 async fn delete_data(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<DeleteRequest>,
 ) -> Result<Json<DeleteResponse>, Error> {
-    // Note: In production, would verify admin_signature
-    let _ = request.admin_signature;
+    // Admin-only, unlike the Writer-level deletes in the S3/FS layers: this L0
+    // prune rewrites the underlying MMR (dropping every leaf below
+    // `new_start_seq`), whereas the L1 deletes only drop an index entry and
+    // leave the tree intact. Rewriting the commitment is strictly more
+    // destructive, so it warrants the highest role.
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        request.bucket_id,
+        RequiredRole::Admin,
+    )
+    .await?;
 
     let (mmr_root, start_seq, leaf_count) = state
         .storage
         .delete_before(request.bucket_id, request.new_start_seq)?;
 
-    // Create commitment payload and sign it over the real leaf_count so the
-    // signature can back a bound `challenge_offchain` against the post-delete state.
-    let payload = CommitmentPayload::new(request.bucket_id, mmr_root, start_seq, leaf_count);
+    // Create commitment payload and sign it over the real post-delete
+    // leaf_count so the signature can back a bound `challenge_offchain` against
+    // the post-delete state.
+    let payload = CommitmentPayload::new(
+        request.bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        request.nonce,
+    );
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
@@ -548,6 +630,7 @@ async fn delete_data(
         start_seq,
         leaf_count,
         provider_signature: signature,
+        nonce: request.nonce,
     }))
 }
 
@@ -811,8 +894,8 @@ async fn get_historical_roots(
 ///
 /// Returns one of several `503`s when a prerequisite is missing:
 /// - `signing_unavailable` — no `--keyfile`.
-/// - `chain_state_not_ready` — `current_block` and `request_timeout` are not both
-///   known from the chain yet.
+/// - `chain_state_not_ready` — `current_anchor_block` and `request_timeout` are
+///   not both known from the chain yet.
 /// - `provider_info_unavailable` — provider not registered on chain yet; the
 ///   chain-state coordinator clears this automatically once registration lands, no
 ///   restart needed.
@@ -826,11 +909,11 @@ async fn negotiate_terms(
 ) -> Result<Json<SignedTerms>, Error> {
     let keypair = state.keypair.as_ref().ok_or(Error::SigningUnavailable)?;
 
-    // Both current_block and RequestTimeout must be known before we can sign —
-    // otherwise we'd emit unbounded or already-expired terms.
-    let current_block = state
+    // Both the anchor block and RequestTimeout must be known before we can sign
+    // — otherwise we'd emit unbounded or already-expired terms.
+    let anchor_block = state
         .chain_state
-        .current_block
+        .current_anchor_block
         .load(std::sync::atomic::Ordering::Relaxed);
     let request_timeout = state
         .chain_state
@@ -839,7 +922,7 @@ async fn negotiate_terms(
         .as_ref()
         .map(|c| c.request_timeout)
         .unwrap_or(0);
-    if current_block == 0 || request_timeout == 0 {
+    if anchor_block == 0 || request_timeout == 0 {
         return Err(Error::ChainStateNotReady);
     }
 
@@ -880,14 +963,12 @@ async fn negotiate_terms(
         max_bytes: req.max_bytes,
         duration: req.duration,
         price_per_byte: info.price_per_byte,
-        valid_until: current_block.saturating_add(request_timeout),
+        valid_until: anchor_block.saturating_add(request_timeout),
         nonce: nonce_counter.next(),
         bucket_id: req.bucket_id,
         replica_params: req.replica_params,
     };
-    let signature = storage_client::sign_terms(keypair, &terms);
-
-    Ok(Json(SignedTerms { terms, signature }))
+    Ok(Json(provider_negotiation::sign_terms(keypair, terms)))
 }
 
 /// Get replica sync status for a bucket.

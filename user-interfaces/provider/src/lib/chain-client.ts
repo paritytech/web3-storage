@@ -9,63 +9,64 @@
  * tracked the migration from the previous dual @polkadot/api + PAPI setup.
  */
 
-import { createClient, Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload, type TypedApi } from 'polkadot-api'
-import { getWsProvider } from 'polkadot-api/ws'
+import { Enum, type PolkadotClient, type Transaction, type TxFinalizedPayload } from 'polkadot-api'
 import { type InjectedPolkadotAccount } from 'polkadot-api/pjs-signer'
-import { parachain } from '@polkadot-api/descriptors'
 import { BehaviorSubject } from 'rxjs'
-import { getSs58Prefix, isSameAddress } from '@web3-storage/papi'
+import { getSs58Prefix, isSameAddress, submitTx } from '@web3-storage/sdk'
+import {
+  clientReady$,
+  connectToChain,
+  disconnectFromChain as disconnectChain,
+  getClient,
+  requireApi,
+  requireClient,
+  subscribeToBlocks,
+} from '@web3-storage/chain-client'
 
 export type { PolkadotClient }
-type ParachainApi = TypedApi<typeof parachain>
+export { clientReady$, connectToChain, getClient, subscribeToBlocks }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Connection state
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The generic connection lifecycle lives in the shared @web3-storage/chain-client
+// package (imported/re-exported above); only provider-specific state stays here.
 
-let client: PolkadotClient | null = null
-let api: ParachainApi | null = null
-let currentEndpoint: string = ''
+/**
+ * The pallet's anchor block — the clock every on-chain duration (agreement
+ * expiry, challenge deadlines, checkpoint windows, deregister cooldown) is
+ * measured against. NOT the parachain height: on live networks the two clocks
+ * differ by millions of blocks, so pallet-clock comparisons must read this.
+ */
+export const anchorBlock$ = new BehaviorSubject<number | undefined>(undefined)
 
-export const clientReady$ = new BehaviorSubject<boolean>(false)
-export const blockNumber$ = new BehaviorSubject<number | undefined>(undefined)
-
-export async function connectToChain(endpoint: string): Promise<PolkadotClient> {
-  if (client && currentEndpoint === endpoint) return client
-
-  try {
-    currentEndpoint = endpoint
-    client = createClient(getWsProvider(endpoint))
-    api = client.getTypedApi(parachain)
-    clientReady$.next(true)
-    return client
-  } catch (error) {
-    clientReady$.next(false)
-    throw error
+/**
+ * Refresh [`anchorBlock$`] from the `current_anchor_block` runtime API. The
+ * unsafe API resolves against live metadata, so no descriptor regeneration is
+ * needed; on runtimes without the API the parachain height is the pallet
+ * clock, so fall back to it.
+ */
+export async function refreshAnchorBlock(parachainBlock: number): Promise<void> {
+  let anchor = parachainBlock
+  const client = getClient()
+  if (client) {
+    try {
+      anchor = Number(
+        await client.getUnsafeApi().apis.StorageProviderApi.current_anchor_block()
+      )
+    } catch { /* pre-anchor runtime */ }
   }
+  // Publish only if we are still on the connection this answer came from —
+  // a call resolving after a disconnect/reconnect would resurrect a stale
+  // anchor from the previous chain.
+  if (getClient() !== client) return
+  anchorBlock$.next(anchor)
 }
 
 export function disconnectFromChain(): void {
-  client?.destroy()
-  client = null
-  api = null
-  currentEndpoint = ''
-  clientReady$.next(false)
-  blockNumber$.next(undefined)
-}
-
-export function getClient(): PolkadotClient | null {
-  return client
-}
-
-function requireApi(): ParachainApi {
-  if (!api) throw new Error('Not connected to chain')
-  return api
-}
-
-function requireClient(): PolkadotClient {
-  if (!client) throw new Error('Not connected to chain')
-  return client
+  disconnectChain()
+  anchorBlock$.next(undefined)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ function requireClient(): PolkadotClient {
 export async function getChainProperties(): Promise<{
   tokenDecimals: number
   tokenSymbol: string
-  blockTimeMs: number
+  anchorBlockTimeMs: number
   minProviderStake: bigint
   ss58Prefix: number
   specName: string
@@ -86,14 +87,16 @@ export async function getChainProperties(): Promise<{
   // them via constants / spec data.
   let tokenDecimals = 12
   let tokenSymbol = 'UNIT'
-  let blockTimeMs = 6000
+  let anchorBlockTimeMs = 6000
   let minProviderStake = 1_000_000_000_000_000n
   let ss58Prefix = getSs58Prefix()
   let specName = ''
   let specVersion = 0
   let genesisHash = ''
 
-  if (client && api) {
+  const client = getClient()
+  if (client) {
+    const api = requireApi()
     try {
       const spec = await client.getChainSpecData()
       genesisHash = spec.genesisHash || genesisHash
@@ -124,13 +127,21 @@ export async function getChainProperties(): Promise<{
       minProviderStake = await api.constants.StorageProvider.MinProviderStake()
     } catch { /* use default */ }
 
+    // Anchor-clock tick — deliberately NOT Aura.SlotDuration: every duration
+    // this UI formats (agreement duration, checkpoint interval/grace, provider
+    // min/max duration) is anchor-denominated (relay blocks), which the
+    // parachain block time will stop matching when it changes. The unsafe API
+    // resolves against live metadata, so no descriptor regeneration is needed;
+    // runtimes without the API keep the 6s default.
     try {
-      const period = await api.constants.Aura.SlotDuration()
-      blockTimeMs = Number(period)
+      const millis = await client
+        .getUnsafeApi()
+        .apis.StorageProviderApi.anchor_block_time_millis()
+      anchorBlockTimeMs = Number(millis)
     } catch { /* use default */ }
   }
 
-  return { tokenDecimals, tokenSymbol, blockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
+  return { tokenDecimals, tokenSymbol, anchorBlockTimeMs, minProviderStake, ss58Prefix, specName, specVersion, genesisHash }
 }
 
 export async function getGenesisHash(): Promise<string> {
@@ -153,8 +164,13 @@ export type TxStatus =
 export type TxProgressCallback = (status: TxStatus) => void
 
 /**
- * Sign + submit a transaction, wait for finalization, throw on chain-side
- * failure or signing error. Streams progress through the optional callback.
+ * Sign + submit a transaction via the sdk, wait for FINALIZATION, throw on
+ * chain-side failure or signing error. Streams progress through the optional
+ * callback.
+ *
+ * Finalized (not in-block) on purpose: this UI's state refreshers read at the
+ * default finalized head, so resolving earlier would refresh into stale state.
+ * No stale-nonce auto-retry — a user-visible retry is the right UX here.
  */
 async function submit(
   tx: Transaction,
@@ -162,54 +178,35 @@ async function submit(
   description: string,
   onProgress?: TxProgressCallback,
 ): Promise<TxFinalizedPayload> {
-  return new Promise((resolve, reject) => {
-    let resolved = false
-    const sub = tx.signSubmitAndWatch(signer.polkadotSigner).subscribe({
-      next: (event) => {
-        if (event.type === 'signed') {
+  try {
+    const result = await submitTx(tx, signer.polkadotSigner, {
+      mode: 'finalized',
+      retryStale: 0,
+      label: description,
+      onStatus: (u) => {
+        if (u.phase === 'signed') {
           onProgress?.({ type: 'broadcast', message: 'Transaction broadcast to network…' })
-        } else if (event.type === 'txBestBlocksState' && event.found) {
+        } else if (u.phase === 'best') {
           onProgress?.({
             type: 'inBlock',
             message: `${description} included in block`,
-            blockHash: event.block.hash,
+            blockHash: u.blockHash ?? '',
           })
-        } else if (event.type === 'finalized') {
+        } else if (u.phase === 'finalized') {
           onProgress?.({
             type: 'finalized',
             message: `${description} finalized`,
-            blockHash: event.block.hash,
+            blockHash: u.blockHash ?? '',
           })
-          if (event.ok) {
-            if (!resolved) {
-              resolved = true
-              sub.unsubscribe()
-              resolve(event)
-            }
-          } else {
-            const err = JSON.stringify(event.dispatchError, (_, v) =>
-              typeof v === 'bigint' ? v.toString() : v,
-            )
-            const message = `${description} failed on-chain: ${err}`
-            onProgress?.({ type: 'error', message })
-            if (!resolved) {
-              resolved = true
-              sub.unsubscribe()
-              reject(new Error(message))
-            }
-          }
-        }
-      },
-      error: (err) => {
-        const message = err instanceof Error ? err.message : String(err)
-        onProgress?.({ type: 'error', message })
-        if (!resolved) {
-          resolved = true
-          reject(err instanceof Error ? err : new Error(message))
         }
       },
     })
-  })
+    return result as TxFinalizedPayload
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    onProgress?.({ type: 'error', message })
+    throw err instanceof Error ? err : new Error(message)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -371,7 +368,8 @@ export async function getAccountBalance(address: string): Promise<{
 
 export async function getProviderAgreements(address: string): Promise<OnChainAgreement[]> {
   const entries = await requireApi().query.StorageProvider.StorageAgreements.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // expires_at is on the pallet's anchor clock, so the comparison must be too.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const out: OnChainAgreement[] = []
   for (const { keyArgs, value } of entries) {
     const [bucketIdRaw, providerAddr] = keyArgs
@@ -380,7 +378,7 @@ export async function getProviderAgreements(address: string): Promise<OnChainAgr
     const expiresAt = value.expires_at
     let status: 'active' | 'expired' | 'terminated' = 'active'
     if (value.extensions_blocked) status = 'terminated'
-    else if (currentBlock > expiresAt && expiresAt > 0) status = 'expired'
+    else if (anchorBlock > expiresAt && expiresAt > 0) status = 'expired'
     out.push({
       id: bucketId,
       bucketId,
@@ -426,8 +424,8 @@ export async function getProviderCheckpoints(address: string): Promise<OnChainCh
     if (!bucket || !bucket.snapshot) continue
     out.push({
       bucketId,
-      mmrRoot: bucket.snapshot.mmr_root,
-      leafCount: Number(bucket.snapshot.leaf_count),
+      mmrRoot: bucket.snapshot.commitment.mmr_root,
+      leafCount: Number(bucket.snapshot.commitment.leaf_count),
       submittedAt: bucket.snapshot.checkpoint_block,
       blockNumber: bucket.snapshot.checkpoint_block,
       providers: bucket.primary_providers,
@@ -453,9 +451,9 @@ export async function getBucketDetails(
 
     const snapshot: OnChainBucketSnapshot | null = bucket.snapshot
       ? {
-          mmrRoot: bucket.snapshot.mmr_root,
-          startSeq: Number(bucket.snapshot.start_seq),
-          leafCount: Number(bucket.snapshot.leaf_count),
+          mmrRoot: bucket.snapshot.commitment.mmr_root,
+          startSeq: Number(bucket.snapshot.commitment.start_seq),
+          leafCount: Number(bucket.snapshot.commitment.leaf_count),
           checkpointBlock: bucket.snapshot.checkpoint_block,
         }
       : null
@@ -522,27 +520,28 @@ export async function getBucketDetails(
 
 export async function getProviderChallenges(address: string): Promise<OnChainChallenge[]> {
   const entries = await requireApi().query.StorageProvider.Challenges.getEntries()
-  const currentBlock = blockNumber$.getValue() || 0
+  // Challenge deadlines are on the pallet's anchor clock.
+  const anchorBlock = anchorBlock$.getValue() || 0
   const challenges: OnChainChallenge[] = []
-  for (const { keyArgs, value } of entries) {
+  // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry is
+  // a single challenge with keyArgs = [deadline, index] and value = Challenge.
+  for (const { keyArgs, value: ch } of entries) {
     const deadline = Number(keyArgs[0])
-    for (let idx = 0; idx < value.length; idx++) {
-      const ch = value[idx]
-      if (!isSameAddress(ch.provider, address)) continue
-      challenges.push({
-        id: idx,
-        bucketId: Number(ch.bucket_id),
-        challenger: ch.challenger,
-        provider: ch.provider,
-        leafIndex: Number(ch.leaf_index),
-        chunkIndex: Number(ch.chunk_index),
-        mmrRoot: ch.mmr_root,
-        startSeq: Number(ch.start_seq),
-        status: currentBlock > deadline ? 'expired' : 'pending',
-        createdAt: 0,
-        deadline,
-      })
-    }
+    const index = Number(keyArgs[1])
+    if (!isSameAddress(ch.provider, address)) continue
+    challenges.push({
+      id: index,
+      bucketId: Number(ch.bucket_id),
+      challenger: ch.challenger,
+      provider: ch.provider,
+      leafIndex: Number(ch.target.leaf_index),
+      chunkIndex: Number(ch.target.chunk_index),
+      mmrRoot: ch.mmr_root,
+      startSeq: Number(ch.start_seq),
+      status: anchorBlock > deadline ? 'expired' : 'pending',
+      createdAt: 0,
+      deadline,
+    })
   }
   return challenges.sort((a, b) => b.deadline - a.deadline)
 }
@@ -750,27 +749,16 @@ export async function submitRespondToChallenge(
 // Subscriptions
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function subscribeToBlocks(callback: (blockNumber: number) => void): () => void {
-  if (!client) {
-    console.warn('Cannot subscribe to blocks: not connected')
-    return () => {}
-  }
-  const sub = client.finalizedBlock$.subscribe({
-    next: (block) => callback(block.number),
-    error: (err) => console.error('Block subscription error:', err),
-  })
-  return () => sub.unsubscribe()
-}
-
 export function subscribeToChallengeEvents(
   address: string,
   onChallenge: (challenge: OnChainChallenge) => void,
 ): () => void {
-  if (!client || !api) {
+  const client = getClient()
+  if (!client) {
     console.warn('Cannot subscribe to challenge events: not connected')
     return () => {}
   }
-  const a = api
+  const a = requireApi()
   const c = client
   const created = a.event.StorageProvider.ChallengeCreated.watch().subscribe({
     next: ({ block, events }) => {

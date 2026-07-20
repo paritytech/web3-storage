@@ -8,7 +8,7 @@
 
 use crate::{Error, ProviderState};
 use codec::Encode;
-use sp_core::H256;
+use sp_core::{Pair, H256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -355,7 +355,7 @@ impl CheckpointCoordinator {
             return Ok(None);
         }
 
-        let current_block = self.chain_client.get_current_block().await?;
+        let anchor_block = self.chain_client.get_current_block().await?;
 
         let (interval, grace_period) = self
             .chain_client
@@ -364,7 +364,7 @@ impl CheckpointCoordinator {
             .unwrap_or((100u32, 20u32));
 
         let window = if interval > 0 {
-            current_block / interval as u64
+            anchor_block / interval as u64
         } else {
             0
         };
@@ -372,7 +372,7 @@ impl CheckpointCoordinator {
         tracing::info!(
             "Checkpoint duty: bucket={} block={} interval={} window={} mmr_root=0x{} leaves={}",
             bucket_id,
-            current_block,
+            anchor_block,
             interval,
             window,
             hex::encode(&bucket.mmr_root.as_bytes()[..4]),
@@ -491,9 +491,9 @@ impl CheckpointCoordinator {
 
         let request = SignProposalRequest {
             bucket_id: proposal.bucket_id,
-            mmr_root: format!("0x{}", hex::encode(proposal.mmr_root.as_bytes())),
-            start_seq: proposal.start_seq,
-            leaf_count: proposal.leaf_count,
+            mmr_root: format!("0x{}", hex::encode(proposal.commitment.mmr_root.as_bytes())),
+            start_seq: proposal.commitment.start_seq,
+            leaf_count: proposal.commitment.leaf_count,
             window: proposal.window,
         };
 

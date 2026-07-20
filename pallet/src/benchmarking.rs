@@ -5,14 +5,28 @@
 
 use super::{Pallet as StorageProvider, *};
 use frame_benchmarking::v2::*;
-use frame_support::{pallet_prelude::*, traits::Currency};
-use frame_system::{pallet_prelude::BlockNumberFor, Pallet as System, RawOrigin};
+use frame_support::{
+    pallet_prelude::*,
+    traits::{Currency, Hooks, ReservableCurrency},
+};
+use frame_system::{Pallet as System, RawOrigin};
 use sp_core::H256;
 use sp_runtime::traits::{Bounded, SaturatedConversion};
 use sp_runtime::Saturating;
-use storage_primitives::{AgreementTerms, BucketId, ProviderRole, ReplicaTerms};
+use storage_primitives::{
+    AgreementTerms, BucketId, ChunkLocation, Commitment, ProviderRole, ReplicaTerms,
+};
 
 const SEED: u32 = 0;
+
+/// Advance the clock the pallet logic reads. `System` and the configured
+/// [`Config::BlockNumberProvider`] are distinct clocks in a real runtime, so
+/// benchmarks must advance both.
+fn set_block_number<T: Config>(n: BlockNumberFor<T>) {
+    use sp_runtime::traits::BlockNumberProvider;
+    System::<T>::set_block_number(n);
+    T::BlockNumberProvider::set_block_number(n);
+}
 
 /// Key type used by the benchmarking keystore for provider signing material.
 const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_core::crypto::KeyTypeId(*b"bnch");
@@ -74,7 +88,8 @@ fn build_primary_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: None,
         replica_params: None,
@@ -94,7 +109,8 @@ fn build_replica_terms<T: Config>(
         max_bytes,
         duration,
         price_per_byte: 1u32.into(),
-        valid_until: System::<T>::block_number().saturating_add(T::RequestTimeout::get()),
+        valid_until: StorageProvider::<T>::current_anchor_block()
+            .saturating_add(T::RequestTimeout::get()),
         nonce,
         bucket_id: Some(bucket_id),
         replica_params: Some(ReplicaTerms {
@@ -171,9 +187,9 @@ fn add_primary_to_bucket<T: Config>(
     bucket_id: BucketId,
     max_bytes: u64,
 ) {
-    let current_block = System::<T>::block_number();
+    let anchor_block = StorageProvider::<T>::current_anchor_block();
     let duration: BlockNumberFor<T> = 100u32.into();
-    let expires_at = current_block.saturating_add(duration);
+    let expires_at = anchor_block.saturating_add(duration);
 
     Buckets::<T>::mutate(bucket_id, |maybe| {
         if let Some(b) = maybe {
@@ -189,7 +205,7 @@ fn add_primary_to_bucket<T: Config>(
         expires_at,
         extensions_blocked: false,
         role: ProviderRole::Primary,
-        started_at: current_block,
+        started_at: anchor_block,
     };
     StorageAgreements::<T>::insert(bucket_id, provider, agreement);
 
@@ -221,11 +237,13 @@ fn insert_challenge<T: Config>(
         mmr_root,
         start_seq: 0,
         leaf_count,
-        leaf_index,
-        chunk_index: 0,
+        target: ChunkLocation {
+            leaf_index,
+            chunk_index: 0,
+        },
         deposit: 100u32.into(),
     };
-    Challenges::<T>::insert(deadline, alloc::vec![challenge]);
+    Challenges::<T>::insert(deadline, 0u16, challenge);
     storage_primitives::ChallengeId { deadline, index: 0 }
 }
 
@@ -251,7 +269,6 @@ fn register_sr25519_key<T: Config>(
 #[benchmarks]
 mod benchmarks {
     use super::*;
-    use frame_system::pallet_prelude::BlockNumberFor;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Provider Management
@@ -318,9 +335,9 @@ mod benchmarks {
         let _ = Pallet::<T>::deregister_provider(RawOrigin::Signed(provider.clone()).into());
 
         // Advance past `DeregisterAnnouncementPeriod` so completion is allowed.
-        let announce_block = System::<T>::block_number();
+        let announce_block = StorageProvider::<T>::current_anchor_block();
         let complete_after = announce_block.saturating_add(T::DeregisterAnnouncementPeriod::get());
-        System::<T>::set_block_number(complete_after);
+        set_block_number::<T>(complete_after);
 
         #[extrinsic_call]
         complete_deregister(RawOrigin::Signed(provider));
@@ -419,9 +436,12 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            0u64, // nonce
             signatures,
         );
 
@@ -595,13 +615,13 @@ mod benchmarks {
 
         // Advance block past agreement expiry + settlement timeout
         let agreement = StorageProvider::<T>::storage_agreements(bucket_id, &provider).unwrap();
-        let current_block = System::<T>::block_number();
+        let anchor_block = StorageProvider::<T>::current_anchor_block();
         let target_block: BlockNumberFor<T> = agreement
             .expires_at
             .saturating_add(T::SettlementTimeout::get())
-            .saturating_add(current_block)
+            .saturating_add(anchor_block)
             .saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         #[extrinsic_call]
         claim_expired_agreement(RawOrigin::Signed(provider), bucket_id);
@@ -633,7 +653,12 @@ mod benchmarks {
         let _ =
             Pallet::<T>::set_min_providers(RawOrigin::Signed(admin.clone()).into(), bucket_id, n);
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut signatures: BoundedVec<
@@ -650,9 +675,8 @@ mod benchmarks {
         checkpoint(
             RawOrigin::Signed(admin),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            commitment,
+            0u64, // nonce
             signatures,
         );
     }
@@ -682,16 +706,20 @@ mod benchmarks {
             (T::AccountId, sp_runtime::MultiSignature),
             T::MaxPrimaryProviders,
         > = BoundedVec::new();
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 10,
+        };
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            commitment,
+            0u64, // nonce
             empty_sigs,
         );
 
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 10);
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded_payload = codec::Encode::encode(&payload);
 
         let mut additional_signatures: BoundedVec<
@@ -758,7 +786,7 @@ mod benchmarks {
         let target_block: BlockNumberFor<T> = window_start
             .saturating_add(grace_period)
             .saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         // Sign the CheckpointProposal with all s providers.
         let proposal =
@@ -783,9 +811,11 @@ mod benchmarks {
         provider_checkpoint(
             RawOrigin::Signed(submitter),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
             window,
             signatures,
         );
@@ -815,13 +845,13 @@ mod benchmarks {
         let provider = create_provider::<T>(0);
         let bucket_id = setup_primary_agreement::<T>(&admin, &provider, 0);
 
-        // Report window 1 — must satisfy current_block > window_start_block(window+1, interval).
+        // Report window 1 — must satisfy anchor_block > window_start_block(window+1, interval).
         // Target: interval * (window + 1) + 1
         let window = 1u64;
         let interval = T::DefaultCheckpointInterval::get();
         let next_window_start = interval.saturating_mul((window + 1).saturated_into());
         let target_block: BlockNumberFor<T> = next_window_start.saturating_add(1u32.into());
-        System::<T>::set_block_number(target_block);
+        set_block_number::<T>(target_block);
 
         #[extrinsic_call]
         report_missed_checkpoint(RawOrigin::Signed(admin), bucket_id, window);
@@ -867,9 +897,12 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            0u64, // nonce
             signatures,
         );
 
@@ -886,7 +919,15 @@ mod benchmarks {
         });
 
         #[extrinsic_call]
-        challenge_checkpoint(RawOrigin::Signed(admin), bucket_id, provider, 0, 0);
+        challenge_checkpoint(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     #[benchmark]
@@ -908,7 +949,12 @@ mod benchmarks {
         // leaf_index 0 below) so create_challenge's leaf_index < leaf_count guard
         // is satisfied.
         let mmr_root = H256::repeat_byte(0xAB);
-        let payload = storage_primitives::CommitmentPayload::new(bucket_id, mmr_root, 0, 1);
+        let commitment = Commitment {
+            mmr_root,
+            start_seq: 0,
+            leaf_count: 1,
+        };
+        let payload = storage_primitives::CommitmentPayload::new(bucket_id, commitment, 0u64);
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(key_type, &public_key, &encoded)
             .expect("signing should work");
@@ -919,11 +965,12 @@ mod benchmarks {
             RawOrigin::Signed(admin),
             bucket_id,
             provider,
-            mmr_root,
-            0, // start_seq
-            1, // leaf_count (matches the signed CommitmentPayload above)
-            0, // leaf_index
-            0, // chunk_index
+            commitment,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+            0u64, // nonce
             signature,
         );
     }
@@ -949,9 +996,12 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            0u64, // nonce
             signatures,
         );
 
@@ -970,7 +1020,15 @@ mod benchmarks {
         );
 
         #[extrinsic_call]
-        challenge_replica(RawOrigin::Signed(admin), bucket_id, replica_provider, 0, 0);
+        challenge_replica(
+            RawOrigin::Signed(admin),
+            bucket_id,
+            replica_provider,
+            ChunkLocation {
+                leaf_index: 0,
+                chunk_index: 0,
+            },
+        );
     }
 
     /// `Proof` response — hashes MaxChunkSize bytes and verifies MMR + Merkle proofs.
@@ -1072,8 +1130,15 @@ mod benchmarks {
 
         let new_mmr_root = H256::repeat_byte(0xEF);
         let new_start_seq: u64 = 1; // must be > challenge.start_seq (0) + leaf_index (0)
-        let payload =
-            storage_primitives::CommitmentPayload::new(bucket_id, new_mmr_root, new_start_seq, 0);
+        let payload = storage_primitives::CommitmentPayload::new(
+            bucket_id,
+            Commitment {
+                mmr_root: new_mmr_root,
+                start_seq: new_start_seq,
+                leaf_count: 0,
+            },
+            0u64, /* nonce */
+        );
         let encoded = codec::Encode::encode(&payload);
         let sig = sp_io::crypto::sr25519_sign(KEY_TYPE, &admin_key, &encoded)
             .expect("signing should work");
@@ -1082,6 +1147,7 @@ mod benchmarks {
         let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::Deleted {
             new_mmr_root,
             new_start_seq,
+            nonce: 0u64,
             admin: admin.clone(),
             admin_signature,
         };
@@ -1114,9 +1180,12 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            0u64, // nonce
             signatures,
         );
 
@@ -1154,9 +1223,12 @@ mod benchmarks {
         let _ = Pallet::<T>::checkpoint(
             RawOrigin::Signed(admin.clone()).into(),
             bucket_id,
-            mmr_root,
-            0,
-            10,
+            Commitment {
+                mmr_root,
+                start_seq: 0,
+                leaf_count: 10,
+            },
+            0u64, // nonce
             signatures,
         );
 
@@ -1196,6 +1268,80 @@ mod benchmarks {
             replica_provider,
             top_up_amount,
         );
+    }
+
+    /// `on_initialize` slash sweep: drains and slashes every challenge expiring
+    /// at a single deadline key. Linear in the challenge count `c`; each entry
+    /// is drained, its pending counters decremented, and its provider slashed.
+    /// The upper bound is the effective per-block slash budget
+    /// `min(MaxChallengesPerDeadline, MAX_SWEEP_SLASH_BUDGET)` — the most the
+    /// sweep ever slashes for one key in a block — so the linear fit covers the
+    /// true worst case rather than extrapolating to it. The sweep applies this
+    /// per key, so a small fixed hook overhead is counted here and again in the
+    /// hook's base weight — conservative.
+    #[benchmark]
+    fn on_initialize_slash_challenges(
+        c: Linear<
+            0,
+            {
+                let cap = T::MaxChallengesPerDeadline::get() as u32;
+                if cap < crate::pallet::MAX_SWEEP_SLASH_BUDGET {
+                    cap
+                } else {
+                    crate::pallet::MAX_SWEEP_SLASH_BUDGET
+                }
+            },
+        >,
+    ) {
+        let deadline: BlockNumberFor<T> = 200u32.into();
+        let deposit: BalanceOf<T> = 100u32.into();
+        for i in 0..c {
+            // Distinct slashable provider (stake reserved) + challenger per
+            // challenge — the worst case (each touches a distinct `Providers`,
+            // `ChallengerStats`, and pending-counter entry).
+            let provider = create_provider::<T>(i);
+            let challenger = funded_account::<T>("challenger", i);
+            // The slash unreserves the challenger's deposit, so reserve it.
+            let _ = T::Currency::reserve(&challenger, deposit);
+            let bucket_id: BucketId = i as u64;
+            let challenge = pallet::Challenge::<T> {
+                bucket_id,
+                provider: provider.clone(),
+                challenger,
+                mmr_root: H256::zero(),
+                start_seq: 0,
+                leaf_count: 1,
+                target: ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+                deposit,
+            };
+            Challenges::<T>::insert(deadline, i as u16, challenge);
+            PendingChallenges::<T>::insert(&provider, 1u32);
+            PendingChallengesByBucket::<T>::insert(bucket_id, &provider, 1u32);
+        }
+        NextChallengeIndex::<T>::insert(deadline, c as u16);
+
+        // Drive the real sweep over exactly one key. Anchor the cursor one
+        // below `deadline`, then set the relay clock so the sweepable range
+        // (keys < previous relay parent) is exactly `{deadline}`:
+        // `sweepable = current_anchor_block() - 1 = deadline`, `end = deadline`.
+        LastSweptChallengeBlock::<T>::put(deadline.saturating_sub(1u32.into()));
+        let now = deadline.saturating_add(1u32.into());
+        set_block_number::<T>(now);
+
+        #[block]
+        {
+            StorageProvider::<T>::on_initialize(now);
+        }
+
+        // Guard against the sweep silently no-op'ing (the bug this benchmark
+        // had while it still called the dropped `on_finalize`): every challenge
+        // at the deadline must have been drained. (At the worst-case component
+        // `c == MaxChallengesPerDeadline` the slash budget is exactly spent, so
+        // the cursor parks at `deadline - 1` and carries over — expected.)
+        assert_eq!(Challenges::<T>::iter_prefix(deadline).count(), 0);
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

@@ -13,7 +13,7 @@
 //!    out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
-//!    `valid_until = current_block + valid_until_offset`.
+//!    `valid_until = current_anchor_block + valid_until_offset`.
 //! 3. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
 //!    existing sr25519 checkpoint key (the same one used to sign
 //!    commitments). The context is `primary-term-v1:` or
@@ -21,12 +21,12 @@
 
 use crate::error::Error;
 use crate::storage::{NonceStore, NullNonceStore};
+use crate::types::ProviderInfo;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use storage_client::discovery::ProviderInfo;
 
 // Wire types are shared with the SDK so client + server agree on serde shape.
-pub use storage_client::agreement::{AgreementTermsOf, NegotiateRequest, SignedTerms};
+pub use provider_negotiation::{AgreementTermsOf, NegotiateRequest, SignedTerms};
 
 /// Validate a negotiation request against the provider's current on-chain
 /// settings.

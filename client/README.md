@@ -173,16 +173,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let challenge_id = client.challenge_checkpoint(
             1,                          // bucket_id
             "5FHneW46...".to_string(),  // provider
-            5,                          // leaf_index
-            123,                        // chunk_index
+            ChunkLocation { leaf_index: 5, chunk_index: 123 },
         ).await?;
 
         println!("Challenge created: {:?}", challenge_id);
     }
 
-    // Check earnings
-    let earnings = client.get_total_challenge_earnings().await?;
-    println!("Total challenge earnings: {} tokens", earnings);
+    // Aggregate challenge activity (challengers earn no reward — a slash goes
+    // entirely to the Treasury and the challenger is only refunded its deposit).
+    let stats = client.get_challenge_stats().await?;
+    println!(
+        "Challenges: total={} successful={} failed={}",
+        stats.total_challenges, stats.successful_challenges, stats.failed_challenges
+    );
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 //! Finalized-block subscription.
 //!
 //! Provides [`BlockSubscriberStream`], a [`Stream`] of finalized blocks: a
@@ -9,12 +11,12 @@ use crate::ClientError;
 use futures::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use subxt::blocks::Block;
+use subxt::client::Block;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
 /// A finalized block as delivered by the subscription.
-type FinalizedBlock = Block<PolkadotConfig, OnlineClient<PolkadotConfig>>;
+type FinalizedBlock = Block<PolkadotConfig>;
 
 /// A [`Stream`] of finalized blocks.
 ///
@@ -52,8 +54,7 @@ impl BlockSubscriberStream {
     /// Start streaming on top of an existing subxt client.
     pub async fn from_client(api: OnlineClient<PolkadotConfig>) -> Result<Self, ClientError> {
         let mut block_sub = api
-            .blocks()
-            .subscribe_finalized()
+            .stream_blocks()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to subscribe to blocks: {e}")))?;
 

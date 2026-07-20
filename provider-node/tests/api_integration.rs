@@ -13,7 +13,7 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, ByteArray, Pair, H256};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_primitives::CommitmentPayload;
+use storage_primitives::{Commitment, CommitmentPayload};
 use storage_provider_node::{create_router, ProviderState, Storage};
 use tokio::net::TcpListener;
 
@@ -31,9 +31,13 @@ impl TestServer {
     /// Endpoints that sign commitments (`/commit`, `/commitment`, ...) work
     /// because a real sr25519 keypair is available.
     async fn new() -> Self {
+        // These tests exercise endpoint behavior, not auth, so run with auth
+        // disabled (auth is enforced by default). Auth is covered end-to-end in
+        // `auth_integration.rs`.
         Self::with_state(Arc::new(
             ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED)
-                .expect("//Alice is a valid SURI"),
+                .expect("//Alice is a valid SURI")
+                .with_auth_disabled(),
         ))
         .await
     }
@@ -43,10 +47,13 @@ impl TestServer {
     /// Used to verify that signing-bound endpoints return 503 rather than
     /// silently emitting zero-byte placeholder signatures.
     async fn new_unsigned() -> Self {
-        Self::with_state(Arc::new(ProviderState::new(
-            Arc::new(Storage::new()),
-            "0xtest_provider".to_string(),
-        )))
+        Self::with_state(Arc::new(
+            ProviderState::with_provider_id(
+                Arc::new(Storage::new()),
+                "0xtest_provider".to_string(),
+            )
+            .with_auth_disabled(),
+        ))
         .await
     }
 
@@ -239,7 +246,8 @@ async fn test_commit_and_get_commitment() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [hash_hex]
+            "data_roots": [hash_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -256,7 +264,7 @@ async fn test_commit_and_get_commitment() {
     // Get commitment
     let commitment_response = server
         .client
-        .get(server.url("/commitment?bucket_id=1"))
+        .get(server.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap();
@@ -402,7 +410,8 @@ async fn test_full_upload_commit_read_flow() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [data_root]
+            "data_roots": [data_root],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -460,6 +469,7 @@ async fn upload_and_commit(server: &TestServer, bucket_id: u64) -> (String, Valu
         .json(&json!({
             "bucket_id": bucket_id,
             "data_roots": [hash_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -506,11 +516,21 @@ async fn commit_returns_valid_sr25519_signature_over_commitment_payload() {
         "server returned zero-byte placeholder instead of a real signature"
     );
 
-    // Reconstruct exactly what the handler signed: CommitmentPayload with the
-    // real leaf_count, so the signature can back a bound challenge_offchain.
+    // Reconstruct exactly what the handler signed: CommitmentPayload with
+    // the real post-commit leaf_count (no longer hardcoded 0) and the nonce
+    // echoed back from the response.
     let mmr_root_bytes = hex_decode(mmr_root_hex).unwrap();
     let mmr_root = H256::from_slice(&mmr_root_bytes);
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
+    let nonce = body["nonce"].as_u64().expect("nonce echoed in response");
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let encoded = payload.encode();
 
     let sig = sr25519::Signature::from_slice(&sig_bytes).expect("64-byte signature");
@@ -532,7 +552,9 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
 
     let resp = server
         .client
-        .get(server.url(&format!("/checkpoint-signature?bucket_id={bucket_id}")))
+        .get(server.url(&format!(
+            "/checkpoint-signature?bucket_id={bucket_id}&nonce=0"
+        )))
         .send()
         .await
         .unwrap();
@@ -542,12 +564,21 @@ async fn checkpoint_signature_verifies_with_real_leaf_count() {
     let mmr_root = H256::from_slice(&hex_decode(body["mmr_root"].as_str().unwrap()).unwrap());
     let start_seq = body["start_seq"].as_u64().unwrap();
     let leaf_count = body["leaf_count"].as_u64().unwrap();
+    let nonce = body["nonce"].as_u64().unwrap();
     assert!(leaf_count > 0, "leaf_count must be the real on-disk value");
 
     let sig_bytes = hex_decode(body["provider_signature"].as_str().unwrap()).unwrap();
     assert_ne!(sig_bytes, vec![0u8; 64]);
 
-    let payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count);
+    let payload = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count,
+        },
+        nonce,
+    );
     let sig = sr25519::Signature::from_slice(&sig_bytes).unwrap();
     assert!(sr25519::Pair::verify(
         &sig,
@@ -570,7 +601,17 @@ async fn commitment_signature_does_not_verify_under_a_different_key() {
         &hex_decode(body["provider_signature"].as_str().unwrap()).unwrap(),
     )
     .unwrap();
-    let encoded = CommitmentPayload::new(bucket_id, mmr_root, start_seq, 0).encode();
+    let nonce = body["nonce"].as_u64().unwrap();
+    let encoded = CommitmentPayload::new(
+        bucket_id,
+        Commitment {
+            mmr_root,
+            start_seq,
+            leaf_count: 0,
+        },
+        nonce,
+    )
+    .encode();
 
     let bob = sr25519::Pair::from_string("//Bob", None).unwrap().public();
     assert!(
@@ -606,7 +647,7 @@ async fn commit_returns_503_when_no_signing_key_configured() {
     let resp = server
         .client
         .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
         .send()
         .await
         .unwrap();
@@ -643,14 +684,14 @@ async fn commitment_endpoint_returns_503_when_no_signing_key() {
     server
         .client
         .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
         .send()
         .await
         .unwrap();
 
     let resp = server
         .client
-        .get(server.url("/commitment?bucket_id=1"))
+        .get(server.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap();
@@ -687,7 +728,7 @@ async fn checkpoint_sign_endpoint_returns_503_when_no_signing_key() {
             .unwrap();
         s.client
             .post(s.url("/commit"))
-            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+            .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
             .send()
             .await
             .unwrap();
@@ -697,7 +738,7 @@ async fn checkpoint_sign_endpoint_returns_503_when_no_signing_key() {
     // /commit, so both servers' MMR roots are identical.
     let proposal = keyed
         .client
-        .get(keyed.url("/commitment?bucket_id=1"))
+        .get(keyed.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap()
@@ -746,7 +787,7 @@ async fn delete_endpoint_returns_503_when_no_signing_key() {
     server
         .client
         .post(server.url("/commit"))
-        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex] }))
+        .json(&json!({ "bucket_id": 1, "data_roots": [hash_hex], "nonce": 0u64 }))
         .send()
         .await
         .unwrap();
@@ -758,6 +799,7 @@ async fn delete_endpoint_returns_503_when_no_signing_key() {
             "bucket_id": 1,
             "new_start_seq": 1,
             "admin_signature": "0x00",
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -993,7 +1035,7 @@ async fn test_checkpoint_sign_happy_path() {
     // Get the real commitment so we can build a matching proposal
     let commitment_resp = server
         .client
-        .get(server.url("/commitment?bucket_id=1"))
+        .get(server.url("/commitment?bucket_id=1&nonce=0"))
         .send()
         .await
         .unwrap();
@@ -1171,6 +1213,7 @@ async fn test_delete_happy_path() {
         .json(&json!({
             "bucket_id": 1,
             "data_roots": [hash1_hex, hash2_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1184,6 +1227,7 @@ async fn test_delete_happy_path() {
             "bucket_id": 1,
             "new_start_seq": 1,
             "admin_signature": "0x00",
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1294,7 +1338,8 @@ async fn test_commit_invalid_hex_data_root() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": ["not_hex"]
+            "data_roots": ["not_hex"],
+            "nonce": 0u64,
         }))
         .send()
         .await
@@ -1332,7 +1377,8 @@ async fn test_commit_without_signing_key() {
         .post(server.url("/commit"))
         .json(&json!({
             "bucket_id": 1,
-            "data_roots": [hash_hex]
+            "data_roots": [hash_hex],
+            "nonce": 0u64,
         }))
         .send()
         .await

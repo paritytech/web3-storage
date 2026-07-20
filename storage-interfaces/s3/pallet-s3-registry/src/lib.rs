@@ -21,9 +21,13 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub mod try_state;
+
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
+// Anchor clock + parachain height, canonically named by the storage pallet.
+use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
 use s3_primitives::{
     validate_bucket_name, validate_object_key, BucketName, MaxContentTypeLen, MaxEtagLen,
     MaxMetadataEntries, MaxMetadataKeyLen, MaxMetadataValueLen, MetadataEntry, ObjectKey,
@@ -35,6 +39,8 @@ use sp_runtime::{BoundedVec, SaturatedConversion};
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
+    #[cfg(feature = "try-runtime")]
+    use sp_runtime::TryRuntimeError;
 
     /// S3 bucket info type alias.
     pub type S3BucketInfoOf<T> =
@@ -48,6 +54,14 @@ pub mod pallet {
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
+
+    #[pallet::hooks]
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
+        #[cfg(feature = "try-runtime")]
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+            Self::do_try_state()
+        }
+    }
 
     #[pallet::config]
     pub trait Config:
@@ -163,6 +177,8 @@ pub mod pallet {
         ObjectKeyTooLong,
         /// Content type too long.
         ContentTypeTooLong,
+        /// Bucket total size would exceed the maximum supported value.
+        BucketSizeLimitReached,
     }
 
     #[pallet::call]
@@ -228,7 +244,7 @@ pub mod pallet {
                 name: bounded_name.clone(),
                 layer0_bucket_id,
                 owner: who.clone(),
-                created_at: frame_system::Pallet::<T>::block_number(),
+                created_at: pallet_storage_provider::Pallet::<T>::current_anchor_block(),
                 object_count: 0,
                 total_size: 0,
             };
@@ -333,7 +349,8 @@ pub mod pallet {
                 .unwrap_or_default();
 
             // Get current timestamp
-            let timestamp = frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+            let timestamp = pallet_storage_provider::Pallet::<T>::current_anchor_block()
+                .saturated_into::<u64>();
 
             // Check if this is an update or new object
             match Objects::<T>::get(s3_bucket_id, &bounded_key) {
@@ -351,7 +368,10 @@ pub mod pallet {
             }
 
             // Update bucket stats
-            bucket_info.total_size = bucket_info.total_size.saturating_add(size);
+            bucket_info.total_size = bucket_info
+                .total_size
+                .checked_add(size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(s3_bucket_id, bucket_info);
 
             // Create metadata
@@ -449,8 +469,8 @@ pub mod pallet {
                 .ok_or(Error::<T>::ObjectNotFound)?;
 
             // Update last modified
-            metadata.last_modified =
-                frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+            metadata.last_modified = pallet_storage_provider::Pallet::<T>::current_anchor_block()
+                .saturated_into::<u64>();
 
             // Update destination bucket stats (re-read if same bucket since src was read separately)
             let mut dst_bucket =
@@ -469,7 +489,10 @@ pub mod pallet {
                 }
             }
 
-            dst_bucket.total_size = dst_bucket.total_size.saturating_add(metadata.size);
+            dst_bucket.total_size = dst_bucket
+                .total_size
+                .checked_add(metadata.size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(dst_bucket_id, dst_bucket);
 
             // Store copy

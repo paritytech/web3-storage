@@ -1,40 +1,58 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * S3 Client — wraps S3Registry pallet + StorageProvider pallet + provider HTTP
- * endpoints. Ported from console-ui's StorageClient, restructured to match
- * drive-ui's DriveClient class pattern (stateless w.r.t. connection).
+ * S3 Client — s3-ui's thin adapter over the SDK's S3Client + layer0 pallet
+ * wrappers, mirroring drive-ui's DriveClient. Everything chain/HTTP-mechanical
+ * (bucket/object ops, tx submission, provider resolution + caching, retry,
+ * request signing, the negotiate→establish flow, MultiSignature encoding)
+ * lives in @web3-storage/sdk. What stays here is app-shaped: the mutable
+ * api/signer lifecycle the RxJS state layer drives, the UI view types, and the
+ * reads/subscriptions the SDK's S3Client doesn't model (provider discovery via
+ * the `find_matching_providers` runtime API, bucket members, checkpoint/
+ * challenge state).
  */
 
-import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
 import { Subscription } from "rxjs";
+import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
+import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
+import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
   httpFetch,
+  negotiateTerms,
   parseMultiaddrToUrl,
-  resolveProviderEndpoint,
-  toHex,
+  removeMember as removeMemberTx,
+  requireOneEvent,
+  setMember as setMemberTx,
+  submitTx,
   toSs58,
-  type ParachainApi,
+  type ChainSigner,
+  type Keypair,
+  type NegotiateRequest,
   type SignedTerms,
-} from "@web3-storage/papi";
-
-// Re-exported so other modules can keep importing them from the client facade.
-export { buildSignedTermsArgs } from "@web3-storage/papi";
-export type { SignedTerms } from "@web3-storage/papi";
+} from "@web3-storage/sdk";
+import { S3Client as SdkS3Client } from "@web3-storage/sdk/s3";
+import type { PrimaryProviderInfo } from "@web3-storage/sdk/s3";
+import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Re-export the SDK negotiate primitives + types the create-bucket components
+// (NewBucketDialog, ProviderPickerPanel) and the state layer import from here.
+export { buildSignedTermsArgs, negotiateTerms };
+export type { NegotiateRequest, SignedTerms };
 
-/** A primary provider backing a bucket's underlying layer-0 bucket. */
-export interface BucketProviderInfo {
-  account: string;
-  multiaddr: string;
-  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
-  url: string | null;
+/** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
+export const parseMultiaddrToHttp = parseMultiaddrToUrl;
+
+/** SS58 address validity — not in the SDK; a thin substrate-bindings wrapper. */
+export function isValidSs58(address: string): boolean {
+  return getSs58AddressInfo(address).isValid;
 }
+
+// ── View types (UI-shaped; the SDK's S3Client returns its own structs that we
+// map onto these so components keep a stable surface) ───────────────────────────
 
 export interface BucketInfo {
   s3BucketId: bigint;
@@ -43,7 +61,7 @@ export interface BucketInfo {
   owner: string;
   createdAt: bigint;
   /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: BucketProviderInfo[];
+  providerInfo: PrimaryProviderInfo[];
 }
 
 export interface S3ObjectInfo {
@@ -152,42 +170,55 @@ export interface QueryMatchingProvidersParams {
   limit: number;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function decodeName(name: unknown): string {
-  if (name == null) return "";
-  try {
-    if (typeof name === "string") return name;
-    if (typeof (name as any).asText === "function") return (name as any).asText();
-    return new TextDecoder().decode(name as Uint8Array);
-  } catch {
-    return "";
-  }
-}
-
 // ── S3Client class ────────────────────────────────────────────────────────────
 
 export class S3Client {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
-  private keypair: import("@/lib/crypto").Keypair | null = null;
-  private providerUrlCache = new Map<string, string>();
+  private keypair: Keypair | null = null;
+  private owner: ChainSigner | null = null;
+  private s3: SdkS3Client | null = null;
+
+  private rebuild(): void {
+    if (!this.api) {
+      this.s3 = null;
+      this.owner = null;
+      return;
+    }
+    let chainSigner: ChainSigner | null = null;
+    if (this.signer && this.signerAddress) {
+      // s3-ui derives raw dev-account keypairs, so provider requests are
+      // signed (the SDK's S3Client reads `signer.keypair`). Fall back to the
+      // address-recovered public key if only a wallet signer is present.
+      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
+      chainSigner = {
+        signer: this.signer,
+        address: this.signerAddress,
+        publicKey,
+        keypair: this.keypair ?? undefined,
+      };
+    }
+    this.owner = chainSigner;
+    this.s3 = new SdkS3Client({ api: this.api, signer: chainSigner });
+  }
 
   setApi(api: ParachainApi | null): void {
     if (api !== this.api) {
-      this.providerUrlCache.clear();
+      this.api = api;
+      this.rebuild();
     }
-    this.api = api;
   }
 
   setSigner(signer: Signer | null, address: string | null): void {
     this.signer = signer;
     this.signerAddress = address;
+    this.rebuild();
   }
 
-  setKeypair(keypair: import("@/lib/crypto").Keypair | null): void {
+  setKeypair(keypair: Keypair | null): void {
     this.keypair = keypair;
+    this.rebuild();
   }
 
   hasApi(): boolean {
@@ -207,170 +238,72 @@ export class S3Client {
     return this.api;
   }
 
-  private requireSigner(): { signer: Signer; address: string } {
-    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
-    return { signer: this.signer, address: this.signerAddress };
+  private requireS3(): SdkS3Client {
+    if (!this.s3) throw new Error("Not connected to chain");
+    return this.s3;
   }
 
-  // ── Tx submission ─────────────────────────────────────────────────────────
-
-  private async submit(tx: Transaction): Promise<TxFinalizedPayload> {
-    const { signer } = this.requireSigner();
-    const result = await tx.signAndSubmit(signer);
-    if (!result.ok) {
-      const err = JSON.stringify(result.dispatchError, (_k, v) =>
-        typeof v === "bigint" ? v.toString() : v,
-      );
-      throw new Error(`Transaction failed on-chain: ${err}`);
-    }
-    return result;
+  private requireOwner(): ChainSigner {
+    if (!this.owner) throw new Error("Signer not set");
+    return this.owner;
   }
 
-  // ── Provider resolution ───────────────────────────────────────────────────
+  // ── Provider resolution (delegated to the SDK's resolver + cache) ───────────
 
-  async getProviderUrl(bucketId: bigint): Promise<string> {
-    const key = bucketId.toString();
-    const cached = this.providerUrlCache.get(key);
-    if (cached) return cached;
-    const url = await resolveProviderEndpoint(this.requireApi(), bucketId);
-    this.providerUrlCache.set(key, url);
-    return url;
+  getProviderUrl(bucketId: bigint): Promise<string> {
+    return this.requireS3().getProviderUrl(bucketId);
   }
 
   invalidateProviderUrl(bucketId: bigint): void {
-    this.providerUrlCache.delete(bucketId.toString());
+    this.s3?.invalidateProviderUrl(bucketId);
   }
 
-  // ── S3 Bucket operations (on-chain) ─────────────────────────────────────
+  // ── S3 Bucket operations (on-chain, via the SDK's S3Client) ─────────────────
 
+  /**
+   * Redeem provider-signed terms in `create_s3_bucket` (negotiate→establish).
+   * The terms are pre-negotiated by the create-bucket UI; `providerUrl` primes
+   * nothing here — the SDK resolves the provider from chain on first use.
+   */
   async createBucket(
     name: string,
     providerAccount: string,
     providerUrl: string,
     signed: SignedTerms,
   ): Promise<BucketInfo> {
-    const api = this.requireApi();
-    const { address } = this.requireSigner();
-
-    const tx = api.tx.S3Registry.create_s3_bucket({
-      name: Binary.fromText(name),
-      ...buildSignedTermsArgs(providerAccount, signed),
+    const info = await this.requireS3().createBucket(name, {
+      maxCapacity: BigInt(signed.terms.max_bytes),
+      duration: signed.terms.duration,
+      provider: { address: providerAccount, url: providerUrl },
+      signedTerms: signed,
     });
-
-    const result = await this.submit(tx);
-
-    const created = api.event.S3Registry.S3BucketCreated.filter(result.events);
-    if (created.length === 0) {
-      // Fallback: query buckets for the latest
-      const buckets = await this.listBuckets();
-      if (buckets.length > 0) {
-        const latest = buckets[buckets.length - 1]!;
-        this.providerUrlCache.set(latest.layer0BucketId.toString(), providerUrl);
-        return latest;
-      }
-      throw new Error(
-        "S3BucketCreated event not found. The runtime descriptor may be stale — run: pnpm papi:generate",
-      );
-    }
-    const { s3_bucket_id, layer0_bucket_id } = created[0]!.payload;
-
-    this.providerUrlCache.set(layer0_bucket_id.toString(), providerUrl);
-
     return {
-      s3BucketId: s3_bucket_id,
-      name,
-      layer0BucketId: layer0_bucket_id,
-      owner: address,
-      createdAt: 0n,
-      providerInfo: [
-        {
-          account: providerAccount,
-          multiaddr: "",
-          url: providerUrl,
-        },
-      ],
+      s3BucketId: info.s3BucketId,
+      name: info.name,
+      layer0BucketId: info.layer0BucketId,
+      owner: info.owner,
+      createdAt: BigInt(info.createdAt),
+      providerInfo: [{ account: providerAccount, multiaddr: "", url: providerUrl }],
     };
   }
 
   async listBuckets(): Promise<BucketInfo[]> {
-    const api = this.requireApi();
-    const { address } = this.requireSigner();
-
-    const bucketIds = await api.query.S3Registry.UserBuckets.getValue(address);
-    if (bucketIds.length === 0) return [];
-
-    const bucketValues = await api.query.S3Registry.S3Buckets.getValues(
-      bucketIds.map((s3BucketId) => [s3BucketId] as const),
-    );
-
-    const buckets: BucketInfo[] = [];
-    const layer0BucketIds: bigint[] = [];
-    bucketValues.forEach((bucket, i) => {
-      if (!bucket) return;
-      buckets.push({
-        s3BucketId: bucketIds[i]!,
-        name: decodeName(bucket.name),
-        layer0BucketId: bucket.layer0_bucket_id,
-        owner: bucket.owner,
-        createdAt: BigInt(bucket.created_at ?? 0),
-        providerInfo: [],
-      });
-      layer0BucketIds.push(bucket.layer0_bucket_id);
-    });
-
-    // Resolve each bucket's primary providers, batching every storage read into
-    // a single query per pallet map (no per-bucket / per-provider round-trips).
-    // `layer0BucketInfo[i]` aligns with `buckets[i]` (both built skipping nulls).
-    const layer0BucketInfo = await api.query.StorageProvider.Buckets.getValues(
-      layer0BucketIds.map((id) => [id] as const),
-    );
-
-    const providerAccounts = [
-      ...new Set(layer0BucketInfo.flatMap((info) => info?.primary_providers ?? [])),
-    ];
-    const providerRecords = await api.query.StorageProvider.Providers.getValues(
-      providerAccounts.map((account) => [account] as const),
-    );
-
-    const providerMap = new Map<string, BucketProviderInfo>();
-    providerAccounts.forEach((account, i) => {
-      const record = providerRecords[i];
-      if (!record) return;
-      const multiaddr = new TextDecoder().decode(record.multiaddr);
-      providerMap.set(account, {
-        account,
-        multiaddr,
-        url: parseMultiaddrToUrl(multiaddr),
-      });
-    });
-
-    buckets.forEach((bucket, i) => {
-      bucket.providerInfo = (layer0BucketInfo[i]?.primary_providers ?? [])
-        .map((account) => providerMap.get(account))
-        .filter((info): info is BucketProviderInfo => info != null);
-    });
-
-    return buckets;
+    const list = await this.requireS3().listBuckets();
+    return list.map((b) => ({
+      s3BucketId: b.s3BucketId,
+      name: b.name,
+      layer0BucketId: b.layer0BucketId,
+      owner: b.owner,
+      createdAt: BigInt(b.createdAt),
+      providerInfo: b.providerInfo,
+    }));
   }
 
   async deleteBucket(s3BucketId: bigint): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.S3Registry.delete_s3_bucket({ s3_bucket_id: s3BucketId });
-    await this.submit(tx);
+    await this.requireS3().deleteBucket(s3BucketId);
   }
 
-  // ── S3 Object operations (HTTP) ─────────────────────────────────────────
-
-  private signRequest(method: string, bucketId: bigint): Record<string, string> {
-    if (!this.keypair) return {};
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `web3storage:${method}:${Number(bucketId)}:${timestamp}`;
-    const msgBytes = new TextEncoder().encode(message);
-    const sig = this.keypair.sign(msgBytes);
-    const pubHex = toHex(this.keypair.publicKey);
-    const sigHex = toHex(sig);
-    return { Authorization: `Web3Storage ${pubHex}:${sigHex}:${timestamp}` };
-  }
+  // ── S3 Object operations (HTTP, via the SDK's S3Client) ─────────────────────
 
   async putObject(
     bucketId: bigint,
@@ -378,94 +311,32 @@ export class S3Client {
     data: Uint8Array,
     options?: { signal?: AbortSignal },
   ): Promise<UploadResult> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({ key });
-    const headers: Record<string, string> = {
-      "Content-Type": "application/octet-stream",
-      ...this.signRequest("PUT", bucketId),
-    };
-    const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?${params.toString()}`,
-      {
-        method: "PUT",
-        headers,
-        body: data as Uint8Array<ArrayBuffer>,
-        signal: options?.signal,
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
-
-    const result = await response.json().catch(() => ({}));
-    return {
-      cid: result.etag ?? result.cid ?? "",
-      size: data.length,
-    };
+    const result = await this.requireS3().putObject({ layer0BucketId: bucketId }, key, data, {
+      signal: options?.signal,
+    });
+    return { cid: result.cid ?? "", size: result.size };
   }
 
-  async getObject(
-    bucketId: bigint,
-    key: string,
-  ): Promise<Uint8Array> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({ key });
-    const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?${params.toString()}`,
-      { headers: this.signRequest("GET", bucketId) },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    return new Uint8Array(buffer);
+  async getObject(bucketId: bigint, key: string): Promise<Uint8Array> {
+    const { data } = await this.requireS3().getObject({ layer0BucketId: bucketId }, key);
+    return data;
   }
 
-  async listObjects(
-    bucketId: bigint,
-    prefix?: string,
-  ): Promise<S3ObjectInfo[]> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams();
-    if (prefix) params.set("prefix", prefix);
-    const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucketId)}/objects?${params.toString()}`,
-      { headers: this.signRequest("GET", bucketId) },
-    );
-
-    if (!response.ok) {
-      throw new Error(`List objects failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return (result.contents || []).map((o: any) => ({
+  async listObjects(bucketId: bigint, prefix?: string): Promise<S3ObjectInfo[]> {
+    const summaries = await this.requireS3().listObjects({ layer0BucketId: bucketId }, prefix);
+    return summaries.map((o) => ({
       key: o.key,
-      size: o.size ?? 0,
-      lastModified: (o.last_modified ?? o.lastModified ?? 0) * 1000,
+      size: o.size,
+      lastModified: o.lastModified ?? 0,
       etag: o.etag ?? "",
     }));
   }
 
   async deleteObject(bucketId: bigint, key: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({ key });
-    const response = await httpFetch(
-      `${providerUrl}/s3/${Number(bucketId)}/object?${params.toString()}`,
-      {
-        method: "DELETE",
-        headers: this.signRequest("DELETE", bucketId),
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Delete failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+    await this.requireS3().deleteObject({ layer0BucketId: bucketId }, key);
   }
 
-  // ── Members ─────────────────────────────────────────────────────────────
+  // ── Members (read is a chain query; writes go through layer0 wrappers) ───────
 
   async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
     const api = this.requireApi();
@@ -480,33 +351,20 @@ export class S3Client {
 
     return (bucket.members ?? []).map((m: { account: string; role: { type?: string } | string }) => {
       const roleType = typeof m.role === "string" ? m.role : m.role?.type ?? "Reader";
-      return {
-        account: m.account,
-        role: roleMap[roleType] ?? "Reader",
-      };
+      return { account: m.account, role: roleMap[roleType] ?? "Reader" };
     });
   }
 
   async addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.StorageProvider.set_member({
-      bucket_id: bucketId,
-      member: account,
-      role: Enum(role),
-    });
-    await this.submit(tx);
+    await setMemberTx(this.requireApi(), this.requireOwner(), bucketId, { address: account }, role);
   }
 
   async removeMember(bucketId: bigint, account: string): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.StorageProvider.remove_member({
-      bucket_id: bucketId,
-      member: account,
-    });
-    await this.submit(tx);
+    await removeMemberTx(this.requireApi(), this.requireOwner(), bucketId, { address: account });
   }
 
-  // ── Provider discovery ────────────────────────────────────────────────────
+  // ── Provider discovery (UI-side; raw `StorageProvider.Providers` + the
+  // `find_matching_providers` runtime API — not modelled by the SDK) ──────────
 
   async listAvailableProviders(): Promise<AvailableProvider[]> {
     const api = this.requireApi();
@@ -599,7 +457,7 @@ export class S3Client {
       .sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  // ── Checkpoint ──────────────────────────────────────────────────────────
+  // ── Checkpoint (chain-state read + provider HTTP duty/trigger) ──────────────
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
     const api = this.requireApi();
@@ -610,9 +468,9 @@ export class S3Client {
     if (!snapshot) return null;
 
     return {
-      mmrRoot: snapshot.mmr_root,
-      startSeq: snapshot.start_seq,
-      leafCount: snapshot.leaf_count,
+      mmrRoot: snapshot.commitment.mmr_root,
+      startSeq: snapshot.commitment.start_seq,
+      leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
   }
@@ -622,12 +480,10 @@ export class S3Client {
     const response = await httpFetch(
       `${providerUrl}/checkpoint/duty?bucket_id=${Number(bucketId)}`,
     );
-
     if (!response.ok) {
       if (response.status === 404) return null;
       throw new Error(`Checkpoint duty failed: ${response.status}`);
     }
-
     return response.json();
   }
 
@@ -637,13 +493,14 @@ export class S3Client {
       `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
       { method: "POST" },
     );
-
     if (!response.ok) {
-      throw new Error(`Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`);
+      throw new Error(
+        `Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`,
+      );
     }
   }
 
-  // ── Challenge ──────────────────────────────────────────────────────────
+  // ── Challenge (write via SDK submitTx; reads/subscriptions are chain queries) ─
 
   async getBucketProviders(bucketId: bigint): Promise<string[]> {
     const api = this.requireApi();
@@ -656,6 +513,12 @@ export class S3Client {
     return providers;
   }
 
+  /**
+   * Open a checkpoint challenge against a provider. The chain submission
+   * (finalized — the challenge id must survive to the response) goes through
+   * the SDK's `submitTx`; we extract `respond_by` ourselves because layer0's
+   * `challengeCheckpoint` wrapper returns only the id and forces chunk 0.
+   */
   async challengeCheckpoint(
     bucketId: bigint,
     provider: string,
@@ -663,23 +526,24 @@ export class S3Client {
     chunkIndex: bigint,
   ): Promise<ChallengeResult> {
     const api = this.requireApi();
-    const tx = api.tx.StorageProvider.challenge_checkpoint({
-      bucket_id: bucketId,
-      provider,
-      leaf_index: leafIndex,
-      chunk_index: chunkIndex,
-    });
+    const result = await submitTx(
+      api.tx.StorageProvider.challenge_checkpoint({
+        bucket_id: bucketId,
+        provider,
+        target: { leaf_index: leafIndex, chunk_index: chunkIndex },
+      }),
+      this.requireOwner().signer,
+      { label: "challenge_checkpoint", mode: "finalized" },
+    );
 
-    const result = await this.submit(tx);
-
-    const created = api.event.StorageProvider.ChallengeCreated.filter(result.events);
-    if (created.length === 0) {
-      throw new Error("ChallengeCreated event not found in transaction result");
-    }
-    const { challenge_id, respond_by } = created[0]!.payload;
+    const created = requireOneEvent(
+      result.events,
+      api.event.StorageProvider.ChallengeCreated,
+      "ChallengeCreated",
+    );
     return {
-      challengeId: { deadline: challenge_id.deadline, index: challenge_id.index },
-      respondBy: respond_by,
+      challengeId: { deadline: created.challenge_id.deadline, index: created.challenge_id.index },
+      respondBy: created.respond_by,
     };
   }
 
@@ -701,32 +565,34 @@ export class S3Client {
 
   async isChallengeActive(deadline: number): Promise<boolean> {
     const api = this.requireApi();
-    const challenges = await api.query.StorageProvider.Challenges.getValue(deadline);
-    return challenges !== undefined && challenges.length > 0;
+    // Challenges is a StorageDoubleMap keyed by (deadline, index); an active
+    // deadline has at least one entry under its prefix.
+    const entries = await api.query.StorageProvider.Challenges.getEntries(deadline);
+    return entries.length > 0;
   }
 
   async getOpenChallenges(bucketId: bigint): Promise<OpenChallenge[]> {
     const api = this.requireApi();
+    // Challenges is a StorageDoubleMap keyed by (deadline, index): each entry
+    // is a single challenge with keyArgs = [deadline, index] and value = the
+    // Challenge (there is no per-deadline Vec to iterate).
     const entries = await api.query.StorageProvider.Challenges.getEntries();
     const result: OpenChallenge[] = [];
 
     for (const entry of entries) {
-      const deadline = entry.keyArgs[0] as number;
-      const challenges = entry.value;
-      for (let i = 0; i < challenges.length; i++) {
-        const c = challenges[i]!;
-        if (c.bucket_id === bucketId) {
-          result.push({
-            deadline,
-            index: i,
-            bucketId: c.bucket_id,
-            provider: c.provider,
-            challenger: c.challenger,
-            leafIndex: c.leaf_index,
-            chunkIndex: c.chunk_index,
-            deposit: c.deposit,
-          });
-        }
+      const [deadline, index] = entry.keyArgs as [number, number];
+      const c = entry.value;
+      if (c.bucket_id === bucketId) {
+        result.push({
+          deadline,
+          index,
+          bucketId: c.bucket_id,
+          provider: c.provider,
+          challenger: c.challenger,
+          leafIndex: c.target.leaf_index,
+          chunkIndex: c.target.chunk_index,
+          deposit: c.deposit,
+        });
       }
     }
 

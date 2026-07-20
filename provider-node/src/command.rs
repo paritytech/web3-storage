@@ -8,7 +8,8 @@ use crate::{
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
     subxt_client::SubxtChainClient,
-    ChainStateCoordinatorHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
+    ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
+    ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
     CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
     StorageBackend,
@@ -55,25 +56,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let seed = cli.key.load_seed()?;
     let mut state = match &seed {
         Some(seed) => {
-            let mut state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(storage, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-
-            // Wire up auth if enabled
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            state
+            configure_state(state, &cli)
         }
         None => {
             let provider_id = cli
@@ -86,23 +71,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            let mut state = ProviderState::new(storage, provider_id);
-
-            if cli.auth.enable_auth {
-                let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-                let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-                let cache = MembershipCache::new(Box::new(resolver), ttl);
-                state.auth_enabled = true;
-                state.membership_cache = Some(Arc::new(cache));
-                state.auth_max_skew = Duration::from_secs(cli.auth.auth_max_skew);
-                tracing::info!(
-                    "Auth enabled (cache_ttl={}s, max_skew={}s)",
-                    cli.auth.auth_cache_ttl,
-                    cli.auth.auth_max_skew
-                );
-            }
-
-            state
+            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
         }
     };
 
@@ -137,6 +106,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
+    let _challenge_responder_handle =
+        start_challenge_responder(&cli, chain_client.as_ref(), state.clone()).await;
 
     // Sync the on-chain multiaddr. Reuses the chain client connected above, so
     // this only runs when that connection succeeded (which also implies a
@@ -165,13 +136,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Start the chain-state coordinator, which keeps `chain_state.current_block`
-/// and `chain_state.provider_info` in sync with the chain.
+/// Apply CLI-derived CORS and auth settings to a freshly constructed state.
+///
+/// Authentication is enforced by default: unless the operator explicitly passed
+/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
+/// resolver so every bucket-scoped request is checked against the caller's role.
+fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
+    let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
+
+    if cli.auth.disable_auth_i_know_what_i_am_doing {
+        state = state.with_auth_disabled();
+        tracing::warn!(
+            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
+             every endpoint is publicly readable and writable by anyone. \
+             Never do this outside a throwaway local environment."
+        );
+    } else {
+        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+        let cache = MembershipCache::new(Box::new(resolver), ttl);
+        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
+        tracing::info!(
+            "Auth enforced (cache_ttl={}s, max_skew={}s)",
+            cli.auth.auth_cache_ttl,
+            cli.auth.auth_max_skew
+        );
+    }
+
+    state
+}
+
+/// Start the chain-state coordinator, which keeps
+/// `chain_state.current_anchor_block` and `chain_state.provider_info` in sync
+/// with the chain.
 ///
 /// Returns `None` only when the provider id isn't a valid account. The
 /// coordinator itself never fails to start: it connects in the background and
-/// retries with a backoff if the chain is unreachable, so `current_block` is
-/// populated as soon as the chain comes up.
+/// retries with a backoff if the chain is unreachable, so `current_anchor_block`
+/// is populated as soon as the chain comes up.
 fn start_chain_state_coordinator(
     cli: &Cli,
     state: Arc<ProviderState>,
@@ -267,6 +269,44 @@ async fn start_replica_sync_coordinator(
         }
         Err(e) => {
             tracing::error!("Failed to start replica sync coordinator: {}", e);
+            None
+        }
+    }
+}
+
+async fn start_challenge_responder(
+    cli: &Cli,
+    chain_client: Option<&SubxtChainClient>,
+    state: Arc<ProviderState>,
+) -> Option<ChallengeResponderHandle> {
+    if !cli.challenge_responder.enable_challenge_responder {
+        return None;
+    }
+
+    let chain_client = match chain_client {
+        Some(c) => c.clone(),
+        None => {
+            tracing::error!(
+                "Challenge responder needs a chain client (--keyfile + reachable chain). Skipping."
+            );
+            return None;
+        }
+    };
+
+    let config = ChallengeResponderConfig {
+        poll_interval: Duration::from_secs(cli.challenge_responder.challenge_poll_interval),
+        ..Default::default()
+    };
+
+    let responder = ChallengeResponder::new(config, state, Box::new(chain_client));
+
+    match responder.start(None).await {
+        Ok(handle) => {
+            tracing::info!("Challenge responder started — auto-responding to challenges");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::error!("Failed to start challenge responder: {}", e);
             None
         }
     }

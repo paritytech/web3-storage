@@ -15,8 +15,8 @@ use sp_core::{sr25519, Pair};
 use sp_runtime::{AccountId32, MultiSignature};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use storage_client::discovery::ProviderInfo;
 use storage_primitives::ReplicaTerms;
+use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,
     PalletConstants, ProviderState, SignedTerms, Storage,
@@ -43,7 +43,7 @@ impl TestServer {
         // Together these satisfy every `/negotiate` prerequisite.
         state
             .chain_state
-            .current_block
+            .current_anchor_block
             .store(100, std::sync::atomic::Ordering::Relaxed);
         *state.chain_state.constants.write() = Some(PalletConstants {
             request_timeout: 200,
@@ -169,6 +169,75 @@ async fn negotiate_returns_signed_terms_with_valid_signature() {
 }
 
 #[tokio::test]
+async fn negotiate_valid_until_is_anchor_block_plus_request_timeout() {
+    // `current_anchor_block` is the pallet's anchor clock — the block the pallet
+    // checks `valid_until` against. Seed a Paseo-scale value to prove the
+    // validity window is anchored to it (a parachain-height-based window
+    // would be rejected on-chain as already expired).
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_anchor_block
+        .store(29_123_456, std::sync::atomic::Ordering::Relaxed);
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 3_600,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let signed: SignedTerms = resp.json().await.unwrap();
+    assert_eq!(signed.terms.valid_until, 29_123_456 + 3_600);
+}
+
+#[tokio::test]
+async fn negotiate_503_when_anchor_block_unknown() {
+    // Everything ready except the anchor clock (`current_anchor_block == 0`,
+    // i.e. the chain-state coordinator has not processed a finalized block
+    // yet): signing would emit terms whose `valid_until` is meaningless on
+    // the pallet's clock, so the handler must refuse.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    *state.chain_state.constants.write() = Some(PalletConstants {
+        request_timeout: 200,
+    });
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "chain_state_not_ready");
+}
+
+#[tokio::test]
+async fn negotiate_503_when_request_timeout_unknown() {
+    // The mirror case: clock known but the RequestTimeout constant not yet
+    // fetched — an unbounded validity window must not be signed either.
+    let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
+    state
+        .chain_state
+        .current_anchor_block
+        .store(100, std::sync::atomic::Ordering::Relaxed);
+    let counter = std::sync::Arc::new(NonceCounter::new(1));
+    counter.bootstrap_from_hsn(0);
+    *state.chain_state.nonce_counter.write() = Some(counter);
+    *state.chain_state.provider_info.write() = Some(provider_info());
+    let server = TestServer::serve(Arc::new(state)).await;
+
+    let resp = server.negotiate(&primary_request()).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "chain_state_not_ready");
+}
+
+#[tokio::test]
 async fn negotiate_pins_listed_price_when_client_overpays() {
     let server = TestServer::ready(provider_info()).await;
 
@@ -230,7 +299,7 @@ async fn negotiate_accepts_replica_when_sync_price_configured() {
 #[tokio::test]
 async fn negotiate_503_when_no_signing_key() {
     // No keypair configured → the handler refuses before doing any work.
-    let server = TestServer::serve(Arc::new(ProviderState::new(
+    let server = TestServer::serve(Arc::new(ProviderState::with_provider_id(
         Arc::new(Storage::new()),
         "0xtest_provider".to_string(),
     )))
@@ -250,7 +319,7 @@ async fn negotiate_503_when_provider_info_unavailable() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -336,7 +405,7 @@ async fn negotiate_transitions_to_info_unavailable_after_complete_deregister() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -386,7 +455,7 @@ async fn negotiate_recovers_after_deregister_cancelled() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -429,7 +498,7 @@ async fn negotiate_503_when_nonce_counter_absent() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,
@@ -453,7 +522,7 @@ async fn negotiate_503_when_nonce_counter_present_but_not_bootstrapped() {
     let state = ProviderState::with_seed(Arc::new(Storage::new()), PROVIDER_SEED).unwrap();
     state
         .chain_state
-        .current_block
+        .current_anchor_block
         .store(100, std::sync::atomic::Ordering::Relaxed);
     *state.chain_state.constants.write() = Some(PalletConstants {
         request_timeout: 200,

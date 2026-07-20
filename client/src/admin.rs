@@ -9,13 +9,12 @@
 //! - Freezing buckets
 //! - Deleting old data
 
-use crate::agreement::AgreementTermsOf;
+use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use sp_core::H256;
-use sp_runtime::MultiSignature;
-use storage_primitives::{BucketId, EndAction, Role};
+use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
@@ -84,8 +83,7 @@ impl AdminClient {
     /// ).await?;
     /// let bucket_id = client.establish_storage_agreement(
     ///     "5FHneW46...".to_string(),
-    ///     signed.terms,
-    ///     signed.signature,
+    ///     signed,
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -93,9 +91,9 @@ impl AdminClient {
     pub async fn establish_storage_agreement(
         &self,
         provider: String,
-        terms: AgreementTermsOf,
-        sig: MultiSignature,
+        signed_terms: SignedTerms,
     ) -> ClientResult<BucketId> {
+        let SignedTerms { terms, signature } = signed_terms;
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
@@ -109,11 +107,14 @@ impl AdminClient {
             terms.nonce,
         );
 
-        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &sig);
+        let tx = extrinsics::establish_storage_agreement(provider_account, &terms, &signature);
 
         let tx_progress = chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
@@ -131,10 +132,9 @@ impl AdminClient {
         let block_hash = H256::from_slice(raw_block_hash.as_bytes());
         let block_number = chain
             .api()
-            .blocks()
-            .at(raw_block_hash)
+            .at_block(raw_block_hash)
             .await
-            .map(|b| b.number())
+            .map(|b| b.block_number() as u32)
             .unwrap_or(0);
 
         let parsed =
@@ -170,7 +170,10 @@ impl AdminClient {
         let tx = extrinsics::set_member(bucket_id, member_account, role);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -196,7 +199,10 @@ impl AdminClient {
         let tx = extrinsics::remove_bucket_member(bucket_id, member_account);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -222,7 +228,10 @@ impl AdminClient {
         let tx = extrinsics::set_member(bucket_id, member_account, new_role);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -256,7 +265,10 @@ impl AdminClient {
         let tx = extrinsics::freeze_bucket(bucket_id);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -295,7 +307,10 @@ impl AdminClient {
         );
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -332,7 +347,10 @@ impl AdminClient {
         );
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -365,7 +383,10 @@ impl AdminClient {
         let tx = extrinsics::end_agreement(bucket_id, provider_account, action);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -398,7 +419,10 @@ impl AdminClient {
         let tx = extrinsics::set_extensions_blocked(bucket_id, true);
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -447,9 +471,8 @@ impl AdminClient {
     pub async fn submit_checkpoint(
         &self,
         bucket_id: BucketId,
-        mmr_root: H256,
-        start_seq: u64,
-        leaf_count: u64,
+        commitment: Commitment,
+        nonce: u64, // nonce the providers signed over (echoed from their commitment)
         signatures: Vec<(String, Vec<u8>)>, // (provider SS58, signature bytes)
     ) -> ClientResult<()> {
         let chain = self.base.chain()?;
@@ -464,11 +487,14 @@ impl AdminClient {
             })
             .collect::<ClientResult<Vec<_>>>()?;
 
-        let tx = extrinsics::checkpoint(bucket_id, mmr_root, start_seq, leaf_count, parsed_sigs);
+        let tx = extrinsics::checkpoint(bucket_id, commitment, nonce, parsed_sigs);
 
         let tx_progress = chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit checkpoint tx: {e}")))?;
@@ -481,7 +507,7 @@ impl AdminClient {
         tracing::info!(
             "Checkpoint submitted for bucket {} with MMR root 0x{}",
             bucket_id,
-            hex::encode(mmr_root.as_bytes())
+            hex::encode(commitment.mmr_root.as_bytes())
         );
         Ok(())
     }
@@ -494,19 +520,21 @@ impl AdminClient {
     pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<BucketInfo> {
         let chain = self.base.chain()?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::bucket_info(bucket_id))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::bucket_info(bucket_id);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
             .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?;
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
         let min_providers = named_field(&value, "min_providers")
@@ -604,15 +632,16 @@ impl AdminClient {
     ) -> ClientResult<Vec<AgreementInfo>> {
         let chain = self.base.chain()?;
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::agreements_for_bucket(bucket_id))
+        let (addr, keys) = storage::agreements_for_bucket(bucket_id);
+        let mut iter = at
+            .storage()
+            .iter(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
 
@@ -624,14 +653,14 @@ impl AdminClient {
 
             // Key layout: [pallet_hash=16][storage_hash=16][blake2_128(bucket_id)=16][bucket_id=8]
             //             [blake2_128(provider)=16][provider=32]; provider at [72..104]
-            let key = &kv.key_bytes;
+            let key = kv.key_bytes();
             let provider = if key.len() >= 104 {
                 format!("0x{}", hex::encode(&key[72..104]))
             } else {
                 String::new()
             };
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("Failed to decode agreement: {e}");
@@ -674,13 +703,15 @@ impl AdminClient {
         let chain = self.base.chain()?;
         let admin_account = SubstrateClient::parse_account(&self.admin_account)?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::member_buckets(&admin_account))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::member_buckets(&admin_account);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
 
@@ -689,7 +720,7 @@ impl AdminClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
 
         // BoundedVec is a newtype: Unnamed([inner_vec]) where inner_vec is Unnamed([entries...]).
@@ -715,9 +746,9 @@ impl AdminClient {
 }
 
 fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
+    value: &'a subxt::ext::scale_value::Value,
     field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
+) -> Option<&'a subxt::ext::scale_value::Value> {
     match &value.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
@@ -731,7 +762,7 @@ fn named_field<'a>(
 /// `AccountId32` is decoded by subxt as `Composite::Unnamed([Composite::Unnamed([byte × 32])])`.
 /// This function recurses through any level of `Composite::Unnamed` wrapping to collect
 /// all `Primitive::U128` leaf values as bytes.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
+fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8>> {
     let mut buf = Vec::new();
     collect_bytes_recursive(value, &mut buf);
     if buf.is_empty() {
@@ -741,7 +772,7 @@ fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<V
     }
 }
 
-fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value<u32>, buf: &mut Vec<u8>) {
+fn collect_bytes_recursive(value: &subxt::ext::scale_value::Value, buf: &mut Vec<u8>) {
     use subxt::ext::scale_value::Primitive;
     match &value.value {
         ValueDef::Primitive(Primitive::U128(n)) => buf.push(*n as u8),

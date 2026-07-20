@@ -109,6 +109,7 @@ pub struct BucketResponse {
 #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgreementResponse {
+    pub bucket_id: BucketId,
     pub owner: Vec<u8>,    // Encoded AccountId
     pub provider: Vec<u8>, // Encoded AccountId
     pub max_bytes: u64,
@@ -132,6 +133,8 @@ pub struct ChallengeResponse {
     pub leaf_index: u64,
     pub chunk_index: u64,
     pub deadline: u32,
+    /// Stable per-deadline index, forming `ChallengeId { deadline, index }`.
+    pub index: u16,
     pub deposit: u128,
 }
 
@@ -167,8 +170,18 @@ sp_api::decl_runtime_apis! {
         /// Get all agreements for a provider.
         fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
 
-        /// Get challenges expiring at a specific block.
+        /// Get challenges expiring at a specific deadline. `block` is an anchor
+        /// block (see `current_anchor_block`), not a parachain height.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges for a specific bucket.
+        fn bucket_challenges(bucket_id: BucketId) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges targeting a specific provider.
+        fn provider_challenges(provider: AccountId) -> Vec<ChallengeResponse>;
+
+        /// Get all challenges created by a specific challenger.
+        fn challenger_challenges(challenger: AccountId) -> Vec<ChallengeResponse>;
 
         /// Check if a provider has sufficient stake for additional bytes.
         fn can_accept_bytes(provider: AccountId, additional_bytes: u64) -> bool;
@@ -179,5 +192,16 @@ sp_api::decl_runtime_apis! {
 
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+
+        /// The anchor block every on-chain duration (timeouts, expiries,
+        /// `valid_until`, nonce age) is measured against. Off-chain actors read
+        /// this instead of a specific storage item so they need not know whether
+        /// the anchor is a relay, parachain, or other block number.
+        fn current_anchor_block() -> BlockNumber;
+
+        /// Milliseconds per anchor block. Pairs with `current_anchor_block` so
+        /// off-chain consumers can humanize anchor-denominated durations
+        /// without knowing which clock the pallet measures them on.
+        fn anchor_block_time_millis() -> u64;
     }
 }

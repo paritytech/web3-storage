@@ -73,7 +73,6 @@ fn make_challenge(bucket_id: BucketId, deadline: u32, index: u16) -> DetectedCha
         leaf_index: 5,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
-        created_at_block: 900,
     }
 }
 
@@ -176,10 +175,12 @@ fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
-        created_at_block: 900,
     };
 
-    let state = Arc::new(ProviderState::new(storage, ALICE_SS58.to_string()));
+    let state = Arc::new(ProviderState::with_provider_id(
+        storage,
+        ALICE_SS58.to_string(),
+    ));
     (state, challenge)
 }
 
@@ -226,7 +227,6 @@ async fn test_proof_generation_failed_no_bucket() {
         leaf_index: 0,
         chunk_index: 0,
         challenger: ALICE_SS58.to_string(),
-        created_at_block: 900,
     };
 
     let mock = Arc::new(MockChallengeChainClient::new().with_challenges(vec![challenge]));

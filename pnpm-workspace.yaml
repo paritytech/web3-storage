@@ -1,0 +1,28 @@
+packages:
+  - "user-interfaces/shared/*"
+  # The magic-named @polkadot-api/descriptors package lives nested inside
+  # packages/papi/.papi/. PAPI tooling regenerates it there; we register it as
+  # a workspace package so consumers can depend on it via `workspace:*`.
+  # (packages/papi itself is covered by the packages/* glob below.)
+  - "packages/papi/.papi/descriptors"
+  - "user-interfaces/provider"
+  - "user-interfaces/drive-ui"
+  - "user-interfaces/s3-ui"
+  - "user-interfaces/photos"
+  - "packages/*"
+  - "examples/papi"
+
+# pnpm blocks dependency build scripts unless allow-listed; esbuild needs its
+# postinstall to place the platform binary.
+allowBuilds:
+  esbuild: true
+
+# pnpm quarantines packages published less than minimumReleaseAge minutes ago
+# (supply-chain protection). Dependabot ignores this policy when resolving
+# lockfiles, so exempt the browser-data packages that publish near-daily;
+# their releases are machine-generated data tables, not code.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - baseline-browser-mapping
+  - caniuse-lite
+  - electron-to-chromium

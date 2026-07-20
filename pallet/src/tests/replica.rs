@@ -351,7 +351,7 @@ fn top_up_replica_sync_balance_fails_no_agreement() {
 /// and a replica provider (2) with an accepted replica agreement.
 fn setup_replica_with_snapshot() -> u64 {
     use sp_core::H256;
-    use storage_primitives::BucketSnapshot;
+    use storage_primitives::{BucketSnapshot, Commitment};
 
     // Provider 3 = primary
     register_provider(3, 200);
@@ -365,11 +365,14 @@ fn setup_replica_with_snapshot() -> u64 {
     Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
             bucket.snapshot = Some(BucketSnapshot {
-                mmr_root: H256::repeat_byte(0xAB),
-                start_seq: 0,
-                leaf_count: 10,
+                commitment: Commitment {
+                    mmr_root: H256::repeat_byte(0xAB),
+                    start_seq: 0,
+                    leaf_count: 10,
+                },
                 checkpoint_block: 1,
                 primary_signers: vec![0x01],
+                commitment_nonce: 0,
             });
         }
     });
@@ -423,11 +426,11 @@ fn confirm_replica_sync_happy_path() {
             } => {
                 assert_eq!(*sync_balance, 490); // 500 - 10
                 assert!(last_sync.is_some());
-                let sync = last_sync.as_ref().unwrap();
-                assert_eq!(sync.root, sp_core::H256::repeat_byte(0xAB));
-                assert_eq!(sync.block, 1);
+                let record = last_sync.as_ref().unwrap();
+                assert_eq!(record.root, sp_core::H256::repeat_byte(0xAB));
+                assert_eq!(record.block, 1);
                 // Synced to the current snapshot ⇒ range recorded (start_seq, leaf_count).
-                assert_eq!(sync.range, Some((0, 10)));
+                assert_eq!(record.range, Some((0, 10)));
             }
             _ => panic!("expected replica"),
         }
@@ -456,20 +459,21 @@ fn challenge_replica_binds_to_synced_range() {
             RuntimeOrigin::signed(4),
             bucket_id,
             2,
-            3, // leaf_index
-            1, // chunk_index
+            storage_primitives::ChunkLocation {
+                leaf_index: 3,
+                chunk_index: 1,
+            },
         ));
 
-        let challenges = Challenges::<Test>::get(101).unwrap();
-        assert_eq!(challenges.len(), 1);
-        let c = &challenges[0];
+        assert_eq!(Challenges::<Test>::iter_prefix(101).count(), 1);
+        let c = Challenges::<Test>::get(101, 0).unwrap();
         assert_eq!(c.provider, 2);
         assert_eq!(c.mmr_root, H256::repeat_byte(0xAB));
         assert_eq!(c.start_seq, 0);
         // Bound to the snapshot's real leaf_count, not a placeholder.
         assert_eq!(c.leaf_count, 10);
-        assert_eq!(c.leaf_index, 3);
-        assert_eq!(c.chunk_index, 1);
+        assert_eq!(c.target.leaf_index, 3);
+        assert_eq!(c.target.chunk_index, 1);
     });
 }
 
@@ -508,7 +512,15 @@ fn challenge_replica_fails_when_synced_to_historical() {
 
         // challenge_replica cannot bind the proof, so it is refused.
         assert_noop!(
-            StorageProvider::challenge_replica(RuntimeOrigin::signed(4), bucket_id, 2, 0, 0),
+            StorageProvider::challenge_replica(
+                RuntimeOrigin::signed(4),
+                bucket_id,
+                2,
+                storage_primitives::ChunkLocation {
+                    leaf_index: 0,
+                    chunk_index: 0,
+                },
+            ),
             Error::<Test>::ReplicaSyncRangeUnknown
         );
     });
@@ -534,7 +546,7 @@ fn confirm_replica_sync_fails_sync_too_frequent() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
-                    snapshot.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
                 }
             }
         });
@@ -569,11 +581,14 @@ fn confirm_replica_sync_fails_insufficient_balance() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 bucket.snapshot = Some(storage_primitives::BucketSnapshot {
-                    mmr_root: sp_core::H256::repeat_byte(0xAB),
-                    start_seq: 0,
-                    leaf_count: 10,
+                    commitment: storage_primitives::Commitment {
+                        mmr_root: sp_core::H256::repeat_byte(0xAB),
+                        start_seq: 0,
+                        leaf_count: 10,
+                    },
                     checkpoint_block: 1,
                     primary_signers: vec![0x01],
+                    commitment_nonce: 0,
                 });
             }
         });
@@ -710,7 +725,7 @@ fn confirm_replica_sync_after_interval_with_new_root() {
         Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
             if let Some(bucket) = maybe_bucket {
                 if let Some(snapshot) = &mut bucket.snapshot {
-                    snapshot.mmr_root = sp_core::H256::repeat_byte(0xCD);
+                    snapshot.commitment.mmr_root = sp_core::H256::repeat_byte(0xCD);
                 }
             }
         });
@@ -737,9 +752,9 @@ fn confirm_replica_sync_after_interval_with_new_root() {
                 ..
             } => {
                 assert_eq!(*sync_balance, 480); // 500 - 10 - 10
-                let sync = last_sync.as_ref().unwrap();
-                assert_eq!(sync.root, sp_core::H256::repeat_byte(0xCD));
-                assert_eq!(sync.block, 12);
+                let record = last_sync.as_ref().unwrap();
+                assert_eq!(record.root, sp_core::H256::repeat_byte(0xCD));
+                assert_eq!(record.block, 12);
             }
             _ => panic!("expected replica"),
         }

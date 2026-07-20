@@ -1,59 +1,70 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 /**
- * Drive Client — wraps DriveRegistry pallet + StorageProvider pallet + provider
- * HTTP endpoints. Stateless w.r.t. connection: takes a `ParachainApi` and a
- * `Signer` (both supplied by the state layer) per-instance, and exposes one
- * method per documented operation.
+ * Drive Client — drive-ui's thin adapter over the sdk's FileSystemClient.
+ * What stays here is app-shaped: stateless signer swapping driven by the
+ * state layer, Blob conversion for the browser download path, and the
+ * progress-status strings. Everything chain/HTTP-mechanical (tx submission,
+ * provider resolution + caching, retry/backoff, request signing, watch-based
+ * acceptance waits) lives in @web3-storage/sdk.
  */
 
-import { Binary, Enum, type PolkadotSigner, type Transaction, type TxFinalizedPayload } from "polkadot-api";
+import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
+import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import {
   buildSignedTermsArgs,
-  httpFetch,
+  createDrive as createDriveTx,
+  negotiateTerms,
   parseMultiaddrToUrl,
-  resolveProviderEndpoint,
   toSs58,
+  type ChainSigner,
+  type NegotiateRequest,
   type SignedTerms,
-} from "@web3-storage/papi";
-
-// Re-exported so other modules can keep importing them from the client facade.
-export { buildSignedTermsArgs } from "@web3-storage/papi";
-export type { SignedTerms } from "@web3-storage/papi";
+} from "@web3-storage/sdk";
+import { FileSystemClient } from "@web3-storage/sdk/fs";
 import type { ParachainApi } from "@/state/chain.state";
 
 export type Signer = PolkadotSigner;
 
-/** A primary provider backing a drive's underlying layer-0 bucket. */
-export interface DriveProviderInfo {
-  account: string;
-  multiaddr: string;
-  /** Resolved HTTP(S) base URL, or `null` if the multiaddr isn't an HTTP endpoint. */
-  url: string | null;
-}
+// Re-export the SDK negotiate primitives + types the create-drive components
+// (NewDriveDialog, ProviderPickerPanel) and the state layer import from here.
+export { buildSignedTermsArgs, negotiateTerms };
+export type { NegotiateRequest, SignedTerms };
 
-export interface DriveInfo {
-  driveId: bigint;
-  bucketId: bigint;
-  owner: string;
-  name: string | null;
-  maxCapacity: bigint;
-  // block-number fields are u32 on chain → number in PAPI's typed API
-  createdAt: number;
-  storagePeriod: number;
-  expiresAt: number;
-  /** Primary providers of the underlying layer-0 bucket. */
-  providerInfo: DriveProviderInfo[];
-}
+/** `parseMultiaddrToHttp` is the SDK's `parseMultiaddrToUrl` under the old name. */
+export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
+export type {
+  BucketMember,
+  CheckpointDuty,
+  CreateDriveOptions,
+  DriveInfo,
+  FsEntry,
+  MemberRole,
+  UploadOptions,
+} from "@web3-storage/sdk/fs";
+import type {
+  BucketMember,
+  CheckpointDuty,
+  CreateDriveOptions,
+  DriveInfo,
+  FsEntry,
+  MemberRole,
+  UploadOptions,
+} from "@web3-storage/sdk/fs";
+
+export interface CheckpointInfo {
+  mmrRoot: string;
+  startSeq: bigint;
+  leafCount: bigint;
+  checkpointBlock: number;
+}
 
 /**
- * Provider-signed agreement terms returned by `POST /negotiate` on the
- * provider node. The signature is the SCALE-encoded `MultiSignature` as
- * hex (e.g. `0x01<64-byte-sr25519-sig>`).
+ * A registered provider as surfaced by the provider picker. UI-side discovery
+ * type (raw `StorageProvider.Providers` sweep) — stays in the UI, not the SDK.
  */
-
 export interface AvailableProvider {
   account: string;
   multiaddr: string;
@@ -67,107 +78,72 @@ export interface AvailableProvider {
   agreementsTotal: number;
 }
 
+/**
+ * A provider scored against storage requirements via the
+ * `find_matching_providers` runtime API. Carries a `matchScore` and
+ * `partialReason` so the picker can rank "best fit" vs near-misses.
+ */
 export interface MatchingProviders extends AvailableProvider {
   matchScore: number;
   partialReason: string;
-  stake: bigint,
   committedBytes: bigint;
-  minDuration: number;
-  maxDuration: number;
-  acceptingPrimary: boolean;
   replicaSyncPrice?: bigint;
   acceptingExtensions: boolean;
   registeredAt: number;
-  agreementsTotal: number;
   agreementsExtended: number;
   agreementsNotExtended: number;
   agreementsBurned: number;
   challengesReceived: number;
   challengesFailed: number;
-  maxCapacity: bigint;
-}
-
-export interface FsEntry {
-  name: string;
-  path: string;
-  entryType: "file" | "directory";
-  size: number;
-  mtime: number;
-}
-
-export interface CreateDriveOptions {
-  name?: string;
-  maxCapacity: bigint;
-  storagePeriod: number;
-  /** Price per byte per block. Defaults to 0 if omitted. */
-  pricePerByte?: bigint;
-}
-
-export type MemberRole = "Admin" | "Writer" | "Reader";
-
-export interface BucketMember {
-  account: string;
-  role: MemberRole;
-}
-
-export interface CheckpointInfo {
-  mmrRoot: string;
-  startSeq: bigint;
-  leafCount: bigint;
-  checkpointBlock: number;
-}
-
-export interface CheckpointDuty {
-  bucketId: number;
-  mmrRoot: string;
-  startSeq: number;
-  leafCount: number;
-  ready: boolean;
-}
-
-export interface UploadOptions {
-  contentType?: string;
-  signal?: AbortSignal;
 }
 
 export interface QueryMatchingProvidersParams {
   query: {
-    bytesNeeded: bigint,
-    minDuration: number,
-    maxPricePerByte: bigint,
-    primaryOnly: boolean,
-  },
+    bytesNeeded: bigint;
+    minDuration: number;
+    maxPricePerByte: bigint;
+    primaryOnly: boolean;
+  };
   limit: number;
-}
-
-function decodeName(name: unknown): string | null {
-  if (name == null) return null;
-  try {
-    if (typeof name === "string") return name;
-    // polkadot-api Binary has asText(); fall back to TextDecoder
-    if (typeof (name as any).asText === "function") return (name as any).asText();
-    return new TextDecoder().decode(name as Uint8Array);
-  } catch {
-    return null;
-  }
 }
 
 export class DriveClient {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
-  private providerUrlCache = new Map<string, string>();
+  private fsc: FileSystemClient | null = null;
+
+  private rebuild(): void {
+    if (!this.api) {
+      this.fsc = null;
+      return;
+    }
+    let chainSigner: ChainSigner | null = null;
+    if (this.signer && this.signerAddress) {
+      // Wallet flows hand us a PolkadotSigner + address; recover the public
+      // key from the address. No raw keypair here, so provider requests go
+      // unsigned (same as this app always behaved).
+      const [publicKey] = ss58Decode(this.signerAddress);
+      chainSigner = {
+        signer: this.signer,
+        address: this.signerAddress,
+        publicKey,
+      };
+    }
+    this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
+  }
 
   setApi(api: ParachainApi | null): void {
     if (api !== this.api) {
-      this.providerUrlCache.clear();
+      this.api = api;
+      this.rebuild();
     }
-    this.api = api;
   }
 
   setSigner(signer: Signer | null, address: string | null): void {
     this.signer = signer;
     this.signerAddress = address;
+    this.rebuild();
   }
 
   hasApi(): boolean {
@@ -187,57 +163,81 @@ export class DriveClient {
     return this.api;
   }
 
-  private requireSigner(): { signer: Signer; address: string } {
-    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
-    return { signer: this.signer, address: this.signerAddress };
-  }
-
-  // ── Tx submission ─────────────────────────────────────────────────────────
-
-  /**
-   * Sign + submit + wait for finalization. Throws on chain-side failure or
-   * signing/connection error.
-   *
-   * Resolves the next nonce via the legacy `system_accountNextIndex` JSON-RPC
-   * method directly against the node, bypassing PAPI's chainHead. PAPI's
-   * default and the runtime-API/storage variants both compute nonce from a
-   * specific block on the client's locally-observed chainHead, which can lag
-   * behind the chain's actual state when the page has just reloaded and a
-   * different connection (e.g. tests' api setup) has been submitting
-   * same-signer txs. `system_accountNextIndex` queries the node directly and
-   * accounts for pending pool state → always returns the correct next nonce.
-   */
-  private async submit(tx: Transaction): Promise<TxFinalizedPayload> {
-    const { signer } = this.requireSigner();
-    const result = await tx.signAndSubmit(signer);
-    if (!result.ok) {
-      const err = JSON.stringify(result.dispatchError, (_k, v) =>
-        typeof v === "bigint" ? v.toString() : v,
-      );
-      throw new Error(`Transaction failed on-chain: ${err}`);
-    }
-    return result;
+  private requireFs(): FileSystemClient {
+    if (!this.fsc) throw new Error("Not connected to chain");
+    return this.fsc;
   }
 
   // ── Provider resolution ───────────────────────────────────────────────────
 
-  async getProviderUrl(bucketId: bigint): Promise<string> {
-    const key = bucketId.toString();
-    const cached = this.providerUrlCache.get(key);
-    if (cached) return cached;
-    const url = await resolveProviderEndpoint(this.requireApi(), bucketId);
-    this.providerUrlCache.set(key, url);
-    return url;
+  getProviderUrl(bucketId: bigint): Promise<string> {
+    return this.requireFs().getProviderUrl(bucketId);
   }
 
   invalidateProviderUrl(bucketId: bigint): void {
-    this.providerUrlCache.delete(bucketId.toString());
+    this.fsc?.invalidateProviderUrl(bucketId);
+  }
+
+  async waitForProvider(
+    bucketId: bigint,
+    onProgress?: (status: string, elapsedMs: number) => void,
+  ): Promise<string> {
+    const statusFor = (elapsedSec: number): string => {
+      if (elapsedSec < 15) return "Checking if provider has accepted the agreement...";
+      if (elapsedSec < 45) return "Provider is reviewing the agreement...";
+      if (elapsedSec < 90) return "Still waiting for provider to accept...";
+      return "Taking longer than usual — provider may be busy or offline...";
+    };
+
+    onProgress?.(statusFor(0), 0);
+    const startTime = Date.now();
+    try {
+      const url = await this.requireFs().waitForProvider(bucketId, {
+        timeoutMs: 150_000,
+        tickMs: 3_000,
+        onTick: (elapsedMs) => onProgress?.(statusFor(Math.round(elapsedMs / 1000)), elapsedMs),
+      });
+      onProgress?.("Provider accepted — ready to use", Date.now() - startTime);
+      return url;
+    } catch {
+      throw new Error(
+        `Provider did not accept the agreement after ${Math.round(
+          (Date.now() - startTime) / 1000,
+        )}s. The provider may be offline or not accepting new agreements.`,
+      );
+    }
+  }
+
+  // ── Account ───────────────────────────────────────────────────────────────
+
+  async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
+    const api = this.requireApi();
+    const account = await api.query.System.Account.getValue(address);
+    return { free: account.data.free, reserved: account.data.reserved };
+  }
+
+  // ── Drive on-chain operations ─────────────────────────────────────────────
+
+  async createDrive(options: CreateDriveOptions): Promise<DriveInfo> {
+    const { driveId, bucketId, provider } = await this.requireFs().createDrive(options);
+    return {
+      driveId,
+      bucketId,
+      owner: this.signerAddress ?? "",
+      name: options.name ?? null,
+      maxCapacity: options.maxCapacity,
+      createdAt: 0,
+      storagePeriod: options.storagePeriod,
+      expiresAt: 0,
+      providerInfo: [{ account: provider, multiaddr: "", url: options.provider?.url ?? null }],
+    };
   }
 
   /**
    * Walk `StorageProvider.Providers` storage and return all registered
-   * providers with their settings, sorted by free capacity descending.
-   * Used by the provider picker to surface candidates before negotiation.
+   * providers, sorted by free capacity descending. Used by the provider
+   * picker to surface candidates before negotiation. UI-side discovery — the
+   * SDK's `discoverAcceptingProvider` picks one; this lists them all.
    */
   async listAvailableProviders(): Promise<AvailableProvider[]> {
     const api = this.requireApi();
@@ -265,8 +265,7 @@ export class DriveClient {
         minDuration: settings.min_duration ?? 0,
         maxDuration: settings.max_duration ?? 0,
         acceptingPrimary: settings.accepting_primary ?? false,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        agreementsTotal: (provider.stats as any)?.agreements_total ?? 0,
+        agreementsTotal: (provider.stats as { agreements_total?: number })?.agreements_total ?? 0,
       });
     }
 
@@ -279,72 +278,72 @@ export class DriveClient {
     return providers;
   }
 
+  /**
+   * Score registered providers against the given storage requirements via the
+   * `find_matching_providers` runtime API. Returns a `matchScore` and
+   * `partialReason` per provider so the picker can rank candidates.
+   */
   async queryMatchingProviders(
-    query: QueryMatchingProvidersParams['query'],
-    limit: QueryMatchingProvidersParams['limit'],
+    query: QueryMatchingProvidersParams["query"],
+    limit: QueryMatchingProvidersParams["limit"],
   ): Promise<MatchingProviders[]> {
     const api = this.requireApi();
-    const matches = await api.apis.StorageProviderApi.find_matching_providers({
-      bytes_needed: query.bytesNeeded,
-      min_duration: query.minDuration,
-      max_price_per_byte: query.maxPricePerByte,
-      primary_only: query.primaryOnly,
-    }, limit);
+    const matches = await api.apis.StorageProviderApi.find_matching_providers(
+      {
+        bytes_needed: query.bytesNeeded,
+        min_duration: query.minDuration,
+        max_price_per_byte: query.maxPricePerByte,
+        primary_only: query.primaryOnly,
+      },
+      limit,
+    );
 
-    return matches.map((match) => {
-      const info = match.info;
-      const maxCapacity = BigInt(info.max_capacity ?? 0);
-      const committedBytes = BigInt(info.committed_bytes ?? 0);
-      const availableCapacity =
-        maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
+    return matches
+      .map((match) => {
+        const info = match.info;
+        const maxCapacity = BigInt(info.max_capacity ?? 0);
+        const committedBytes = BigInt(info.committed_bytes ?? 0);
+        const availableCapacity =
+          maxCapacity > committedBytes ? maxCapacity - committedBytes : 0n;
 
-      return {
-        account: toSs58(match.account),
-        multiaddr: new TextDecoder().decode(info.multiaddr),
-        stake: BigInt(info.stake ?? 0),
-        availableCapacity,
-        maxCapacity,
-        committedBytes,
-        pricePerByte: BigInt(info.price_per_byte ?? 0),
-        minDuration: info.min_duration ?? 0,
-        maxDuration: info.max_duration ?? 0,
-        acceptingPrimary: info.accepting_primary ?? false,
-        replicaSyncPrice:
-          info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
-        acceptingExtensions: info.accepting_extensions ?? false,
-        registeredAt: Number(info.registered_at ?? 0),
-        agreementsTotal: info.agreements_total ?? 0,
-        agreementsExtended: info.agreements_extended ?? 0,
-        agreementsNotExtended: info.agreements_not_extended ?? 0,
-        agreementsBurned: info.agreements_burned ?? 0,
-        challengesReceived: info.challenges_received ?? 0,
-        challengesFailed: info.challenges_failed ?? 0,
-        matchScore: match.match_score,
-        partialReason: match.partial_reason?.type ?? "",
-      };
-    }).sort((a, b) => b.matchScore - a.matchScore);
+        return {
+          account: toSs58(match.account),
+          multiaddr: new TextDecoder().decode(info.multiaddr),
+          stake: BigInt(info.stake ?? 0),
+          availableCapacity,
+          maxCapacity,
+          committedBytes,
+          pricePerByte: BigInt(info.price_per_byte ?? 0),
+          minDuration: info.min_duration ?? 0,
+          maxDuration: info.max_duration ?? 0,
+          acceptingPrimary: info.accepting_primary ?? false,
+          replicaSyncPrice:
+            info.replica_sync_price != null ? BigInt(info.replica_sync_price) : undefined,
+          acceptingExtensions: info.accepting_extensions ?? false,
+          registeredAt: Number(info.registered_at ?? 0),
+          agreementsTotal: info.agreements_total ?? 0,
+          agreementsExtended: info.agreements_extended ?? 0,
+          agreementsNotExtended: info.agreements_not_extended ?? 0,
+          agreementsBurned: info.agreements_burned ?? 0,
+          challengesReceived: info.challenges_received ?? 0,
+          challengesFailed: info.challenges_failed ?? 0,
+          matchScore: match.match_score,
+          partialReason: match.partial_reason?.type ?? "",
+        };
+      })
+      .sort((a, b) => b.matchScore - a.matchScore);
   }
-
-
-  // ── Account ───────────────────────────────────────────────────────────────
-
-  async getBalance(address: string): Promise<{ free: bigint; reserved: bigint }> {
-    const api = this.requireApi();
-    const account = await api.query.System.Account.getValue(address);
-    return { free: account.data.free, reserved: account.data.reserved };
-  }
-
-  // ── Drive on-chain operations ─────────────────────────────────────────────
 
   /**
-   * Redeem provider-signed agreement terms on chain to open a Layer-0
-   * bucket + primary agreement and register the drive on top — atomically
-   * in one extrinsic.
+   * Redeem provider-signed agreement terms on chain to open a Layer-0 bucket
+   * + primary agreement and register the drive on top — atomically in one
+   * extrinsic (via the layer-0 `createDrive` wrapper, submitted finalized).
    *
    * **Step 2 of drive creation.** Step 1 is the HTTP `negotiateTerms` call
-   * against the chosen provider. Splitting the two lets a failed on-chain
+   * against the chosen provider; splitting the two lets a failed on-chain
    * submit be retried without re-negotiating (terms valid until
-   * `terms.valid_until`).
+   * `terms.valid_until`). `providerUrl` is used only to prime the provider
+   * URL cache for the first upload.
    */
   async submitCreateDrive(
     name: string | undefined,
@@ -353,37 +352,31 @@ export class DriveClient {
     signed: SignedTerms,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    const { address } = this.requireSigner();
+    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
+    const [publicKey] = ss58Decode(this.signerAddress);
+    const owner: ChainSigner = {
+      signer: this.signer,
+      address: this.signerAddress,
+      publicKey,
+    };
 
-    const tx = api.tx.DriveRegistry.create_drive({
-      name: name ? Binary.fromText(name) : undefined,
-      ...buildSignedTermsArgs(providerAccount, signed),
-    });
-
-    const result = await this.submit(tx);
-
-    const created = api.event.DriveRegistry.DriveCreated.filter(result.events);
-    if (created.length === 0) {
-      const drives = await this.listDrives();
-      if (drives.length > 0) {
-        // Prime the provider URL cache so the first upload skips the on-chain lookup.
-        this.providerUrlCache.set(drives[drives.length - 1].bucketId.toString(), providerUrl);
-        return drives[drives.length - 1];
-      }
-      throw new Error(
-        "DriveCreated event not found. The runtime descriptor may be stale — run: pnpm papi:generate",
-      );
-    }
-    const { drive_id, bucket_id } = created[0].payload;
-
-    // We already know the provider HTTP URL — prime the cache so the first
-    // upload doesn't have to resolve it from chain.
-    this.providerUrlCache.set(bucket_id.toString(), providerUrl);
+    // Finalize: the state layer reads the drive list back at the finalized
+    // head right after this resolves, so an in-block ("best") submit would
+    // race a reorg and the just-created drive could be missing from the
+    // refreshed list. `retryStale: 0` — a user retry is the right UX for a UI.
+    const { driveId, bucketId } = await createDriveTx(
+      api,
+      owner,
+      name ?? "",
+      { address: providerAccount },
+      signed,
+      { mode: "finalized", retryStale: 0 },
+    );
 
     return {
-      driveId: drive_id,
-      bucketId: bucket_id,
-      owner: address,
+      driveId,
+      bucketId,
+      owner: this.signerAddress,
       name: name ?? null,
       maxCapacity: BigInt(signed.terms.max_bytes),
       createdAt: 0,
@@ -393,129 +386,22 @@ export class DriveClient {
     };
   }
 
-  async listDrives(): Promise<DriveInfo[]> {
-    const api = this.requireApi();
-    const { address } = this.requireSigner();
-
-    const driveIds = await api.query.DriveRegistry.UserDrives.getValue(address);
-    if (driveIds.length === 0) return [];
-
-    // Batch all drive lookups into one storage query instead of N round-trips.
-    const driveValues = await api.query.DriveRegistry.Drives.getValues(
-      driveIds.map((driveId) => [driveId] as const),
-    );
-
-    const drives: DriveInfo[] = [];
-    const bucketIds: bigint[] = [];
-    driveValues.forEach((drive, i) => {
-      if (!drive) return;
-      drives.push({
-        driveId: driveIds[i]!,
-        bucketId: drive.bucket_id,
-        owner: drive.owner,
-        name: decodeName(drive.name),
-        maxCapacity: drive.max_capacity,
-        createdAt: drive.created_at,
-        storagePeriod: drive.storage_period,
-        expiresAt: drive.expires_at,
-        providerInfo: [],
-      });
-      bucketIds.push(drive.bucket_id);
-    });
-
-    // `providersByBucket[i]` aligns with `drives[i]` (both built skipping nulls).
-    const providersByBucket = await this.resolveBucketProviders(bucketIds);
-    drives.forEach((drive, i) => {
-      drive.providerInfo = providersByBucket[i] ?? [];
-    });
-
-    return drives;
+  listDrives(): Promise<DriveInfo[]> {
+    return this.requireFs().listDrives(this.signerAddress ?? undefined);
   }
 
-  async getDrive(driveId: bigint): Promise<DriveInfo | null> {
-    const api = this.requireApi();
-    const drive = await api.query.DriveRegistry.Drives.getValue(driveId);
-    if (!drive) return null;
-    const [providerInfo] = await this.resolveBucketProviders([drive.bucket_id]);
-    return {
-      driveId,
-      bucketId: drive.bucket_id,
-      owner: drive.owner,
-      name: decodeName(drive.name),
-      maxCapacity: drive.max_capacity,
-      createdAt: drive.created_at,
-      storagePeriod: drive.storage_period,
-      expiresAt: drive.expires_at,
-      providerInfo: providerInfo ?? [],
-    };
-  }
-
-  /**
-   * Resolve the primary-provider info for each given layer-0 bucket id, batching
-   * every storage read into a single query per pallet map (no per-bucket /
-   * per-provider round-trips). Returns an array aligned with `bucketIds`.
-   */
-  private async resolveBucketProviders(
-    bucketIds: bigint[],
-  ): Promise<DriveProviderInfo[][]> {
-    const api = this.requireApi();
-    const bucketInfo = await api.query.StorageProvider.Buckets.getValues(
-      bucketIds.map((id) => [id] as const),
-    );
-
-    const providerAccounts = [
-      ...new Set(bucketInfo.flatMap((info) => info?.primary_providers ?? [])),
-    ];
-    const providerRecords = await api.query.StorageProvider.Providers.getValues(
-      providerAccounts.map((account) => [account] as const),
-    );
-
-    const providerMap = new Map<string, DriveProviderInfo>();
-    providerAccounts.forEach((account, i) => {
-      const record = providerRecords[i];
-      if (!record) return;
-      const multiaddr = new TextDecoder().decode(record.multiaddr);
-      providerMap.set(account, {
-        account,
-        multiaddr,
-        url: parseMultiaddrToUrl(multiaddr),
-      });
-    });
-
-    return bucketInfo.map((info) =>
-      (info?.primary_providers ?? [])
-        .map((account) => providerMap.get(account))
-        .filter((p): p is DriveProviderInfo => p != null),
-    );
+  getDrive(driveId: bigint): Promise<DriveInfo | null> {
+    return this.requireFs().getDrive(driveId);
   }
 
   async deleteDrive(driveId: bigint): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.DriveRegistry.delete_drive({ drive_id: driveId });
-    await this.submit(tx);
+    await this.requireFs().deleteDrive(driveId);
   }
 
   // ── FS HTTP operations ────────────────────────────────────────────────────
 
-  async listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const params = new URLSearchParams({ path });
-    const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/ls?${params.toString()}`,
-    );
-
-    if (!response.ok) {
-      throw new Error(`List directory failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return (result.entries || []).map((e: { name: string; path: string; entry_type: string; size?: number; mtime?: number }) => ({
-      name: e.name,
-      path: e.path,
-      entryType: e.entry_type as "file" | "directory",
-      size: e.size ?? 0,
-      mtime: (e.mtime ?? 0) * 1000,
-    }));
+  listDirectory(bucketId: bigint, path: string): Promise<FsEntry[]> {
+    return this.requireFs().listDirectory(bucketId, path);
   }
 
   async uploadFile(
@@ -524,98 +410,34 @@ export class DriveClient {
     data: Uint8Array,
     options: UploadOptions = {},
   ): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": options.contentType || "application/octet-stream" },
-        body: data as Uint8Array<ArrayBuffer>,
-        signal: options.signal,
-      },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+    await this.requireFs().uploadFile(bucketId, path, data, options);
   }
 
   async downloadFile(bucketId: bigint, path: string): Promise<Blob> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
-    );
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    return response.blob();
+    const bytes = await this.requireFs().downloadFile(bucketId, path);
+    return new Blob([bytes as BlobPart]);
   }
 
-  async deleteFile(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/file?path=${encodeURIComponent(path)}`,
-      { method: "DELETE" },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Delete failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+  deleteFile(bucketId: bigint, path: string): Promise<void> {
+    return this.requireFs().deleteFile(bucketId, path);
   }
 
-  async createDirectory(bucketId: bigint, path: string): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/fs/${Number(bucketId)}/mkdir?path=${encodeURIComponent(path)}`,
-      { method: "POST" },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Create directory failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+  createDirectory(bucketId: bigint, path: string): Promise<void> {
+    return this.requireFs().createDirectory(bucketId, path);
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
 
-  async getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
-    const api = this.requireApi();
-    const bucket = await api.query.StorageProvider.Buckets.getValue(bucketId);
-    if (!bucket) throw new Error(`Bucket ${bucketId} not found`);
-
-    const roleMap: Record<string, MemberRole> = {
-      Admin: "Admin",
-      Writer: "Writer",
-      Reader: "Reader",
-    };
-
-    return (bucket.members ?? []).map((m: { account: string; role: { type?: string } | string }) => {
-      const roleType = typeof m.role === "string" ? m.role : m.role?.type ?? "Reader";
-      return {
-        account: m.account,
-        role: roleMap[roleType] ?? "Reader",
-      };
-    });
+  getBucketMembers(bucketId: bigint): Promise<BucketMember[]> {
+    return this.requireFs().getBucketMembers(bucketId);
   }
 
-  async addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.StorageProvider.set_member({
-      bucket_id: bucketId,
-      member: account,
-      role: Enum(role),
-    });
-    await this.submit(tx);
+  addMember(bucketId: bigint, account: string, role: MemberRole): Promise<void> {
+    return this.requireFs().addMember(bucketId, account, role);
   }
 
-  async removeMember(bucketId: bigint, account: string): Promise<void> {
-    const api = this.requireApi();
-    const tx = api.tx.StorageProvider.remove_member({
-      bucket_id: bucketId,
-      member: account,
-    });
-    await this.submit(tx);
+  removeMember(bucketId: bigint, account: string): Promise<void> {
+    return this.requireFs().removeMember(bucketId, account);
   }
 
   // ── Checkpoint ────────────────────────────────────────────────────────────
@@ -629,39 +451,21 @@ export class DriveClient {
     if (!snapshot) return null;
 
     return {
-      mmrRoot: snapshot.mmr_root,
-      startSeq: snapshot.start_seq,
-      leafCount: snapshot.leaf_count,
+      mmrRoot: snapshot.commitment.mmr_root,
+      startSeq: snapshot.commitment.start_seq,
+      leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
   }
 
-  async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${Number(bucketId)}`,
-    );
-
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Checkpoint duty failed: ${response.status}`);
-    }
-
-    return response.json();
+  getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
+    return this.requireFs().getCheckpointDuty(bucketId);
   }
 
-  async triggerCheckpoint(bucketId: bigint): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
-      { method: "POST" },
-    );
-
-    if (!response.ok) {
-      throw new Error(`Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
+  triggerCheckpoint(bucketId: bigint): Promise<void> {
+    return this.requireFs().triggerCheckpoint(bucketId);
   }
 }
 
 // Re-export descriptor for tests / consumers that need event types.
-export { parachain };
+export { parachain }

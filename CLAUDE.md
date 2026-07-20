@@ -10,6 +10,14 @@
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
 
+**Code review rules:**
+- NEVER submit AI-generated review comments (PR reviews, inline comments, or issue comments) to GitHub automatically
+- ALWAYS present review findings to the human reviewer for triage first, and only post the ones they explicitly approve, after they explicitly ask for them to be posted
+
+**Cargo dependency rules:**
+- ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
+- On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).
+
 **Automatic formatting:**
 - ALWAYS run `/format` after generating or modifying Rust code
 - ALWAYS run `/format` before creating any git commit
@@ -33,7 +41,7 @@ cargo build --release
 
 # Build specific components
 cargo build --release -p storage-parachain-runtime
-cargo build --release -p storage-provider-pallet
+cargo build --release -p pallet-storage-provider
 cargo build --release -p storage-provider-node
 cargo build --release -p storage-client
 
@@ -51,7 +59,7 @@ just build
 cargo test
 
 # Run pallet tests
-cargo test -p storage-provider-pallet
+cargo test -p pallet-storage-provider
 
 # Run provider node tests
 cargo test -p storage-provider-node
@@ -144,19 +152,21 @@ They duplicate functionality PAPI already provides, drag in 20+ transitive deps,
 
 | Need                                 | Use                                                                                                |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Chain client + typed API             | `polkadot-api` (`createClient`, `getWsProvider` from `polkadot-api/ws-provider`)                   |
+| Chain client + typed API             | `polkadot-api` (`createClient`; `getWsProvider` from `polkadot-api/ws`)                   |
 | Signer wrapper                       | `getPolkadotSigner` from `polkadot-api/signer`                                                     |
-| SCALE / `Binary` / `Enum`            | `@polkadot-api/substrate-bindings`                                                                 |
+| SCALE / `Binary` / `Enum`            | `import { Binary, Enum } from "polkadot-api"` — NOT `@polkadot-api/substrate-bindings` (its 0.20+ `Binary` is a codec helper without `fromBytes`/`asBytes`) |
 | Sr25519 key derivation (`//Alice`)   | `sr25519CreateDerive` from `@polkadot-labs/hdkd` + `DEV_PHRASE` + `entropyToMiniSecret` + `mnemonicToEntropy` from `@polkadot-labs/hdkd-helpers` |
 | SS58 encode / decode                 | `ss58Address` / `ss58Decode` from `@polkadot-labs/hdkd-helpers`                                    |
 | blake2-256 hashing                   | `blake2b256` from `@polkadot-labs/hdkd-helpers`                                                    |
 | `cryptoWaitReady()`                  | Not needed — hdkd is synchronous; delete the import and the await                                  |
 
-Canonical signer/derive pattern — set up the derive function once at module load, then call `makeSigner("//Alice")` etc.:
+In-repo code should not hand-roll these: the workspace package `@web3-storage/sdk` (`packages/sdk`) already provides `connect`, `makeSigner`, `seedToKeypair`, the `Alice..Ferdie` dev signers, `submitTx` (in-block by default, per the suite's finalization semantics), `watchValue`-based waits, and typed wrappers for every pallet extrinsic. Import from it instead of duplicating the patterns below.
+
+Canonical signer/derive pattern (what `makeSigner` does under the hood) — set up the derive function once at module load, then call `makeSigner("//Alice")` etc.:
 
 ```js
 import { createClient } from "polkadot-api";
-import { getWsProvider } from "polkadot-api/ws-provider";
+import { getWsProvider } from "polkadot-api/ws";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
@@ -379,7 +389,12 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/storage.rs)
+
+All durations are measured in **anchor (relay-chain) blocks** (`RC_HOURS`,
+6 s each), not parachain blocks — the pallet reads its clock from
+`Config::BlockNumberProvider` (see the anchor-clock section in
+[docs/design/scalable-web3-storage-implementation.md](docs/design/scalable-web3-storage-implementation.md)):
 
 ```rust
 // Token decimals
@@ -391,14 +406,14 @@ pub const MinProviderStake: Balance = 1_000 * UNIT;
 // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
 pub const MinStakePerByte: Balance = 1_000;
 
-// Challenge response deadline (provider must respond within this many blocks)
-pub const ChallengeTimeout: BlockNumber = 48 * HOURS;
-pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-pub const RequestTimeout: BlockNumber = 6 * HOURS;
+// Challenge response deadline (provider must respond within this many anchor blocks)
+pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
+pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
+pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
 
 // Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100;
-pub const DefaultCheckpointGrace: BlockNumber = 20;
+pub const DefaultCheckpointInterval: BlockNumber = 100; // anchor blocks (~10 min)
+pub const DefaultCheckpointGrace: BlockNumber = 20;     // anchor blocks (~2 min)
 pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
 pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
@@ -422,13 +437,13 @@ pub struct ProviderSettings {
 Providers must stake tokens proportional to their declared capacity:
 
 ```rust
-// Minimum stake per byte of declared capacity
-pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+// Minimum stake per byte of declared capacity (1 token per GB)
+pub const MinStakePerByte: Balance = 1_000;
 
 // Required stake calculation
 required_stake = max_capacity * MinStakePerByte
 
-// Example: 1 TB capacity requires 1,000,000,000,000 units stake
+// Example: 1 TB capacity requires ~1.1e15 units (~1100 tokens) stake
 ```
 
 ## Key Concepts
@@ -674,7 +689,8 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 - Token decimals: 12 (like Polkadot)
 - Minimum stake: 1000 tokens
-- Challenge period: 100 blocks
+- Challenge response window: 48h (`48 * RC_HOURS` anchor blocks)
+- All on-chain durations are anchor (relay-chain) blocks, 6 s each
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes

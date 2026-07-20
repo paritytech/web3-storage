@@ -5,7 +5,7 @@
 use crate as pallet_storage_provider;
 use frame_support::{
     derive_impl,
-    traits::{ConstU32, ConstU64, Hooks},
+    traits::{ConstU16, ConstU32, ConstU64, Hooks},
 };
 use sp_core::{Get, Pair as _, H256};
 use sp_runtime::{
@@ -86,6 +86,8 @@ impl pallet_storage_provider::Config for Test {
     type MinProviderStake = ConstU64<100>;
     type MaxChunkSize = ConstU32<262144>; // 256 KiB
     type ChallengeTimeout = ConstU64<100>;
+    type ChallengeDeposit = ConstU64<100>; // same value as pre-fix hardcoded constant — keeps existing tests' math intact
+    type MaxNonceAge = ConstU64<200>;
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
     // Provider-initiated checkpoint config
@@ -94,9 +96,15 @@ impl pallet_storage_provider::Config for Test {
     type CheckpointReward = ConstU64<10>; // 10 units reward
     type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
     type MaxBucketsPerMember = ConstU32<100>;
-    // Must be >= ChallengeTimeout (100 in this mock) AND > RequestTimeout (50).
-    // Set to a small multiple so tests can advance past the period quickly.
-    type DeregisterAnnouncementPeriod = ConstU64<100>;
+    // Must be > ChallengeTimeout (100) AND > RequestTimeout (50) per the
+    // pallet's `integrity_test`. 100 + 50 grace; small enough that tests can
+    // advance past the period quickly.
+    type DeregisterAnnouncementPeriod = ConstU64<150>;
+    // Small cap so the cap-enforcement test can hit it without creating
+    // thousands of challenges.
+    type MaxChallengesPerDeadline = ConstU16<5>;
+    type BlockNumberProvider = System;
+    type AnchorBlockTimeMillis = ConstU64<6000>;
     type WeightInfo = ();
 }
 
@@ -178,12 +186,10 @@ pub fn new_test_ext_with_genesis_providers(
 pub fn run_to_block(n: u64) {
     while System::block_number() < n {
         let current = System::block_number();
-        if current > 1 {
-            <StorageProvider as Hooks<u64>>::on_finalize(current);
-        }
         <System as Hooks<u64>>::on_finalize(current);
         System::set_block_number(current + 1);
         <System as Hooks<u64>>::on_initialize(current + 1);
+        <StorageProvider as Hooks<u64>>::on_initialize(current + 1);
     }
 }
 
@@ -382,7 +388,7 @@ pub fn setup_replica_agreement(
 /// a fresh single-primary bucket, so multi-primary shapes are synthesized.
 #[allow(dead_code)]
 pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_bytes: u64) {
-    let current_block = System::block_number();
+    let anchor_block = System::block_number();
     crate::Buckets::<Test>::mutate(bucket_id, |maybe_bucket| {
         if let Some(bucket) = maybe_bucket {
             let _ = bucket.primary_providers.try_push(provider);
@@ -396,10 +402,10 @@ pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_byte
             max_bytes,
             payment_locked: 0,
             price_per_byte: 0,
-            expires_at: current_block + 200,
+            expires_at: anchor_block + 200,
             extensions_blocked: false,
             role: storage_primitives::ProviderRole::Primary,
-            started_at: current_block,
+            started_at: anchor_block,
         },
     );
     crate::Providers::<Test>::mutate(provider, |maybe_p| {

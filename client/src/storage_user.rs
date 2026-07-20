@@ -320,7 +320,7 @@ impl StorageUserClient {
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
     /// let client = StorageUserClient::with_defaults()?;
-    /// let commitment = client.commit(1, vec![data_root]).await?;
+    /// let commitment = client.commit(1, vec![data_root], 0u64).await?;
     /// println!("Committed with MMR root: {}", commitment.mmr_root);
     /// # Ok(())
     /// # }
@@ -329,6 +329,7 @@ impl StorageUserClient {
         &self,
         bucket_id: BucketId,
         data_roots: Vec<H256>,
+        nonce: u64,
     ) -> ClientResult<CommitResponse> {
         let provider_url = self.base.get_provider_url()?;
 
@@ -338,6 +339,7 @@ impl StorageUserClient {
                 .iter()
                 .map(|h| BaseClient::hex_encode(h.as_bytes()))
                 .collect(),
+            nonce,
         };
 
         let response = self
@@ -369,6 +371,7 @@ impl StorageUserClient {
     pub async fn get_checkpoint_signature(
         &self,
         bucket_id: BucketId,
+        nonce: u64,
     ) -> ClientResult<CheckpointSignatureResponse> {
         let provider_url = self.base.get_provider_url()?;
 
@@ -376,7 +379,10 @@ impl StorageUserClient {
             .base
             .http
             .get(format!("{provider_url}/checkpoint-signature"))
-            .query(&[("bucket_id", bucket_id.to_string())])
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("nonce", nonce.to_string()),
+            ])
             .send()
             .await?;
 
@@ -587,13 +593,20 @@ impl StorageUserClient {
     }
 
     /// Get the current MMR commitment for a bucket from the provider.
-    pub async fn get_commitment(&self, bucket_id: BucketId) -> ClientResult<CommitmentResponse> {
+    pub async fn get_commitment(
+        &self,
+        bucket_id: BucketId,
+        nonce: u64,
+    ) -> ClientResult<CommitmentResponse> {
         let provider_url = self.base.get_provider_url()?;
         let response = self
             .base
             .http
             .get(format!("{provider_url}/commitment"))
-            .query(&[("bucket_id", bucket_id.to_string())])
+            .query(&[
+                ("bucket_id", bucket_id.to_string()),
+                ("nonce", nonce.to_string()),
+            ])
             .send()
             .await?;
 
@@ -675,6 +688,9 @@ struct UploadNodeRequest {
 struct CommitRequest {
     bucket_id: u64,
     data_roots: Vec<String>,
+    /// Block number the caller intends to submit the resulting signature at.
+    /// The provider signs over this so the pallet's recency check passes.
+    nonce: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -689,6 +705,8 @@ pub struct CommitResponse {
     pub leaf_count: u64,
     pub leaf_indices: Vec<u64>,
     pub provider_signature: String,
+    /// Echo of the nonce the provider signed over.
+    pub nonce: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -719,6 +737,7 @@ pub struct CheckpointSignatureResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+    pub nonce: u64,
 }
 
 #[derive(serde::Deserialize)]
@@ -734,6 +753,7 @@ pub struct CommitmentResponse {
     pub start_seq: u64,
     pub leaf_count: u64,
     pub provider_signature: String,
+    pub nonce: u64,
 }
 
 #[derive(serde::Deserialize)]
