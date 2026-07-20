@@ -110,7 +110,7 @@ Primary providers don't sync with each other. Clients are responsible for upload
 Every duration, deadline and timeout in this pallet is measured against the
 **anchor block** — sourced from `Config::BlockNumberProvider` (the relay chain in
 production) — not the parachain block height, so wall-clock durations stay stable
-when the parachain block time changes (#233).
+when the parachain block time changes.
 
 Read it via `Pallet::current_anchor_block()` on-chain, or the
 `current_anchor_block` / `anchor_block_time_millis` runtime APIs off-chain — never

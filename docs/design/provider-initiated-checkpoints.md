@@ -282,9 +282,9 @@ For each bucket and checkpoint window, one provider is elected as the "checkpoin
 ```rust
 /// Deterministic leader election based on the anchor (relay-chain) block.
 /// `block_number` here — and every window/interval in this document — is an
-/// anchor block read via `current_anchor_block()`, not the parachain height
-/// (#233); the `frame_system::block_number()` in the pseudocode stands in for
-/// that anchor read.
+/// anchor block read via `current_anchor_block()`, not the parachain height;
+/// the `frame_system::block_number()` in the pseudocode stands in for that
+/// anchor read.
 fn elect_leader(
     bucket_id: BucketId,
     block_number: BlockNumber,
