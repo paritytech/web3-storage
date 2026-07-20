@@ -102,7 +102,7 @@ pub struct CommitRequest {
     pub bucket_id: BucketId,
     /// Data roots to add to the MMR
     pub data_roots: Vec<String>,
-    /// `CommitmentPayload` nonce — relay-chain block at which the caller expects to
+    /// `CommitmentPayload` nonce — anchor block at which the caller expects to
     /// submit the resulting signature on-chain. The provider signs over
     /// this value so the pallet's recency check passes.
     pub nonce: u64,

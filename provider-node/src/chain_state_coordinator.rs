@@ -1077,9 +1077,11 @@ mod tests {
                         "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
                         "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
                         "Metadata_metadata" => METADATA.to_vec().encode(),
-                        // Anchor block the coordinator reads per finalized block;
-                        // matches the mocked header number below.
-                        "StorageProviderApi_current_anchor_block" => 42u32.encode(),
+                        // Anchor block the coordinator reads per finalized block.
+                        // Deliberately distinct from the mocked header number
+                        // (42) so the assertion below fails if the coordinator
+                        // ever regresses to storing the parachain height.
+                        "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
                         // sp_version::RuntimeVersion, field by field.
                         "Core_version" => (
                             "test".to_string(),           // spec_name
@@ -1256,7 +1258,13 @@ mod tests {
                 .await
                 .expect("follow runs to stream end");
 
-            assert_eq!(chain_state.current_anchor_block.load(Ordering::Relaxed), 42);
+            // 4242 comes from the mocked runtime API, NOT the header number
+            // (42) — proving the anchor is sourced from the runtime API rather
+            // than the parachain height.
+            assert_eq!(
+                chain_state.current_anchor_block.load(Ordering::Relaxed),
+                4242
+            );
             let info = chain_state.provider_info.read();
             let info = info.as_ref().expect("provider info synced from chain");
             assert_eq!(info.stake, 1_000);

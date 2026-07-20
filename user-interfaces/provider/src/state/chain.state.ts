@@ -101,9 +101,12 @@ export async function connect(wsEndpoint?: string): Promise<void> {
       void refreshAnchorBlock(block)
     })
 
-    // Set initial block
+    // Set initial block. The anchor is deliberately NOT seeded here: its
+    // pre-anchor-runtime fallback is the parachain height passed in, and a
+    // fabricated `1` would be published as a real anchor value. It stays 0
+    // (the safe direction — nothing shows as expired) until the first
+    // finalized block refreshes it.
     blockNumber$.next(1)
-    void refreshAnchorBlock(1)
   } catch (error) {
     connectionStatus$.next('error')
     connectionError$.next(error instanceof Error ? error.message : 'Connection failed')
