@@ -171,8 +171,7 @@ sp_api::decl_runtime_apis! {
         fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
 
         /// Get challenges expiring at a specific deadline. `block` is an anchor
-        /// block (see `current_anchor_block`), not a parachain height —
-        /// deadlines are stored on the anchor clock.
+        /// block (see `current_anchor_block`), not a parachain height.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
 
         /// Get all challenges for a specific bucket.

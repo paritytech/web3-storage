@@ -59,12 +59,11 @@ impl<T: Config> Pallet<T> {
         weight
     }
 
-    /// Resolve the inclusive range of deadline keys to drain this block, or
-    /// `None` when there is nothing to do (clock not ready yet, cursor just
-    /// caught up). Side effect: on the very first run it anchors
-    /// [`LastSweptChallengeBlock`] at the current sweepable height — instead of
-    /// scanning up from zero, since relay numbers start in the millions on live
-    /// networks — and returns `None`.
+    /// Inclusive range of deadline keys to drain this block, or `None` when
+    /// there is nothing to do (clock not ready, or cursor already caught up).
+    /// On the first run it anchors [`LastSweptChallengeBlock`] at the current
+    /// height (rather than scanning from zero — relay numbers start in the
+    /// millions) and returns `None`.
     fn challenge_sweep_range() -> Option<(AnchorBlockNumberFor<T>, AnchorBlockNumberFor<T>)> {
         let now = Self::current_anchor_block();
         if now.is_zero() {

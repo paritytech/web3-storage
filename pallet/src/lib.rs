@@ -68,17 +68,11 @@ pub mod pallet {
     pub type BalanceOf<T> =
         <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-    /// The anchor block-number type: the clock every on-chain duration in this
-    /// pallet (timeouts, expiries, `valid_until`, nonce age, challenge
-    /// deadlines) is measured against, sourced from
-    /// [`Config::BlockNumberProvider`] — the relay chain in production.
-    ///
-    /// The `Config` bound pins this equal to `BlockNumberFor<T>` (the parachain
-    /// block-number type), so it is a readability marker, not a distinct
-    /// compile-time type: it documents, in signatures and storage, which values
-    /// live on the anchor clock versus the parachain height (e.g.
-    /// `frame_system::Pallet::block_number()`), which are numerically unrelated
-    /// on any network where the two clocks differ.
+    /// The anchor block-number type — the clock every pallet duration is
+    /// measured against ([`Config::BlockNumberProvider`], the relay chain in
+    /// production). The `Config` bound pins it equal to `BlockNumberFor<T>`, so
+    /// it is a readability marker (not a distinct type): it flags which values
+    /// live on the anchor clock rather than the parachain height.
     pub type AnchorBlockNumberFor<T> = <<T as Config>::BlockNumberProvider as
         sp_runtime::traits::BlockNumberProvider>::BlockNumber;
 
@@ -216,7 +210,7 @@ pub mod pallet {
         /// Timeout for challenge response (e.g., ~48 hours in relay chain
         /// blocks).
         #[pallet::constant]
-        type ChallengeTimeout: Get<BlockNumberFor<Self>>;
+        type ChallengeTimeout: Get<AnchorBlockNumberFor<Self>>;
 
         /// Deposit required to open a challenge. Reserved from the challenger
         /// on `challenge_*` and refunded (minus a response-time-proportional
@@ -235,27 +229,27 @@ pub mod pallet {
         /// values older than this are rejected to prevent indefinite
         /// signature replay.
         #[pallet::constant]
-        type MaxNonceAge: Get<BlockNumberFor<Self>>;
+        type MaxNonceAge: Get<AnchorBlockNumberFor<Self>>;
 
         /// Settlement window (in relay chain blocks) after agreement expiry
         /// for owner to call end_agreement.
         #[pallet::constant]
-        type SettlementTimeout: Get<BlockNumberFor<Self>>;
+        type SettlementTimeout: Get<AnchorBlockNumberFor<Self>>;
 
         /// Maximum duration (in relay chain blocks) for agreement requests
         /// before expiry.
         #[pallet::constant]
-        type RequestTimeout: Get<BlockNumberFor<Self>>;
+        type RequestTimeout: Get<AnchorBlockNumberFor<Self>>;
 
         /// Default interval between provider-initiated checkpoints (e.g., 100
         /// relay chain blocks).
         #[pallet::constant]
-        type DefaultCheckpointInterval: Get<BlockNumberFor<Self>>;
+        type DefaultCheckpointInterval: Get<AnchorBlockNumberFor<Self>>;
 
         /// Default grace period for checkpoint leader (e.g., 20 relay chain
         /// blocks).
         #[pallet::constant]
-        type DefaultCheckpointGrace: Get<BlockNumberFor<Self>>;
+        type DefaultCheckpointGrace: Get<AnchorBlockNumberFor<Self>>;
 
         /// Reward paid to provider for submitting a checkpoint.
         #[pallet::constant]
@@ -275,7 +269,7 @@ pub mod pallet {
         /// challenge against this provider that was created up to the
         /// announcement block matures while the provider is still slashable.
         #[pallet::constant]
-        type DeregisterAnnouncementPeriod: Get<BlockNumberFor<Self>>;
+        type DeregisterAnnouncementPeriod: Get<AnchorBlockNumberFor<Self>>;
 
         /// Maximum number of challenges that may share a single deadline
         /// (relay chain block), and the per-block slash budget of the
