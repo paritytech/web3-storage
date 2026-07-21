@@ -16,6 +16,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Single place to change which runtime the integration-test jobs resolve their
+  # chain-spec script for. Must be one of the runtimes flagged
+  # integration_tests=true in scripts/runtimes-matrix.json (which the Build job
+  # compiles).
+  INTEGRATION_TEST_RUNTIME: web3-storage-paseo
+
 jobs:
   set-image:
     uses: ./.github/workflows/set-image.yml
@@ -176,10 +183,20 @@ jobs:
       - name: Restore executable bits
         run: chmod +x target/release/storage-provider-node
 
+      - name: Resolve zombienet config from matrix
+        run: |
+          CONFIG=$(jq -r --arg r "$INTEGRATION_TEST_RUNTIME" '.[] | select(.name==$r) | .zombienet_config // empty' scripts/runtimes-matrix.json)
+          if [ -z "$CONFIG" ]; then
+            echo "ERROR: no zombienet_config for runtime '$INTEGRATION_TEST_RUNTIME' in scripts/runtimes-matrix.json"
+            exit 1
+          fi
+          echo "Using zombienet config: $CONFIG"
+          echo "ZOMBIENET_CONFIG=$CONFIG" >> $GITHUB_ENV
+
       - name: Start chain
         uses: ./.github/actions/start-zombienet
         with:
-          config: zombienet/storage-paseo-local.toml
+          config: ${{ env.ZOMBIENET_CONFIG }}
 
       - name: Wait for parachain blocks
         uses: ./.github/actions/wait-for-parachain
@@ -251,7 +268,7 @@ jobs:
 
       - name: Resolve chain-spec script from matrix
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
@@ -488,7 +505,7 @@ jobs:
 
       - name: Resolve chain-spec script
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
@@ -617,7 +634,7 @@ jobs:
 
       - name: Resolve chain-spec script from matrix
         run: |
-          RUNTIME=web3-storage-paseo
+          RUNTIME="$INTEGRATION_TEST_RUNTIME"
           SCRIPT=$(jq -r --arg r "$RUNTIME" '.[] | select(.name==$r) | .chain_spec_script // empty' scripts/runtimes-matrix.json)
           if [ -z "$SCRIPT" ]; then
             echo "ERROR: no chain_spec_script for runtime '$RUNTIME' in scripts/runtimes-matrix.json"
