@@ -291,6 +291,21 @@ fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role>
     }
 }
 
+/// Wrap a payload the way Polkadot message-signing surfaces do before signing:
+/// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
+/// `PolkadotSigner.signBytes` apply this wrapper so a signed message can never be
+/// mistaken for a signed extrinsic. The auth message is always short, so no
+/// hashing step applies.
+fn wrap_bytes(msg: &[u8]) -> Vec<u8> {
+    const PREFIX: &[u8] = b"<Bytes>";
+    const SUFFIX: &[u8] = b"</Bytes>";
+    let mut out = Vec::with_capacity(PREFIX.len() + msg.len() + SUFFIX.len());
+    out.extend_from_slice(PREFIX);
+    out.extend_from_slice(msg);
+    out.extend_from_slice(SUFFIX);
+    out
+}
+
 /// Verify an sr25519 signature from an `Authorization` header.
 ///
 /// The client signs the request by building the message
@@ -372,9 +387,17 @@ pub fn verify_signature(
             .map_err(|_| Error::AuthRequired)?,
     );
 
-    // Verify signature
+    // Verify signature. Two signing surfaces reach this endpoint:
+    // - the Rust SDK / provider tests sign the raw message bytes;
+    // - browser wallet extensions and PAPI's `PolkadotSigner.signBytes` never
+    //   expose a raw key and wrap the payload in `<Bytes>…</Bytes>` before
+    //   signing (see `@polkadot-api/signers-common`'s `getSignBytes`).
+    // Accept either so wallet-backed clients (the UIs) can authenticate.
     let message = provider_negotiation::auth_message(method, bucket_id, timestamp_str);
-    if !sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey) {
+    let wrapped = wrap_bytes(message.as_bytes());
+    let verified = sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey)
+        || sr25519::Pair::verify(&signature, &wrapped, &pubkey);
+    if !verified {
         return Err(Error::AuthRequired);
     }
 
@@ -483,6 +506,30 @@ mod tests {
 
         let result = verify_signature(&header, "PUT", 1, Duration::from_secs(300));
         assert!(result.is_ok());
+        assert_eq!(result.unwrap(), AccountId32::new(keypair.public().0));
+    }
+
+    #[test]
+    fn test_verify_wrapped_signature() {
+        // Wallet signers (browser extensions, PAPI `signBytes`) wrap the message
+        // in `<Bytes>…</Bytes>` before signing and never expose a raw key. The
+        // provider must accept that form so UI/wallet clients can authenticate.
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let ts = current_timestamp();
+        let message = provider_negotiation::auth_message("PUT", 1, &ts.to_string());
+        let sig = keypair.sign(&wrap_bytes(message.as_bytes()));
+        let header = format!(
+            "Web3Storage 0x{}:0x{}:{}",
+            hex::encode(keypair.public().0),
+            hex::encode(sig.0),
+            ts
+        );
+
+        let result = verify_signature(&header, "PUT", 1, Duration::from_secs(300));
+        assert!(
+            result.is_ok(),
+            "wrapped (wallet-style) signature must verify"
+        );
         assert_eq!(result.unwrap(), AccountId32::new(keypair.public().0));
     }
 
