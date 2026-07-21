@@ -86,7 +86,7 @@ impl<T: Config> Pallet<T> {
     /// the terms, decides it, so a quote signed for one flavour can
     /// never be redeemed as the other.
     pub(crate) fn verify_terms_signature(
-        provider_info: &ProviderInfo<T>,
+        provider_info: &ProviderInfoOf<T>,
         terms: &AgreementTermsOf<T>,
         sig: &sp_runtime::MultiSignature,
         context: &[u8],

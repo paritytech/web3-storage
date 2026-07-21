@@ -13,7 +13,7 @@ fn genesis_provider(account: u64, stake: u64) -> GenesisProvider<Test> {
         multiaddr: b"/ip4/127.0.0.1/tcp/3333".to_vec(),
         public_key: vec![1u8; 32],
         stake,
-        settings: ProviderSettings::<Test> {
+        settings: ProviderSettingsOf::<Test> {
             min_duration: 5,
             max_duration: 50,
             price_per_byte: 1,

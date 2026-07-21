@@ -6,7 +6,7 @@ mod try_state;
 
 use crate::{mock::*, Error, S3Buckets};
 use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
-use pallet_storage_provider::{AgreementTermsOf, ProviderSettings};
+use pallet_storage_provider::{AgreementTermsOf, ProviderSettingsOf};
 use sp_core::crypto::KeyTypeId;
 use storage_primitives::{AgreementTerms, BucketId};
 
@@ -64,7 +64,7 @@ fn setup_provider() -> sp_core::sr25519::Public {
         public_key_bytes,
         10_000_000_000_000 // Must exceed MinProviderStake (1_000_000_000_000)
     ));
-    let settings = ProviderSettings::<Test> {
+    let settings = ProviderSettingsOf::<Test> {
         min_duration: 10u64,
         max_duration: 10_000u64,
         price_per_byte: 0u128,

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::Member;
+use crate::MemberOf;
 use crate::*;
 use frame_support::pallet_prelude::*;
 use storage_primitives::{BucketId, Role};
 
 impl<T: Config> Pallet<T> {
-    pub(crate) fn ensure_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
+    pub(crate) fn ensure_admin(who: &T::AccountId, bucket: &BucketOf<T>) -> DispatchResult {
         ensure!(
             bucket
                 .members
@@ -22,7 +22,7 @@ impl<T: Config> Pallet<T> {
     /// - whether that member currently holds `Role::Admin`,
     /// - the total number of admins in the bucket.
     pub(crate) fn locate_member(
-        bucket: &Bucket<T>,
+        bucket: &BucketOf<T>,
         member: &T::AccountId,
     ) -> (Option<usize>, bool, u32) {
         let mut target_idx = None;
@@ -40,7 +40,10 @@ impl<T: Config> Pallet<T> {
         (target_idx, target_is_admin, admin_count)
     }
 
-    pub(crate) fn ensure_writer_or_admin(who: &T::AccountId, bucket: &Bucket<T>) -> DispatchResult {
+    pub(crate) fn ensure_writer_or_admin(
+        who: &T::AccountId,
+        bucket: &BucketOf<T>,
+    ) -> DispatchResult {
         ensure!(
             bucket
                 .members
@@ -75,7 +78,7 @@ impl<T: Config> Pallet<T> {
                 }
                 bucket.members[idx].role = role;
             } else {
-                let new_member = Member::<T> {
+                let new_member = MemberOf::<T> {
                     account: member.clone(),
                     role,
                 };

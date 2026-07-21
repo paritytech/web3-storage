@@ -214,7 +214,7 @@ pub fn register_provider(who: u64, stake: u64) {
 pub fn register_provider_with_settings(
     who: u64,
     stake: u64,
-    settings: crate::ProviderSettings<Test>,
+    settings: crate::ProviderSettingsOf<Test>,
 ) {
     use frame_support::assert_ok;
     register_provider(who, stake);
@@ -397,7 +397,7 @@ pub fn add_primary_to_bucket(provider: u64, owner: u64, bucket_id: u64, max_byte
     crate::StorageAgreements::<Test>::insert(
         bucket_id,
         provider,
-        crate::StorageAgreement::<Test> {
+        crate::StorageAgreementOf::<Test> {
             owner,
             max_bytes,
             payment_locked: 0,

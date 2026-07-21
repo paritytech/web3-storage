@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::Member;
+use crate::MemberOf;
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::{
@@ -149,7 +149,7 @@ impl<T: Config> Pallet<T> {
         let bucket_id = NextBucketId::<T>::get();
         NextBucketId::<T>::put(bucket_id.saturating_add(1));
 
-        let admin_member = Member::<T> {
+        let admin_member = MemberOf::<T> {
             account: admin.clone(),
             role: Role::Admin,
         };
@@ -166,7 +166,7 @@ impl<T: Config> Pallet<T> {
                 .map_err(|_| Error::<T>::MaxPrimaryProvidersReached)?;
         }
 
-        let bucket = Bucket::<T> {
+        let bucket = BucketOf::<T> {
             members,
             frozen_start_seq: None,
             min_providers,

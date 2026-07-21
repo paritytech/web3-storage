@@ -317,7 +317,8 @@ pub mod pallet {
     /// Provider registry.
     #[pallet::storage]
     #[pallet::getter(fn providers)]
-    pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
+    pub type Providers<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfoOf<T>>;
 
     /// Per-provider sliding replay window over signed agreement-term nonces.
     /// See [`storage_primitives::ReplayWindow`] for the bit layout
@@ -335,7 +336,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::unbounded]
     #[pallet::getter(fn buckets)]
-    pub type Buckets<T: Config> = StorageMap<_, Blake2_128Concat, BucketId, Bucket<T>>;
+    pub type Buckets<T: Config> = StorageMap<_, Blake2_128Concat, BucketId, BucketOf<T>>;
 
     /// Storage agreements: per-provider contracts for a bucket.
     #[pallet::storage]
@@ -346,7 +347,7 @@ pub mod pallet {
         BucketId,
         Blake2_128Concat,
         T::AccountId,
-        StorageAgreement<T>,
+        StorageAgreementOf<T>,
     >;
 
     /// Pending challenges indexed by `(deadline block, stable per-deadline
@@ -363,7 +364,7 @@ pub mod pallet {
         BlockNumberFor<T>,
         Twox64Concat,
         u16,
-        Challenge<T>,
+        ChallengeOf<T>,
         OptionQuery,
     >;
 
@@ -494,7 +495,7 @@ pub mod pallet {
         /// Stake to reserve; must be at least `T::MinProviderStake`.
         pub stake: BalanceOf<T>,
         /// Provider settings, validated like `update_provider_settings`.
-        pub settings: ProviderSettings<T>,
+        pub settings: ProviderSettingsOf<T>,
     }
 
     /// Genesis configuration for the storage provider pallet.
@@ -543,24 +544,24 @@ pub mod pallet {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Provider information stored on-chain.
-    pub type ProviderInfo<T> = storage_primitives::ProviderInfo<
+    pub type ProviderInfoOf<T> = storage_primitives::ProviderInfo<
         BalanceOf<T>,
         BlockNumberFor<T>,
         <T as Config>::MaxMultiaddrLength,
     >;
 
     /// Provider settings controlling pricing and availability.
-    pub type ProviderSettings<T> =
+    pub type ProviderSettingsOf<T> =
         storage_primitives::ProviderSettings<BalanceOf<T>, BlockNumberFor<T>>;
 
     /// On-chain statistics for evaluating provider quality.
-    pub type ProviderStats<T> = storage_primitives::ProviderStats<BlockNumberFor<T>>;
+    pub type ProviderStatsOf<T> = storage_primitives::ProviderStats<BlockNumberFor<T>>;
 
     /// Bucket member with role.
-    pub type Member<T> = storage_primitives::Member<<T as frame_system::Config>::AccountId>;
+    pub type MemberOf<T> = storage_primitives::Member<<T as frame_system::Config>::AccountId>;
 
     /// Bucket container for data with membership and storage agreements.
-    pub type Bucket<T> = storage_primitives::Bucket<
+    pub type BucketOf<T> = storage_primitives::Bucket<
         <T as frame_system::Config>::AccountId,
         BlockNumberFor<T>,
         <T as Config>::MaxMembers,
@@ -568,18 +569,18 @@ pub mod pallet {
     >;
 
     /// Storage agreement between bucket and provider.
-    pub type StorageAgreement<T> = storage_primitives::StorageAgreement<
+    pub type StorageAgreementOf<T> = storage_primitives::StorageAgreement<
         <T as frame_system::Config>::AccountId,
         BalanceOf<T>,
         BlockNumberFor<T>,
     >;
 
     /// Active challenge against a provider.
-    pub type Challenge<T> =
+    pub type ChallengeOf<T> =
         storage_primitives::Challenge<<T as frame_system::Config>::AccountId, BalanceOf<T>>;
 
     /// Challenge response from provider.
-    pub type ChallengeResponse<T> = storage_primitives::ChallengeResponse<
+    pub type ChallengeResponseOf<T> = storage_primitives::ChallengeResponse<
         <T as frame_system::Config>::AccountId,
         <T as Config>::MaxChunkSize,
     >;
@@ -618,7 +619,7 @@ pub mod pallet {
         },
         ProviderSettingsUpdated {
             provider: T::AccountId,
-            settings: ProviderSettings<T>,
+            settings: ProviderSettingsOf<T>,
         },
         ProviderMultiaddrUpdated {
             provider: T::AccountId,
@@ -990,7 +991,7 @@ pub mod pallet {
                 multiaddr,
                 public_key,
                 stake,
-                ProviderSettings::<T>::default(),
+                ProviderSettingsOf::<T>::default(),
             )
         }
 
@@ -1177,7 +1178,7 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
             origin: OriginFor<T>,
-            settings: ProviderSettings<T>,
+            settings: ProviderSettingsOf<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
             ensure!(
@@ -1392,7 +1393,7 @@ pub mod pallet {
                     bucket.members[idx].role = role;
                 } else {
                     // Add new member
-                    let new_member = Member::<T> {
+                    let new_member = MemberOf::<T> {
                         account: member.clone(),
                         role,
                     };
@@ -2605,14 +2606,14 @@ pub mod pallet {
         /// Respond to a challenge.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
-            ChallengeResponse::<T>::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
-            ChallengeResponse::<T>::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
-            ChallengeResponse::<T>::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
+            ChallengeResponseOf::<T>::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
+            ChallengeResponseOf::<T>::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
+            ChallengeResponseOf::<T>::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
         })]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
-            response: ChallengeResponse<T>,
+            response: ChallengeResponseOf<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -2655,7 +2656,7 @@ pub mod pallet {
             // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
             // — they represent caller mistakes, not adversarial responses.
             let response_outcome: Result<(), SlashReason> = match &response {
-                ChallengeResponse::<T>::Proof {
+                ChallengeResponseOf::<T>::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
@@ -2675,7 +2676,7 @@ pub mod pallet {
                         Err(SlashReason::InvalidProof)
                     }
                 }
-                ChallengeResponse::<T>::Deleted {
+                ChallengeResponseOf::<T>::Deleted {
                     new_mmr_root,
                     new_start_seq,
                     nonce,
@@ -2711,7 +2712,7 @@ pub mod pallet {
                         }
                     }
                 }
-                ChallengeResponse::<T>::Superseded => {
+                ChallengeResponseOf::<T>::Superseded => {
                     // A `Superseded` defense only holds when the challenged
                     // commitment was genuinely replaced by a newer canonical
                     // snapshot. Without a snapshot to lean on the claim is

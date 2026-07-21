@@ -159,7 +159,7 @@ fn can_accept_bytes_checks_capacity() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 accepting_primary: true,
                 max_capacity: 100,
                 ..Default::default()
@@ -202,7 +202,7 @@ fn find_matching_providers_scores() {
         register_provider_with_settings(
             2,
             1000,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 accepting_primary: true,
                 max_capacity: 1000,
                 price_per_byte: 5,
@@ -234,7 +234,7 @@ fn find_matching_providers_partial_score() {
         register_provider_with_settings(
             2,
             1000,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 accepting_primary: true,
                 max_capacity: 1000,
                 price_per_byte: 20,
@@ -268,7 +268,7 @@ fn find_matching_providers_not_accepting() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 accepting_primary: false,
                 ..Default::default()
             },
@@ -387,7 +387,7 @@ fn query_challenges_at_returns_data() {
                 deadline: 101,
                 index: 0,
             },
-            crate::ChallengeResponse::<Test>::Superseded,
+            crate::ChallengeResponseOf::<Test>::Superseded,
         ));
 
         // After removing sibling index 0, the survivor is still reported at its

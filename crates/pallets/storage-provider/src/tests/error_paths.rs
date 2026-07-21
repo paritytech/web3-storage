@@ -92,7 +92,7 @@ fn end_agreement_cannot_terminate_replica_early() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 accepting_primary: true,
                 replica_sync_price: Some(10),
                 ..Default::default()

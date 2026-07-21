@@ -57,7 +57,7 @@ fn create_provider<T: Config>(index: u32) -> T::AccountId {
     // Enable provider for agreements
     let _ = Pallet::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        pallet::ProviderSettings::<T> {
+        pallet::ProviderSettingsOf::<T> {
             min_duration: 1u32.into(),
             max_duration: 1000u32.into(),
             price_per_byte: 1u32.into(),
@@ -197,7 +197,7 @@ fn add_primary_to_bucket<T: Config>(
         }
     });
 
-    let agreement = StorageAgreement::<T> {
+    let agreement = StorageAgreementOf::<T> {
         owner: admin.clone(),
         max_bytes,
         payment_locked: 0u32.into(),
@@ -228,7 +228,7 @@ fn insert_challenge<T: Config>(
     mmr_root: H256,
 ) -> storage_primitives::ChallengeId<BlockNumberFor<T>> {
     let deadline: BlockNumberFor<T> = 200u32.into();
-    let challenge = pallet::Challenge::<T> {
+    let challenge = pallet::ChallengeOf::<T> {
         bucket_id,
         provider: provider.clone(),
         challenger: challenger.clone(),
@@ -353,7 +353,7 @@ mod benchmarks {
     #[benchmark]
     fn update_provider_settings() {
         let provider = create_provider::<T>(0);
-        let settings = pallet::ProviderSettings::<T> {
+        let settings = pallet::ProviderSettingsOf::<T> {
             min_duration: 10u32.into(),
             max_duration: 10000u32.into(),
             price_per_byte: 100u32.into(),
@@ -1072,7 +1072,7 @@ mod benchmarks {
 
         let challenge_id = insert_challenge::<T>(bucket_id, &provider, &admin, mmr_root);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Proof {
+        let response: pallet::ChallengeResponseOf<T> = pallet::ChallengeResponseOf::<T>::Proof {
             chunk_data,
             mmr_proof,
             chunk_proof,
@@ -1118,7 +1118,7 @@ mod benchmarks {
             .expect("signing should work");
         let admin_signature = sp_runtime::MultiSignature::Sr25519(sig);
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Deleted {
+        let response: pallet::ChallengeResponseOf<T> = pallet::ChallengeResponseOf::<T>::Deleted {
             new_mmr_root,
             new_start_seq,
             nonce: 0u64,
@@ -1166,7 +1166,7 @@ mod benchmarks {
         let challenge_id =
             insert_challenge::<T>(bucket_id, &provider, &admin, H256::repeat_byte(0xCD));
 
-        let response: pallet::ChallengeResponse<T> = pallet::ChallengeResponse::<T>::Superseded;
+        let response: pallet::ChallengeResponseOf<T> = pallet::ChallengeResponseOf::<T>::Superseded;
 
         #[extrinsic_call]
         respond_to_challenge(RawOrigin::Signed(provider), challenge_id, response);
@@ -1278,7 +1278,7 @@ mod benchmarks {
             // The slash unreserves the challenger's deposit, so reserve it.
             let _ = T::Currency::reserve(&challenger, deposit);
             let bucket_id: BucketId = i as u64;
-            let challenge = pallet::Challenge::<T> {
+            let challenge = pallet::ChallengeOf::<T> {
                 bucket_id,
                 provider: provider.clone(),
                 challenger,

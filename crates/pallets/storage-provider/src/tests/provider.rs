@@ -180,7 +180,7 @@ fn cancel_deregister_clears_announcement() {
         assert!(restored.settings.accepting_extensions);
 
         // And settings updates work again post-cancel.
-        let tweak = ProviderSettings::<Test> {
+        let tweak = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -244,7 +244,7 @@ fn update_provider_settings_blocked_while_announcement_pending() {
             1
         )));
 
-        let resumed = ProviderSettings::<Test> {
+        let resumed = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -384,7 +384,7 @@ fn update_provider_settings_works() {
             200
         ));
 
-        let new_settings = ProviderSettings::<Test> {
+        let new_settings = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -420,7 +420,7 @@ fn update_provider_settings_with_max_capacity_works() {
             200
         ));
 
-        let new_settings = ProviderSettings::<Test> {
+        let new_settings = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -449,7 +449,7 @@ fn update_provider_settings_fails_with_capacity_below_committed() {
         setup_agreement(2, 1, 100, 100);
 
         // Try to set max_capacity below committed_bytes
-        let new_settings = ProviderSettings::<Test> {
+        let new_settings = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -481,7 +481,7 @@ fn update_provider_settings_fails_with_insufficient_stake_for_capacity() {
 
         // Try to set capacity that requires more stake than available
         // MinStakePerByte = 1 in mock, so 200 stake only covers 200 bytes
-        let new_settings = ProviderSettings::<Test> {
+        let new_settings = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -512,7 +512,7 @@ fn update_provider_settings_fails_when_min_duration_above_max() {
 
         // min_duration > max_duration would silently brick the provider
         // out of `find_matching_provider`; reject it at the entry point.
-        let bad_settings = ProviderSettings::<Test> {
+        let bad_settings = ProviderSettingsOf::<Test> {
             min_duration: 1000u64,
             max_duration: 10u64,
             price_per_byte: 5u64,
@@ -528,7 +528,7 @@ fn update_provider_settings_fails_when_min_duration_above_max() {
         );
 
         // Equal endpoints are allowed (single-duration providers).
-        let edge_settings = ProviderSettings::<Test> {
+        let edge_settings = ProviderSettingsOf::<Test> {
             min_duration: 100u64,
             max_duration: 100u64,
             price_per_byte: 5u64,
@@ -558,7 +558,7 @@ fn update_provider_settings_emits_event_with_new_settings() {
             200
         ));
 
-        let new_settings = ProviderSettings::<Test> {
+        let new_settings = ProviderSettingsOf::<Test> {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte: 5u64,
@@ -646,7 +646,7 @@ fn establish_agreement_fails_when_capacity_exceeded() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 min_duration: 0u64,
                 max_duration: 1000u64,
                 price_per_byte: 1u64,
@@ -690,7 +690,7 @@ fn establish_agreement_works_within_capacity() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettings::<Test> {
+            ProviderSettingsOf::<Test> {
                 min_duration: 0u64,
                 max_duration: 1000u64,
                 price_per_byte: 1u64,

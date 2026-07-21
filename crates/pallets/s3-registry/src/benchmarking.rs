@@ -30,7 +30,7 @@ use frame_support::{
     BoundedVec,
 };
 use frame_system::{pallet_prelude::BlockNumberFor, RawOrigin};
-use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettings};
+use pallet_storage_provider::{AgreementTermsOf, Pallet as StorageProvider, ProviderSettingsOf};
 use s3_primitives::{
     BucketName, MaxContentTypeLen, MaxEtagLen, MaxMetadataEntries, MaxMetadataKeyLen,
     MaxMetadataValueLen, MaxObjectKeyLen, MetadataEntry, ObjectKey, ObjectMetadata, S3BucketId,
@@ -80,7 +80,7 @@ fn create_provider<T: Config>(index: u32) -> (T::AccountId, sp_core::sr25519::Pu
 
     let _ = StorageProvider::<T>::update_provider_settings(
         RawOrigin::Signed(provider.clone()).into(),
-        ProviderSettings::<T> {
+        ProviderSettingsOf::<T> {
             min_duration: 1u32.into(),
             max_duration: 1_000_000u32.into(),
             price_per_byte: 1u32.into(),

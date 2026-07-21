@@ -79,7 +79,7 @@ fn try_state_detects_challenge_below_sweep_cursor() {
         Challenges::<Test>::insert(
             deadline,
             0u16,
-            Challenge::<Test> {
+            ChallengeOf::<Test> {
                 bucket_id: 0,
                 provider: 2,
                 challenger: 1,
