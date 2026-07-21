@@ -57,10 +57,11 @@ async function main() {
 
   // The provider always enforces auth on the S3 routes (Reader to GET/HEAD/list,
   // Writer to PUT/DELETE). Bob owns this bucket (Admin), so signing each request
-  // with his keypair satisfies every role. The signed message includes the HTTP
-  // verb, so it must match the request method exactly.
-  const s3Auth = (method: string): Record<string, string> =>
-    signProviderRequest(client.keypair!, method, bucketId);
+  // satisfies every role. Signs through `signBytes` — the same wallet surface
+  // real users sign with (it wraps in `<Bytes>…</Bytes>`; the provider accepts
+  // that). The signed message includes the HTTP verb, so it must match exactly.
+  const s3Auth = (method: string): Promise<Record<string, string>> =>
+    signProviderRequest(client.signer, method, bucketId);
 
   // ── Different sizes ───────────────────────────────────────────────────────
 
@@ -135,11 +136,11 @@ async function main() {
       url.searchParams.set("key", "e2e-test.txt");
       const putResp = await fetch(url, {
         method: "PUT",
-        headers: { "Content-Type": "text/plain", ...s3Auth("PUT") },
+        headers: { "Content-Type": "text/plain", ...(await s3Auth("PUT")) },
         body,
       });
       assert.ok(putResp.ok, `S3 PUT should succeed, got ${putResp.status}`);
-      const getResp = await fetch(url, { headers: s3Auth("GET") });
+      const getResp = await fetch(url, { headers: await s3Auth("GET") });
       assert.ok(getResp.ok, `GET should succeed, got ${getResp.status}`);
       const downloaded = await getResp.text();
       assert.strictEqual(downloaded, body, "S3 GET content should match PUT");
@@ -151,7 +152,7 @@ async function main() {
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
       url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "HEAD", headers: s3Auth("HEAD") });
+      const resp = await fetch(url, { method: "HEAD", headers: await s3Auth("HEAD") });
       assert.ok(resp.ok || resp.status === 405, `HEAD should return 200 or 405, got ${resp.status}`);
     },
   });
@@ -160,7 +161,7 @@ async function main() {
     name: "4.7 S3 list objects",
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/objects`, PROVIDER_URL);
-      const resp = await fetch(url, { headers: s3Auth("GET") });
+      const resp = await fetch(url, { headers: await s3Auth("GET") });
       assert.ok(resp.ok, `S3 list should succeed, got ${resp.status}`);
       const data = await resp.json();
       assert.ok(Array.isArray(data.contents), "List should return a contents array");
@@ -177,10 +178,10 @@ async function main() {
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
       url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "DELETE", headers: s3Auth("DELETE") });
+      const resp = await fetch(url, { method: "DELETE", headers: await s3Auth("DELETE") });
       assert.ok(resp.ok, `S3 DELETE should succeed, got ${resp.status}`);
       // Verify the object is gone.
-      const getResp = await fetch(url, { headers: s3Auth("GET") });
+      const getResp = await fetch(url, { headers: await s3Auth("GET") });
       assert.strictEqual(getResp.status, 404, `GET after DELETE should 404, got ${getResp.status}`);
     },
   });

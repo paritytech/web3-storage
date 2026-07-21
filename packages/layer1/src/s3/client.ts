@@ -253,7 +253,7 @@ export class S3Client extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const headers: Record<string, string> = {
       "Content-Type": options.contentType || "application/octet-stream",
-      ...this.authHeaders("PUT", bucket.layer0BucketId),
+      ...(await this.authHeaders("PUT", bucket.layer0BucketId)),
     };
     for (const [k, v] of Object.entries(options.metadata ?? {})) {
       headers[`x-amz-meta-${k}`] = v;
@@ -278,7 +278,7 @@ export class S3Client extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucket.layer0BucketId) },
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -308,7 +308,7 @@ export class S3Client extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE", headers: this.authHeaders("DELETE", bucket.layer0BucketId) },
+      { method: "DELETE", headers: await this.authHeaders("DELETE", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -322,7 +322,7 @@ export class S3Client extends Layer1Client {
     if (prefix) params.set("prefix", prefix);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/objects?${params.toString()}`,
-      { headers: this.authHeaders("GET", bucket.layer0BucketId) },
+      { headers: await this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`List objects failed: ${response.status}`);

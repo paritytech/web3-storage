@@ -11,7 +11,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   signProviderRequest,
-  type SigningKeypair,
+  type ProviderRequestSigner,
 } from "@web3-storage/core";
 
 import { asHex, toHex, type ParachainApi } from "./address.js";
@@ -33,7 +33,7 @@ export interface ProviderFetchOpts {
    * (`provider-node/src/auth.rs`) for a bucket-scoped, role-gated request
    * (`PUT /node`, `POST /commit`, …). Omit for public/read endpoints.
    */
-  sign?: { keypair: SigningKeypair; bucketId: bigint | number };
+  sign?: { signer: ProviderRequestSigner; bucketId: bigint | number };
 }
 
 export async function providerFetch(
@@ -51,7 +51,7 @@ export async function providerFetch(
   // auth.rs reconstructs the message from the upper-case HTTP verb; signing with
   // anything else would fail verification.
   if (opts.sign)
-    Object.assign(headers, signProviderRequest(opts.sign.keypair, method.toUpperCase(), opts.sign.bucketId));
+    Object.assign(headers, await signProviderRequest(opts.sign.signer, method.toUpperCase(), opts.sign.bucketId));
   const resp = await fetch(url, {
     method,
     headers: Object.keys(headers).length ? headers : undefined,
@@ -113,7 +113,7 @@ export async function putChunk(
   data: Uint8Array | string,
   signer: ChainSigner,
 ): Promise<PutChunkResult> {
-  const sign = { keypair: signer.keypair, bucketId };
+  const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const cid = blake2b256(bytes);
   const hash = toHex(cid);
@@ -146,7 +146,7 @@ export async function uploadChunk(
   nonce: bigint | number,
   signer: ChainSigner,
 ): Promise<{ hash: string; data: Uint8Array; commit: any }> {
-  const sign = { keypair: signer.keypair, bucketId };
+  const sign = { signer: signer.signer, bucketId };
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
   const hash = toHex(blake2b256(bytes));
   await providerFetch(providerUrl, "/node", {

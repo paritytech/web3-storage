@@ -72,7 +72,7 @@ export abstract class Layer1Client {
     return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
   }
 
-  protected authHeaders(method: string, bucketId: bigint): Record<string, string> {
-    return signProviderRequest(this.requireSigner().keypair, method, bucketId);
+  protected authHeaders(method: string, bucketId: bigint): Promise<Record<string, string>> {
+    return signProviderRequest(this.requireSigner().signer, method, bucketId);
   }
 }

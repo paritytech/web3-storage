@@ -186,12 +186,12 @@ export class S3Client {
       return;
     }
     let chainSigner: ChainSigner | null = null;
-    if (this.signer && this.signerAddress && this.keypair) {
+    if (this.signer && this.signerAddress) {
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey: this.keypair.publicKey,
-        keypair: this.keypair,
+        publicKey: this.signer.publicKey,
+        keypair: this.keypair ?? undefined,
       };
     }
     this.owner = chainSigner;

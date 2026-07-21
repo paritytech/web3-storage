@@ -34,10 +34,11 @@ export interface ChainSigner {
   /** Dev-account name, when this is one of the well-known dev signers. */
   name?: DevAccountName;
   /**
-   * Raw keypair backing the signer. Required for provider request signing
-   * (raw sr25519 over the auth message — PolkadotSigner.signBytes may wrap).
+   * Raw keypair backing the signer, when one is available (derived/dev signers).
+   * Provider-request auth signs through {@link ChainSigner.signer}'s `signBytes`,
+   * so this is not required — a wallet-extension signer has no raw key.
    */
-  keypair: Keypair;
+  keypair?: Keypair;
 }
 
 /**

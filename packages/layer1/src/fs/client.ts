@@ -224,7 +224,7 @@ export class FileSystemClient extends Layer1Client {
     if (opts.recursive) params.set("recursive", "true");
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/ls?${params.toString()}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`List directory failed: ${response.status}`);
@@ -252,7 +252,7 @@ export class FileSystemClient extends Layer1Client {
         method: "PUT",
         headers: {
           "Content-Type": options.contentType || "application/octet-stream",
-          ...this.authHeaders("PUT", bucketId),
+          ...(await this.authHeaders("PUT", bucketId)),
         },
         body: data as BodyInit,
         signal: options.signal,
@@ -275,7 +275,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucketId) },
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
@@ -319,7 +319,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/file?path=${encodeURIComponent(path)}`,
-      { method: "DELETE", headers: this.authHeaders("DELETE", bucketId) },
+      { method: "DELETE", headers: await this.authHeaders("DELETE", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -331,7 +331,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/mkdir?path=${encodeURIComponent(path)}`,
-      { method: "POST", headers: this.authHeaders("POST", bucketId) },
+      { method: "POST", headers: await this.authHeaders("POST", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -344,7 +344,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/fs/${bucketId}/index_root`,
-      { headers: this.authHeaders("GET", bucketId) },
+      { headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`index_root failed: ${response.status}`);
@@ -366,7 +366,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/checkpoint/duty?bucket_id=${bucketId}`,
-      { headers: this.authHeaders("GET", bucketId) },
+      { headers: await this.authHeaders("GET", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -380,7 +380,7 @@ export class FileSystemClient extends Layer1Client {
     const providerUrl = await this.getProviderUrl(bucketId);
     const response = await httpFetch(
       `${providerUrl}/checkpoint/trigger?bucket_id=${bucketId}`,
-      { method: "POST", headers: this.authHeaders("POST", bucketId) },
+      { method: "POST", headers: await this.authHeaders("POST", bucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {

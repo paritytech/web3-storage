@@ -336,7 +336,7 @@ async function main() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          ...signProviderRequest(eve.keypair, "PUT", bucketId),
+          ...(await signProviderRequest(eve.signer, "PUT", bucketId)),
         },
         body,
       });

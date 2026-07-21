@@ -120,12 +120,12 @@ export class DriveClient {
       return;
     }
     let chainSigner: ChainSigner | null = null;
-    if (this.signer && this.signerAddress && this.keypair) {
+    if (this.signer && this.signerAddress) {
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey: this.keypair.publicKey,
-        keypair: this.keypair,
+        publicKey: this.signer.publicKey,
+        keypair: this.keypair ?? undefined,
       };
     }
     this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
@@ -355,14 +355,14 @@ export class DriveClient {
     signed: SignedTerms,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    if (!this.signer || !this.signerAddress || !this.keypair) {
+    if (!this.signer || !this.signerAddress) {
       throw new Error("Signer not set");
     }
     const owner: ChainSigner = {
       signer: this.signer,
       address: this.signerAddress,
-      publicKey: this.keypair.publicKey,
-      keypair: this.keypair,
+      publicKey: this.signer.publicKey,
+      keypair: this.keypair ?? undefined,
     };
 
     // Finalize: the state layer reads the drive list back at the finalized
