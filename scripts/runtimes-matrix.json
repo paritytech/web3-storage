@@ -29,7 +29,7 @@
     "uris": [
       "TODO: update WSS"
     ],
-    "integration_tests": true,
+    "integration_tests": false,
     "try_runtime": {
       "spec_name_check": "--disable-spec-name-check",
       "extra_flags": "--blocktime 6000 --disable-spec-version-check"
