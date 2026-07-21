@@ -77,10 +77,7 @@ mod tests {
         // "//Alice" must derive the canonical well-known Alice account.
         use subxt_signer::sr25519::dev;
         let seed = Signer::from_seed("//Alice").unwrap();
-        assert_eq!(
-            seed.keypair().public_key().0,
-            dev::alice().public_key().0
-        );
+        assert_eq!(seed.keypair().public_key().0, dev::alice().public_key().0);
     }
 
     #[test]
