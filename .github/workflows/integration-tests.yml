@@ -120,6 +120,16 @@ jobs:
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
       - name: Install just
         run: cargo install just --locked || true
 
@@ -154,14 +164,6 @@ jobs:
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      # Before the download so the cached target/ can't clobber it. save-if
-      # false — only the build job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
 
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
@@ -455,6 +457,16 @@ jobs:
       - name: Load common environment variables via env file
         run: cat .github/env >> $GITHUB_ENV
 
+      # Restore the Rust cache before installing just so the build job's cached
+      # ~/.cargo/bin makes the install a fast no-op instead of a ~60s recompile;
+      # it also lands before the artifact download so the cached target/ can't
+      # clobber it. save-if false — only the build job writes this cache.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
       - name: Install just
         run: cargo install just --locked || true
 
@@ -489,14 +501,6 @@ jobs:
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      # Before the download so the cached target/ can't clobber it. save-if
-      # false — only the build job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
 
       # Extract into target/release so the artifact's contents land back at
       # their original paths (chmod, chain_spec_command scripts, demos).
@@ -622,6 +626,16 @@ jobs:
           echo "Using chain-spec script: $SCRIPT"
           echo "E2E_CHAIN_SPEC_SCRIPT=$SCRIPT" >> $GITHUB_ENV
 
+      # Restored before installing just so the build job's cached ~/.cargo/bin
+      # makes the install a fast no-op instead of a ~60s recompile; also before
+      # the artifact download so the cached target/ can't clobber the freshly
+      # downloaded provider + wbuild. save-if false — only the build job writes it.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "integration-tests-build"
+          save-if: false
+
       - name: Install just
         run: cargo install just --locked || true
 
@@ -640,15 +654,6 @@ jobs:
       - name: Download Polkadot SDK binaries
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: just polkadot_version="$POLKADOT_SDK_VERSION" download-polkadot-sdk-binaries
-
-      # Restored before the artifact download so the cached target/ can't clobber
-      # the freshly downloaded provider + wbuild. save-if false — only the build
-      # job writes this cache.
-      - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          shared-key: "integration-tests-build"
-          save-if: false
 
       # Extract into target/release so the artifact's target/release-rooted
       # contents land back at their original paths (provider binary + per-runtime
