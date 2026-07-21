@@ -12,6 +12,7 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::discovery::ProviderInfo;
 use crate::substrate::{constants, extrinsics, storage, SubstrateClient};
+use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::BucketId;
@@ -20,31 +21,34 @@ use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 /// Client for storage providers.
 pub struct ProviderClient {
     base: BaseClient,
-    provider_account: String, // Substrate account ID
+    signer: Signer,
 }
 
 impl ProviderClient {
-    /// Create a new provider client.
-    pub fn new(config: ClientConfig, provider_account: String) -> ClientResult<Self> {
+    /// Create a new provider client. `signer` submits every extrinsic and
+    /// identifies the provider account.
+    pub fn new(config: ClientConfig, signer: Signer) -> ClientResult<Self> {
         Ok(Self {
             base: BaseClient::new(config)?,
-            provider_account,
+            signer,
         })
     }
 
+    /// The provider account: the signer's public key.
+    fn provider_account(&self) -> AccountId32 {
+        AccountId32::new(self.signer.keypair().public_key().0)
+    }
+
     /// Create with default configuration.
-    pub fn with_defaults(provider_account: String) -> ClientResult<Self> {
-        Self::new(ClientConfig::default(), provider_account)
+    pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
+        Self::new(ClientConfig::default(), signer)
     }
 
-    /// Connect to the blockchain. Must be called before any on-chain operations.
+    /// Connect to the blockchain and install the signer. Must be called before
+    /// any on-chain operations.
     pub async fn connect(&mut self) -> ClientResult<()> {
-        self.base.connect_chain().await
-    }
-
-    /// Set the signer for submitting extrinsics. Must be called after connect().
-    pub fn set_signer(&mut self, signer: crate::Signer) -> ClientResult<()> {
-        self.base.set_signer(signer)
+        self.base.connect_chain().await?;
+        self.base.set_signer(self.signer.clone())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -62,9 +66,9 @@ impl ProviderClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::ProviderClient;
+    /// # use storage_client::{ProviderClient, Signer};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
+    /// let client = ProviderClient::with_defaults(Signer::from_seed("//Alice")?)?;
     /// let multiaddr = "/ip4/203.0.113.1/tcp/3333".to_string();
     /// let public_key = vec![0u8; 32]; // Your actual public key
     /// let stake = 1_000_000_000_000u128; // 1 token with 12 decimals
@@ -85,7 +89,7 @@ impl ProviderClient {
 
         tracing::info!(
             "Registering provider {} with stake {}",
-            self.provider_account,
+            self.provider_account(),
             stake
         );
 
@@ -227,7 +231,7 @@ impl ProviderClient {
 
         tracing::info!(
             "Updating settings for provider {}: price_per_byte={}",
-            self.provider_account,
+            self.provider_account(),
             settings.price_per_byte
         );
 
@@ -266,7 +270,7 @@ impl ProviderClient {
         tracing::info!(
             "Adding stake {} for provider {}",
             additional_stake,
-            self.provider_account
+            self.provider_account()
         );
 
         let tx = extrinsics::add_stake(additional_stake);
@@ -293,7 +297,7 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let signer = chain.signer()?;
 
-        tracing::info!("Deregistering provider {}", self.provider_account);
+        tracing::info!("Deregistering provider {}", self.provider_account());
 
         let tx = extrinsics::deregister_provider();
 
@@ -430,8 +434,7 @@ impl ProviderClient {
     /// List all active agreements for this provider.
     pub async fn list_active_agreements(&self) -> ClientResult<Vec<ActiveAgreement>> {
         let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_account = self.provider_account();
         let provider_bytes: &[u8] = provider_account.as_ref();
 
         let at = chain
@@ -600,8 +603,7 @@ impl ProviderClient {
     /// List all active challenges against this provider.
     pub async fn list_active_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_account = self.provider_account();
         let provider_bytes: Vec<u8> = AsRef::<[u8]>::as_ref(&provider_account).to_vec();
 
         let at = chain
@@ -687,8 +689,7 @@ impl ProviderClient {
     /// Get your provider statistics.
     pub async fn get_stats(&self) -> ClientResult<ProviderStats> {
         let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_account = self.provider_account();
 
         let at = chain
             .api()
@@ -768,8 +769,7 @@ impl ProviderClient {
     /// Get your current committed bytes vs available capacity.
     pub async fn get_capacity_info(&self) -> ClientResult<CapacityInfo> {
         let chain = self.base.chain()?;
-        let provider_account = SubstrateClient::parse_account(&self.provider_account)
-            .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
+        let provider_account = self.provider_account();
 
         let at = chain
             .api()

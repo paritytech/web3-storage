@@ -114,11 +114,11 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     let bob_ss58 = dev_ss58("bob");
 
     // ── Register Alice as provider ────────────────────────────────────────────
-    let mut provider = ProviderClient::new(chain_config(), alice_ss58.clone()).ok()?;
+    let mut provider =
+        ProviderClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if provider.connect().await.is_err() {
         return None;
     }
-    provider.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
 
     let already_registered = matches!(
         provider.get_provider_info(&dev_account("alice")).await,
@@ -203,22 +203,22 @@ pub async fn alice_admin() -> Option<AdminClient> {
 /// Build a `ChallengerClient` signed by Alice. Returns `None` if the chain is down.
 #[allow(dead_code)]
 pub async fn alice_challenger() -> Option<ChallengerClient> {
-    let mut client = ChallengerClient::new(chain_config(), dev_ss58("alice")).ok()?;
+    let mut client =
+        ChallengerClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
     Some(client)
 }
 
 /// Build a `ProviderClient` signed by Alice. Returns `None` if the chain is down.
 #[allow(dead_code)]
 pub async fn alice_provider() -> Option<ProviderClient> {
-    let mut client = ProviderClient::new(chain_config(), dev_ss58("alice")).ok()?;
+    let mut client =
+        ProviderClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
     Some(client)
 }
 

@@ -33,10 +33,10 @@
 //! ### For Storage Providers
 //! [`ProviderClient`](provider::ProviderClient) - Manage provider operations
 //! ```no_run
-//! use storage_client::{ProviderClient, ClientConfig};
+//! use storage_client::{ProviderClient, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = ProviderClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // Register as provider
 //! client.register(
@@ -83,10 +83,10 @@
 //! ### For Data Integrity Monitors
 //! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
 //! ```no_run
-//! use storage_client::{ChallengerClient, ChunkLocation, ClientConfig};
+//! use storage_client::{ChallengerClient, ChunkLocation, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // Challenge a provider
 //! let challenge_id = client.challenge_checkpoint(

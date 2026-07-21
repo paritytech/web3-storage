@@ -1991,9 +1991,8 @@ impl CheckpointManager {
     ///
     /// ```ignore
     /// // Setup challenger client
-    /// let mut challenger = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+    /// let mut challenger = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
     /// challenger.connect().await?;
-    /// challenger.set_signer(Signer::from_seed("//Alice")?)?;
     ///
     /// // Execute auto-challenges
     /// let result = manager.execute_auto_challenges(bucket_id, &challenger, 0.7).await?;
