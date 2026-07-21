@@ -914,7 +914,7 @@ pub enum Event<T: Config> {
 Read-only queries used by clients (the Rust SDK, demos, and the provider
 node's membership cache) to discover providers, inspect bucket state, list
 agreements, and watch challenges without submitting transactions. Defined in
-`pallet/src/runtime_api.rs` as `StorageProviderApi`.
+`crates/pallets/storage-provider/src/runtime_api.rs` as `StorageProviderApi`.
 
 ```rust
 sp_api::decl_runtime_apis! {
@@ -963,7 +963,7 @@ sp_api::decl_runtime_apis! {
 }
 ```
 
-Response types live in `pallet/src/runtime_api.rs` (`ProviderInfoResponse`,
+Response types live in `crates/pallets/storage-provider/src/runtime_api.rs` (`ProviderInfoResponse`,
 `StorageRequirements`, `MatchedProvider`, `BucketResponse`,
 `AgreementResponse`, `ChallengeResponse`, etc.). They flatten the on-chain
 structs into encode/decode-friendly shapes (e.g. `AccountId` as `Vec<u8>`,
