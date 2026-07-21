@@ -9,7 +9,7 @@
 //! The SDK provides specialized clients for different user roles:
 //!
 //! ### For Storage Users
-//! [`StorageUserClient`](storage_user::StorageUserClient) - Upload, download, and verify data
+//! [`StorageUserClient`] - Upload, download, and verify data
 //! ```no_run
 //! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy, Signer};
 //!
@@ -31,7 +31,7 @@
 //! ```
 //!
 //! ### For Storage Providers
-//! [`ProviderClient`](provider::ProviderClient) - Manage provider operations
+//! [`ProviderClient`] - Manage provider operations
 //! ```no_run
 //! use storage_client::{ProviderClient, Signer};
 //!
@@ -49,7 +49,7 @@
 //! ```
 //!
 //! ### For Bucket Administrators
-//! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
+//! [`AdminClient`] - Manage buckets and agreements
 //! ```no_run
 //! use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
 //!
@@ -81,7 +81,7 @@
 //! ```
 //!
 //! ### For Data Integrity Monitors
-//! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
+//! [`ChallengerClient`] - Challenge providers
 //! ```no_run
 //! use storage_client::{ChallengerClient, ChunkLocation, Signer};
 //!

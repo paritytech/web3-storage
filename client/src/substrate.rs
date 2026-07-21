@@ -765,7 +765,7 @@ pub mod storage {
 
     /// Query all storage agreements for a specific bucket (prefix iteration).
     ///
-    /// Key layout after prefix: [blake2_128(provider)=16][provider=32]; provider at offset 72 in full key.
+    /// Key layout after prefix: `[blake2_128(provider)=16][provider=32]`; provider at offset 72 in full key.
     pub fn agreements_for_bucket(
         bucket_id: u64,
     ) -> (
@@ -793,25 +793,25 @@ pub mod storage {
 
     /// Iterate all registered providers.
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32];
-    /// account at [48..80].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]`;
+    /// account at `[48..80]`.
     pub fn all_providers() -> DynamicAddress<(subxt::dynamic::Value,)> {
         subxt::dynamic::storage(PALLET_NAME, "Providers")
     }
 
     /// Iterate all storage agreements (bucket_id × provider DoubleMap).
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]
-    ///             [blake2_128(provider)=16][provider=32]; bucket_id at [48..56], provider at [72..104].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]`
+    ///             `[blake2_128(provider)=16][provider=32]`; bucket_id at `[48..56]`, provider at `[72..104]`.
     pub fn all_storage_agreements() -> DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>
     {
         subxt::dynamic::storage(PALLET_NAME, "StorageAgreements")
     }
 
-    /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
+    /// Iterate all active challenge entries (deadline_block → `Vec<Challenge>`).
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4];
-    /// deadline block at [48..52].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4]`;
+    /// deadline block at `[48..52]`.
     pub fn all_challenges() -> DynamicAddress<(subxt::dynamic::Value,)> {
         subxt::dynamic::storage(PALLET_NAME, "Challenges")
     }
