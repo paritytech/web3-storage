@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = FileSystemClient::new(
         "ws://127.0.0.1:2222",    // Parachain WebSocket
         "http://127.0.0.1:3333",  // Provider HTTP
-        Signer::dev("alice")?,    // Use Alice for testing
+        Signer::from_seed("//Alice")?,    // Use Alice for testing
     ).await?;
 
     // Create a drive (like a mounted filesystem)

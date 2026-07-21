@@ -91,7 +91,7 @@ The user provides a 256-bit (32-byte) symmetric key. This is the simplest possib
 // Rust
 let key = EncryptionKey::generate();
 let client =
-    StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?.with_encryption_key(&key);
+    StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?.with_encryption_key(&key);
 ```
 
 ```typescript

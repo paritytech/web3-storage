@@ -251,7 +251,7 @@ The provider node uses environment variables for configuration:
 use storage_client::{Signer, StorageUserClient};
 
 // Connect to provider
-let client = StorageUserClient::new(config, Signer::dev("alice")?)?;
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Upload data (off-chain)
 let data = b"Hello, decentralized storage!";

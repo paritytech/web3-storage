@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fs_client = FileSystemClient::new(
         "ws://127.0.0.1:2222",      // Parachain endpoint
         "http://127.0.0.1:3333",     // Provider endpoint
-        Signer::dev("alice")?,       // Use Alice's key for testing
+        Signer::from_seed("//Alice")?,       // Use Alice's key for testing
     )
     .await?;
 
@@ -135,7 +135,7 @@ provider HTTP requests. For development, use dev accounts:
 
 ```rust
 // A well-known development account
-let signer = Signer::dev("alice")?;   // alice, bob, charlie, dave, eve, ferdie
+let signer = Signer::from_seed("//Alice")?;   // //Alice, //Bob, //Charlie, //Dave, //Eve, //Ferdie
 ```
 
 For production, derive from a secret URI / mnemonic or wrap an existing keypair:

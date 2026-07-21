@@ -645,7 +645,7 @@ With this protocol, the user API becomes simple:
 let mut fs_client = FileSystemClient::new(
     "ws://localhost:2222",
     "http://localhost:3333",
-    Signer::dev("alice")?,
+    Signer::from_seed("//Alice")?,
 ).await?;
 
 // Create drive - checkpoints handled automatically based on strategy
@@ -784,7 +784,7 @@ use storage_client::{CheckpointManager, CheckpointConfig, CheckpointResult, Sign
 let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
     .with_providers(vec!["http://localhost:3333".to_string()])
-    .with_signer(Signer::dev("alice")?);
+    .with_signer(Signer::from_seed("//Alice")?);
 
 // Submit checkpoint
 let result = manager.submit_checkpoint(bucket_id).await;
@@ -819,7 +819,7 @@ use std::sync::Arc;
 let manager = Arc::new(CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
     .with_providers(vec!["http://localhost:3333".to_string()])
-    .with_signer(Signer::dev("alice")?));
+    .with_signer(Signer::from_seed("//Alice")?));
 
 // Configure batched checkpoints
 let config = BatchedCheckpointConfig {
@@ -933,7 +933,7 @@ if let Some(conflict) = conflict {
 use file_system_client::{FileSystemClient, Signer};
 
 let mut fs_client =
-    FileSystemClient::new("ws://localhost:2222", "http://localhost:3333", Signer::dev("alice")?)
+    FileSystemClient::new("ws://localhost:2222", "http://localhost:3333", Signer::from_seed("//Alice")?)
         .await?;
 
 // Enable automatic checkpoints for a drive

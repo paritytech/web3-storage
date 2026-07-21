@@ -32,16 +32,15 @@ tokio = { version = "1", features = ["full"] }
 
 ### Setup
 
-All clients must connect to the chain before on-chain operations. `AdminClient`
-and `StorageUserClient` take their signer at construction; `ProviderClient` and
-`ChallengerClient` set it after connecting via `set_signer`:
+All clients take their signer at construction and must connect to the chain
+before on-chain operations:
 
 ```rust
 use storage_client::{AdminClient, ClientConfig, Signer};
 
 let config = ClientConfig::default(); // ws://localhost:2222
 // Dev account for testing — use a real keypair in production!
-let mut client = AdminClient::new(config, Signer::dev("alice")?)?;
+let mut client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Connect to chain
 client.connect().await?;
@@ -61,7 +60,7 @@ use storage_client::{ChunkingStrategy, ClientConfig, Signer, StorageUserClient};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create client (default config, dev Alice signer)
-    let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
+    let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 
     // Upload data
     let data = b"My important data";
@@ -123,7 +122,7 @@ use storage_client::{AdminClient, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = AdminClient::with_defaults(Signer::dev("alice")?)?;
+    let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
 
     // Create bucket
     let bucket_id = client.create_bucket(2).await?; // min 2 providers
@@ -355,7 +354,7 @@ cargo run --example complete_workflow
 ### Automated Spot-Checking
 
 ```rust
-let mut client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
+let mut client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 
 // Perform 10 random spot-checks
 let (passed, failed) = client.spot_check_batch(

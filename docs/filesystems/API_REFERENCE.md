@@ -334,8 +334,8 @@ pub async fn new(
 - `chain_endpoint`: Parachain WebSocket endpoint (e.g., `"ws://127.0.0.1:2222"`)
 - `provider_endpoint`: Storage provider HTTP endpoint (e.g., `"http://127.0.0.1:3333"`)
 - `signer`: Signs on-chain extrinsics and provider HTTP requests (the provider
-  always enforces auth). Build with `Signer::dev("alice")` for testing, or
-  `Signer::from_seed(...)` / `Signer::from_keypair(...)` for real keys —
+  always enforces auth). Build with `Signer::from_seed("//Alice")` for testing, or
+  `Signer::from_seed("<mnemonic>")` / `Signer::from_keypair(...)` for real keys —
   never use dev accounts in production.
 
 **Returns:**
@@ -349,7 +349,7 @@ use file_system_client::{FileSystemClient, Signer};
 let mut fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",
     "http://127.0.0.1:3333",
-    Signer::dev("alice")?,
+    Signer::from_seed("//Alice")?,
 ).await?;
 ```
 
@@ -1293,7 +1293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fs_client = FileSystemClient::new(
         "ws://127.0.0.1:2222",
         "http://127.0.0.1:3333",
-        Signer::dev("alice")?,
+        Signer::from_seed("//Alice")?,
     ).await?;
 
     // 2. Create drive

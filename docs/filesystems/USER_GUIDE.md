@@ -66,7 +66,7 @@ use file_system_client::{FileSystemClient, Signer};
 let mut fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",           // Parachain WebSocket endpoint
     "http://127.0.0.1:3333",         // Storage provider HTTP endpoint
-    Signer::dev("alice")?,           // Use Alice's dev account
+    Signer::from_seed("//Alice")?,           // Use Alice's dev account
 ).await?;
 
 // Or use a real key for production:

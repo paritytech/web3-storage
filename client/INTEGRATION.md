@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create client (dev signer for testing) and connect to chain
-    let mut client = AdminClient::new(config, Signer::dev("alice")?)?;
+    let mut client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
     client.connect().await?;
 
     // Now you can make on-chain calls
@@ -217,9 +217,8 @@ mod tests {
             // ...
         };
 
-        let mut client = ProviderClient::new(config, "5FHne...".to_string())?;
+        let mut client = ProviderClient::new(config, Signer::from_seed("//Bob")?)?;
         client.connect().await?;
-        client.set_signer(Signer::dev("bob")?)?;
 
         let result = client.register(
             "/ip4/127.0.0.1/tcp/3333".to_string(),
@@ -258,12 +257,11 @@ client.connect().await?;
 
 ### "No signer configured" Error
 
-Set a signer before submitting extrinsics. Only `ProviderClient` and
-`ChallengerClient` need this step — `AdminClient` and `StorageUserClient`
-take their signer at construction:
+Every client takes its signer at construction — pass one to `new()` (or
+`with_defaults()`):
 
 ```rust
-client.set_signer(Signer::dev("alice")?)?;
+let client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
 ```
 
 ### Transaction Fails
