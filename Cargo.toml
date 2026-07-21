@@ -50,7 +50,7 @@ storage-subxt = { path = "crates/storage-subxt" }
 # Storage Interfaces: File System Interface
 file-system-client = { path = "storage-interfaces/file-system/client" }
 file-system-primitives = { path = "crates/primitives/file-system", default-features = false }
-pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
+pallet-drive-registry = { path = "crates/pallets/drive-registry", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
 pallet-s3-registry = { path = "crates/pallets/s3-registry", default-features = false }
