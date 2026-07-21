@@ -1,6 +1,6 @@
 # Storage Provider Pallet - Extrinsics Reference
 
-Quick reference for all available extrinsics in the storage provider pallet ([pallet/src/lib.rs](../../pallet/src/lib.rs)).
+Quick reference for all available extrinsics in the storage provider pallet ([crates/pallets/storage-provider/src/lib.rs](../../crates/pallets/storage-provider/src/lib.rs)).
 
 ## Provider Management
 
