@@ -17,10 +17,10 @@ permissions:
   contents: read
 
 env:
-  # Single place to change which runtime the integration-test jobs resolve their
-  # chain-spec script for. Must be one of the runtimes flagged
-  # integration_tests=true in scripts/runtimes-matrix.json (which the Build job
-  # compiles).
+  # Which runtime the test jobs run against (the chain-spec resolve steps and the
+  # zombienet config key on it). Must be one of the runtimes flagged
+  # integration_tests=true in scripts/runtimes-matrix.json, since those are what
+  # the Build job compiles and uploads.
   INTEGRATION_TEST_RUNTIME: web3-storage-paseo
 
 jobs:
@@ -81,8 +81,11 @@ jobs:
       - name: Install just
         run: cargo install just --locked || true
 
-      # One wasm per runtime the test jobs fan out on.
-      - name: Build all runtimes
+      # Build the wasm for every runtime flagged integration_tests=true in the
+      # matrix. The test jobs run against INTEGRATION_TEST_RUNTIME, which must be
+      # one of them. Uploaded below so the test jobs download instead of
+      # rebuilding.
+      - name: Build integration-test runtimes
         run: |
           for cmd in $(jq -r '.[] | select(.integration_tests == true) | .build_command' scripts/runtimes-matrix.json); do
             echo "::group::just $cmd"
