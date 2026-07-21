@@ -67,7 +67,7 @@ impl AdminClient {
     /// ```no_run
     /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = AdminClient::with_defaults(Signer::dev("alice")?)?;
+    /// let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://provider.example:3333",
     ///     &NegotiateRequest {

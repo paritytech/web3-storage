@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📡 Step 1: Connecting to blockchain and provider...");
 
     let mut fs_client =
-        FileSystemClient::new(chain_ws, provider_url, Signer::dev("alice")?).await?;
+        FileSystemClient::new(chain_ws, provider_url, Signer::from_seed("//Alice")?).await?;
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();
     let provider = ProviderClient::fetch_provider_id(provider_url).await?;

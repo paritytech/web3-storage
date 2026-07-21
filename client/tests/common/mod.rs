@@ -48,11 +48,20 @@ const MIN_STAKE: u128 = 1_000 * 1_000_000_000_000u128;
 
 /// Derive the SS58 address for a dev account by name ("alice", "bob", …).
 ///
-/// Avoids hardcoding addresses in tests. Delegates to [`Signer::dev`], so the
-/// account and signer always match.
+/// Avoids hardcoding addresses in tests. Derived from the same `//Name` seed the
+/// signer uses, so the account and signer always match.
 #[allow(dead_code)]
 pub fn dev_ss58(name: &str) -> String {
     dev_account(name).to_ss58check()
+}
+
+/// The `//Name` secret URI for a dev account name ("alice" -> "//Alice").
+fn dev_suri(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!("//{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        None => "//Alice".to_string(),
+    }
 }
 
 /// Derive the typed `AccountId32` for a dev account by name ("alice", "bob", …).
@@ -61,7 +70,7 @@ pub fn dev_ss58(name: &str) -> String {
 /// storage queries / parser APIs that take `&AccountId32` directly.
 #[allow(dead_code)]
 pub fn dev_account(name: &str) -> AccountId32 {
-    let signer = Signer::dev(name).expect("known dev account");
+    let signer = Signer::from_seed(&dev_suri(name)).expect("valid dev seed");
     AccountId32::from(signer.keypair().public_key().0)
 }
 
@@ -109,7 +118,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     if provider.connect().await.is_err() {
         return None;
     }
-    provider.set_signer(Signer::dev("alice").ok()?).ok()?;
+    provider.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
 
     let already_registered = matches!(
         provider.get_provider_info(&dev_account("alice")).await,
@@ -146,7 +155,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
     // Alice is both the provider (signs terms) and the bucket owner (redeems).
     // Nonces must be unique per provider, so we pick one based on the current
     // block-ish counter — using time-since-epoch nanos so reruns don't collide.
-    let mut admin = AdminClient::new(chain_config(), Signer::dev("alice").ok()?).ok()?;
+    let mut admin = AdminClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if admin.connect().await.is_err() {
         return None;
     }
@@ -184,7 +193,7 @@ pub async fn chain_setup() -> Option<ChainSetup> {
 /// Build an `AdminClient` signed by Alice. Returns `None` if the chain is down.
 #[allow(dead_code)]
 pub async fn alice_admin() -> Option<AdminClient> {
-    let mut client = AdminClient::new(chain_config(), Signer::dev("alice").ok()?).ok()?;
+    let mut client = AdminClient::new(chain_config(), Signer::from_seed("//Alice").ok()?).ok()?;
     if client.connect().await.is_err() {
         return None;
     }
@@ -198,7 +207,7 @@ pub async fn alice_challenger() -> Option<ChallengerClient> {
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_signer(Signer::dev("alice").ok()?).ok()?;
+    client.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
     Some(client)
 }
 
@@ -209,7 +218,7 @@ pub async fn alice_provider() -> Option<ProviderClient> {
     if client.connect().await.is_err() {
         return None;
     }
-    client.set_signer(Signer::dev("alice").ok()?).ok()?;
+    client.set_signer(Signer::from_seed("//Alice").ok()?).ok()?;
     Some(client)
 }
 

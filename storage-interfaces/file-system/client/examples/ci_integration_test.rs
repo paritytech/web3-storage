@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create the client
     println!("Step 1: Creating file system client...");
     let mut fs_client =
-        FileSystemClient::new(chain_ws, provider_url, Signer::dev("alice")?).await?;
+        FileSystemClient::new(chain_ws, provider_url, Signer::from_seed("//Alice")?).await?;
     println!("  Client connected successfully");
 
     let owner: AccountId32 = dev_signer::alice().public_key().0.into();

@@ -133,7 +133,7 @@ impl FileSystemClient {
     /// * `provider_endpoint` - Storage provider HTTP endpoint
     ///
     /// The `signer` authenticates provider requests and signs on-chain
-    /// extrinsics; build it via [`Signer::from_seed`], [`Signer::dev`], or
+    /// extrinsics; build it via [`Signer::from_seed`] (e.g. `"//Alice"`) or
     /// [`Signer::from_keypair`].
     pub async fn new(
         chain_endpoint: &str,

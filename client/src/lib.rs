@@ -14,7 +14,7 @@
 //! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = StorageUserClient::new(ClientConfig::default(), Signer::dev("alice")?)?;
+//! let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 //!
 //! // Upload data
 //! let data = b"Hello, decentralized world!";
@@ -54,7 +54,7 @@
 //! use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = AdminClient::with_defaults(Signer::dev("alice")?)?;
+//! let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // 1. Ask the provider node to sign agreement terms over HTTP. The
 //! //    provider allocates the nonce + validity window and signs.

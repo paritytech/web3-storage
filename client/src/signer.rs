@@ -5,17 +5,14 @@
 use crate::{ClientError, ClientResult};
 use std::str::FromStr;
 use std::sync::Arc;
-use subxt_signer::{
-    sr25519::{dev, Keypair},
-    SecretUri,
-};
+use subxt_signer::{sr25519::Keypair, SecretUri};
 
 /// A signer used for both provider-request authentication headers and on-chain
 /// extrinsic signing.
 ///
-/// Build it from a raw [`Keypair`], a secret URI / mnemonic ([`Signer::from_seed`]),
-/// or a well-known dev account name ([`Signer::dev`]). Internally it is a
-/// reference-counted sr25519 keypair (so cloning is cheap), and it implements
+/// Build it from a raw [`Keypair`] or a secret URI / mnemonic
+/// ([`Signer::from_seed`], e.g. `"//Alice"` for a dev account). Internally it is
+/// a reference-counted sr25519 keypair (so cloning is cheap), and it implements
 /// [`subxt::tx::Signer`] so it can be handed straight to subxt for extrinsic
 /// submission.
 #[derive(Clone)]
@@ -35,20 +32,6 @@ impl Signer {
         Keypair::from_uri(&uri)
             .map(|keypair| Self(Arc::new(keypair)))
             .map_err(|e| ClientError::Config(format!("invalid signer seed: {e}")))
-    }
-
-    /// A well-known dev account by name: `"alice"`..`"ferdie"` (case-insensitive).
-    pub fn dev(name: &str) -> ClientResult<Self> {
-        let keypair = match name.to_ascii_lowercase().as_str() {
-            "alice" => dev::alice(),
-            "bob" => dev::bob(),
-            "charlie" => dev::charlie(),
-            "dave" => dev::dave(),
-            "eve" => dev::eve(),
-            "ferdie" => dev::ferdie(),
-            other => return Err(ClientError::Config(format!("unknown dev account: {other}"))),
-        };
-        Ok(Self(Arc::new(keypair)))
     }
 
     /// The underlying keypair, e.g. to build provider-auth headers.
@@ -90,14 +73,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seed_and_dev_agree_for_alice() {
+    fn from_seed_matches_well_known_dev_alice() {
+        // "//Alice" must derive the canonical well-known Alice account.
+        use subxt_signer::sr25519::dev;
         let seed = Signer::from_seed("//Alice").unwrap();
-        let dev = Signer::dev("Alice").unwrap();
-        assert_eq!(seed.keypair().public_key().0, dev.keypair().public_key().0);
+        assert_eq!(
+            seed.keypair().public_key().0,
+            dev::alice().public_key().0
+        );
     }
 
     #[test]
-    fn unknown_dev_account_errors() {
-        assert!(Signer::dev("nobody").is_err());
+    fn invalid_seed_errors() {
+        assert!(Signer::from_seed("not a valid bip39 mnemonic").is_err());
     }
 }
