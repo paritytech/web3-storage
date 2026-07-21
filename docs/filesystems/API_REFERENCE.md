@@ -644,7 +644,7 @@ pub struct DirectoryEntry {
 
 ### Checkpoint Operations
 
-Layer 1 checkpoint methods delegate to Layer 0's `CheckpointManager` for multi-provider coordination and consensus verification. See [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md) for details.
+Layer 1 checkpoint methods delegate to Layer 0's `CheckpointManager` for multi-provider coordination and consensus verification. See [Checkpoint Protocol Design](../drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 **Key Concepts:**
 - Layer 1 maps `drive_id` → `bucket_id` automatically

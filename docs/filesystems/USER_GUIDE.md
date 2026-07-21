@@ -548,7 +548,7 @@ let drive_id = fs_client.create_drive_with_providers(
 - Known reliable providers from past experience
 - Testing with specific provider configurations
 
-For more details, see [Storage Marketplace Design](../design/marketplace.md).
+For more details, see [Storage Marketplace Design](../drafts/marketplace.md).
 
 ---
 
@@ -625,7 +625,7 @@ If providers disagree on the data state, the system detects and handles it:
 // 4. Continues with majority consensus
 ```
 
-For more details, see [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md).
+For more details, see [Checkpoint Protocol Design](../drafts/CHECKPOINT_PROTOCOL.md).
 
 ---
 

@@ -2178,7 +2178,7 @@ Response:
 ### Layer 1 — File System & S3 Interfaces
 
 The provider node also serves the Layer 1 interfaces described in
-`docs/filesystems/` and `docs/design/marketplace.md`. These mount on top of
+`docs/filesystems/` and `docs/drafts/marketplace.md`. These mount on top of
 the Layer 0 blob primitives and require Writer/Admin authorization for
 mutating routes.
 

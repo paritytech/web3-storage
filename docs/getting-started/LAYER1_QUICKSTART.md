@@ -392,7 +392,7 @@ Once infrastructure is running:
 
 ### Architecture
 - [System Design](../design/scalable-web3-storage.md)
-- [Checkpoint Protocol](../design/CHECKPOINT_PROTOCOL.md)
+- [Checkpoint Protocol](../drafts/CHECKPOINT_PROTOCOL.md)
 
 ## Quick Reference Card
 

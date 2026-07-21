@@ -1,37 +1,46 @@
 # Documentation
 
-Project structure:
-
 ```
 docs/
 ├── getting-started/   — quickstart
 ├── reference/         — pallet API + payment math
-├── design/            — architecture, economics, protocols
+├── design/            — canonical system design (review-gated)
+├── drafts/            — work-in-progress protocol notes (need triage)
 └── filesystems/       — Layer 1 file system interface
 ```
 
+> `design/` is the source of truth and requires design review before changes.
+> `drafts/` holds evolving notes that have not been ratified — treat as WIP.
+
 ## Getting started
 
-- **[Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup (chain → provider → demo) plus the SDK examples for the file-system and S3 interfaces. The canonical entry point.
-- **[`FILE_SYSTEM_QUICKSTART.md`](../FILE_SYSTEM_QUICKSTART.md)** (repo root) — short version focused on the file-system layer only.
-- **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — build/test/run commands and code-review guidelines for contributors and AI agents.
+- **[Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup (chain → provider → demo) plus SDK examples for the file-system and S3 interfaces. The canonical entry point.
+- **[`FILE_SYSTEM_QUICKSTART.md`](../FILE_SYSTEM_QUICKSTART.md)** (repo root) — short version, file-system layer only.
+- **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — build/test/run commands and contributor guidelines.
 
 ## Reference
 
 - **[Extrinsics Reference](./reference/EXTRINSICS_REFERENCE.md)** — every pallet extrinsic with parameters, errors, and example workflows.
-- **[Payment Calculator](./reference/PAYMENT_CALCULATOR.md)** — `payment = price_per_byte × max_bytes × duration`, with worked examples and the common `PaymentExceedsMax` failure mode.
+- **[Payment Calculator](./reference/PAYMENT_CALCULATOR.md)** — `payment = price_per_byte × max_bytes × duration`, with worked examples.
 
 ## Design
 
+The canonical system design. Changes require review (see [`.github/CODEOWNERS`](../.github/CODEOWNERS)).
+
 - **[Scalable Web3 Storage](./design/scalable-web3-storage.md)** — architecture, economic model, comparisons with Filecoin/IPFS/Arweave, rebuttals to common review concerns.
 - **[Implementation Details](./design/scalable-web3-storage-implementation.md)** — pallet extrinsics, provider HTTP API, MMR layout, challenge mechanism, replica sync.
-- **[Smart Contracts](./design/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow.
-- **[Execution Flows](./design/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs for the main flows.
-- **[Marketplace](./design/marketplace.md)** — provider capacity, discovery, and matching.
-- **[Checkpoint Protocol](./design/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
-- **[Provider-Initiated Checkpoints](./design/provider-initiated-checkpoints.md)** — extension where providers proactively commit state.
-- **[Client-Side Encryption](./design/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
-- **[S3 Metadata Index](./design/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
+
+## Drafts
+
+Work-in-progress notes, not yet ratified. **These need triage** — each should be reviewed and either promoted into `design/`, folded into an existing doc, or dropped.
+
+- **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow.
+- **[Execution Flows](./drafts/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs for the main flows.
+- **[Marketplace](./drafts/marketplace.md)** — provider capacity, discovery, and matching.
+- **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
+- **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state.
+- **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
+- **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
 
 ## Layer 1 — file system interface
 
@@ -41,24 +50,16 @@ docs/
 - **[Admin Guide](./filesystems/ADMIN_GUIDE.md)** — operations, monitoring, dispute resolution.
 - **[API Reference](./filesystems/API_REFERENCE.md)** — extrinsics, SDK methods, primitives, events, errors.
 
-## Other clients
+## Clients
 
 - **[Storage Client SDK](../client/README.md)** — Layer-0 Rust client.
 - **[S3 Interface](../storage-interfaces/s3/README.md)** — Layer-1 S3-compatible Rust client.
-- **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (umbrella over `packages/{core,layer0,layer1}`; `./fs`, `./s3`, and `./revive` subpaths).
-
-## Scripts
-
-- `scripts/build-chain-spec.sh` — build runtime + emit chain spec (used by `just generate-chain-spec`).
-- `scripts/check-chain.sh` — relay + parachain health probe.
-- `scripts/quick-test.sh` — curl-based smoke test of the Layer-0 provider HTTP API.
+- **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./fs`, `./s3`, `./revive` subpaths).
 
 ## External
 
-- [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) — FRAME, Cumulus, networking.
-- [Substrate Docs](https://docs.substrate.io/).
-- [Polkadot.js Apps](https://polkadot.js.org/apps/).
+- [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) · [Substrate Docs](https://docs.substrate.io/) · [Polkadot.js Apps](https://polkadot.js.org/apps/)
 
 ## License
 
-See the repository root [README](../README.md#license) for license details.
+See the repository root [README](../README.md#license).
