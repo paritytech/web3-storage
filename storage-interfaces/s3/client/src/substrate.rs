@@ -103,15 +103,18 @@ impl SubstrateClient {
     /// may not yet reflect the previous tx's inclusion.
     async fn submit_and_finalize(
         &self,
-        tx: subxt::tx::DefaultPayload<Composite<()>>,
-    ) -> std::result::Result<subxt::blocks::ExtrinsicEvents<PolkadotConfig>, String> {
+        tx: subxt::tx::DynamicPayload<Vec<Value>>,
+    ) -> std::result::Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, String> {
         let signer = self.signer()?;
 
         let mut last_err = String::new();
         for attempt in 0..3u32 {
-            match self
-                .client
-                .tx()
+            let at = match self.client.at_current_block().await {
+                Ok(at) => at,
+                Err(e) => return Err(format!("Failed to submit tx: {e}")),
+            };
+            match at
+                .transactions()
                 .sign_and_submit_then_watch_default(&tx, signer)
                 .await
             {
@@ -294,23 +297,21 @@ impl SubstrateClient {
         &self,
         name: &str,
     ) -> std::result::Result<Option<S3BucketId>, S3ClientError> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "BucketNameToId",
-            vec![Value::from_bytes(name.as_bytes())],
-        );
+        let storage_query =
+            subxt::dynamic::storage::<(Value,), Value>(PALLET_NAME, "BucketNameToId");
 
-        let result = self
+        let at = self
             .client
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| S3ClientError::InternalError(e.to_string()))?
-            .fetch(&storage_query)
+            .map_err(|e| S3ClientError::InternalError(e.to_string()))?;
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::from_bytes(name.as_bytes()),))
             .await
             .map_err(|e| S3ClientError::InternalError(e.to_string()))?;
 
-        Ok(result.and_then(|v| v.as_type::<u64>().ok()))
+        Ok(result.and_then(|v| v.decode_as::<u64>().ok()))
     }
 
     /// Get bucket info by ID.
@@ -318,25 +319,22 @@ impl SubstrateClient {
         &self,
         bucket_id: S3BucketId,
     ) -> std::result::Result<Option<BucketInfo>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "S3Buckets",
-            vec![Value::u128(bucket_id as u128)],
-        );
+        let storage_query = subxt::dynamic::storage::<(Value,), Value>(PALLET_NAME, "S3Buckets");
 
-        let result = self
+        let at = self
             .client
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .map_err(|e| e.to_string())?;
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::u128(bucket_id as u128),))
             .await
             .map_err(|e| e.to_string())?;
 
         match result {
             Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
+                let decoded = value.decode().map_err(|e| e.to_string())?;
 
                 let name = extract_bytes_field(&decoded, "name").unwrap_or_default();
                 let layer0_bucket_id = extract_u64_field(&decoded, "layer0_bucket_id").unwrap_or(0);
@@ -363,28 +361,29 @@ impl SubstrateClient {
         bucket_id: S3BucketId,
         key: &str,
     ) -> std::result::Result<Option<ChainObjectMetadata>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "Objects",
-            vec![
-                Value::u128(bucket_id as u128),
-                Value::from_bytes(key.as_bytes()),
-            ],
-        );
+        let storage_query =
+            subxt::dynamic::storage::<(Value, Value), Value>(PALLET_NAME, "Objects");
 
-        let result = self
+        let at = self
             .client
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .map_err(|e| e.to_string())?;
+        let result = at
+            .storage()
+            .try_fetch(
+                storage_query,
+                (
+                    Value::u128(bucket_id as u128),
+                    Value::from_bytes(key.as_bytes()),
+                ),
+            )
             .await
             .map_err(|e| e.to_string())?;
 
         match result {
             Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
+                let decoded = value.decode().map_err(|e| e.to_string())?;
 
                 let cid_bytes = extract_bytes_field(&decoded, "cid").unwrap_or_default();
                 let cid = if cid_bytes.len() == 32 {
@@ -415,25 +414,22 @@ impl SubstrateClient {
 
     /// List user's buckets.
     pub async fn list_user_buckets(&self) -> std::result::Result<Vec<BucketInfo>, String> {
-        let storage_query = subxt::dynamic::storage(
-            PALLET_NAME,
-            "UserBuckets",
-            vec![Value::from_bytes(self.account_id)],
-        );
+        let storage_query = subxt::dynamic::storage::<(Value,), Value>(PALLET_NAME, "UserBuckets");
 
-        let result = self
+        let at = self
             .client
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| e.to_string())?
-            .fetch(&storage_query)
+            .map_err(|e| e.to_string())?;
+        let result = at
+            .storage()
+            .try_fetch(storage_query, (Value::from_bytes(self.account_id),))
             .await
             .map_err(|e| e.to_string())?;
 
         let bucket_ids: Vec<u64> = match result {
             Some(value) => {
-                let decoded = value.to_value().map_err(|e| e.to_string())?;
+                let decoded = value.decode().map_err(|e| e.to_string())?;
                 extract_u64_vec(&decoded)
             }
             None => vec![],
@@ -670,7 +666,7 @@ impl EventParser<S3Event> for S3EventParser {
     /// unexpected field structure. Unknown variants within the right pallet surface as
     /// [`S3Event::Unknown`].
     fn parse_event_detail(
-        event: &subxt::events::EventDetails<PolkadotConfig>,
+        event: &subxt::events::Event<'_, PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<S3Event> {
@@ -678,15 +674,15 @@ impl EventParser<S3Event> for S3EventParser {
             return None;
         }
 
-        let fields = match event.field_values() {
+        let fields = match event.decode_fields_unchecked_as::<Composite<()>>() {
             Ok(f) => f,
             Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.variant_name());
+                tracing::trace!("Failed to decode fields for {}: {e}", event.event_name());
                 return None;
             }
         };
 
-        match event.variant_name() {
+        match event.event_name() {
             "S3BucketCreated" => Some(S3Event::S3BucketCreated {
                 s3_bucket_id: scale_decode::field_u64(&fields, "s3_bucket_id")?,
                 name: scale_decode::field_bytes(&fields, "name")?,

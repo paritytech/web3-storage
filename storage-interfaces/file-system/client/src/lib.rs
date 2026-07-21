@@ -894,7 +894,10 @@ impl FileSystemClient {
         let events = self
             .substrate_client
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&call, signer)
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
@@ -920,13 +923,13 @@ impl FileSystemClient {
 
     /// Query bucket_id for a drive from on-chain storage
     async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
-        let storage_client = self
+        let at = self
             .substrate_client
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
+        let storage_client = at.storage();
 
         // Build the storage key for Drives storage map
         use sp_core::twox_128;
@@ -942,10 +945,17 @@ impl FileSystemClient {
         storage_key.extend_from_slice(&key_hash);
         storage_key.extend_from_slice(&key);
 
-        let bytes_opt = storage_client
-            .fetch_raw(storage_key)
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?;
+        // `fetch_raw` no longer returns an Option in subxt 0.50; a missing
+        // value surfaces as `StorageError::NoValueFound` instead.
+        let bytes_opt = match storage_client.fetch_raw(storage_key).await {
+            Ok(bytes) => Some(bytes),
+            Err(subxt::error::StorageError::NoValueFound) => None,
+            Err(e) => {
+                return Err(FsClientError::Blockchain(format!(
+                    "Storage fetch failed: {e}"
+                )))
+            }
+        };
 
         if let Some(bytes) = bytes_opt {
             // DriveInfo structure (simplified):

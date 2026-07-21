@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-	# Layer 0: Scalable Web3 Storage
 	"client",
+	"crates/pallets/drive-registry",
+	"crates/pallets/s3-registry",
+	"crates/pallets/storage-provider",
 	"crates/storage-subxt",
-	"pallet",
 	"provider-node",
 	"provider/negotiation",
 	"runtimes/web3-storage-local",
@@ -22,11 +23,9 @@ members = [
 
 	# Storage Interfaces: File System Interface
 	"storage-interfaces/file-system/client",
-	"storage-interfaces/file-system/pallet-registry",
 
 	# Storage Interfaces: S3-Compatible Interface
 	"storage-interfaces/s3/client",
-	"storage-interfaces/s3/pallet-s3-registry",
 ]
 
 [workspace.package]
@@ -39,7 +38,7 @@ repository = "https://github.com/paritytech/web3-storage"
 # Layer 0: Scalable Web3 Storage (Internal crates)
 pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompile", default-features = false }
 pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
-pallet-storage-provider = { path = "pallet", default-features = false }
+pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
 provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
@@ -54,7 +53,7 @@ file-system-primitives = { path = "crates/primitives/file-system", default-featu
 pallet-drive-registry = { path = "storage-interfaces/file-system/pallet-registry", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
-pallet-s3-registry = { path = "storage-interfaces/s3/pallet-s3-registry", default-features = false }
+pallet-s3-registry = { path = "crates/pallets/s3-registry", default-features = false }
 s3-client = { path = "storage-interfaces/s3/client" }
 s3-primitives = { path = "crates/primitives/s3", default-features = false }
 
@@ -169,9 +168,9 @@ chacha20poly1305 = "0.10"
 rand = "0.8"
 
 # Subxt (chain interaction for off-chain clients)
-subxt = { version = "0.44.3" }
-subxt-core = { version = "0.44.3", default-features = false }
-subxt-signer = { version = "0.44.3", features = ["sr25519"] }
+subxt = { version = "0.50.2" }
+subxt-rpcs = { version = "0.50.2" }
+subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
 sp-keyring = { version = "46.0.0", default-features = false }

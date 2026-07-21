@@ -13,7 +13,7 @@
 //!    out-of-range reuse).
 //! 2. Builds [`AgreementTerms`] from the request, the provider's current
 //!    `price_per_byte` setting (read from chain), and
-//!    `valid_until = current_block + valid_until_offset`.
+//!    `valid_until = current_anchor_block + valid_until_offset`.
 //! 3. Signs `blake2_256(TERM_CONTEXT | SCALE(terms))` with the provider's
 //!    existing sr25519 checkpoint key (the same one used to sign
 //!    commitments). The context is `primary-term-v1:` or

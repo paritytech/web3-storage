@@ -261,7 +261,6 @@ subxt-codegen URL=CHAIN_WS OUTPUT="crates/storage-subxt/src/storage_paseo_runtim
     echo "Generating subxt code..."
     printf '// SPDX-License-Identifier: Apache-2.0\n\n' > "{{ OUTPUT }}"
     subxt codegen --file "{{ METADATA }}" \
-        --crate "::subxt_core" \
         --derive Clone \
         --derive Eq \
         --derive PartialEq \

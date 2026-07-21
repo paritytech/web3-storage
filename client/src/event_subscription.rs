@@ -646,8 +646,7 @@ impl EventSubscriber {
         running: Arc<AtomicBool>,
     ) -> Result<(), ClientError> {
         let mut block_sub = api
-            .blocks()
-            .subscribe_finalized()
+            .stream_blocks()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to subscribe to blocks: {e}")))?;
 
@@ -655,10 +654,14 @@ impl EventSubscriber {
             match block_sub.next().await {
                 Some(Ok(block)) => {
                     let block_hash = H256::from_slice(block.hash().as_ref());
-                    let block_number = block.number();
+                    let block_number = block.number() as u32;
 
                     // Get events from this block
-                    match block.events().await {
+                    let events = match block.at().await {
+                        Ok(at) => at.events().fetch().await.map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    match events {
                         Ok(events) => {
                             for event_result in events.iter() {
                                 match event_result {
@@ -707,7 +710,7 @@ impl EventSubscriber {
     /// Delegates to [`StorageProviderEventParser`] so that the subscription
     /// loop and one-shot callers share identical decoding logic.
     fn parse_event(
-        event: &subxt::events::EventDetails<PolkadotConfig>,
+        event: &subxt::events::Event<'_, PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<StorageEvent> {
@@ -880,11 +883,11 @@ pub async fn subscribe_bucket_events(
 /// [`parse_event_detail`]: EventParser::parse_event_detail
 /// [`from_extrinsic_events`]: EventParser::from_extrinsic_events
 pub trait EventParser<EventType> {
-    /// Attempt to decode a single [`subxt::events::EventDetails`] into an
+    /// Attempt to decode a single [`subxt::events::Event`] into an
     /// `EventType`. Return `None` to skip the event (wrong pallet, unknown
     /// variant, decode failure, etc.).
     fn parse_event_detail(
-        event: &subxt::events::EventDetails<PolkadotConfig>,
+        event: &subxt::events::Event<'_, PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<EventType>;
@@ -898,7 +901,7 @@ pub trait EventParser<EventType> {
     ///
     /// [`parse_event_detail`]: EventParser::parse_event_detail
     fn from_extrinsic_events(
-        events: &subxt::blocks::ExtrinsicEvents<PolkadotConfig>,
+        events: &subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Vec<EventType> {
@@ -923,7 +926,7 @@ pub trait EventParser<EventType> {
 /// ```no_run
 /// # use sp_core::H256;
 /// # use storage_client::event_subscription::{EventParser, StorageProviderEventParser};
-/// # use subxt::blocks::ExtrinsicEvents;
+/// # use subxt::extrinsics::ExtrinsicEvents;
 /// # use subxt::PolkadotConfig;
 /// # async fn example(events: ExtrinsicEvents<PolkadotConfig>, block_hash: H256, block_number: u32) {
 /// let storage_events =
@@ -936,14 +939,14 @@ pub trait EventParser<EventType> {
 pub struct StorageProviderEventParser;
 
 impl EventParser<StorageEvent> for StorageProviderEventParser {
-    /// Parse a single [`subxt::events::EventDetails`] into a [`StorageEvent`].
+    /// Parse a single [`subxt::events::Event`] into a [`StorageEvent`].
     ///
     /// Returns `None` when the event:
     /// - comes from a pallet other than `StorageProvider`, or
     /// - has a variant that is not covered (e.g. `ProviderDeregistered`), or
     /// - cannot be decoded due to unexpected field structure.
     fn parse_event_detail(
-        event: &subxt::events::EventDetails<PolkadotConfig>,
+        event: &subxt::events::Event<'_, PolkadotConfig>,
         block_hash: H256,
         block_number: u32,
     ) -> Option<StorageEvent> {
@@ -953,15 +956,15 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 
         // We log decode failures at TRACE level so callers don't need to
         // worry about noisy warnings for known-unhandled variants.
-        let fields = match event.field_values() {
+        let fields = match event.decode_fields_unchecked_as::<scale_value::Composite<()>>() {
             Ok(f) => f,
             Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.variant_name());
+                tracing::trace!("Failed to decode fields for {}: {e}", event.event_name());
                 return None;
             }
         };
 
-        match event.variant_name() {
+        match event.event_name() {
             // ── Checkpoint ────────────────────────────────────────────────────
             "BucketCheckpointed" => Some(StorageEvent::BucketCheckpointed {
                 bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
@@ -1158,7 +1161,7 @@ impl EventParser<StorageEvent> for StorageProviderEventParser {
 /// A missing composite or a field that fails to decode is logged at `warn`: with correct
 /// runtime metadata this never happens, so a hit signals a metadata-shape regression that
 /// would otherwise be masked by the zero default.
-fn field_terms_scalars(fields: &scale_value::Composite<u32>, name: &str) -> (u64, u32, u128) {
+fn field_terms_scalars(fields: &scale_value::Composite<()>, name: &str) -> (u64, u32, u128) {
     let Some(terms) = fields.at(name) else {
         tracing::warn!("AgreementTerms field '{name}' absent; defaulting scalars to 0");
         return (0, 0, 0);
@@ -1178,7 +1181,7 @@ fn field_terms_scalars(fields: &scale_value::Composite<u32>, name: &str) -> (u64
 
 /// Read the StorageProvider pallet's `ChallengeId` named composite as a `(deadline, index)`
 /// pair.
-fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Option<(u32, u16)> {
+fn field_challenge_id(fields: &scale_value::Composite<()>, name: &str) -> Option<(u32, u16)> {
     let v = fields.at(name)?;
     let deadline = v.at("deadline")?.as_u128()? as u32;
     let index = v.at("index")?.as_u128()? as u16;
@@ -1188,7 +1191,7 @@ fn field_challenge_id(fields: &scale_value::Composite<u32>, name: &str) -> Optio
 /// Read the StorageProvider pallet's `ProviderSettings` named composite into the client-side
 /// [`crate::ProviderSettings`]. Returns `None` if a required field is missing or mistyped.
 fn field_provider_settings(
-    fields: &scale_value::Composite<u32>,
+    fields: &scale_value::Composite<()>,
     name: &str,
 ) -> Option<crate::ProviderSettings> {
     let settings = fields.at(name)?;
@@ -1211,7 +1214,7 @@ fn field_provider_settings(
 
 /// Read a `RemovalReason`-shaped variant field, falling back to `"Unknown"` when the field
 /// is missing or not a variant.
-fn field_removal_reason(fields: &scale_value::Composite<u32>, name: &str) -> String {
+fn field_removal_reason(fields: &scale_value::Composite<()>, name: &str) -> String {
     fields
         .at(name)
         .and_then(scale_decode::variant_name)

@@ -25,7 +25,7 @@ import {
   OnChainBucketDetails,
 } from '@/lib/chain-client'
 import { isSameAddress } from '@web3-storage/sdk'
-import { getCurrentBlock } from '@/state/chain.state'
+import { getAnchorBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 import { challengeKey } from '@/state/challengeKey'
 
@@ -297,7 +297,9 @@ export async function loadProviderData(
     if (bucketIds.length > 0) {
       try {
         const chainBucketDetails = await getBucketDetails(bucketIds, address)
-        const currentBlock = getCurrentBlock() || 0
+        // Checkpoint windows are anchor-block / interval, so overdue detection
+        // must divide the anchor clock, not the parachain height.
+        const anchorBlock = getAnchorBlock() || 0
         const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
         for (const a of chainAgreements) {
           if (isSameAddress(a.provider, address)) agreementsByBucket.set(a.bucketId, a)
@@ -306,8 +308,8 @@ export async function loadProviderData(
           chainBucketDetails.map((bd) => {
             const agr = agreementsByBucket.get(bd.bucketId)
             let isOverdue = false
-            if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && currentBlock > 0) {
-              const expectedWindow = BigInt(Math.floor(currentBlock / bd.checkpointConfig.interval))
+            if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && anchorBlock > 0) {
+              const expectedWindow = BigInt(Math.floor(anchorBlock / bd.checkpointConfig.interval))
               isOverdue = expectedWindow > bd.lastCheckpointWindow + 1n
             }
             return convertBucketDetail(bd, agr || null, isOverdue)

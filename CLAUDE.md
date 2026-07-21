@@ -10,6 +10,10 @@
 **Pull request rules:**
 - ALWAYS open pull requests against the repository's default branch (`dev`)
 
+**Code review rules:**
+- NEVER submit AI-generated review comments (PR reviews, inline comments, or issue comments) to GitHub automatically
+- ALWAYS present review findings to the human reviewer for triage first, and only post the ones they explicitly approve, after they explicitly ask for them to be posted
+
 **Cargo dependency rules:**
 - ALWAYS declare external dependencies in the root `[workspace.dependencies]` and inherit them in crates via `{ workspace = true }`. Never add inline-versioned dependencies (e.g. `foo = "1.2"`) to a crate's `Cargo.toml`.
 - On the inheriting line you may only add `features` (additive) and `optional`; per Cargo, `version` and `default-features` cannot appear there, so set `default-features` in the workspace declaration (e.g. `hex = { version = "0.4", default-features = false }`).
@@ -212,9 +216,11 @@ export function sameAddress(a, b) {
 
 ```
 web3-storage/
-├── pallet/                     # Substrate pallet (on-chain logic - Layer 0)
-│   ├── src/lib.rs             # Core pallet implementation
-│   └── Cargo.toml             # Pallet dependencies
+├── crates/
+│   └── pallets/               # FRAME pallets (on-chain logic)
+│       ├── storage-provider/  # Storage provider pallet (Layer 0)
+│       ├── drive-registry/    # Drive Registry pallet (Layer 1 file system)
+│       └── s3-registry/       # S3 Registry pallet (Layer 1 S3)
 ├── runtimes/                   # Parachain runtimes
 │   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
 │   │   ├── src/lib.rs         # Runtime configuration
@@ -244,7 +250,6 @@ web3-storage/
 ├── examples/contracts/         # Example Solidity dApps (StorageMarketplace.sol)
 ├── storage-interfaces/         # Layer 1 - High-level interfaces
 │   └── file-system/           # File System Interface
-│       ├── pallet-registry/   # Drive Registry pallet (on-chain)
 │       └── client/            # File System Client SDK
 │           ├── src/
 │           │   ├── lib.rs     # Main file system client
@@ -277,7 +282,7 @@ web3-storage/
 
 #### Layer 0 (Raw Storage)
 
-**Pallet (`pallet/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
+**Pallet (`crates/pallets/storage-provider/`)**: On-chain logic for provider registration, bucket creation, storage agreements, checkpoints, and challenge/slashing mechanism.
 
 **Runtime (`runtimes/web3-storage-local/`)**: Parachain runtime that includes the storage provider pallet and configures its parameters (stake requirements, challenge periods, etc.).
 
@@ -306,7 +311,7 @@ web3-storage/
 - `CommitStrategy`: Checkpoint strategies (Immediate, Batched, Manual)
 - Helper functions for CID computation and path handling
 
-**Drive Registry Pallet (`storage-interfaces/file-system/pallet-registry/`)**: On-chain drive management:
+**Drive Registry Pallet (`crates/pallets/drive-registry/`)**: On-chain drive management:
 - Drive creation with automatic infrastructure setup
 - Root CID tracking for drive state
 - User-to-drive mapping
@@ -387,7 +392,12 @@ The Polkadot SDK provides:
 
 ## Configuration
 
-### Runtime Parameters (runtimes/web3-storage-local/src/lib.rs)
+### Runtime Parameters (runtimes/web3-storage-local/src/storage.rs)
+
+All durations are measured in **anchor (relay-chain) blocks** (`RC_HOURS`,
+6 s each), not parachain blocks — the pallet reads its clock from
+`Config::BlockNumberProvider` (see the anchor-clock section in
+[docs/design/scalable-web3-storage-implementation.md](docs/design/scalable-web3-storage-implementation.md)):
 
 ```rust
 // Token decimals
@@ -399,14 +409,14 @@ pub const MinProviderStake: Balance = 1_000 * UNIT;
 // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
 pub const MinStakePerByte: Balance = 1_000;
 
-// Challenge response deadline (provider must respond within this many blocks)
-pub const ChallengeTimeout: BlockNumber = 48 * HOURS;
-pub const SettlementTimeout: BlockNumber = 24 * HOURS;
-pub const RequestTimeout: BlockNumber = 6 * HOURS;
+// Challenge response deadline (provider must respond within this many anchor blocks)
+pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
+pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
+pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
 
 // Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100;
-pub const DefaultCheckpointGrace: BlockNumber = 20;
+pub const DefaultCheckpointInterval: BlockNumber = 100; // anchor blocks (~10 min)
+pub const DefaultCheckpointGrace: BlockNumber = 20;     // anchor blocks (~2 min)
 pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
 pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
@@ -430,13 +440,13 @@ pub struct ProviderSettings {
 Providers must stake tokens proportional to their declared capacity:
 
 ```rust
-// Minimum stake per byte of declared capacity
-pub const MinStakePerByte: Balance = 1_000_000; // 1 unit per MB
+// Minimum stake per byte of declared capacity (1 token per GB)
+pub const MinStakePerByte: Balance = 1_000;
 
 // Required stake calculation
 required_stake = max_capacity * MinStakePerByte
 
-// Example: 1 TB capacity requires 1,000,000,000,000 units stake
+// Example: 1 TB capacity requires ~1.1e15 units (~1100 tokens) stake
 ```
 
 ## Key Concepts
@@ -682,7 +692,8 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 
 - Token decimals: 12 (like Polkadot)
 - Minimum stake: 1000 tokens
-- Challenge period: 100 blocks
+- Challenge response window: 48h (`48 * RC_HOURS` anchor blocks)
+- All on-chain durations are anchor (relay-chain) blocks, 6 s each
 - Data is content-addressed with blake2-256
 - All data operations happen off-chain via HTTP
 - Chain is only for accountability and disputes

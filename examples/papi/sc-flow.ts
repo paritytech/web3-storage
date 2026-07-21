@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import {
   challengeOffchain,
   connect,
+  currentRelayBlock,
   downloadChunk,
   ensureProviderRegistered,
   fetchChallengeProof,
@@ -167,7 +168,7 @@ async function main() {
     // 5) Off-chain ops are unchanged — they bypass the contract entirely.
     console.log("\n[5/6] Off-chain upload + challenge round-trip…");
     const payload = `Hello via SC! ${new Date().toISOString()}`;
-    const uploadNonce = Number(await api.query.System.Number.getValue());
+    const uploadNonce = await currentRelayBlock(api);
     const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce);
     const downloaded = await downloadChunk(PROVIDER_URL, upload.hash);
     assert.deepStrictEqual(
