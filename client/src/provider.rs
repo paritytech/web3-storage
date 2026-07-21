@@ -102,7 +102,10 @@ impl ProviderClient {
         // Submit and wait for inclusion
         let tx_progress = chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
@@ -126,13 +129,15 @@ impl ProviderClient {
     ) -> ClientResult<Option<ProviderInfo>> {
         let chain = self.base.chain()?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_info(account))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_info(account);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
@@ -141,7 +146,7 @@ impl ProviderClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         // Decode top-level fields.
@@ -245,7 +250,10 @@ impl ProviderClient {
 
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -272,7 +280,10 @@ impl ProviderClient {
 
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -295,7 +306,10 @@ impl ProviderClient {
 
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -319,13 +333,15 @@ impl ProviderClient {
         provider: &AccountId32,
     ) -> ClientResult<Option<u64>> {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_replay_state(provider))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_replay_state(provider);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
 
@@ -333,7 +349,7 @@ impl ProviderClient {
             return Ok(None);
         };
         let decoded = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode replay state: {e}")))?;
         Ok(named_field(&decoded, "hsn")
             .and_then(|v| v.as_u128())
@@ -348,10 +364,11 @@ impl ProviderClient {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
         let value = chain
             .api()
-            .constants()
-            .at(&constants::request_timeout())
+            .at_current_block()
+            .await
             .map_err(|e| ClientError::Chain(format!("Failed to read RequestTimeout: {e}")))?
-            .to_value()
+            .constants()
+            .entry(constants::request_timeout())
             .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
 
         Ok(value.as_u128().map(|v| v as u32))
@@ -424,15 +441,15 @@ impl ProviderClient {
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
         let provider_bytes: &[u8] = provider_account.as_ref();
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::all_storage_agreements())
+        let mut iter = at
+            .storage()
+            .iter(storage::all_storage_agreements(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
 
@@ -446,7 +463,7 @@ impl ProviderClient {
             //             [blake2_128(bucket_id)=16][bucket_id=8]
             //             [blake2_128(provider)=16][provider=32]
             // bucket_id at [48..56], provider at [72..104]
-            let key = &kv.key_bytes;
+            let key = kv.key_bytes();
             if key.len() < 104 {
                 continue;
             }
@@ -457,7 +474,7 @@ impl ProviderClient {
             let bucket_id =
                 u64::from_le_bytes(key[48..56].try_into().unwrap_or([0u8; 8])) as BucketId;
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("Failed to decode agreement: {e}");
@@ -519,7 +536,10 @@ impl ProviderClient {
 
         chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
@@ -567,7 +587,10 @@ impl ProviderClient {
 
         let tx_progress = chain
             .api()
-            .tx()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?
+            .transactions()
             .sign_and_submit_then_watch_default(&tx, signer)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
@@ -588,15 +611,15 @@ impl ProviderClient {
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
         let provider_bytes: Vec<u8> = AsRef::<[u8]>::as_ref(&provider_account).to_vec();
 
-        let storage = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let mut iter = storage
-            .iter(storage::all_challenges())
+        let mut iter = at
+            .storage()
+            .iter(storage::all_challenges(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate challenges: {e}")))?;
 
@@ -608,13 +631,13 @@ impl ProviderClient {
 
             // Key layout: [twox128(pallet)=16][twox128(storage)=16]
             //             [blake2_128(deadline)=16][deadline=4]; deadline at [48..52]
-            let key = &kv.key_bytes;
+            let key = kv.key_bytes();
             if key.len() < 52 {
                 continue;
             }
             let deadline = u32::from_le_bytes(key[48..52].try_into().unwrap_or([0u8; 4]));
 
-            let value = match kv.value.to_value() {
+            let value = match kv.value().decode() {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!("Failed to decode challenges at block {deadline}: {e}");
@@ -674,13 +697,15 @@ impl ProviderClient {
         let provider_account = SubstrateClient::parse_account(&self.provider_account)
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_info(&provider_account))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_info(&provider_account);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
@@ -689,7 +714,7 @@ impl ProviderClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         let stake = named_field(&value, "stake")
@@ -753,13 +778,15 @@ impl ProviderClient {
         let provider_account = SubstrateClient::parse_account(&self.provider_account)
             .map_err(|e| ClientError::Chain(format!("Invalid provider account: {e}")))?;
 
-        let thunk = chain
+        let at = chain
             .api()
-            .storage()
-            .at_latest()
+            .at_current_block()
             .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?
-            .fetch(&storage::provider_info(&provider_account))
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let (addr, keys) = storage::provider_info(&provider_account);
+        let thunk = at
+            .storage()
+            .try_fetch(addr, keys)
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
@@ -773,7 +800,7 @@ impl ProviderClient {
         };
 
         let value = thunk
-            .to_value()
+            .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         let stake = named_field(&value, "stake")
@@ -809,9 +836,9 @@ impl ProviderClient {
 }
 
 fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value<u32>,
+    value: &'a subxt::ext::scale_value::Value,
     field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value<u32>> {
+) -> Option<&'a subxt::ext::scale_value::Value> {
     match &value.value {
         ValueDef::Composite(Composite::Named(fields)) => {
             fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
@@ -821,7 +848,7 @@ fn named_field<'a>(
 }
 
 /// Decode an AccountId32 from a scale_value unnamed composite of 32 u8 items.
-fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<Vec<u8>> {
+fn decode_account_bytes(value: &subxt::ext::scale_value::Value) -> Option<Vec<u8>> {
     match &value.value {
         ValueDef::Composite(Composite::Unnamed(items)) if items.len() == 32 => {
             items.iter().map(|b| b.as_u128().map(|n| n as u8)).collect()
@@ -836,7 +863,7 @@ fn decode_account_bytes(value: &subxt::ext::scale_value::Value<u32>) -> Option<V
 /// wrapping the inner `Vec<T>`, so scale_value surfaces it as
 /// `Composite::Unnamed([inner_vec])`. This helper drills through that wrapper
 /// if present, then collects the bytes.
-fn decode_byte_vec(value: &subxt::ext::scale_value::Value<u32>) -> Vec<u8> {
+fn decode_byte_vec(value: &subxt::ext::scale_value::Value) -> Vec<u8> {
     let ValueDef::Composite(Composite::Unnamed(items)) = &value.value else {
         return Vec::new();
     };

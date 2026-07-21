@@ -2,6 +2,13 @@
 
 This document provides detailed sequence diagrams for all major extrinsics in the Scalable Web3 Storage system, explaining the flow of data between clients, providers, and the blockchain.
 
+Every on-chain block quantity in these diagrams (deadlines, expiries,
+timeouts, `current_block`) is denominated on the **anchor clock** — the relay
+chain in production, read via `current_anchor_block()`. Pseudocode showing
+`frame_system::block_number()` or `current_block` is illustrative; the
+implementation reads the anchor. See the anchor-clock section in
+[scalable-web3-storage-implementation.md](scalable-web3-storage-implementation.md).
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -472,7 +479,7 @@ sequenceDiagram
     C->>C: ensure!(snapshot.has_provider_signed(provider_idx))
 
     Note over C: Create challenge
-    C->>C: deadline = current_block + ChallengePeriod
+    C->>C: deadline = current_anchor_block + ChallengeTimeout
     C->>C: challenge = Challenge {
     Note over C:   challenger,
     Note over C:   bucket_id,
@@ -484,7 +491,7 @@ sequenceDiagram
     Note over C:   deposit
     Note over C: }
 
-    C->>C: Challenges::append(deadline, challenge)
+    C->>C: Challenges::insert(deadline, next_index, challenge)
 
     C-->>U: Event::ChallengeCreated { challenge_id, deadline }
     C-->>P: Event::ChallengeCreated { ... }  // Provider monitors events
@@ -538,27 +545,28 @@ sequenceDiagram
     participant C as Chain (Pallet)
     participant B as Balances
 
-    Note over C: on_finalize(block_number) hook
+    Note over C: on_initialize(n) slash sweep
 
-    C->>C: expired = Challenges::take(block_number)
+    Note over C: Deadlines are anchor (relay-chain) blocks. Drain every deadline<br/>key after LastSweptChallengeBlock and before the current anchor<br/>block (exclusive — challenges at the anchor itself are still<br/>respondable), budget-capped.
+
+    C->>C: expired = Challenges::drain_prefix(deadline_key)
 
     loop For each expired challenge
         Note over C: Provider failed to respond!
 
-        C->>C: Slash provider stake
-        C->>B: Currency::slash(provider, slash_amount)
+        C->>C: Slash provider's entire stake
+        C->>B: Currency::slash_reserved(provider, stake)
+        C->>B: resolve_creating(Treasury, slashed)
 
-        C->>C: Reward challenger
-        C->>B: Currency::transfer(slash, challenger)
+        C->>C: Refund challenger deposit (no reward)
+        C->>B: Currency::unreserve(challenger, deposit)
 
-        C->>C: Remove provider from bucket
-        C->>C: bucket.primary_providers.remove(provider)
+        C->>C: Update provider + challenger stats
 
-        C->>C: End storage agreement
-        C->>C: StorageAgreements::remove((bucket_id, provider))
-
-        C-->>C: Event::ProviderSlashed { provider, amount }
+        C-->>C: Event::ChallengeSlashed { challenge_id, provider,<br/>slashed_amount, challenger_reward: 0, reason: Timeout }
     end
+
+    Note over C: Bucket membership and agreement teardown are NOT part of the<br/>sweep — anyone triggers them afterwards via the permissionless<br/>remove_slashed extrinsic.
 ```
 
 ---

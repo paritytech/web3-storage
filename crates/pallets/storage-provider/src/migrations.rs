@@ -17,9 +17,8 @@ extern crate alloc;
 /// `0` (harmless: the nonce only matters to late-signature verification for a
 /// checkpoint still accepting signers, which no pre-existing snapshot has).
 pub mod v1 {
-    use crate::{Bucket, Buckets, Config, Member, Pallet};
+    use crate::{BlockNumberFor, Bucket, Buckets, Config, Member, Pallet};
     use frame_support::{pallet_prelude::*, traits::UncheckedOnRuntimeUpgrade, weights::Weight};
-    use frame_system::pallet_prelude::BlockNumberFor;
     use sp_core::H256;
     use storage_primitives::{BucketSnapshot, Commitment};
 

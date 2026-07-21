@@ -26,6 +26,7 @@ import assert from "node:assert";
 import {
   configureCheckpointWindow,
   connect,
+  currentRelayBlock,
   ensureProviderRegistered,
   establishStorageAgreement,
   makeSigner,
@@ -33,7 +34,7 @@ import {
   READ_OPTS,
   reportMissedCheckpoint,
   sameAddress,
-  waitForBlock,
+  waitForRelayBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -107,7 +108,7 @@ async function main() {
     );
 
     console.log("\n=== Step 3: Pick a window and let it elapse without a checkpoint ===");
-    const head = Number(await api.query.System.Number.getValue(READ_OPTS));
+    const head = await currentRelayBlock(api);
     const missedWindow = BigInt(Math.floor(head / WINDOW_INTERVAL));
     // window_end = (missedWindow + 1) * interval ; need current_block > window_end
     const windowEnd = (Number(missedWindow) + 1) * WINDOW_INTERVAL;
@@ -118,7 +119,7 @@ async function main() {
       windowEnd,
       windowEnd
     );
-    await waitForBlock(papi, windowEnd);
+    await waitForRelayBlock(papi, api, windowEnd);
 
     console.log("\n=== Step 4: Record balances, then report_missed_checkpoint ===");
     const providerBefore = (await api.query.StorageProvider.Providers.getValue(

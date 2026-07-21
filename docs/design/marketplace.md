@@ -366,14 +366,14 @@ Example:
 ### Runtime Parameters
 
 ```rust
-// Minimum stake per byte of declared capacity
-pub const MinStakePerByte: Balance = 1_000_000;
+// Minimum stake per byte of declared capacity (1 token per GB)
+pub const MinStakePerByte: Balance = 1_000;
 
 // Minimum provider stake to register
 pub const MinProviderStake: Balance = 1_000 * UNIT;
 
-// Challenge response timeout
-pub const ChallengeTimeout: BlockNumber = 100;
+// Challenge response timeout (anchor blocks — 48 hours)
+pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
 ```
 
 ### Client Configuration

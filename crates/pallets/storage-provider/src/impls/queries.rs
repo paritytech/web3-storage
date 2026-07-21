@@ -3,7 +3,6 @@
 use crate::*;
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
-use frame_system::pallet_prelude::BlockNumberFor;
 use sp_runtime::traits::{CheckedMul, SaturatedConversion};
 use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, ReplicaSyncRecord};
 
@@ -62,6 +61,27 @@ fn agreement_to_response<T: Config>(
 }
 
 impl<T: Config> Pallet<T> {
+    /// The anchor block: the clock every pallet duration (timeouts, expiries,
+    /// `valid_until`, nonce age) is measured against. Whether that is a relay
+    /// chain block, parachain block, or something else is a
+    /// [`Config::BlockNumberProvider`] detail — callers (including off-chain
+    /// consumers via the `current_anchor_block` runtime API) need not care.
+    /// The relay chain in production, `System` in tests.
+    ///
+    /// During `on_initialize` this returns the *previous* block's anchor value
+    /// (the validation-data inherent has not run yet); everywhere else it is
+    /// the current block's.
+    pub fn current_anchor_block() -> BlockNumberFor<T> {
+        <T::BlockNumberProvider as sp_runtime::traits::BlockNumberProvider>::current_block_number()
+    }
+
+    /// Milliseconds per anchor block; pairs with
+    /// [`Self::current_anchor_block`] so off-chain consumers can humanize
+    /// anchor-denominated durations.
+    pub fn anchor_block_time_millis() -> u64 {
+        T::AnchorBlockTimeMillis::get()
+    }
+
     /// Query provider information.
     pub fn query_provider_info(
         provider: &T::AccountId,
@@ -224,7 +244,8 @@ impl<T: Config> Pallet<T> {
             .collect()
     }
 
-    /// Query challenges expiring at a specific block.
+    /// Query challenges expiring at a specific deadline. `block` is an anchor
+    /// block (see [`Self::current_anchor_block`]), not a parachain height.
     pub fn query_challenges_at(
         block: BlockNumberFor<T>,
     ) -> Vec<crate::runtime_api::ChallengeResponse> {

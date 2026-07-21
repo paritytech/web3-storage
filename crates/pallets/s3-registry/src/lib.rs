@@ -21,9 +21,13 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub mod try_state;
+
 use alloc::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_system::pallet_prelude::*;
+// Anchor clock + parachain height, canonically named by the storage pallet.
+use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
 use s3_primitives::{
     validate_bucket_name, validate_object_key, BucketName, MaxContentTypeLen, MaxEtagLen,
     MaxMetadataEntries, MaxMetadataKeyLen, MaxMetadataValueLen, MetadataEntry, ObjectKey,
@@ -35,8 +39,6 @@ use sp_runtime::{BoundedVec, SaturatedConversion};
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
-    #[cfg(feature = "try-runtime")]
-    use alloc::collections::BTreeSet;
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
 
@@ -54,9 +56,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }
@@ -118,81 +120,6 @@ pub mod pallet {
     #[pallet::getter(fn next_s3_bucket_id)]
     pub type NextS3BucketId<T: Config> = StorageValue<_, S3BucketId, ValueQuery>;
 
-    #[cfg(feature = "try-runtime")]
-    impl<T: Config> Pallet<T> {
-        /// Cross-storage index and counter invariants, checked on every
-        /// try-runtime block and runtime-upgrade dry-run (read-only, never panics).
-        pub fn do_try_state() -> Result<(), TryRuntimeError> {
-            let next_id = NextS3BucketId::<T>::get();
-            for (id, info) in S3Buckets::<T>::iter() {
-                // `NextS3BucketId` strictly exceeds every live id.
-                ensure!(
-                    id < next_id,
-                    "NextS3BucketId does not exceed a live S3BucketId"
-                );
-
-                // `BucketNameToId` is the exact inverse of the bucket name.
-                ensure!(
-                    BucketNameToId::<T>::get(&info.name) == Some(id),
-                    "S3 bucket name has no matching BucketNameToId entry"
-                );
-
-                // `UserBuckets` completeness: the bucket is listed under its owner.
-                ensure!(
-                    UserBuckets::<T>::get(&info.owner).contains(&id),
-                    "S3 bucket missing from its owner's UserBuckets"
-                );
-
-                // `object_count` / `total_size` match the actual `Objects` entries.
-                let mut count: u64 = 0;
-                let mut total: u64 = 0;
-                for (_key, obj) in Objects::<T>::iter_prefix(id) {
-                    count = count.saturating_add(1);
-                    total = total
-                        .checked_add(obj.size)
-                        .ok_or("S3 bucket total_size overflows u64")?;
-                }
-                ensure!(
-                    info.object_count == count,
-                    "S3 bucket object_count != number of Objects"
-                );
-                ensure!(
-                    info.total_size == total,
-                    "S3 bucket total_size != sum of object sizes"
-                );
-            }
-
-            // `BucketNameToId` reverse: every entry points to a live bucket with that name.
-            for (name, id) in BucketNameToId::<T>::iter() {
-                let info = S3Buckets::<T>::get(id)
-                    .ok_or("BucketNameToId references a non-existent bucket")?;
-                ensure!(
-                    info.name == name,
-                    "BucketNameToId key does not match the bucket's name"
-                );
-            }
-
-            // `UserBuckets` correctness: no duplicates, and every entry is owned
-            // by the account it is listed under.
-            for (owner, ids) in UserBuckets::<T>::iter() {
-                let unique: BTreeSet<S3BucketId> = ids.iter().copied().collect();
-                ensure!(
-                    unique.len() == ids.len(),
-                    "duplicate S3 bucket id in UserBuckets entry"
-                );
-                for id in ids.iter() {
-                    let info = S3Buckets::<T>::get(id)
-                        .ok_or("UserBuckets references a non-existent bucket")?;
-                    ensure!(
-                        info.owner == owner,
-                        "UserBuckets entry not owned by the account"
-                    );
-                }
-            }
-            Ok(())
-        }
-    }
-
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -250,6 +177,8 @@ pub mod pallet {
         ObjectKeyTooLong,
         /// Content type too long.
         ContentTypeTooLong,
+        /// Bucket total size would exceed the maximum supported value.
+        BucketSizeLimitReached,
     }
 
     #[pallet::call]
@@ -315,7 +244,7 @@ pub mod pallet {
                 name: bounded_name.clone(),
                 layer0_bucket_id,
                 owner: who.clone(),
-                created_at: frame_system::Pallet::<T>::block_number(),
+                created_at: pallet_storage_provider::Pallet::<T>::current_anchor_block(),
                 object_count: 0,
                 total_size: 0,
             };
@@ -420,7 +349,8 @@ pub mod pallet {
                 .unwrap_or_default();
 
             // Get current timestamp
-            let timestamp = frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+            let timestamp = pallet_storage_provider::Pallet::<T>::current_anchor_block()
+                .saturated_into::<u64>();
 
             // Check if this is an update or new object
             match Objects::<T>::get(s3_bucket_id, &bounded_key) {
@@ -438,7 +368,10 @@ pub mod pallet {
             }
 
             // Update bucket stats
-            bucket_info.total_size = bucket_info.total_size.saturating_add(size);
+            bucket_info.total_size = bucket_info
+                .total_size
+                .checked_add(size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(s3_bucket_id, bucket_info);
 
             // Create metadata
@@ -536,8 +469,8 @@ pub mod pallet {
                 .ok_or(Error::<T>::ObjectNotFound)?;
 
             // Update last modified
-            metadata.last_modified =
-                frame_system::Pallet::<T>::block_number().saturated_into::<u64>();
+            metadata.last_modified = pallet_storage_provider::Pallet::<T>::current_anchor_block()
+                .saturated_into::<u64>();
 
             // Update destination bucket stats (re-read if same bucket since src was read separately)
             let mut dst_bucket =
@@ -556,7 +489,10 @@ pub mod pallet {
                 }
             }
 
-            dst_bucket.total_size = dst_bucket.total_size.saturating_add(metadata.size);
+            dst_bucket.total_size = dst_bucket
+                .total_size
+                .checked_add(metadata.size)
+                .ok_or(Error::<T>::BucketSizeLimitReached)?;
             S3Buckets::<T>::insert(dst_bucket_id, dst_bucket);
 
             // Store copy

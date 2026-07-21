@@ -170,7 +170,8 @@ sp_api::decl_runtime_apis! {
         /// Get all agreements for a provider.
         fn provider_agreements(provider: AccountId) -> Vec<AgreementResponse>;
 
-        /// Get challenges expiring at a specific block.
+        /// Get challenges expiring at a specific deadline. `block` is an anchor
+        /// block (see `current_anchor_block`), not a parachain height.
         fn challenges_at(block: BlockNumber) -> Vec<ChallengeResponse>;
 
         /// Get all challenges for a specific bucket.
@@ -191,5 +192,16 @@ sp_api::decl_runtime_apis! {
 
         /// Get providers with sufficient capacity for the given bytes (paginated).
         fn providers_with_capacity(bytes_needed: u64, offset: u32, limit: u32) -> Vec<(AccountId, ProviderInfoResponse)>;
+
+        /// The anchor block every on-chain duration (timeouts, expiries,
+        /// `valid_until`, nonce age) is measured against. Off-chain actors read
+        /// this instead of a specific storage item so they need not know whether
+        /// the anchor is a relay, parachain, or other block number.
+        fn current_anchor_block() -> BlockNumber;
+
+        /// Milliseconds per anchor block. Pairs with `current_anchor_block` so
+        /// off-chain consumers can humanize anchor-denominated durations
+        /// without knowing which clock the pallet measures them on.
+        fn anchor_block_time_millis() -> u64;
     }
 }

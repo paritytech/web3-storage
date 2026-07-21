@@ -36,7 +36,7 @@ extern crate alloc;
 pub use pallet::*;
 
 #[cfg(feature = "runtime-benchmarks")]
-pub mod bechmarking;
+pub mod benchmarking;
 pub mod migrations;
 pub mod weights;
 pub use weights::WeightInfo;
@@ -47,22 +47,23 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub mod try_state;
+
 #[frame_support::pallet]
 #[allow(clippy::let_unit_value)]
 #[allow(clippy::type_complexity)]
 #[allow(deprecated)]
 pub mod pallet {
     use super::*;
-    #[cfg(feature = "try-runtime")]
-    use alloc::collections::BTreeSet;
     use alloc::vec::Vec;
     use file_system_primitives::{DriveId, DriveInfo};
     use frame_support::{pallet_prelude::*, traits::Get};
     use frame_system::pallet_prelude::*;
-    use pallet_storage_provider;
-    use sp_runtime::BoundedVec;
+    // Anchor clock + parachain height, canonically named by the storage pallet.
+    use pallet_storage_provider::{BlockNumberFor, SystemBlockNumberFor};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
+    use sp_runtime::{traits::Saturating, BoundedVec};
     use storage_primitives::Role;
 
     /// In-code storage version. v1 drops the `payment` field from
@@ -74,9 +75,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<SystemBlockNumberFor<T>> for Pallet<T> {
         #[cfg(feature = "try-runtime")]
-        fn try_state(_block: BlockNumberFor<T>) -> Result<(), TryRuntimeError> {
+        fn try_state(_block: SystemBlockNumberFor<T>) -> Result<(), TryRuntimeError> {
             Self::do_try_state()
         }
     }
@@ -137,67 +138,6 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn next_drive_id)]
     pub type NextDriveId<T> = StorageValue<_, DriveId, ValueQuery>;
-
-    #[cfg(feature = "try-runtime")]
-    impl<T: Config> Pallet<T> {
-        /// Cross-storage index invariants, checked on every try-runtime block
-        /// and runtime-upgrade dry-run (read-only, never panics).
-        pub fn do_try_state() -> Result<(), TryRuntimeError> {
-            // `BucketToDrive` is consistent, has no dangling entries, and is
-            // injective on drive ids (two buckets never map to one drive).
-            let mut seen_drives: BTreeSet<DriveId> = BTreeSet::new();
-            for (bucket_id, drive_id) in BucketToDrive::<T>::iter() {
-                let drive = Drives::<T>::get(drive_id)
-                    .ok_or("BucketToDrive references a non-existent drive")?;
-                ensure!(
-                    drive.bucket_id == bucket_id,
-                    "BucketToDrive maps a bucket to a drive with a different bucket_id"
-                );
-                ensure!(
-                    seen_drives.insert(drive_id),
-                    "BucketToDrive maps two buckets to the same drive (not injective)"
-                );
-            }
-
-            let next_id = NextDriveId::<T>::get();
-            for (drive_id, drive) in Drives::<T>::iter() {
-                // `NextDriveId` strictly exceeds every live drive id.
-                ensure!(
-                    drive_id < next_id,
-                    "NextDriveId does not exceed a live DriveId"
-                );
-                // `BucketToDrive` completeness: each live drive maps back from its bucket.
-                ensure!(
-                    BucketToDrive::<T>::get(drive.bucket_id) == Some(drive_id),
-                    "live drive has no matching BucketToDrive entry"
-                );
-                // `UserDrives` completeness: each live drive is listed under its owner.
-                ensure!(
-                    UserDrives::<T>::get(&drive.owner).contains(&drive_id),
-                    "live drive missing from its owner's UserDrives"
-                );
-            }
-
-            // `UserDrives` correctness: no duplicates, and every entry is owned
-            // by the account it is listed under.
-            for (owner, drive_ids) in UserDrives::<T>::iter() {
-                let unique: BTreeSet<DriveId> = drive_ids.iter().copied().collect();
-                ensure!(
-                    unique.len() == drive_ids.len(),
-                    "duplicate drive id in UserDrives entry"
-                );
-                for drive_id in drive_ids.iter() {
-                    let drive = Drives::<T>::get(drive_id)
-                        .ok_or("UserDrives references a non-existent drive")?;
-                    ensure!(
-                        drive.owner == owner,
-                        "UserDrives entry not owned by the account"
-                    );
-                }
-            }
-            Ok(())
-        }
-    }
 
     /// Events
     #[pallet::event]
@@ -310,14 +250,14 @@ pub mod pallet {
             let next_id = drive_id.checked_add(1).ok_or(Error::<T>::DriveIdOverflow)?;
 
             // Calculate expiry block
-            let current_block = <frame_system::Pallet<T>>::block_number();
-            let expires_at = current_block + storage_period;
+            let anchor_block = pallet_storage_provider::Pallet::<T>::current_anchor_block();
+            let expires_at = anchor_block.saturating_add(storage_period);
 
             // Create drive info
             let drive_info = DriveInfo {
                 owner: who.clone(),
                 bucket_id,
-                created_at: current_block,
+                created_at: anchor_block,
                 name: bounded_name,
                 max_capacity,
                 storage_period,

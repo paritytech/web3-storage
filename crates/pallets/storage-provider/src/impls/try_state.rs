@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `try_state` invariant checks (compiled only under the `try-runtime`
-//! feature). They assert config and cross-storage invariants against live
-//! state on every try-runtime block and runtime-upgrade dry-run, catching
-//! violations that `integrity_test` (build-time only) and the extrinsic
-//! guards (bypassed by `setStorage`/migrations) cannot.
+//! `try_state` invariant checks. They assert config and cross-storage
+//! invariants against live state, catching violations that `integrity_test`
+//! (build-time only) and the extrinsic guards (bypassed by
+//! `setStorage`/migrations) cannot. The `Hooks::try_state` hook invoking them
+//! on every block / runtime-upgrade dry-run is still gated by `try-runtime`,
+//! but the checks themselves are always compiled and callable.
 //!
 //! Read-only, never panics: a violated invariant returns `TryRuntimeError`.
 
@@ -19,6 +20,7 @@ impl<T: Config> Pallet<T> {
         Self::check_timing_config()?;
         Self::check_committed_bytes()?;
         Self::check_buckets_and_membership()?;
+        Self::check_challenge_sweep_cursor()?;
         Ok(())
     }
 
@@ -33,6 +35,25 @@ impl<T: Config> Pallet<T> {
             T::DeregisterAnnouncementPeriod::get() > T::ChallengeTimeout::get(),
             "DeregisterAnnouncementPeriod must be > ChallengeTimeout (challenge maturity)"
         );
+        Ok(())
+    }
+
+    /// P1.5: no unresolved challenge sits at or below the swept cursor. The
+    /// `on_initialize` sweep drains every deadline key up to its cursor (parking
+    /// one below a key it only partly drained), and `create_challenge` always
+    /// sets `deadline = now + ChallengeTimeout`, above the cursor — so anything
+    /// at or below it must already have been drained. A violation means a
+    /// challenge was stranded unslashed (e.g. an upgrade that left
+    /// parachain-denominated keys below the anchor).
+    fn check_challenge_sweep_cursor() -> Result<(), TryRuntimeError> {
+        if let Some(cursor) = LastSweptChallengeBlock::<T>::get() {
+            for (deadline, _index, _challenge) in Challenges::<T>::iter() {
+                ensure!(
+                    deadline > cursor,
+                    "unresolved challenge sits at or below the swept cursor"
+                );
+            }
+        }
         Ok(())
     }
 
