@@ -600,3 +600,28 @@ async fn commit_reader_blocked() {
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+/// A validly-signed request from an account that is not a member of the bucket
+/// must be rejected on the L0 write path — a correct signature only proves
+/// identity, not authorization. (The FS path has `fs_unknown_account_*`; this
+/// closes the same gap for `/node`.)
+#[tokio::test]
+async fn node_non_member_returns_forbidden() {
+    // Alice is the sole (Admin) member; Dave signs a genuine signature but is
+    // not in the member set.
+    let server = AuthTestServer::with_role(Role::Admin).await;
+    let dave = sr25519::Pair::from_string("//Dave", None).unwrap();
+
+    let ts = current_timestamp();
+    let header = make_auth_header(&dave, "PUT", 1, ts);
+    let resp = server
+        .client
+        .put(server.url("/node"))
+        .header("Authorization", &header)
+        .json(&node_body(1, b"non-member payload"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
