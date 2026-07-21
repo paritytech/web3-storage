@@ -2,10 +2,10 @@
 resolver = "2"
 members = [
 	"client",
-	"crates/storage-subxt",
 	"crates/pallets/drive-registry",
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
+	"crates/storage-subxt",
 	"primitives",
 	"provider-node",
 	"provider/negotiation",
