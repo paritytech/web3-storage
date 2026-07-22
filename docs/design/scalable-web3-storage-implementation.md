@@ -571,6 +571,14 @@ Sr25519/Ed25519, 33 bytes for compressed Ecdsa). All on-chain signature
 verification uses `sp_runtime::MultiSignature` against this key, so a single
 provider can use any of the supported schemes.
 
+> **⚠️ Scheme asymmetry — [#274](https://github.com/paritytech/web3-storage/issues/274).**
+> On-chain verification is multi-scheme (`MultiSignature`:
+> Sr25519/Ed25519/Ecdsa), but the provider node's off-chain HTTP auth (see
+> [Authentication & RBAC](#authentication--rbac)) verifies **sr25519 only**, and
+> only sr25519 is exercised end-to-end. The supported matrix (incl. the reserved
+> 64-byte / `Eth` shapes the pallet accepts but can't verify) is **unratified** —
+> this doc should be updated once #274 decides it.
+
 Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
 
@@ -1582,6 +1590,15 @@ Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
 authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
 locally and resolves the caller's role via a TTL-cached query against the
 chain's `Buckets` storage (`bucket.members`).
+
+> **⚠️ Under-specified — [#304](https://github.com/paritytech/web3-storage/issues/304).**
+> This scheme grew organically across several crates and needs one source of
+> truth: the wire format is currently defined twice (Rust `provider-negotiation`
+> + TS `core`) and hand-synced; the provider also accepts a `<Bytes>`-wrapped
+> form (what wallets / PAPI `signBytes` send) not documented below; and the
+> signed message binds only method + bucket + timestamp — **no body or provider
+> binding**, leaving a replay window (default 5 min skew). #304 tracks the
+> canonical definition + the binding/replay fix.
 
 ```
 Authorization: Web3Storage <pubkey_hex>:<signature_hex>:<unix_timestamp>
