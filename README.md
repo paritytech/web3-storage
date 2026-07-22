@@ -62,7 +62,7 @@ just demo
    status), `just health` (provider node health), `just stats` (provider stats).
 
 3. **Build something on top**: see [Client Documentation](./client/README.md)
-   for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./FILE_SYSTEM_QUICKSTART.md)
+   for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
    for the Layer-1 file-system interface.
 
 ## File System Interface (Layer 1)
@@ -99,7 +99,7 @@ just fs-test-all            # Run all unit tests across primitives, pallet, clie
 just fs-demo-ci             # Integration example against a running chain + provider
 ```
 
-**Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
+**Complete guide**: [FILE_SYSTEM_QUICKSTART.md](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
 
 ### When to Use Layer 0 vs Layer 1
 
@@ -149,7 +149,7 @@ just s3-test-all             # S3 layer only
 | Document | Description |
 |----------|-------------|
 | **[Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md)** | **Three-terminal setup + SDK examples (recommended)** |
-| [File System Quick Start](./FILE_SYSTEM_QUICKSTART.md) | File-system-only quickstart |
+| [File System Quick Start](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md) | File-system-only quickstart |
 | [File System Docs](./docs/filesystems/README.md) | Complete Layer 1 documentation |
 | [Extrinsics Reference](./docs/reference/EXTRINSICS_REFERENCE.md) | Complete blockchain API |
 | [Payment Calculator](./docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |

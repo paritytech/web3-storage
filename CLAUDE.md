@@ -148,7 +148,7 @@ just fs-demo-ci
 cargo run -p file-system-client --example basic_usage
 ```
 
-**Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](./FILE_SYSTEM_QUICKSTART.md)
+**Quick Start Guide**: [FILE_SYSTEM_QUICKSTART.md](docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
 
 **Complete Documentation**: [docs/filesystems/README.md](./docs/filesystems/README.md)
 
@@ -280,7 +280,6 @@ web3-storage/
 │       ├── USER_GUIDE.md     # User guide
 │       ├── API_REFERENCE.md  # API documentation
 │       └── ADMIN_GUIDE.md    # Admin guide
-├── FILE_SYSTEM_QUICKSTART.md  # Quick start for file system
 └── justfile                    # Development commands
 ```
 

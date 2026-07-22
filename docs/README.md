@@ -16,7 +16,7 @@ docs/
 ## Getting started
 
 - **[Layer 1 Quick Start](./getting-started/LAYER1_QUICKSTART.md)** — three-terminal setup (chain → provider → demo) plus SDK examples for the file-system and S3 interfaces. The canonical entry point.
-- **[`FILE_SYSTEM_QUICKSTART.md`](../FILE_SYSTEM_QUICKSTART.md)** (repo root) — short version, file-system layer only.
+- **[`FILE_SYSTEM_QUICKSTART.md`](./getting-started/FILE_SYSTEM_QUICKSTART.md)** — short version, file-system layer only.
 - **[`CLAUDE.md`](../CLAUDE.md)** (repo root) — build/test/run commands and contributor guidelines.
 
 ## Reference
