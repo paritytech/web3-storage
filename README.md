@@ -186,7 +186,7 @@ Two types of nodes work together:
 
 ```
 scalable-web3-storage/
-├── pallet/               # Substrate pallet (on-chain logic)
+├── crates/pallets/       # FRAME pallets (on-chain logic)
 ├── runtimes/             # Parachain runtimes (web3-storage-local, web3-storage-paseo)
 ├── provider-node/        # Off-chain storage server (HTTP API)
 ├── client/               # Client SDK for applications
@@ -248,11 +248,10 @@ The provider node uses environment variables for configuration:
 ## Example: Basic Upload Flow
 
 ```rust
-use storage_client::StorageUserClient;
+use storage_client::{Signer, StorageUserClient};
 
 // Connect to provider
-let mut client = StorageUserClient::new(config);
-client.connect_chain().await?;
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Upload data (off-chain)
 let data = b"Hello, decentralized storage!";

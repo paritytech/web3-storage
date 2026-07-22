@@ -772,8 +772,18 @@ async fn sign_checkpoint_proposal(
 /// which handles leader election, signature collection, and on-chain submission.
 async fn trigger_checkpoint(
     State(state): State<Arc<ProviderState>>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<CheckpointDutyQuery>,
 ) -> Result<Json<TriggerCheckpointResponse>, Error> {
+    check_role(
+        &state,
+        &headers,
+        "POST",
+        query.bucket_id,
+        RequiredRole::Writer,
+    )
+    .await?;
+
     tracing::info!(
         "Checkpoint trigger requested for bucket {}",
         query.bucket_id

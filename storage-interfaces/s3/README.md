@@ -33,13 +33,13 @@ This module provides an S3-compatible storage interface (Layer 1) on top of the 
 | Component | Path | Description |
 |-----------|------|-------------|
 | **s3-primitives** | `primitives/` | Core types and validation functions (no_std compatible) |
-| **pallet-s3-registry** | `pallet-s3-registry/` | On-chain S3 bucket and object metadata storage |
+| **pallet-s3-registry** | `../../crates/pallets/s3-registry/` | On-chain S3 bucket and object metadata storage |
 | **s3-client** | `client/` | High-level SDK for S3 operations |
 
 ## Quick Start
 
 ```rust
-use s3_client::{S3Client, PutObjectOptions};
+use s3_client::{PutObjectOptions, S3Client, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = S3Client::new(
         "ws://127.0.0.1:2222",           // Chain URL
         "http://localhost:3333",          // Provider URL
-        "//Alice",                        // Seed phrase
+        Signer::from_seed("//Alice")?,    // Signer
     ).await?;
 
     // Create bucket

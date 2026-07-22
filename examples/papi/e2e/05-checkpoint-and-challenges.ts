@@ -52,14 +52,18 @@ async function main() {
   // Create a bucket + agreement + upload data for checkpoint tests.
   const maxBytes = 1_048_576n;
   const duration = 200;
-  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
-    maxBytes,
-    duration,
-  });
+  const { bucketId } = await negotiateAndEstablish(
+    api,
+    PROVIDER_URL,
+    client,
+    provider,
+    { maxBytes, duration },
+    true, // finalize: an immediate provider upload reads finalized membership
+  );
 
   const payload = `checkpoint-test @ ${Date.now()}`;
   const uploadNonce = await currentRelayBlock(api);
-  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce);
+  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce, client);
   const uploadInfo = {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,

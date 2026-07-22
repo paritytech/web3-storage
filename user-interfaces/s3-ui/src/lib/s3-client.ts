@@ -15,7 +15,6 @@
 import { Subscription } from "rxjs";
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import { getSs58AddressInfo } from "@polkadot-api/substrate-bindings";
 import {
   buildSignedTermsArgs,
@@ -25,6 +24,7 @@ import {
   removeMember as removeMemberTx,
   requireOneEvent,
   setMember as setMemberTx,
+  signProviderRequest,
   submitTx,
   toSs58,
   type ChainSigner,
@@ -188,14 +188,10 @@ export class S3Client {
     }
     let chainSigner: ChainSigner | null = null;
     if (this.signer && this.signerAddress) {
-      // s3-ui derives raw dev-account keypairs, so provider requests are
-      // signed (the SDK's S3Client reads `signer.keypair`). Fall back to the
-      // address-recovered public key if only a wallet signer is present.
-      const publicKey = this.keypair?.publicKey ?? ss58Decode(this.signerAddress)[0];
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
+        publicKey: this.signer.publicKey,
         keypair: this.keypair ?? undefined,
       };
     }
@@ -210,13 +206,13 @@ export class S3Client {
     }
   }
 
-  setSigner(signer: Signer | null, address: string | null): void {
+  setSigner(
+    signer: Signer | null,
+    address: string | null,
+    keypair: Keypair | null,
+  ): void {
     this.signer = signer;
     this.signerAddress = address;
-    this.rebuild();
-  }
-
-  setKeypair(keypair: Keypair | null): void {
     this.keypair = keypair;
     this.rebuild();
   }
@@ -488,10 +484,12 @@ export class S3Client {
   }
 
   async triggerCheckpoint(bucketId: bigint): Promise<void> {
+    if (!this.signer) throw new Error("Connect a wallet to trigger a checkpoint");
     const providerUrl = await this.getProviderUrl(bucketId);
+    const headers = await signProviderRequest(this.signer, "POST", bucketId);
     const response = await httpFetch(
       `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
-      { method: "POST" },
+      { method: "POST", headers },
     );
     if (!response.ok) {
       throw new Error(

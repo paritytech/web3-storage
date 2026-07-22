@@ -55,7 +55,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use file_system_primitives::DriveId;
-pub use storage_client::{CheckpointConfig, CheckpointResult};
+pub use storage_client::{CheckpointConfig, CheckpointResult, Signer};
 pub use substrate::SubstrateClient;
 
 /// File system client errors
@@ -131,13 +131,24 @@ impl FileSystemClient {
     ///
     /// * `chain_endpoint` - Parachain WebSocket RPC endpoint (e.g., "ws://127.0.0.1:2222")
     /// * `provider_endpoint` - Storage provider HTTP endpoint
-    pub async fn new(chain_endpoint: &str, provider_endpoint: &str) -> Result<Self> {
-        let storage_client = StorageUserClient::new(ClientConfig {
-            provider_urls: vec![provider_endpoint.to_string()],
-            ..Default::default()
-        })
+    ///
+    /// The `signer` authenticates provider requests and signs on-chain
+    /// extrinsics; build it via [`Signer::from_seed`] (e.g. `"//Alice"`) or
+    /// [`Signer::from_keypair`].
+    pub async fn new(
+        chain_endpoint: &str,
+        provider_endpoint: &str,
+        signer: Signer,
+    ) -> Result<Self> {
+        let storage_client = StorageUserClient::new(
+            ClientConfig {
+                provider_urls: vec![provider_endpoint.to_string()],
+                ..Default::default()
+            },
+            signer.clone(),
+        )
         .map_err(|e| FsClientError::Config(e.to_string()))?;
-        let substrate_client = SubstrateClient::connect(chain_endpoint).await?;
+        let substrate_client = SubstrateClient::connect(chain_endpoint, signer).await?;
 
         Ok(Self {
             storage_client,
@@ -146,18 +157,6 @@ impl FileSystemClient {
             checkpoint_handle: None,
             drive_bucket_map: HashMap::new(),
         })
-    }
-
-    /// Create a client with a development signer (for testing).
-    pub async fn with_dev_signer(mut self, name: &str) -> Result<Self> {
-        self.substrate_client = self.substrate_client.with_dev_signer(name)?;
-        Ok(self)
-    }
-
-    /// Set a custom signer for blockchain transactions.
-    pub fn with_signer(mut self, signer: subxt_signer::sr25519::Keypair) -> Self {
-        self.substrate_client = self.substrate_client.with_signer(signer);
-        self
     }
 
     /// Create a new drive (USER-FACING API)
@@ -451,11 +450,7 @@ impl FileSystemClient {
         let manager = manager.with_providers(provider_endpoints);
 
         // Use the same signer as the file system client
-        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
-            manager.with_signer(signer.clone())
-        } else {
-            manager
-        };
+        let manager = manager.with_signer(self.substrate_client.signer().clone());
 
         // Submit checkpoint
         Ok(manager.submit_checkpoint(bucket_id).await)
@@ -479,11 +474,7 @@ impl FileSystemClient {
 
         let manager = manager.with_providers(provider_endpoints);
 
-        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
-            manager.with_signer(signer.clone())
-        } else {
-            manager
-        };
+        let manager = manager.with_signer(self.substrate_client.signer().clone());
 
         Ok(manager.submit_checkpoint(bucket_id).await)
     }
@@ -559,11 +550,7 @@ impl FileSystemClient {
         let manager = manager.with_providers(provider_endpoints);
 
         // Use the same signer as the file system client
-        let manager = if let Ok(signer) = self.substrate_client.signer_keypair() {
-            manager.with_signer(signer.clone())
-        } else {
-            manager
-        };
+        let manager = manager.with_signer(self.substrate_client.signer().clone());
 
         // Configure batched checkpoint loop
         let batched_config = BatchedCheckpointConfig {
@@ -890,7 +877,7 @@ impl FileSystemClient {
         let call = substrate::extrinsics::create_drive(name_bytes, provider, terms, sig);
 
         // Sign and submit
-        let signer = self.substrate_client.signer()?;
+        let signer = self.substrate_client.signer();
         let events = self
             .substrate_client
             .api()

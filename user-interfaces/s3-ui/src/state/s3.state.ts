@@ -84,13 +84,11 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
-  client.setSigner(signer, address);
-});
-
-keypair$$.subscribe((keypair) => {
-  client.setKeypair(keypair);
-});
+combineLatest([signer$$, signerAddress$$, keypair$$]).subscribe(
+  ([signer, address, keypair]) => {
+    client.setSigner(signer, address, keypair);
+  },
+);
 
 export function getS3Client(): S3Client {
   return client;
