@@ -23,6 +23,14 @@
 - ALWAYS run `/format` before creating any git commit
 - This ensures all code follows project formatting standards (Rust, TOML, feature propagation) and passes clippy
 
+**Design & spec discipline:**
+- `docs/design/` is the **canonical, review-gated source of truth** (enforced by `.github/CODEOWNERS`). Reason and implement *from* it; treat it as the spec.
+- **Validate code against the design.** When writing or changing code, check it against `docs/design/`. On any divergence, **stop and flag** — don't proceed on assumptions.
+- **Prefer flagging over quietly editing the design to match the code.** If implementation and design disagree, treat it as a *finding*: open or reference an issue and discuss before changing the spec, rather than silently reconciling the gap.
+- If something in the design looks **wrong or vulnerable**, **flag and discuss** (open an issue and ping the design owner) — don't just fix it. Changes to the design itself go through a PR reviewed per `.github/CODEOWNERS`.
+- **`docs/reference/`** is *derived* documentation and **not** gated. When you change behavior, **update the relevant `reference/` doc** so it keeps reflecting the implementation.
+- **`docs/drafts/`** is unratified / WIP — don't treat it as authoritative or reason from it as if it were the spec.
+
 ## Project Overview
 
 Scalable Web3 Storage is a decentralized storage system built on Substrate with game-theoretic guarantees. Storage providers lock stake and face slashing for data loss, while the chain acts as a credible threat rather than the hot path.
@@ -298,7 +306,7 @@ web3-storage/
 
 **Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
 
-**Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/design/smart-contracts.md](docs/design/smart-contracts.md).
+**Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/drafts/smart-contracts.md](docs/drafts/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 
@@ -530,7 +538,7 @@ let recommendations = client.suggest_providers(bytes, duration, budget).await?;
 - Price (too high = -30 points)
 - Duration (mismatch = -20 points)
 
-See [Storage Marketplace Design](docs/design/marketplace.md) for details.
+See [Storage Marketplace Design](docs/drafts/marketplace.md) for details.
 
 ### Checkpoint Management
 
@@ -564,7 +572,7 @@ handle.stop().await?;         // Stop background loop
 - `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
 - `ProviderHealthHistory`: Tracks provider reliability and response times
 
-See [Checkpoint Protocol Design](docs/design/CHECKPOINT_PROTOCOL.md) for details.
+See [Checkpoint Protocol Design](docs/drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 ### Event Subscription
 
@@ -649,9 +657,9 @@ For the full review criteria (Parity Standards), see the `/review` skill. The re
 | [Payment Calculator](docs/reference/PAYMENT_CALCULATOR.md) | Calculate agreement costs |
 | [Architecture Design](docs/design/scalable-web3-storage.md) | System design, economics, common concerns |
 | [Implementation Details](docs/design/scalable-web3-storage-implementation.md) | Technical specs |
-| [Execution Flows](docs/design/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
-| [Storage Marketplace](docs/design/marketplace.md) | Provider capacity & discovery |
-| [Checkpoint Protocol](docs/design/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
+| [Execution Flows](docs/reference/EXECUTION_FLOWS.md) | Sequence diagrams for all extrinsics |
+| [Storage Marketplace](docs/drafts/marketplace.md) | Provider capacity & discovery |
+| [Checkpoint Protocol](docs/drafts/CHECKPOINT_PROTOCOL.md) | Automated checkpoint management |
 | [File System Architecture](docs/filesystems/ARCHITECTURE.md) | Layer 1 encoding, security, blockchain details |
 
 ## Common Issues & Solutions
