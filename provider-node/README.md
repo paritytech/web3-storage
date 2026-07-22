@@ -14,10 +14,13 @@ just health           # check provider is up
 
 ## Authentication
 
-Authentication is enforced by default. Mutating and bucket-scoped endpoints
-require a signed `Authorization` header; the only way to turn enforcement off is
-the `--disable-auth-i-know-what-i-am-doing` flag, which opens every endpoint to
-the public and is meant strictly for throwaway local experiments.
+Authentication is always enforced: every mutating Layer-0 endpoint (`PUT
+/node`, `POST /commit`, `POST /delete`) and all fs/s3 endpoints require a
+signed `Authorization` header, and there is no way to turn enforcement off.
+Layer-0 content-addressed reads (`GET /node`, `GET /read`, `POST
+/fetch_nodes`, the commitment/proof endpoints) are currently unauthenticated;
+whether they should require the `Reader` role is tracked in
+[#228](https://github.com/paritytech/web3-storage/issues/228).
 
 The client signs an sr25519 message binding the request to a bucket and a
 timestamp:

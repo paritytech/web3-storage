@@ -34,7 +34,7 @@ Each specialized client (ProviderClient, AdminClient, etc.) uses the base client
 ### Basic Setup
 
 ```rust
-use storage_client::{AdminClient, ClientConfig};
+use storage_client::{AdminClient, ClientConfig, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,12 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enable_retries: true,
     };
 
-    // Create client and connect to chain
-    let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
-    client.base.connect_chain().await?;
-
-    // Set signer (for testing)
-    client.base = client.base.with_dev_signer("alice")?;
+    // Create client (dev signer for testing) and connect to chain
+    let mut client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
+    client.connect().await?;
 
     // Now you can make on-chain calls
     let bucket_id = client.create_bucket(2).await?;
@@ -66,16 +63,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For production, use actual keypairs instead of dev accounts:
 
 ```rust
+use storage_client::{AdminClient, Signer};
 use subxt_signer::sr25519::Keypair;
 
 // Load from seed phrase or keystore
 let keypair = Keypair::from_uri("//Alice")?;
 
-// Set signer
-if let Some(chain_client) = client.base.chain_client.as_mut() {
-    let client = Arc::make_mut(chain_client);
-    *client = client.clone().with_signer(keypair);
-}
+// Any subxt sr25519 keypair converts into a Signer
+let mut client = AdminClient::new(config, Signer::from(keypair))?;
+client.connect().await?;
 ```
 
 ### Dynamic Extrinsics
@@ -221,9 +217,8 @@ mod tests {
             // ...
         };
 
-        let mut client = ProviderClient::new(config, "5FHne...".to_string())?;
-        client.base.connect_chain().await?;
-        client.base = client.base.with_dev_signer("bob")?;
+        let mut client = ProviderClient::new(config, Signer::from_seed("//Bob")?)?;
+        client.connect().await?;
 
         let result = client.register(
             "/ip4/127.0.0.1/tcp/3333".to_string(),
@@ -254,18 +249,19 @@ cargo test --features integration-tests
 
 ### "Not connected to chain" Error
 
-Ensure you call `connect_chain()` before making on-chain calls:
+Ensure you call `connect()` before making on-chain calls:
 
 ```rust
-client.base.connect_chain().await?;
+client.connect().await?;
 ```
 
 ### "No signer configured" Error
 
-Set a signer before submitting extrinsics:
+Every client takes its signer at construction — pass one to `new()` (or
+`with_defaults()`):
 
 ```rust
-client.base = client.base.with_dev_signer("alice")?;
+let client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
 ```
 
 ### Transaction Fails

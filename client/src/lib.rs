@@ -9,12 +9,12 @@
 //! The SDK provides specialized clients for different user roles:
 //!
 //! ### For Storage Users
-//! [`StorageUserClient`](storage_user::StorageUserClient) - Upload, download, and verify data
+//! [`StorageUserClient`] - Upload, download, and verify data
 //! ```no_run
-//! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy};
+//! use storage_client::{StorageUserClient, ClientConfig, ChunkingStrategy, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = StorageUserClient::with_defaults()?;
+//! let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 //!
 //! // Upload data
 //! let data = b"Hello, decentralized world!";
@@ -31,12 +31,12 @@
 //! ```
 //!
 //! ### For Storage Providers
-//! [`ProviderClient`](provider::ProviderClient) - Manage provider operations
+//! [`ProviderClient`] - Manage provider operations
 //! ```no_run
-//! use storage_client::{ProviderClient, ClientConfig};
+//! use storage_client::{ProviderClient, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = ProviderClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = ProviderClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // Register as provider
 //! client.register(
@@ -49,12 +49,12 @@
 //! ```
 //!
 //! ### For Bucket Administrators
-//! [`AdminClient`](admin::AdminClient) - Manage buckets and agreements
+//! [`AdminClient`] - Manage buckets and agreements
 //! ```no_run
-//! use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
+//! use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // 1. Ask the provider node to sign agreement terms over HTTP. The
 //! //    provider allocates the nonce + validity window and signs.
@@ -81,12 +81,12 @@
 //! ```
 //!
 //! ### For Data Integrity Monitors
-//! [`ChallengerClient`](challenger::ChallengerClient) - Challenge providers
+//! [`ChallengerClient`] - Challenge providers
 //! ```no_run
-//! use storage_client::{ChallengerClient, ChunkLocation, ClientConfig};
+//! use storage_client::{ChallengerClient, ChunkLocation, Signer};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+//! let client = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
 //!
 //! // Challenge a provider
 //! let challenge_id = client.challenge_checkpoint(
@@ -110,6 +110,7 @@ pub mod encryption;
 pub mod event_subscription;
 pub mod provider;
 pub mod scale_decode;
+pub mod signer;
 pub mod storage_user;
 pub mod substrate;
 pub mod verification;
@@ -144,6 +145,7 @@ pub use event_subscription::{
     StorageProviderEventParser, SubscriptionHandle,
 };
 pub use provider::{ProviderClient, ProviderSettings};
+pub use signer::Signer;
 pub use storage_user::{
     CheckpointSignatureResponse, CommitResponse, CommitmentResponse, ExistsResponse,
     HealthResponse, StorageUserClient,

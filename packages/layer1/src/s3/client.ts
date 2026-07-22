@@ -6,7 +6,7 @@
  * wrappers (silent, no auto-retry, finalized submission + finalized reads by
  * default — UI-grade; tests/examples opt into in-block/best via
  * readOpts/submitMode); HTTP ops go through core's retrying fetch and are
- * signed when the signer has a raw keypair.
+ * signed with the signer's raw keypair, which the provider always requires.
  *
  * Bytes are opaque here: client-side encryption (when used) wraps/unwraps
  * app-side, so CID verification covers exactly what the provider stores.
@@ -17,9 +17,7 @@ import {
   CidMismatchError,
   DEFAULT_CHUNK_SIZE,
   httpFetch,
-  signProviderRequest,
   toHex,
-  type HttpFetchOpts,
 } from "@web3-storage/core";
 import {
   asHex,
@@ -27,18 +25,11 @@ import {
   deleteObjectMetadata as deleteObjectMetadataTx,
   deleteS3Bucket as deleteS3BucketTx,
   putObjectMetadata as putObjectMetadataTx,
-  type ChainSigner,
-  type ParachainApi,
-  type SubmitOpts,
-  type TxStatusListener,
   type WaitOpts,
 } from "@web3-storage/layer0";
 
-import {
-  ProviderUrlResolver,
-  resolveBucketProviders,
-  resolveCreationTerms,
-} from "../provider-url.js";
+import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
+import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketInfo,
   BucketRef,
@@ -50,69 +41,11 @@ import type {
   PutObjectResult,
 } from "./types.js";
 
-export interface S3ClientOptions {
-  api: ParachainApi;
-  signer?: ChainSigner | null;
-  /** Explicit provider URL (dev/tests) — skips on-chain resolution. */
-  providerUrl?: string;
-  /** Injection point for unit tests. */
-  fetch?: typeof fetch;
-  /** Tx progress listener. Default null (silent) — apps drive their own UI. */
-  onStatus?: TxStatusListener | null;
-  /**
-   * Read view for chain lookups. Defaults to "finalized" (UI-grade,
-   * reorg-safe). Tests/examples pass READ_OPTS ({at: "best"}) to match their
-   * in-block submission semantics.
-   */
-  readOpts?: { at: "best" | "finalized" };
-  /**
-   * Submission doneness. Defaults to "finalized" (UI-grade). Tests/examples
-   * pass "best" for speed.
-   */
-  submitMode?: "best" | "finalized";
-}
+export type S3ClientOptions = Layer1ClientOptions;
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
-export class S3Client {
-  private readonly api: ParachainApi;
-  private signer: ChainSigner | null;
-  private readonly providers: ProviderUrlResolver;
-  private readonly fetchOpts: HttpFetchOpts;
-  private readonly onStatus: TxStatusListener | null;
-  private readonly readOpts: { at: "best" | "finalized" };
-  private readonly submitMode: "best" | "finalized";
-  private readonly creationUrlOverride?: string;
-
-  constructor(opts: S3ClientOptions) {
-    this.api = opts.api;
-    this.signer = opts.signer ?? null;
-    this.readOpts = opts.readOpts ?? { at: "finalized" };
-    this.submitMode = opts.submitMode ?? "finalized";
-    this.providers = new ProviderUrlResolver(opts.api, opts.providerUrl, this.readOpts);
-    this.creationUrlOverride = opts.providerUrl;
-    this.fetchOpts = opts.fetch ? { fetchImpl: opts.fetch } : {};
-    this.onStatus = opts.onStatus ?? null;
-  }
-
-  setSigner(signer: ChainSigner | null): void {
-    this.signer = signer;
-  }
-
-  private requireSigner(): ChainSigner {
-    if (!this.signer) throw new Error("Signer not set");
-    return this.signer;
-  }
-
-  private submitOpts(): SubmitOpts {
-    return { mode: this.submitMode, retryStale: 0, onStatus: this.onStatus };
-  }
-
-  private authHeaders(method: string, layer0BucketId: bigint): Record<string, string> {
-    const kp = this.signer?.keypair;
-    return kp ? signProviderRequest(kp, method, layer0BucketId) : {};
-  }
-
+export class S3Client extends Layer1Client {
   // ── Validation (S3 conventions, lifted from the original SDK stub) ──────
 
   validateBucketName(name: string): void {
@@ -320,7 +253,7 @@ export class S3Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const headers: Record<string, string> = {
       "Content-Type": options.contentType || "application/octet-stream",
-      ...this.authHeaders("PUT", bucket.layer0BucketId),
+      ...(await this.authHeaders("PUT", bucket.layer0BucketId)),
     };
     for (const [k, v] of Object.entries(options.metadata ?? {})) {
       headers[`x-amz-meta-${k}`] = v;
@@ -345,7 +278,7 @@ export class S3Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { signal: opts.signal, headers: this.authHeaders("GET", bucket.layer0BucketId) },
+      { signal: opts.signal, headers: await this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -375,7 +308,7 @@ export class S3Client {
     const providerUrl = await this.getProviderUrl(bucket.layer0BucketId);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/object?key=${encodeURIComponent(key)}`,
-      { method: "DELETE", headers: this.authHeaders("DELETE", bucket.layer0BucketId) },
+      { method: "DELETE", headers: await this.authHeaders("DELETE", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) {
@@ -389,7 +322,7 @@ export class S3Client {
     if (prefix) params.set("prefix", prefix);
     const response = await httpFetch(
       `${providerUrl}/s3/${bucket.layer0BucketId}/objects?${params.toString()}`,
-      { headers: this.authHeaders("GET", bucket.layer0BucketId) },
+      { headers: await this.authHeaders("GET", bucket.layer0BucketId) },
       this.fetchOpts,
     );
     if (!response.ok) throw new Error(`List objects failed: ${response.status}`);

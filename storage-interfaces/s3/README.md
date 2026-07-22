@@ -39,7 +39,7 @@ This module provides an S3-compatible storage interface (Layer 1) on top of the 
 ## Quick Start
 
 ```rust
-use s3_client::{S3Client, PutObjectOptions};
+use s3_client::{PutObjectOptions, S3Client, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = S3Client::new(
         "ws://127.0.0.1:2222",           // Chain URL
         "http://localhost:3333",          // Provider URL
-        "//Alice",                        // Seed phrase
+        Signer::from_seed("//Alice")?,    // Signer
     ).await?;
 
     // Create bucket

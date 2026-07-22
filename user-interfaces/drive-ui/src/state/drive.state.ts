@@ -20,7 +20,7 @@ import {
   type SignedTerms,
 } from "@/lib/drive-client";
 import { api$$, getApi } from "@/state/chain.state";
-import { signer$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
+import { signer$$, keypair$$, signerAddress$$, getSignerAddress, refreshBalance } from "@/state/wallet.state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -86,12 +86,11 @@ api$$.subscribe((api) => {
   client.setApi(api);
 });
 
-// Use combineLatest so the client always receives signer + address together.
-// With separate subscriptions, signer$ fires before signerAddress$ inside
-// setSigner(), leaving client.signerAddress null when refreshDrives() runs.
-combineLatest([signer$$, signerAddress$$]).subscribe(([signer, address]) => {
-  client.setSigner(signer, address);
-});
+combineLatest([signer$$, signerAddress$$, keypair$$]).subscribe(
+  ([signer, address, keypair]) => {
+    client.setSigner(signer, address, keypair);
+  },
+);
 
 export function getDriveClient(): DriveClient {
   return client;

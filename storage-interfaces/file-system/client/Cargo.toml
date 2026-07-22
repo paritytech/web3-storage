@@ -21,7 +21,6 @@ reqwest = { workspace = true }
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 subxt = { workspace = true }
-subxt-signer = { workspace = true }
 
 # Utilities
 tracing = { workspace = true }
@@ -30,6 +29,7 @@ thiserror = { workspace = true }
 hex = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+subxt-signer = { workspace = true }
 tokio-test = { workspace = true }
 
 [[example]]

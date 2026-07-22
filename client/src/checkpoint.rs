@@ -772,15 +772,9 @@ impl CheckpointManager {
     }
 
     /// Set the signer for submitting transactions.
-    pub fn with_signer(mut self, signer: subxt_signer::sr25519::Keypair) -> Self {
+    pub fn with_signer(mut self, signer: crate::Signer) -> Self {
         self.chain_client = self.chain_client.with_signer(signer);
         self
-    }
-
-    /// Set a development signer (for testing).
-    pub fn with_dev_signer(mut self, name: &str) -> Result<Self, ClientError> {
-        self.chain_client = self.chain_client.with_dev_signer(name)?;
-        Ok(self)
     }
 
     // ========================================================================
@@ -1997,9 +1991,8 @@ impl CheckpointManager {
     ///
     /// ```ignore
     /// // Setup challenger client
-    /// let mut challenger = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+    /// let mut challenger = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
     /// challenger.connect().await?;
-    /// challenger.set_dev_signer("alice")?;
     ///
     /// // Execute auto-challenges
     /// let result = manager.execute_auto_challenges(bucket_id, &challenger, 0.7).await?;
@@ -2491,7 +2484,7 @@ pub async fn submit_checkpoint_simple(
     chain_endpoint: &str,
     bucket_id: BucketId,
     provider_endpoints: Vec<String>,
-    signer_name: &str,
+    signer: crate::Signer,
 ) -> CheckpointResult {
     let manager = match CheckpointManager::new(chain_endpoint, CheckpointConfig::default()).await {
         Ok(m) => m,
@@ -2502,16 +2495,9 @@ pub async fn submit_checkpoint_simple(
         }
     };
 
-    let manager = manager.with_providers(provider_endpoints);
-
-    let manager = match manager.with_dev_signer(signer_name) {
-        Ok(m) => m,
-        Err(e) => {
-            return CheckpointResult::TransactionFailed {
-                error: e.to_string(),
-            }
-        }
-    };
+    let manager = manager
+        .with_providers(provider_endpoints)
+        .with_signer(signer);
 
     manager.submit_checkpoint(bucket_id).await
 }
