@@ -34,7 +34,8 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 Work-in-progress notes, not yet ratified. **These need triage** — each should be reviewed and either promoted into `design/`, folded into an existing doc, or dropped.
 
-- **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow.
+- **[Layer 1 Design / Implementation](./drafts/L1_design_implementation.md)** — file-system & S3 provider interfaces on top of Layer 0 (split out of the Layer 0 implementation doc); triage tracked in [#51](https://github.com/paritytech/web3-storage/issues/51).
+- **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow. Candidate for promotion to `reference/` (it's API-reference material, not a draft design).
 - **[Execution Flows](./drafts/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs for the main flows.
 - **[Marketplace](./drafts/marketplace.md)** — provider capacity, discovery, and matching.
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
@@ -58,7 +59,9 @@ Work-in-progress notes, not yet ratified. **These need triage** — each should 
 
 ## External
 
-- [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) · [Substrate Docs](https://docs.substrate.io/) · [Polkadot.js Apps](https://polkadot.js.org/apps/)
+- [Polkadot SDK](https://paritytech.github.io/polkadot-sdk/) — FRAME, Cumulus, networking.
+- [Substrate Docs](https://docs.substrate.io/).
+- [Polkadot.js Apps](https://polkadot.js.org/apps/).
 
 ## License
 

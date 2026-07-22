@@ -1773,7 +1773,7 @@ pub enum ChallengeResponse<T: Config> {
 ## Off-Chain: Provider Node API
 
 The provider node exposes a JSON-over-HTTP API (axum) on, by default,
-`http://localhost:3333`. Endpoints fall into five groups:
+`http://localhost:3333`. Endpoints fall into four groups:
 
 1. **Health & info** — public, unauthenticated.
 2. **Layer-0 blob storage** — content-addressed node upload, existence check,
@@ -1782,14 +1782,11 @@ The provider node exposes a JSON-over-HTTP API (axum) on, by default,
    replica providers; read-only.
 4. **Provider-initiated checkpoint coordination** — proposal signing, leader
    duty, force trigger. Used by the autonomous checkpoint coordinator.
-5. **Layer-1 interfaces** — S3-compatible (`/s3/...`) and POSIX-like
-   (`/fs/...`). See `docs/filesystems/` for the full spec.
 
 ### Authentication & RBAC
 
-Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`, the
-Layer-1 mutating endpoints) and authenticated read endpoints require an
-`Authorization` header. The provider node verifies an sr25519 signature
+Mutating Layer-0 endpoints (`PUT /node`, `POST /commit`, `POST /delete`) and
+authenticated read endpoints require an `Authorization` header. The provider node verifies an sr25519 signature
 locally and resolves the caller's role via a TTL-cached query against the
 chain's `Buckets` storage (`bucket.members`).
 
@@ -2174,37 +2171,6 @@ Response:
   "syncing": false
 }
 ```
-
-### Layer 1 — File System & S3 Interfaces
-
-The provider node also serves the Layer 1 interfaces described in
-`docs/filesystems/` and `docs/drafts/marketplace.md`. These mount on top of
-the Layer 0 blob primitives and require Writer/Admin authorization for
-mutating routes.
-
-```
-S3-compatible object storage
-────────────────────────────
-PUT    /s3/:bucket_id/object?key=path/to/object
-GET    /s3/:bucket_id/object?key=path/to/object
-HEAD   /s3/:bucket_id/object?key=path/to/object
-DELETE /s3/:bucket_id/object?key=path/to/object
-GET    /s3/:bucket_id/objects                     # list
-GET    /s3/:bucket_id/index_root                  # current S3 index CID
-
-File system interface
-─────────────────────
-PUT    /fs/:bucket_id/file?path=/dir/file.txt
-GET    /fs/:bucket_id/file?path=/dir/file.txt
-DELETE /fs/:bucket_id/file?path=/dir/file.txt
-POST   /fs/:bucket_id/mkdir                       # body: { path: ... }
-GET    /fs/:bucket_id/ls?path=/dir
-GET    /fs/:bucket_id/index_root                  # current drive root CID
-```
-
-See [`docs/filesystems/API_REFERENCE.md`](../filesystems/API_REFERENCE.md) for
-the full Layer 1 contract (request/response shapes, error codes, manifest
-formats).
 
 ### Replica Sync API
 

@@ -67,6 +67,12 @@ just demo
 
 ## File System Interface (Layer 1)
 
+> [!NOTE]
+> **Layer 1 design is under triage.** Its design/implementation notes have been
+> split into a draft — [`docs/drafts/L1_design_implementation.md`](./docs/drafts/L1_design_implementation.md) —
+> pending a decision on the layered architecture (what belongs on-chain vs.
+> provider-only). See [#51](https://github.com/paritytech/web3-storage/issues/51).
+
 The Layer 1 File System Interface provides a familiar file/folder abstraction
 over Layer 0's raw blob storage.
 
