@@ -1773,15 +1773,13 @@ pub enum ChallengeResponse<T: Config> {
 ## Off-Chain: Provider Node API
 
 The provider node exposes a JSON-over-HTTP API (axum) on, by default,
-`http://localhost:3333`. Endpoints fall into four groups:
+`http://localhost:3333`. Endpoints fall into three groups:
 
 1. **Health & info** — public, unauthenticated.
 2. **Layer-0 blob storage** — content-addressed node upload, existence check,
    commit, read, proofs, deletion. Mutating endpoints require auth.
 3. **Replica sync** — peaks, subtree, bulk node fetch, sync status. Used by
    replica providers; read-only.
-4. **Provider-initiated checkpoint coordination** — proposal signing, leader
-   duty, force trigger. Used by the autonomous checkpoint coordinator.
 
 ### Authentication & RBAC
 
@@ -2069,69 +2067,6 @@ Response:
 
 Note: Public observability endpoint. Useful for operators and the
 Prometheus/Grafana setup in `docs/`.
-```
-
-### Provider-Initiated Checkpoint Coordination
-
-These endpoints back the autonomous checkpoint coordinator
-(`checkpoint_coordinator.rs`). Primary providers exchange signed
-`CheckpointProposal`s over HTTP, and one of them submits the
-`provider_checkpoint` extrinsic on-chain.
-
-```
-Sign a Checkpoint Proposal
-──────────────────────────
-POST /checkpoint/sign
-
-Request:
-{
-  "bucket_id": 1234,
-  "mmr_root": "0xfed...",
-  "start_seq": 0,
-  "leaf_count": 42,
-  "window": 7
-}
-
-Response (200 OK):
-{
-  "signer": "5G...",                 // this provider's SS58 address
-  "signature": "0x...",              // sr25519 over CheckpointProposal
-  "agreed": true,                    // false if local state diverges
-  "local_mmr_root": "0xfed..."       // included for divergence diagnostics
-}
-
-Note: If `agreed: false`, the signature is empty — the local view of the
-bucket doesn't match the proposal. Callers compare `local_mmr_root` to
-investigate divergence (e.g. one provider is behind).
-
-Get Checkpoint Duty
-───────────────────
-GET /checkpoint/duty?bucket_id=1234
-
-Response:
-{
-  "bucket_id": 1234,
-  "mmr_root": "0xfed...",
-  "start_seq": 0,
-  "leaf_count": 42,
-  "ready": true                      // false if leaf_count == 0
-}
-
-Trigger Checkpoint (operator-only)
-──────────────────────────────────
-POST /checkpoint/trigger?bucket_id=1234
-Authorization: Web3Storage <...>     # Admin
-
-Response:
-{
-  "bucket_id": 1234,
-  "triggered": true,
-  "message": "Checkpoint triggered for bucket 1234 with 42 leaves..."
-}
-
-Note: Sends a `ForceCheckpoint` command to the coordinator task. Requires the
-provider to have been launched with `--enable-checkpoint-coordinator`,
-otherwise returns 500. Mostly used in tests and manual recovery.
 ```
 
 ### Replica Sync Status

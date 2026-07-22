@@ -688,6 +688,77 @@ async fn discover_peers(&self, bucket_id: BucketId) -> Vec<ProviderPeer> {
 
 ---
 
+## Implemented HTTP API (as shipped)
+
+> ⚠️ **Drift from the proposal above.** These are the endpoints the provider
+> node actually ships today (backing the autonomous checkpoint coordinator,
+> `checkpoint_coordinator.rs`). They differ from the proposed
+> `/checkpoint/propose` + `/checkpoint/status` in
+> [Provider Node Changes](#2-provider-to-provider-communication) — reconcile the
+> two during triage. Extracted from the Layer 0 implementation doc, which is
+> review-gated and should not carry unratified design.
+
+Primary providers exchange signed `CheckpointProposal`s over HTTP, and one of
+them submits the `provider_checkpoint` extrinsic on-chain.
+
+```
+Sign a Checkpoint Proposal
+──────────────────────────
+POST /checkpoint/sign
+
+Request:
+{
+  "bucket_id": 1234,
+  "mmr_root": "0xfed...",
+  "start_seq": 0,
+  "leaf_count": 42,
+  "window": 7
+}
+
+Response (200 OK):
+{
+  "signer": "5G...",                 // this provider's SS58 address
+  "signature": "0x...",              // sr25519 over CheckpointProposal
+  "agreed": true,                    // false if local state diverges
+  "local_mmr_root": "0xfed..."       // included for divergence diagnostics
+}
+
+Note: If `agreed: false`, the signature is empty — the local view of the
+bucket doesn't match the proposal. Callers compare `local_mmr_root` to
+investigate divergence (e.g. one provider is behind).
+
+Get Checkpoint Duty
+───────────────────
+GET /checkpoint/duty?bucket_id=1234
+
+Response:
+{
+  "bucket_id": 1234,
+  "mmr_root": "0xfed...",
+  "start_seq": 0,
+  "leaf_count": 42,
+  "ready": true                      // false if leaf_count == 0
+}
+
+Trigger Checkpoint (operator-only)
+──────────────────────────────────
+POST /checkpoint/trigger?bucket_id=1234
+Authorization: Web3Storage <...>     # Admin
+
+Response:
+{
+  "bucket_id": 1234,
+  "triggered": true,
+  "message": "Checkpoint triggered for bucket 1234 with 42 leaves..."
+}
+
+Note: Sends a `ForceCheckpoint` command to the coordinator task. Requires the
+provider to have been launched with `--enable-checkpoint-coordinator`,
+otherwise returns 500. Mostly used in tests and manual recovery.
+```
+
+---
+
 ## Security Analysis
 
 ### Attack: Malicious Leader Submits Wrong Root
