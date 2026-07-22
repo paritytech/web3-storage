@@ -1,5 +1,13 @@
 # Provider-Initiated Checkpoints Design
 
+> ⚠️ **Needs triage — [#306](https://github.com/paritytech/web3-storage/issues/306).**
+> This design was added and implemented without review, and is now questioned
+> (it may be redundant with replica nodes + client-held signatures). Its design
+> was removed from the review-gated `docs/design/` in #305. Pending #306, this
+> doc is either reviewed and canonicalized, or removed together with the related
+> code. The "Problem Statement" / "Why" reasoning below has **not** been
+> validated — treat with skepticism.
+
 ## Problem Statement
 
 The current checkpoint system requires the data owner's client to:
