@@ -27,7 +27,7 @@ The exact pinned versions live in `.github/env` and are installed identically in
 
 | File                    | Purpose                                                  |
 |-------------------------|----------------------------------------------------------|
-| `IWeb3Storage.sol`      | Vendored ABI of the precompile (kept in sync with `precompiles/storage-provider-precompile/src/IWeb3Storage.sol`). |
+| `IWeb3Storage.sol`      | Vendored ABI of the precompile (kept in sync with `crates/precompiles/storage-provider/src/IWeb3Storage.sol`). |
 | `StorageMarketplace.sol`| Marketplace contract: `buyStorage` / `endMyAgreement`.    |
 | `build.sh`              | One-shot compile script.                                 |
 

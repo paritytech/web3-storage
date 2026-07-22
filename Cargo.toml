@@ -13,9 +13,9 @@ members = [
 	"runtimes/web3-storage-paseo",
 
 	# Smart-contract precompiles (pallet_revive integration)
-	"precompiles/drive-registry-precompile",
-	"precompiles/s3-registry-precompile",
-	"precompiles/storage-provider-precompile",
+	"crates/precompiles/drive-registry",
+	"crates/precompiles/s3-registry",
+	"crates/precompiles/storage-provider",
 
 	# Storage Interfaces: File System Interface
 	"storage-interfaces/file-system/client",
@@ -34,10 +34,10 @@ repository = "https://github.com/paritytech/web3-storage"
 
 [workspace.dependencies]
 # Layer 0: Scalable Web3 Storage (Internal crates)
-pallet-drive-registry-precompile = { path = "precompiles/drive-registry-precompile", default-features = false }
-pallet-s3-registry-precompile = { path = "precompiles/s3-registry-precompile", default-features = false }
+pallet-drive-registry-precompile = { path = "crates/precompiles/drive-registry", default-features = false }
+pallet-s3-registry-precompile = { path = "crates/precompiles/s3-registry", default-features = false }
 pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
-pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
+pallet-storage-provider-precompile = { path = "crates/precompiles/storage-provider", default-features = false }
 provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
