@@ -196,7 +196,7 @@ scalable-web3-storage/
 ├── runtimes/             # Parachain runtimes (web3-storage-local, web3-storage-paseo)
 ├── provider-node/        # Off-chain storage server (HTTP API)
 ├── client/               # Client SDK for applications
-├── primitives/           # Shared types and utilities
+├── crates/primitives/    # Shared primitives crates (storage, file-system, s3)
 ├── scripts/              # Helper scripts
 └── docs/                 # Documentation
     ├── getting-started/  # Quick start guides

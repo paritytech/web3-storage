@@ -53,7 +53,7 @@ jobs:
             runtime:
               - 'runtimes/**'
               - 'crates/pallets/**'
-              - 'primitives/**'
+              - 'crates/primitives/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/check-runtime-migration.yml'

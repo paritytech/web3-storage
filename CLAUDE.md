@@ -246,16 +246,18 @@ web3-storage/
 │   │   └── types.rs          # Client types
 │   ├── examples/             # Usage examples
 │   └── README.md             # SDK documentation
-├── primitives/                 # Layer 0 shared types and utilities
-│   ├── src/lib.rs            # Common types
-│   └── Cargo.toml            # Primitive dependencies
+├── crates/                     # Shared crates
+│   ├── primitives/             # Shared primitives crates
+│   │   ├── storage/           # Layer 0 shared types (storage-primitives)
+│   │   ├── file-system/       # File system types (file-system-primitives)
+│   │   └── s3/                # S3 interface types (s3-primitives)
+│   └── storage-subxt/          # Static subxt runtime bindings
 ├── precompiles/                # pallet_revive precompiles (Solidity → pallets)
 │   ├── storage-provider-precompile/  # 0x…0901 — bucket lifecycle
 │   └── drive-registry-precompile/    # 0x…0902 — drive lifecycle
 ├── examples/contracts/         # Example Solidity dApps (StorageMarketplace.sol)
 ├── storage-interfaces/         # Layer 1 - High-level interfaces
 │   └── file-system/           # File System Interface
-│       ├── primitives/        # File system types (DriveInfo, CommitStrategy, etc.)
 │       └── client/            # File System Client SDK
 │           ├── src/
 │           │   ├── lib.rs     # Main file system client
@@ -303,13 +305,13 @@ web3-storage/
 - Submit checkpoints (on-chain)
 - Challenge providers (on-chain)
 
-**Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
+**Primitives (`crates/primitives/storage/`)**: Shared types used across pallet, provider node, and client.
 
 **Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/drafts/smart-contracts.md](docs/drafts/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 
-**File System Primitives (`storage-interfaces/file-system/primitives/`)**: High-level types for file system:
+**File System Primitives (`crates/primitives/file-system/`)**: High-level types for file system:
 - `DriveInfo`: Drive metadata and configuration
 - `DirectoryNode`: Protobuf-based directory structure
 - `FileManifest`: File metadata with chunk tracking

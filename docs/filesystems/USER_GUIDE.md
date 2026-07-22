@@ -54,7 +54,7 @@ The system handles all of this automatically!
 # Add to your Cargo.toml
 [dependencies]
 file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
+file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 ```
 
 ### Initialize Client
@@ -879,7 +879,7 @@ See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for deta
 
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
-- **[Examples](../../storage-interfaces/file-system/examples/)** - Code examples
+- **[Examples](../../storage-interfaces/file-system/client/examples/)** - Code examples
 
 ## Additional Resources
 
