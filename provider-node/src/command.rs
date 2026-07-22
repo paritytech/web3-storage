@@ -10,9 +10,9 @@ use crate::{
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
     ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
-    StorageBackend,
+    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps,
+    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -52,13 +52,30 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+    // Membership-based auth over the chain's bucket member sets.
+    let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
+    let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
+    let membership = Arc::new(MembershipCache::new(Box::new(resolver), ttl));
+    tracing::info!(
+        "Auth: membership cache_ttl={}s, max_skew={}s",
+        cli.auth.auth_cache_ttl,
+        cli.auth.auth_max_skew
+    );
+
+    let deps = ProviderDeps {
+        storage,
+        nonce_store,
+        membership,
+        auth_max_skew: Duration::from_secs(cli.auth.auth_max_skew),
+    };
+
     // Resolve provider identity
     let seed = cli.key.load_seed()?;
-    let mut state = match &seed {
+    let state = match &seed {
         Some(seed) => {
-            let state = ProviderState::with_seed(storage, seed)?;
+            let state = ProviderState::with_seed(deps, seed)?;
             tracing::info!("Signing enabled for account: {}", state.provider_id);
-            configure_state(state, &cli)
+            state
         }
         None => {
             let provider_id = cli
@@ -71,14 +88,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 provider_id
             );
 
-            configure_state(ProviderState::with_provider_id(storage, provider_id), &cli)
+            ProviderState::with_provider_id(deps, provider_id)
         }
-    };
-
-    // Install the nonce store before sharing `state` across coordinators: while
-    // it is still solely owned here, `chain_state`'s Arc has a single owner, so
-    // the in-place install succeeds.
-    state.set_nonce_store(nonce_store);
+    }
+    .with_cors_origins(cli.rpc.cors_allowed_origins.clone());
 
     let state = Arc::new(state);
 
@@ -134,36 +147,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
-}
-
-/// Apply CLI-derived CORS and auth settings to a freshly constructed state.
-///
-/// Authentication is enforced by default: unless the operator explicitly passed
-/// `--disable-auth-i-know-what-i-am-doing`, we wire in the on-chain membership
-/// resolver so every bucket-scoped request is checked against the caller's role.
-fn configure_state(state: ProviderState, cli: &Cli) -> ProviderState {
-    let mut state = state.with_cors_origins(cli.rpc.cors_allowed_origins.clone());
-
-    if cli.auth.disable_auth_i_know_what_i_am_doing {
-        state = state.with_auth_disabled();
-        tracing::warn!(
-            "AUTHENTICATION DISABLED via --disable-auth-i-know-what-i-am-doing: \
-             every endpoint is publicly readable and writable by anyone. \
-             Never do this outside a throwaway local environment."
-        );
-    } else {
-        let resolver = ChainMembershipResolver::new(cli.rpc.chain_rpc.clone());
-        let ttl = Duration::from_secs(cli.auth.auth_cache_ttl);
-        let cache = MembershipCache::new(Box::new(resolver), ttl);
-        state.set_auth_config(Arc::new(cache), Duration::from_secs(cli.auth.auth_max_skew));
-        tracing::info!(
-            "Auth enforced (cache_ttl={}s, max_skew={}s)",
-            cli.auth.auth_cache_ttl,
-            cli.auth.auth_max_skew
-        );
-    }
-
-    state
 }
 
 /// Start the chain-state coordinator, which keeps

@@ -60,23 +60,18 @@ file-system-primitives = { path = "path/to/storage-interfaces/file-system/primit
 ### Initialize Client
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 
 // Initialize client with blockchain connection
 let mut fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",           // Parachain WebSocket endpoint
     "http://127.0.0.1:3333",         // Storage provider HTTP endpoint
+    Signer::from_seed("//Alice")?,           // Use Alice's dev account
 ).await?;
 
-// Set up signing (for testing with dev accounts)
-fs_client = fs_client
-    .with_dev_signer("alice")        // Use Alice's dev account
-    .await?;
-
-// Or use a real keypair for production:
-// use subxt_signer::sr25519::Keypair;
-// let keypair = Keypair::from_seed("your seed phrase")?;
-// fs_client = fs_client.with_signer(keypair).await?;
+// Or use a real key for production:
+// let signer = Signer::from_seed("your seed phrase")?;
+// or: Signer::from_keypair(keypair)
 ```
 
 **Blockchain Integration:**

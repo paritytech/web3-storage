@@ -35,7 +35,7 @@ export {
   type MerkleEntry,
   type NegotiateRequest,
   type SignedTerms,
-  type SigningKeypair,
+  type ProviderRequestSigner,
 } from "@web3-storage/core";
 
 export { Web3Storage, type Web3StorageOptions } from "./web3-storage.js";
