@@ -3,14 +3,15 @@
 ```
 docs/
 ├── getting-started/   — quickstart
-├── reference/         — pallet API + payment math
+├── reference/         — derived / how-it-works docs (accurate, not gated)
 ├── design/            — canonical system design (review-gated)
-├── drafts/            — work-in-progress protocol notes (need triage)
+├── drafts/            — unratified / WIP notes (need triage)
 └── filesystems/       — Layer 1 file system interface
 ```
 
-> `design/` is the source of truth and requires design review before changes.
-> `drafts/` holds evolving notes that have not been ratified — treat as WIP.
+> - **`design/`** — the source of truth; changes require design-owner review (see [`.github/CODEOWNERS`](../.github/CODEOWNERS)).
+> - **`reference/`** — accurate but *derived* material (flow walkthroughs, API refs). Kept in sync with the design, but not itself design-of-record, so it is **not** review-gated.
+> - **`drafts/`** — unratified / WIP notes; treat as provisional. Each needs triage: promote to `design/` or `reference/`, fold into an existing doc, or drop.
 
 ## Getting started
 
@@ -22,6 +23,7 @@ docs/
 
 - **[Extrinsics Reference](./reference/EXTRINSICS_REFERENCE.md)** — every pallet extrinsic with parameters, errors, and example workflows.
 - **[Payment Calculator](./reference/PAYMENT_CALCULATOR.md)** — `payment = price_per_byte × max_bytes × duration`, with worked examples.
+- **[Execution Flows](./reference/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs of the main flows (derived from the design; no design-owner sign-off needed).
 
 ## Design
 
@@ -32,11 +34,10 @@ The canonical system design. Changes require review (see [`.github/CODEOWNERS`](
 
 ## Drafts
 
-Work-in-progress notes, not yet ratified. **These need triage** — each should be reviewed and either promoted into `design/`, folded into an existing doc, or dropped.
+Unratified / WIP notes. **These need triage** ([#308](https://github.com/paritytech/web3-storage/issues/308)) — each should be reviewed and either promoted into `design/` (design-of-record) or `reference/` (accurate derived material), folded into an existing doc, or dropped.
 
 - **[Layer 1 Design / Implementation](./drafts/L1_design_implementation.md)** — file-system & S3 provider interfaces on top of Layer 0 (split out of the Layer 0 implementation doc); triage tracked in [#51](https://github.com/paritytech/web3-storage/issues/51).
 - **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow. Candidate for promotion to `reference/` (it's API-reference material, not a draft design).
-- **[Execution Flows](./drafts/EXECUTION_FLOWS.md)** — sequence-by-sequence walkthroughs for the main flows.
 - **[Marketplace](./drafts/marketplace.md)** — provider capacity, discovery, and matching.
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
 - **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state.
