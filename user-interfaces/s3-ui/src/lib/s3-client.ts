@@ -24,6 +24,7 @@ import {
   removeMember as removeMemberTx,
   requireOneEvent,
   setMember as setMemberTx,
+  signProviderRequest,
   submitTx,
   toSs58,
   type ChainSigner,
@@ -483,10 +484,12 @@ export class S3Client {
   }
 
   async triggerCheckpoint(bucketId: bigint): Promise<void> {
+    if (!this.signer) throw new Error("Connect a wallet to trigger a checkpoint");
     const providerUrl = await this.getProviderUrl(bucketId);
+    const headers = await signProviderRequest(this.signer, "POST", bucketId);
     const response = await httpFetch(
       `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
-      { method: "POST" },
+      { method: "POST", headers },
     );
     if (!response.ok) {
       throw new Error(
