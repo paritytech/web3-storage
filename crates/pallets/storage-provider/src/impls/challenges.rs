@@ -140,7 +140,7 @@ impl<T: Config> Pallet<T> {
         let anchor_block = Self::current_anchor_block();
         let deadline = anchor_block.saturating_add(T::ChallengeTimeout::get());
 
-        let challenge = ChallengeOf::<T> {
+        let challenge = Challenge {
             bucket_id,
             provider: provider.clone(),
             challenger: challenger.clone(),
@@ -223,7 +223,7 @@ impl<T: Config> Pallet<T> {
     /// same financial outcome — the distinction is for observers
     /// reading the event log.
     pub(crate) fn slash_provider_for_failed_challenge(
-        challenge: &ChallengeOf<T>,
+        challenge: &Challenge<T>,
         challenge_id: ChallengeId<BlockNumberFor<T>>,
         reason: SlashReason,
     ) {

@@ -9,7 +9,7 @@ use storage_primitives::{BucketId, BucketSnapshot, ProviderRole, ReplicaSyncReco
 fn challenge_to_response<T: Config>(
     deadline: BlockNumberFor<T>,
     index: u16,
-    c: ChallengeOf<T>,
+    c: Challenge<T>,
 ) -> crate::runtime_api::ChallengeResponse {
     crate::runtime_api::ChallengeResponse {
         bucket_id: c.bucket_id,
@@ -28,7 +28,7 @@ fn challenge_to_response<T: Config>(
 fn agreement_to_response<T: Config>(
     bucket_id: BucketId,
     provider: &T::AccountId,
-    agreement: StorageAgreementOf<T>,
+    agreement: StorageAgreement<T>,
 ) -> crate::runtime_api::AgreementResponse {
     crate::runtime_api::AgreementResponse {
         bucket_id,

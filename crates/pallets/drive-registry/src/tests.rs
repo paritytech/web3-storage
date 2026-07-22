@@ -7,7 +7,7 @@ use crate::{
     Error, Event,
 };
 use frame_support::{assert_noop, assert_ok, traits::ConstU32, BoundedVec};
-use pallet_storage_provider::{AgreementTermsOf, ProviderSettingsOf};
+use pallet_storage_provider::{AgreementTermsOf, ProviderSettings};
 use sp_core::crypto::KeyTypeId;
 use storage_primitives::{AgreementTerms, Role};
 
@@ -67,7 +67,7 @@ fn setup_provider() -> (sp_core::sr25519::Public, u64) {
         public_key_bytes,
         10_000_000_000_000, // Must exceed MinProviderStake (1_000_000_000_000)
     ));
-    let settings = ProviderSettingsOf::<Test> {
+    let settings = ProviderSettings {
         min_duration: 10u64,
         max_duration: 10_000u64,
         price_per_byte: 0u128,

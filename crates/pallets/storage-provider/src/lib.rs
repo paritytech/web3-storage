@@ -57,13 +57,13 @@ pub mod pallet {
     pub use frame_system::pallet_prelude::BlockNumberFor as SystemBlockNumberFor;
     use frame_system::pallet_prelude::*;
     use sp_core::H256;
-    use sp_runtime::traits::{CheckedAdd, Saturating, Zero};
+    use sp_runtime::traits::{Bounded, CheckedAdd, Saturating, Zero};
     #[cfg(feature = "try-runtime")]
     use sp_runtime::TryRuntimeError;
     use storage_primitives::{
         BucketId, BucketSnapshot, ChallengeId, ChallengerStatRecord, ChunkLocation, Commitment,
-        CommitmentPayload, EndAction, ProviderRole, RemovalReason, ReplayWindow, ReplicaSyncRecord,
-        Role, SlashReason,
+        CommitmentPayload, EndAction, MerkleProof, MmrProof, ProviderRole, RemovalReason,
+        ReplayWindow, ReplicaSyncRecord, Role, SlashReason,
     };
 
     pub type BalanceOf<T> =
@@ -317,8 +317,7 @@ pub mod pallet {
     /// Provider registry.
     #[pallet::storage]
     #[pallet::getter(fn providers)]
-    pub type Providers<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfoOf<T>>;
+    pub type Providers<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ProviderInfo<T>>;
 
     /// Per-provider sliding replay window over signed agreement-term nonces.
     /// See [`storage_primitives::ReplayWindow`] for the bit layout
@@ -336,7 +335,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::unbounded]
     #[pallet::getter(fn buckets)]
-    pub type Buckets<T: Config> = StorageMap<_, Blake2_128Concat, BucketId, BucketOf<T>>;
+    pub type Buckets<T: Config> = StorageMap<_, Blake2_128Concat, BucketId, Bucket<T>>;
 
     /// Storage agreements: per-provider contracts for a bucket.
     #[pallet::storage]
@@ -347,7 +346,7 @@ pub mod pallet {
         BucketId,
         Blake2_128Concat,
         T::AccountId,
-        StorageAgreementOf<T>,
+        StorageAgreement<T>,
     >;
 
     /// Pending challenges indexed by `(deadline block, stable per-deadline
@@ -364,7 +363,7 @@ pub mod pallet {
         BlockNumberFor<T>,
         Twox64Concat,
         u16,
-        ChallengeOf<T>,
+        Challenge<T>,
         OptionQuery,
     >;
 
@@ -495,7 +494,7 @@ pub mod pallet {
         /// Stake to reserve; must be at least `T::MinProviderStake`.
         pub stake: BalanceOf<T>,
         /// Provider settings, validated like `update_provider_settings`.
-        pub settings: ProviderSettingsOf<T>,
+        pub settings: ProviderSettings<T>,
     }
 
     /// Genesis configuration for the storage provider pallet.
@@ -544,46 +543,217 @@ pub mod pallet {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Provider information stored on-chain.
-    pub type ProviderInfoOf<T> = storage_primitives::ProviderInfo<
-        BalanceOf<T>,
-        BlockNumberFor<T>,
-        <T as Config>::MaxMultiaddrLength,
-    >;
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
+    #[scale_info(skip_type_params(T))]
+    pub struct ProviderInfo<T: Config> {
+        /// Multiaddr for connecting to this provider.
+        pub multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
+        /// Public key for signature verification.
+        /// Stored as raw bytes to support multiple key types (Sr25519, Ed25519, Ecdsa).
+        pub public_key: BoundedVec<u8, ConstU32<64>>,
+        /// Total stake locked by this provider.
+        pub stake: BalanceOf<T>,
+        /// Total contracted bytes (sum of max_bytes across all agreements).
+        pub committed_bytes: u64,
+        /// Provider settings.
+        pub settings: ProviderSettings<T>,
+        /// Provider statistics.
+        pub stats: ProviderStats<T>,
+        /// Block at which a previously-announced deregistration becomes
+        /// finalisable via `complete_deregister`. `None` means no
+        /// announcement is in progress. During the announcement window the
+        /// provider is still on-chain and still slashable for any pending
+        /// challenge — they only get their stake back after the window.
+        pub deregister_at: Option<BlockNumberFor<T>>,
+    }
 
     /// Provider settings controlling pricing and availability.
-    pub type ProviderSettingsOf<T> =
-        storage_primitives::ProviderSettings<BalanceOf<T>, BlockNumberFor<T>>;
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        MaxEncodedLen,
+        DebugNoBound,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
+    #[scale_info(skip_type_params(T))]
+    #[serde(
+        bound(serialize = "", deserialize = ""),
+        rename_all = "camelCase",
+        default
+    )]
+    pub struct ProviderSettings<T: Config> {
+        /// Minimum agreement duration provider will accept.
+        pub min_duration: BlockNumberFor<T>,
+        /// Maximum agreement duration provider will accept.
+        pub max_duration: BlockNumberFor<T>,
+        /// Price per byte per block for storage.
+        pub price_per_byte: BalanceOf<T>,
+        /// Whether accepting new primary agreements.
+        pub accepting_primary: bool,
+        /// Price per successful sync confirmation, or None if not accepting replicas.
+        pub replica_sync_price: Option<BalanceOf<T>>,
+        /// Whether accepting extensions on existing agreements.
+        pub accepting_extensions: bool,
+        /// Maximum storage capacity in bytes. 0 = unlimited (backward compatible).
+        /// When set, provider cannot accept agreements that would exceed this capacity.
+        pub max_capacity: u64,
+    }
+
+    impl<T: Config> Default for ProviderSettings<T> {
+        fn default() -> Self {
+            Self {
+                min_duration: Zero::zero(),
+                max_duration: BlockNumberFor::<T>::max_value(),
+                price_per_byte: Zero::zero(),
+                accepting_primary: true,
+                replica_sync_price: None,
+                accepting_extensions: true,
+                max_capacity: 0, // 0 = unlimited (backward compatible)
+            }
+        }
+    }
 
     /// On-chain statistics for evaluating provider quality.
-    pub type ProviderStatsOf<T> = storage_primitives::ProviderStats<BlockNumberFor<T>>;
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        TypeInfo,
+        MaxEncodedLen,
+        DebugNoBound,
+        DefaultNoBound,
+    )]
+    #[scale_info(skip_type_params(T))]
+    pub struct ProviderStats<T: Config> {
+        /// Block when provider registered.
+        pub registered_at: BlockNumberFor<T>,
+        /// Total agreements ever created with this provider.
+        pub agreements_total: u32,
+        /// Agreements where client chose to extend.
+        pub agreements_extended: u32,
+        /// Agreements that expired without extension.
+        pub agreements_not_extended: u32,
+        /// Agreements where client burned payment.
+        pub agreements_burned: u32,
+        /// Total bytes ever committed across all agreements.
+        pub total_bytes_committed: u64,
+        /// Number of challenges received.
+        pub challenges_received: u32,
+        /// Number of challenges where provider was slashed.
+        pub challenges_failed: u32,
+    }
 
     /// Bucket member with role.
-    pub type MemberOf<T> = storage_primitives::Member<<T as frame_system::Config>::AccountId>;
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
+    #[scale_info(skip_type_params(T))]
+    pub struct Member<T: Config> {
+        pub account: T::AccountId,
+        pub role: Role,
+    }
 
     /// Bucket container for data with membership and storage agreements.
-    pub type BucketOf<T> = storage_primitives::Bucket<
-        <T as frame_system::Config>::AccountId,
-        BlockNumberFor<T>,
-        <T as Config>::MaxMembers,
-        <T as Config>::MaxPrimaryProviders,
-    >;
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, Debug)]
+    #[scale_info(skip_type_params(T))]
+    pub struct Bucket<T: Config> {
+        /// Members who can interact with this bucket.
+        pub members: BoundedVec<Member<T>, T::MaxMembers>,
+        /// If Some, bucket is append-only from this start_seq.
+        pub frozen_start_seq: Option<u64>,
+        /// Minimum primary provider signatures required for checkpoint.
+        pub min_providers: u32,
+        /// Primary provider account IDs (limited to T::MaxPrimaryProviders).
+        pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
+        /// Current canonical state.
+        pub snapshot: Option<BucketSnapshot<BlockNumberFor<T>>>,
+        /// Historical MMR roots for replica sync validation.
+        pub historical_roots: [(u32, H256); 6],
+        /// Total snapshots created for this bucket.
+        pub total_snapshots: u32,
+    }
 
     /// Storage agreement between bucket and provider.
-    pub type StorageAgreementOf<T> = storage_primitives::StorageAgreement<
-        <T as frame_system::Config>::AccountId,
-        BalanceOf<T>,
-        BlockNumberFor<T>,
-    >;
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
+    #[scale_info(skip_type_params(T))]
+    pub struct StorageAgreement<T: Config> {
+        /// Who owns this agreement (can top up, transfer ownership).
+        pub owner: T::AccountId,
+        /// Maximum bytes (quota).
+        pub max_bytes: u64,
+        /// Payment locked for storage.
+        pub payment_locked: BalanceOf<T>,
+        /// Price per byte locked at creation/last extension.
+        pub price_per_byte: BalanceOf<T>,
+        /// Agreement expiration.
+        pub expires_at: BlockNumberFor<T>,
+        /// Whether provider has blocked extensions for this agreement.
+        pub extensions_blocked: bool,
+        /// Provider role for this bucket.
+        pub role: ProviderRole<BalanceOf<T>, BlockNumberFor<T>>,
+        /// Block when agreement became active.
+        pub started_at: BlockNumberFor<T>,
+    }
 
     /// Active challenge against a provider.
-    pub type ChallengeOf<T> =
-        storage_primitives::Challenge<<T as frame_system::Config>::AccountId, BalanceOf<T>>;
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, TypeInfo, MaxEncodedLen, Debug)]
+    #[scale_info(skip_type_params(T))]
+    pub struct Challenge<T: Config> {
+        /// Bucket containing the challenged data.
+        pub bucket_id: BucketId,
+        /// Provider being challenged.
+        pub provider: T::AccountId,
+        /// Account that issued the challenge.
+        pub challenger: T::AccountId,
+        /// MMR root the provider committed to.
+        pub mmr_root: H256,
+        /// Start sequence of the commitment.
+        pub start_seq: u64,
+        /// Leaf + chunk being challenged.
+        pub target: ChunkLocation,
+        /// Deposit locked by challenger.
+        pub deposit: BalanceOf<T>,
+    }
 
     /// Challenge response from provider.
-    pub type ChallengeResponseOf<T> = storage_primitives::ChallengeResponse<
-        <T as frame_system::Config>::AccountId,
-        <T as Config>::MaxChunkSize,
-    >;
+    #[derive(
+        CloneNoBound,
+        PartialEqNoBound,
+        EqNoBound,
+        Encode,
+        Decode,
+        codec::DecodeWithMemTracking,
+        TypeInfo,
+        DebugNoBound,
+    )]
+    #[scale_info(skip_type_params(T))]
+    pub enum ChallengeResponse<T: Config> {
+        /// Provide the chunk with proofs.
+        Proof {
+            chunk_data: BoundedVec<u8, T::MaxChunkSize>,
+            mmr_proof: MmrProof,
+            chunk_proof: MerkleProof,
+        },
+        /// Data was deleted - show newer commitment without this seq.
+        Deleted {
+            new_mmr_root: H256,
+            new_start_seq: u64,
+            /// Block at which the admin signed the deletion commitment. Used
+            /// as the `nonce` in `CommitmentPayload` and recency-checked by
+            /// the pallet to prevent signature replay.
+            nonce: u64,
+            admin: T::AccountId,
+            admin_signature: sp_runtime::MultiSignature,
+        },
+        /// Challenged state has been superseded by canonical.
+        Superseded,
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Events
@@ -619,7 +789,7 @@ pub mod pallet {
         },
         ProviderSettingsUpdated {
             provider: T::AccountId,
-            settings: ProviderSettingsOf<T>,
+            settings: ProviderSettings<T>,
         },
         ProviderMultiaddrUpdated {
             provider: T::AccountId,
@@ -991,7 +1161,7 @@ pub mod pallet {
                 multiaddr,
                 public_key,
                 stake,
-                ProviderSettingsOf::<T>::default(),
+                ProviderSettings::default(),
             )
         }
 
@@ -1178,7 +1348,7 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::update_provider_settings())]
         pub fn update_provider_settings(
             origin: OriginFor<T>,
-            settings: ProviderSettingsOf<T>,
+            settings: ProviderSettings<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
             ensure!(
@@ -1393,7 +1563,7 @@ pub mod pallet {
                     bucket.members[idx].role = role;
                 } else {
                     // Add new member
-                    let new_member = MemberOf::<T> {
+                    let new_member = Member {
                         account: member.clone(),
                         role,
                     };
@@ -2606,14 +2776,14 @@ pub mod pallet {
         /// Respond to a challenge.
         #[pallet::call_index(41)]
         #[pallet::weight(match response {
-            ChallengeResponseOf::<T>::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
-            ChallengeResponseOf::<T>::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
-            ChallengeResponseOf::<T>::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
+            ChallengeResponse::Proof { .. } => T::WeightInfo::respond_to_challenge_proof(),
+            ChallengeResponse::Deleted { .. } => T::WeightInfo::respond_to_challenge_deleted(),
+            ChallengeResponse::Superseded => T::WeightInfo::respond_to_challenge_superseded(),
         })]
         pub fn respond_to_challenge(
             origin: OriginFor<T>,
             challenge_id: ChallengeId<BlockNumberFor<T>>,
-            response: ChallengeResponseOf<T>,
+            response: ChallengeResponse<T>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
@@ -2656,7 +2826,7 @@ pub mod pallet {
             // bucket snapshot for `Deleted`) still bubble up as `DispatchError`
             // — they represent caller mistakes, not adversarial responses.
             let response_outcome: Result<(), SlashReason> = match &response {
-                ChallengeResponseOf::<T>::Proof {
+                ChallengeResponse::Proof {
                     chunk_data,
                     mmr_proof,
                     chunk_proof,
@@ -2676,7 +2846,7 @@ pub mod pallet {
                         Err(SlashReason::InvalidProof)
                     }
                 }
-                ChallengeResponseOf::<T>::Deleted {
+                ChallengeResponse::Deleted {
                     new_mmr_root,
                     new_start_seq,
                     nonce,
@@ -2712,7 +2882,7 @@ pub mod pallet {
                         }
                     }
                 }
-                ChallengeResponseOf::<T>::Superseded => {
+                ChallengeResponse::Superseded => {
                     // A `Superseded` defense only holds when the challenged
                     // commitment was genuinely replaced by a newer canonical
                     // snapshot. Without a snapshot to lean on the claim is

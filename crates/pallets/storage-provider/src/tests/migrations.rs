@@ -22,7 +22,7 @@ struct OldBucketSnapshot {
 /// value for this test.
 #[derive(Encode)]
 struct OldBucket {
-    members: BoundedVec<MemberOf<Test>, <Test as Config>::MaxMembers>,
+    members: BoundedVec<Member<Test>, <Test as Config>::MaxMembers>,
     frozen_start_seq: Option<u64>,
     min_providers: u32,
     primary_providers: BoundedVec<u64, <Test as Config>::MaxPrimaryProviders>,
@@ -39,7 +39,7 @@ fn put_old_bucket(bucket_id: BucketId, old: OldBucket) {
 fn migration_backfills_commitment_nonce_on_existing_snapshot() {
     new_test_ext().execute_with(|| {
         let bucket_id: BucketId = 1;
-        let member = MemberOf::<Test> {
+        let member = Member {
             account: 42u64,
             role: Role::Admin,
         };

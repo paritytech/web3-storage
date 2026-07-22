@@ -54,7 +54,7 @@ fn extend_agreement_fails_provider_not_accepting_extensions() {
         // Provider disables extensions globally
         assert_ok!(StorageProvider::update_provider_settings(
             RuntimeOrigin::signed(2),
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 accepting_extensions: false,
                 accepting_primary: true,
                 ..Default::default()
@@ -74,7 +74,7 @@ fn extend_agreement_fails_payment_too_low() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 price_per_byte: 1,
                 accepting_primary: true,
                 accepting_extensions: true,
@@ -103,7 +103,7 @@ fn extend_agreement_fails_duration_too_short() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 min_duration: 50,
                 max_duration: 1000,
                 accepting_primary: true,
@@ -198,7 +198,7 @@ fn top_up_agreement_fails_payment_exceeds_max() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 price_per_byte: 1,
                 accepting_primary: true,
                 ..Default::default()

@@ -8,7 +8,7 @@ use storage_primitives::{BucketId, HISTORICAL_ROOT_PRIMES};
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn update_historical_roots(
-        bucket: &mut BucketOf<T>,
+        bucket: &mut Bucket<T>,
         anchor_block: BlockNumberFor<T>,
         mmr_root: H256,
     ) {
@@ -23,7 +23,7 @@ impl<T: Config> Pallet<T> {
     }
 
     pub(crate) fn find_matching_root(
-        bucket: &BucketOf<T>,
+        bucket: &Bucket<T>,
         roots: &[Option<H256>; 7],
     ) -> Result<(u8, H256), DispatchError> {
         // Check current snapshot first

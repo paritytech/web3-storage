@@ -15,7 +15,7 @@ fn end_agreement_pay_after_expiry() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 price_per_byte: 1,
                 accepting_primary: true,
                 ..Default::default()
@@ -55,7 +55,7 @@ fn end_agreement_burn_after_expiry() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 price_per_byte: 1,
                 accepting_primary: true,
                 ..Default::default()
@@ -174,7 +174,7 @@ fn claim_expired_agreement_works() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 price_per_byte: 1,
                 accepting_primary: true,
                 ..Default::default()

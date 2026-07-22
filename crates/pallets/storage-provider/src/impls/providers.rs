@@ -9,7 +9,7 @@ impl<T: Config> Pallet<T> {
     /// Reject any path that would create a new commitment for a
     /// provider who has announced deregistration. `deregister_provider`
     /// also flips `accepting_primary`/`accepting_extensions` to `false`,
-    pub(crate) fn ensure_provider_active(provider: &ProviderInfoOf<T>) -> DispatchResult {
+    pub(crate) fn ensure_provider_active(provider: &ProviderInfo<T>) -> DispatchResult {
         ensure!(
             provider.deregister_at.is_none(),
             Error::<T>::DeregisterAnnounced
@@ -21,7 +21,7 @@ impl<T: Config> Pallet<T> {
     ///
     /// Shared by `update_provider_settings` and `register_provider_internal`.
     pub(crate) fn validate_settings(
-        settings: &ProviderSettingsOf<T>,
+        settings: &ProviderSettings<T>,
         committed_bytes: u64,
         stake: BalanceOf<T>,
     ) -> DispatchResult {
@@ -63,7 +63,7 @@ impl<T: Config> Pallet<T> {
         multiaddr: BoundedVec<u8, T::MaxMultiaddrLength>,
         public_key: BoundedVec<u8, ConstU32<64>>,
         stake: BalanceOf<T>,
-        settings: ProviderSettingsOf<T>,
+        settings: ProviderSettings<T>,
     ) -> DispatchResult {
         ensure!(
             !Providers::<T>::contains_key(who),
@@ -88,13 +88,13 @@ impl<T: Config> Pallet<T> {
 
         let anchor_block = Self::current_anchor_block();
 
-        let provider_info = ProviderInfoOf::<T> {
+        let provider_info = ProviderInfo {
             multiaddr,
             public_key,
             stake,
             committed_bytes: 0,
             settings,
-            stats: ProviderStatsOf::<T> {
+            stats: ProviderStats {
                 registered_at: anchor_block,
                 ..Default::default()
             },

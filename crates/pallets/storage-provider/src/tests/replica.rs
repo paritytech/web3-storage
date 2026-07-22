@@ -7,7 +7,7 @@ fn setup_provider_with_replicas(provider: u64, stake: u64) {
     register_provider_with_settings(
         provider,
         stake,
-        ProviderSettingsOf::<Test> {
+        ProviderSettings {
             accepting_primary: true,
             replica_sync_price: Some(10),
             ..Default::default()

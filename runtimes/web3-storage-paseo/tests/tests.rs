@@ -570,7 +570,7 @@ fn should_update_provider_settings() {
         let who: AccountId = account.to_account_id();
         register_provider_for(account, default_stake());
 
-        let new_settings = pallet_storage_provider::ProviderSettingsOf::<Runtime> {
+        let new_settings = pallet_storage_provider::ProviderSettings::<Runtime> {
             min_duration: 10,
             max_duration: 1_000,
             price_per_byte: 7,
@@ -817,7 +817,7 @@ fn register_accepting_provider_for(account: Sr25519Keyring, stake: Balance) {
     assert_ok_ok(construct_and_apply_extrinsic(
         Some(account.pair()),
         RuntimeCall::StorageProvider(StorageProviderCall::<Runtime>::update_provider_settings {
-            settings: pallet_storage_provider::ProviderSettingsOf::<Runtime> {
+            settings: pallet_storage_provider::ProviderSettings {
                 min_duration: 1,
                 max_duration: 1_000_000,
                 price_per_byte: 0,

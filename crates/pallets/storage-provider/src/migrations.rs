@@ -17,7 +17,7 @@ extern crate alloc;
 /// `0` (harmless: the nonce only matters to late-signature verification for a
 /// checkpoint still accepting signers, which no pre-existing snapshot has).
 pub mod v1 {
-    use crate::{BlockNumberFor, BucketOf, Buckets, Config, MemberOf, Pallet};
+    use crate::{BlockNumberFor, Bucket, Buckets, Config, Member, Pallet};
     use frame_support::{pallet_prelude::*, traits::UncheckedOnRuntimeUpgrade, weights::Weight};
     use sp_core::H256;
     use storage_primitives::{BucketSnapshot, Commitment};
@@ -38,7 +38,7 @@ pub mod v1 {
 
         #[derive(Decode)]
         pub struct Bucket<T: Config> {
-            pub members: BoundedVec<MemberOf<T>, T::MaxMembers>,
+            pub members: BoundedVec<Member<T>, T::MaxMembers>,
             pub frozen_start_seq: Option<u64>,
             pub min_providers: u32,
             pub primary_providers: BoundedVec<T::AccountId, T::MaxPrimaryProviders>,
@@ -56,7 +56,7 @@ pub mod v1 {
             let mut translated = 0u64;
             Buckets::<T>::translate::<old::Bucket<T>, _>(|_bucket_id, old| {
                 translated = translated.saturating_add(1);
-                Some(BucketOf::<T> {
+                Some(Bucket {
                     members: old.members,
                     frozen_start_seq: old.frozen_start_seq,
                     min_providers: old.min_providers,

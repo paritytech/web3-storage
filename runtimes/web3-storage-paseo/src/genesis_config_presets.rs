@@ -7,7 +7,7 @@ use crate::*;
 use alloc::{vec, vec::Vec};
 use cumulus_primitives_core::ParaId;
 use frame_support::build_struct_json_patch;
-use pallet_storage_provider::{GenesisProvider, ProviderSettingsOf};
+use pallet_storage_provider::{GenesisProvider, ProviderSettings};
 use sp_genesis_builder::PresetId;
 use sp_keyring::Sr25519Keyring;
 
@@ -35,7 +35,7 @@ fn previewnet_genesis_provider() -> GenesisProvider<Runtime> {
                 .to_vec(),
         public_key: Sr25519Keyring::Alice.to_raw_public_vec(),
         stake: 1_200_000_000_000 * UNIT,
-        settings: ProviderSettingsOf::<Runtime> {
+        settings: ProviderSettings {
             min_duration: 100,
             max_duration: 100_000,
             price_per_byte: 1,

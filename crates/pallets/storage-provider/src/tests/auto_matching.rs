@@ -25,7 +25,7 @@ fn register_provider_for_matching(who: u64, price_per_byte: u64, max_capacity: u
     register_provider_with_settings(
         who,
         200,
-        ProviderSettingsOf::<Test> {
+        ProviderSettings {
             min_duration: 10u64,
             max_duration: 1000u64,
             price_per_byte,
@@ -68,7 +68,7 @@ fn find_matching_providers_flags_not_accepting() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 min_duration: 10u64,
                 max_duration: 1000u64,
                 price_per_byte: 1u64,
@@ -133,7 +133,7 @@ fn find_matching_providers_flags_duration_mismatch() {
         register_provider_with_settings(
             2,
             200,
-            ProviderSettingsOf::<Test> {
+            ProviderSettings {
                 min_duration: 500u64, // Minimum 500 blocks
                 max_duration: 1000u64,
                 price_per_byte: 1u64,

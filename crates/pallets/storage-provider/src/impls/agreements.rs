@@ -10,7 +10,7 @@ use storage_primitives::{BucketId, EndAction, ProviderRole, RemovalReason, Repla
 
 impl<T: Config> Pallet<T> {
     pub(crate) fn validate_duration(
-        settings: &ProviderSettingsOf<T>,
+        settings: &ProviderSettings<T>,
         duration: BlockNumberFor<T>,
     ) -> DispatchResult {
         ensure!(
@@ -44,7 +44,7 @@ impl<T: Config> Pallet<T> {
     pub(crate) fn finalize_agreement(
         bucket_id: BucketId,
         provider: &T::AccountId,
-        agreement: &StorageAgreementOf<T>,
+        agreement: &StorageAgreement<T>,
         action: EndAction,
         is_early: bool,
     ) -> DispatchResult {
@@ -233,7 +233,7 @@ impl<T: Config> Pallet<T> {
         let bucket_id = Self::create_bucket_internal(owner, 1, Some(provider))?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
-        let agreement = StorageAgreementOf::<T> {
+        let agreement = StorageAgreement {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
             payment_locked: payment,
@@ -381,7 +381,7 @@ impl<T: Config> Pallet<T> {
         T::Currency::reserve(owner, total_lock)?;
 
         let expires_at = anchor_block.saturating_add(terms.duration);
-        let agreement = StorageAgreementOf::<T> {
+        let agreement = StorageAgreement {
             owner: owner.clone(),
             max_bytes: terms.max_bytes,
             payment_locked: payment,
