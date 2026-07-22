@@ -38,7 +38,7 @@ cargo run -p file-system-client --example basic_usage
 
 - [Layer 0 Design](../design/scalable-web3-storage.md) — the underlying storage system.
 - [Layer 0 Implementation](../design/scalable-web3-storage-implementation.md) — pallet, provider, MMR, challenges.
-- [Checkpoint Protocol](../design/CHECKPOINT_PROTOCOL.md) — multi-provider checkpoint coordination used by Layer 1's commit strategies.
+- [Checkpoint Protocol](../drafts/CHECKPOINT_PROTOCOL.md) — multi-provider checkpoint coordination used by Layer 1's commit strategies.
 
 ## License
 

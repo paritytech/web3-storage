@@ -7,7 +7,7 @@ timeouts, `current_block`) is denominated on the **anchor clock** — the relay
 chain in production, read via `current_anchor_block()`. Pseudocode showing
 `frame_system::block_number()` or `current_block` is illustrative; the
 implementation reads the anchor. See the anchor-clock section in
-[scalable-web3-storage-implementation.md](scalable-web3-storage-implementation.md).
+[scalable-web3-storage-implementation.md](../design/scalable-web3-storage-implementation.md).
 
 ## Table of Contents
 

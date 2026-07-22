@@ -1,0 +1,14 @@
+# CODEOWNERS
+#
+# Lines are matched bottom-to-top; the LAST matching pattern wins for a file.
+# A required-review rule is satisfied by any ONE of the owners listed for the
+# matched pattern — so listing a single owner makes that person's review
+# mandatory. Owners must have write access to the repo for their review to count.
+# GitHub reads this file from the repository's default branch (`dev`).
+#
+# See: https://docs.github.com/articles/about-code-owners
+
+# Design documents require review from @eskimor.
+# `/**` matches every file in docs/design/ recursively — all subdirectories,
+# all file types, no exceptions.
+/docs/design/**              @eskimor
