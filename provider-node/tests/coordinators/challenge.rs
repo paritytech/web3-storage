@@ -7,9 +7,11 @@ use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{
     build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponseResult, DetectedChallenge, Error, ProviderState, Storage,
+    ChallengeResponseResult, DetectedChallenge, Error, NullNonceStore, ProviderDeps, ProviderState,
+    Storage,
 };
 
 struct MockChallengeChainClient {
@@ -176,8 +178,17 @@ fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
         challenger: ALICE_SS58.to_string(),
     };
 
-    let state = Arc::new(ProviderState::with_provider_id(
+    let deps = ProviderDeps {
         storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = Arc::new(ProviderState::with_provider_id(
+        deps,
         ALICE_SS58.to_string(),
     ));
     (state, challenge)

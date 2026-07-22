@@ -248,11 +248,10 @@ The provider node uses environment variables for configuration:
 ## Example: Basic Upload Flow
 
 ```rust
-use storage_client::StorageUserClient;
+use storage_client::{Signer, StorageUserClient};
 
 // Connect to provider
-let mut client = StorageUserClient::new(config);
-client.connect_chain().await?;
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Upload data (off-chain)
 let data = b"Hello, decentralized storage!";

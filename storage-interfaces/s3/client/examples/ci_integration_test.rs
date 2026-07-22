@@ -17,7 +17,7 @@
 //!
 //! Usage: cargo run --example ci_integration_test [chain_ws] [provider_url]
 
-use s3_client::{PutObjectOptions, S3Client};
+use s3_client::{PutObjectOptions, S3Client, Signer};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::env;
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create the S3 client
     println!("Step 1: Creating S3 client...");
     let owner: AccountId32 = dev_signer::bob().public_key().0.into();
-    let client = S3Client::new(chain_ws, provider_url, "//Bob").await?;
+    let client = S3Client::new(chain_ws, provider_url, Signer::from_seed("//Bob")?).await?;
     println!("  Client connected successfully");
 
     // Discover the provider's on-chain account from its /info endpoint

@@ -9,7 +9,9 @@ mod checkpoint;
 mod replica_sync;
 
 use std::sync::Arc;
-use storage_provider_node::{ProviderState, Storage};
+use std::time::Duration;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
@@ -17,17 +19,33 @@ pub const ALICE_SEED: &str = "//Alice";
 
 /// Create a standard test `ProviderState` for coordinator tests.
 pub fn test_state() -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
     Arc::new(ProviderState::with_provider_id(
-        storage,
+        deps,
         ALICE_SS58.to_string(),
     ))
 }
 
 /// Create a test `ProviderState` with a keypair derived from the given seed.
 pub fn test_state_with_seed(seed: &str) -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::with_seed(storage, seed).unwrap())
+    let deps = ProviderDeps {
+        storage: Arc::new(Storage::new()),
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    Arc::new(ProviderState::with_seed(deps, seed).unwrap())
 }
 
 /// Poll a condition with timeout. Returns `true` if the condition was met

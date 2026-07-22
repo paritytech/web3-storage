@@ -645,8 +645,8 @@ With this protocol, the user API becomes simple:
 let mut fs_client = FileSystemClient::new(
     "ws://localhost:2222",
     "http://localhost:3333",
-).await?
-    .with_dev_signer("alice").await?;
+    Signer::from_seed("//Alice")?,
+).await?;
 
 // Create drive - checkpoints handled automatically based on strategy
 let drive_id = fs_client.create_drive(
@@ -778,13 +778,13 @@ use storage_client::{
 ### CheckpointManager Usage
 
 ```rust
-use storage_client::{CheckpointManager, CheckpointConfig, CheckpointResult};
+use storage_client::{CheckpointManager, CheckpointConfig, CheckpointResult, Signer};
 
 // Create manager
 let manager = CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
     .with_providers(vec!["http://localhost:3333".to_string()])
-    .with_dev_signer("alice")?;
+    .with_signer(Signer::from_seed("//Alice")?);
 
 // Submit checkpoint
 let result = manager.submit_checkpoint(bucket_id).await;
@@ -811,7 +811,7 @@ match result {
 
 ```rust
 use storage_client::{
-    CheckpointManager, BatchedCheckpointConfig, BatchedInterval, CheckpointCallback,
+    CheckpointManager, BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, Signer,
 };
 use std::sync::Arc;
 
@@ -819,7 +819,7 @@ use std::sync::Arc;
 let manager = Arc::new(CheckpointManager::new("ws://localhost:2222", CheckpointConfig::default())
     .await?
     .with_providers(vec!["http://localhost:3333".to_string()])
-    .with_dev_signer("alice")?);
+    .with_signer(Signer::from_seed("//Alice")?));
 
 // Configure batched checkpoints
 let config = BatchedCheckpointConfig {
@@ -930,11 +930,11 @@ if let Some(conflict) = conflict {
 ### FileSystemClient Integration
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 
-let mut fs_client = FileSystemClient::new("ws://localhost:2222", "http://localhost:3333")
-    .await?
-    .with_dev_signer("alice").await?;
+let mut fs_client =
+    FileSystemClient::new("ws://localhost:2222", "http://localhost:3333", Signer::from_seed("//Alice")?)
+        .await?;
 
 // Enable automatic checkpoints for a drive
 fs_client.enable_auto_checkpoints(

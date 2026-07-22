@@ -9,12 +9,10 @@ use file_system_primitives::DriveId;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
-use std::sync::Arc;
-use storage_client::{scale_decode, EventParser};
+use storage_client::{scale_decode, EventParser, Signer};
 use storage_primitives::Role;
 use subxt::ext::scale_value::{At, Composite, Value};
 use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::Keypair;
 
 /// Pallet name in the runtime configuration.
 pub const PALLET_NAME: &str = "DriveRegistry";
@@ -23,49 +21,22 @@ pub const PALLET_NAME: &str = "DriveRegistry";
 #[derive(Clone)]
 pub struct SubstrateClient {
     api: OnlineClient<PolkadotConfig>,
-    signer: Option<Arc<Keypair>>,
+    signer: Signer,
     endpoint: String,
 }
 
 impl SubstrateClient {
     /// Connect to a substrate node.
-    pub async fn connect(ws_url: &str) -> Result<Self, FsClientError> {
+    pub async fn connect(ws_url: &str, signer: Signer) -> Result<Self, FsClientError> {
         let api = OnlineClient::<PolkadotConfig>::from_url(ws_url)
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Connection failed: {e}")))?;
 
         Ok(Self {
             api,
-            signer: None,
+            signer,
             endpoint: ws_url.to_string(),
         })
-    }
-
-    /// Set the signer for this client.
-    pub fn with_signer(mut self, signer: Keypair) -> Self {
-        self.signer = Some(Arc::new(signer));
-        self
-    }
-
-    /// Create a client with a development keypair (for testing).
-    pub fn with_dev_signer(mut self, name: &str) -> Result<Self, FsClientError> {
-        use subxt_signer::sr25519::dev;
-
-        let keypair = match name {
-            "alice" => dev::alice(),
-            "bob" => dev::bob(),
-            "charlie" => dev::charlie(),
-            "dave" => dev::dave(),
-            "eve" => dev::eve(),
-            "ferdie" => dev::ferdie(),
-            _ => {
-                return Err(FsClientError::Config(format!(
-                    "Unknown dev account: {name}"
-                )))
-            }
-        };
-        self.signer = Some(Arc::new(keypair));
-        Ok(self)
     }
 
     /// Get the API client.
@@ -73,22 +44,9 @@ impl SubstrateClient {
         &self.api
     }
 
-    /// Get the signer if available.
-    pub fn signer(&self) -> Result<&Keypair, FsClientError> {
-        self.signer
-            .as_ref()
-            .map(|s| s.as_ref())
-            .ok_or(FsClientError::NoSigner)
-    }
-
-    /// Get the signer keypair (cloned) if available.
-    ///
-    /// This is useful when you need to pass the keypair to another component.
-    pub fn signer_keypair(&self) -> Result<Keypair, FsClientError> {
-        self.signer
-            .as_ref()
-            .map(|s| (**s).clone())
-            .ok_or(FsClientError::NoSigner)
+    /// The signer.
+    pub fn signer(&self) -> &Signer {
+        &self.signer
     }
 
     /// Get the WebSocket endpoint URL.

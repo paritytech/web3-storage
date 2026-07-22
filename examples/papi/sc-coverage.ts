@@ -255,11 +255,17 @@ async function main() {
     // sometimes the rpc returns old data, and the tests run sequentially, so
     // bump the expected NextBucketId by hand for the post-call assertion.
     nextBucketBefore += 1n;
-    r = await callPrecompile(api, client, WEB3_STORAGE_ADDR, iWeb3, "establishStorageAgreement", [
-      toHex(providerBytes32),
-      signedC.terms,
-      signedC.signature,
-    ]);
+    // Finalize: the upload below reads bucketC membership from the provider's
+    // finalized view, so an in-block establish would race it.
+    r = await callPrecompile(
+      api,
+      client,
+      WEB3_STORAGE_ADDR,
+      iWeb3,
+      "establishStorageAgreement",
+      [toHex(providerBytes32), signedC.terms, signedC.signature],
+      { finalized: true },
+    );
     const createdC = assertEvent(r.events, "StorageProvider", "BucketCreated", "establishStorageAgreement");
     const bucketC = createdC.bucket_id;
     assert.strictEqual(bucketC, nextBucketBefore);
@@ -267,7 +273,7 @@ async function main() {
 
     console.log("    preconditions: uploadChunk + submitClientCheckpoint");
     const uploadNonce = await currentRelayBlock(api);
-    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", uploadNonce);
+    const upload = await uploadChunk(providerUrl, bucketC, "coverage-test", uploadNonce, client);
     const ckNonce = await currentRelayBlock(api);
     const ck = await fetchCheckpointSignature(providerUrl, bucketC, ckNonce);
     await submitClientCheckpoint(api, client, provider, bucketC, ck);

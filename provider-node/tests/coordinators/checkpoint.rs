@@ -7,10 +7,11 @@ use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::checkpoint_coordinator::SignProposalRequest;
 use storage_provider_node::{
     CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointDuty,
-    CheckpointResult, Error, ProviderState, Storage,
+    CheckpointResult, Error, NullNonceStore, ProviderDeps, ProviderState, Storage,
 };
 
 struct MockCheckpointChainClient {
@@ -79,7 +80,16 @@ fn test_state_with_bucket(bucket_id: BucketId) -> Arc<ProviderState> {
     let data_root = H256::from(hash);
     let _ = storage.store_node(bucket_id, data_root, data, None);
     storage.commit(bucket_id, vec![data_root]).unwrap();
-    Arc::new(ProviderState::with_seed(storage, "//Alice").unwrap())
+    let deps = ProviderDeps {
+        storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    Arc::new(ProviderState::with_seed(deps, "//Alice").unwrap())
 }
 
 #[test]

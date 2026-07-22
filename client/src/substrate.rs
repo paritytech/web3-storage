@@ -6,15 +6,14 @@
 //! the storage parachain.
 
 use crate::base::ClientError;
+use crate::Signer;
 use codec::Encode;
 use futures::StreamExt;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
-use std::sync::Arc;
 use storage_primitives::{ChunkLocation, Commitment};
 use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::{dev, Keypair};
 
 pub const PALLET_NAME: &str = "StorageProvider";
 
@@ -22,7 +21,7 @@ pub const PALLET_NAME: &str = "StorageProvider";
 #[derive(Clone)]
 pub struct SubstrateClient {
     api: OnlineClient<PolkadotConfig>,
-    signer: Option<Arc<Keypair>>,
+    signer: Option<Signer>,
 }
 
 impl SubstrateClient {
@@ -36,24 +35,9 @@ impl SubstrateClient {
     }
 
     /// Set the signer for this client (for submitting extrinsics).
-    pub fn with_signer(mut self, signer: Keypair) -> Self {
-        self.signer = Some(Arc::new(signer));
+    pub fn with_signer(mut self, signer: Signer) -> Self {
+        self.signer = Some(signer);
         self
-    }
-
-    /// Create a client with a development keypair (for testing).
-    pub fn with_dev_signer(mut self, name: &str) -> Result<Self, ClientError> {
-        let keypair = match name {
-            "alice" => dev::alice(),
-            "bob" => dev::bob(),
-            "charlie" => dev::charlie(),
-            "dave" => dev::dave(),
-            "eve" => dev::eve(),
-            "ferdie" => dev::ferdie(),
-            _ => return Err(ClientError::Config(format!("Unknown dev account: {name}"))),
-        };
-        self.signer = Some(Arc::new(keypair));
-        Ok(self)
     }
 
     /// Get the API client.
@@ -62,10 +46,9 @@ impl SubstrateClient {
     }
 
     /// Get the signer if available.
-    pub fn signer(&self) -> Result<&Keypair, ClientError> {
+    pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
             .as_ref()
-            .map(|s| s.as_ref())
             .ok_or_else(|| ClientError::Config("No signer configured".to_string()))
     }
 
@@ -782,7 +765,7 @@ pub mod storage {
 
     /// Query all storage agreements for a specific bucket (prefix iteration).
     ///
-    /// Key layout after prefix: [blake2_128(provider)=16][provider=32]; provider at offset 72 in full key.
+    /// Key layout after prefix: `[blake2_128(provider)=16][provider=32]`; provider at offset 72 in full key.
     pub fn agreements_for_bucket(
         bucket_id: u64,
     ) -> (
@@ -810,25 +793,25 @@ pub mod storage {
 
     /// Iterate all registered providers.
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32];
-    /// account at [48..80].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]`;
+    /// account at `[48..80]`.
     pub fn all_providers() -> DynamicAddress<(subxt::dynamic::Value,)> {
         subxt::dynamic::storage(PALLET_NAME, "Providers")
     }
 
     /// Iterate all storage agreements (bucket_id × provider DoubleMap).
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]
-    ///             [blake2_128(provider)=16][provider=32]; bucket_id at [48..56], provider at [72..104].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(bucket_id)=16][bucket_id=8]`
+    ///             `[blake2_128(provider)=16][provider=32]`; bucket_id at `[48..56]`, provider at `[72..104]`.
     pub fn all_storage_agreements() -> DynamicAddress<(subxt::dynamic::Value, subxt::dynamic::Value)>
     {
         subxt::dynamic::storage(PALLET_NAME, "StorageAgreements")
     }
 
-    /// Iterate all active challenge entries (deadline_block → Vec<Challenge>).
+    /// Iterate all active challenge entries (deadline_block → `Vec<Challenge>`).
     ///
-    /// Key layout: [twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4];
-    /// deadline block at [48..52].
+    /// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(block)=16][block=4]`;
+    /// deadline block at `[48..52]`.
     pub fn all_challenges() -> DynamicAddress<(subxt::dynamic::Value,)> {
         subxt::dynamic::storage(PALLET_NAME, "Challenges")
     }

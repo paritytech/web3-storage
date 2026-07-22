@@ -17,6 +17,7 @@ import {
   downloadChunk,
   ensureProviderRegistered,
   makeSigner,
+  signProviderRequest,
   toHex,
   uploadChunk,
 } from "@web3-storage/sdk";
@@ -43,12 +44,24 @@ async function main() {
   // Create a bucket for upload tests by redeeming provider-signed terms.
   const maxCapacity = 10_485_760n; // 10 MiB
   const duration = 100;
-  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
-    maxBytes: maxCapacity,
-    duration,
-  });
+  const { bucketId } = await negotiateAndEstablish(
+    api,
+    PROVIDER_URL,
+    client,
+    provider,
+    { maxBytes: maxCapacity, duration },
+    true, // finalize: an immediate provider upload reads finalized membership
+  );
 
   const tests: Array<{ name: string; fn: () => Promise<void> }> = [];
+
+  // The provider always enforces auth on the S3 routes (Reader to GET/HEAD/list,
+  // Writer to PUT/DELETE). Bob owns this bucket (Admin), so signing each request
+  // satisfies every role. Signs through `signBytes` — the same wallet surface
+  // real users sign with (it wraps in `<Bytes>…</Bytes>`; the provider accepts
+  // that). The signed message includes the HTTP verb, so it must match exactly.
+  const s3Auth = (method: string): Promise<Record<string, string>> =>
+    signProviderRequest(client.signer, method, bucketId);
 
   // ── Different sizes ───────────────────────────────────────────────────────
 
@@ -57,7 +70,7 @@ async function main() {
     fn: async () => {
       const data = "x".repeat(100);
       const nonce = await currentRelayBlock(api);
-      const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const { hash, commit } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
       assert.ok(commit.mmr_root, "Should return mmr_root");
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(downloaded, new TextEncoder().encode(data), "Downloaded data should match");
@@ -69,7 +82,7 @@ async function main() {
     fn: async () => {
       const data = randomBytes(64 * 1024);
       const nonce = await currentRelayBlock(api);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "64KB roundtrip integrity");
     },
@@ -80,7 +93,7 @@ async function main() {
     fn: async () => {
       const data = randomBytes(256 * 1024);
       const nonce = await currentRelayBlock(api);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), data, "256KB roundtrip integrity");
     },
@@ -93,7 +106,7 @@ async function main() {
       const nonce = await currentRelayBlock(api);
       for (let i = 0; i < 5; i++) {
         const data = `sequential upload #${i} @ ${Date.now()}`;
-        const result = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+        const result = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
         uploads.push(result);
       }
       // Verify leaf indices are incrementing.
@@ -123,15 +136,11 @@ async function main() {
       url.searchParams.set("key", "e2e-test.txt");
       const putResp = await fetch(url, {
         method: "PUT",
-        headers: { "Content-Type": "text/plain" },
+        headers: { "Content-Type": "text/plain", ...(await s3Auth("PUT")) },
         body,
       });
-      if (!putResp.ok) {
-        // S3 endpoints may not be available; skip gracefully.
-        console.log("    S3 PUT returned %d — skipping (S3 endpoints may not be enabled)", putResp.status);
-        return;
-      }
-      const getResp = await fetch(url);
+      assert.ok(putResp.ok, `S3 PUT should succeed, got ${putResp.status}`);
+      const getResp = await fetch(url, { headers: await s3Auth("GET") });
       assert.ok(getResp.ok, `GET should succeed, got ${getResp.status}`);
       const downloaded = await getResp.text();
       assert.strictEqual(downloaded, body, "S3 GET content should match PUT");
@@ -143,12 +152,7 @@ async function main() {
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
       url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "HEAD" });
-      if (!resp.ok && resp.status === 404) {
-        console.log("    S3 HEAD returned 404 — S3 endpoints may not be enabled, skipping");
-        return;
-      }
-      // If it worked, just verify we got headers back.
+      const resp = await fetch(url, { method: "HEAD", headers: await s3Auth("HEAD") });
       assert.ok(resp.ok || resp.status === 405, `HEAD should return 200 or 405, got ${resp.status}`);
     },
   });
@@ -157,13 +161,15 @@ async function main() {
     name: "4.7 S3 list objects",
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/objects`, PROVIDER_URL);
-      const resp = await fetch(url);
-      if (!resp.ok && resp.status !== 200) {
-        console.log("    S3 list returned %d — skipping", resp.status);
-        return;
-      }
+      const resp = await fetch(url, { headers: await s3Auth("GET") });
+      assert.ok(resp.ok, `S3 list should succeed, got ${resp.status}`);
       const data = await resp.json();
-      assert.ok(Array.isArray(data.contents || data), "List should return an array");
+      assert.ok(Array.isArray(data.contents), "List should return a contents array");
+      // 4.5 PUT this key into the bucket and 4.8 hasn't deleted it yet.
+      assert.ok(
+        data.contents.some((o: { key: string }) => o.key === "e2e-test.txt"),
+        "List should include the object uploaded in 4.5"
+      );
     },
   });
 
@@ -172,17 +178,11 @@ async function main() {
     fn: async () => {
       const url = new URL(`/s3/${bucketId}/object`, PROVIDER_URL);
       url.searchParams.set("key", "e2e-test.txt");
-      const resp = await fetch(url, { method: "DELETE" });
-      if (!resp.ok && resp.status === 404) {
-        console.log("    S3 DELETE not available, skipping");
-        return;
-      }
+      const resp = await fetch(url, { method: "DELETE", headers: await s3Auth("DELETE") });
+      assert.ok(resp.ok, `S3 DELETE should succeed, got ${resp.status}`);
       // Verify the object is gone.
-      const getResp = await fetch(url);
-      assert.ok(
-        getResp.status === 404 || !getResp.ok,
-        `GET after DELETE should 404, got ${getResp.status}`
-      );
+      const getResp = await fetch(url, { headers: await s3Auth("GET") });
+      assert.strictEqual(getResp.status, 404, `GET after DELETE should 404, got ${getResp.status}`);
     },
   });
 
@@ -209,7 +209,7 @@ async function main() {
     fn: async () => {
       const binary = randomBytes(512);
       const nonce = await currentRelayBlock(api);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary, nonce);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, binary, nonce, client);
       const downloaded = await downloadChunk(PROVIDER_URL, hash);
       assert.deepStrictEqual(new Uint8Array(downloaded), binary, "Binary roundtrip should match");
     },
@@ -220,8 +220,8 @@ async function main() {
     fn: async () => {
       const data = "duplicate content for e2e";
       const nonce = await currentRelayBlock(api);
-      const first = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
-      const second = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const first = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
+      const second = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
       assert.strictEqual(first.hash, second.hash, "Same data should produce same hash");
       assert.notStrictEqual(
         first.commit.leaf_indices[0],
@@ -238,7 +238,7 @@ async function main() {
       const bytes = new TextEncoder().encode(data);
       const expectedHash = toHex(blake2b256(bytes));
       const nonce = await currentRelayBlock(api);
-      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce);
+      const { hash } = await uploadChunk(PROVIDER_URL, bucketId, data, nonce, client);
       assert.strictEqual(hash, expectedHash, "Provider hash should match local blake2-256");
     },
   });
