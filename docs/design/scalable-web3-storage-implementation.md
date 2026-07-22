@@ -169,24 +169,6 @@ pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> {
     #[pallet::constant]
     type RequestTimeout: Get<BlockNumberFor<Self>>;
 
-    /// Default interval between provider-initiated checkpoint windows.
-    #[pallet::constant]
-    type DefaultCheckpointInterval: Get<BlockNumberFor<Self>>;
-
-    /// Default grace period (in blocks) for the elected leader before any
-    /// primary provider may submit the checkpoint as a fallback.
-    #[pallet::constant]
-    type DefaultCheckpointGrace: Get<BlockNumberFor<Self>>;
-
-    /// Reward paid (from the per-bucket checkpoint pool) to the submitter
-    /// of a provider-initiated checkpoint.
-    #[pallet::constant]
-    type CheckpointReward: Get<BalanceOf<Self>>;
-
-    /// Penalty slashed from a leader's stake if they miss their window.
-    #[pallet::constant]
-    type CheckpointMissPenalty: Get<BalanceOf<Self>>;
-
     /// Maximum number of buckets a single account can be a member of
     /// (bounds the per-account reverse index).
     #[pallet::constant]
@@ -235,10 +217,6 @@ parachain `HOURS`:
 | `ChallengeTimeout` | `48 * RC_HOURS` |
 | `SettlementTimeout` | `24 * RC_HOURS` |
 | `RequestTimeout` | `6 * RC_HOURS` |
-| `DefaultCheckpointInterval` | `100` anchor blocks (~10 min) |
-| `DefaultCheckpointGrace` | `20` anchor blocks (~2 min) |
-| `CheckpointReward` | `1_000_000_000_000` (1 token) |
-| `CheckpointMissPenalty` | `500_000_000_000` (0.5 token) |
 | `MaxBucketsPerMember` | `1_000` |
 | `DeregisterAnnouncementPeriod` | `54 * RC_HOURS` (48h challenge window + 6h grace) |
 | `MaxChallengesPerDeadline` | `1_000` |
@@ -574,54 +552,6 @@ pub struct Challenge<T: Config> {
     pub deposit: BalanceOf<T>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Provider-initiated checkpoint storage
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Per-bucket checkpoint window configuration.
-/// `None` means the bucket uses `T::DefaultCheckpointInterval` /
-/// `T::DefaultCheckpointGrace` and provider-initiated checkpoints are off.
-#[pallet::storage]
-pub type CheckpointConfigs<T: Config> = StorageMap<
-    _,
-    Blake2_128Concat,
-    BucketId,
-    CheckpointWindowConfig<BlockNumberFor<T>>,
->;
-
-pub struct CheckpointWindowConfig<BlockNumber> {
-    /// Blocks between checkpoint windows (e.g., 100 ≈ 10 minutes)
-    pub interval: BlockNumber,
-    /// Grace period reserved for the elected leader (e.g., 20 blocks)
-    pub grace_period: BlockNumber,
-    /// Whether provider-initiated checkpoints are enabled for this bucket
-    pub enabled: bool,
-}
-
-/// Last successful checkpoint window per bucket. `None` = none yet.
-/// Prevents both re-submission and re-reporting of the same window.
-#[pallet::storage]
-pub type LastCheckpointWindow<T: Config> =
-    StorageMap<_, Blake2_128Concat, BucketId, u64, OptionQuery>;
-
-/// Pending checkpoint rewards per (provider, bucket).
-/// Provider-first key order so a provider's pending rewards can be drained
-/// on `complete_deregister` without scanning every bucket.
-#[pallet::storage]
-pub type CheckpointRewards<T: Config> = StorageDoubleMap<
-    _,
-    Blake2_128Concat, T::AccountId,
-    Blake2_128Concat, BucketId,
-    BalanceOf<T>,
-    ValueQuery,
->;
-
-/// Per-bucket reward pool used to pay providers for submitting checkpoints.
-/// Funded permissionlessly via `fund_checkpoint_pool`.
-#[pallet::storage]
-pub type CheckpointPool<T: Config> =
-    StorageMap<_, Blake2_128Concat, BucketId, BalanceOf<T>, ValueQuery>;
-
 /// Reverse index: account → bucket IDs they are a member of.
 /// Bounded by `T::MaxBucketsPerMember` to keep iteration costs predictable.
 #[pallet::storage]
@@ -641,7 +571,7 @@ Sr25519/Ed25519, 33 bytes for compressed Ecdsa). All on-chain signature
 verification uses `sp_runtime::MultiSignature` against this key, so a single
 provider can use any of the supported schemes.
 
-Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
+Two on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
 `version: u8` so the protocol can evolve without breaking existing signatures):
 
 - `CommitmentPayload { version, bucket_id, commitment, nonce }` — what
@@ -650,9 +580,6 @@ Three on-chain signed payloads exist (all SCALE-encoded, all carry an explicit
   Structures](#data-structures)). For `challenge_offchain` the challenger
   passes the signed `commitment` through unchanged so the pallet's payload
   reconstruction matches the signature.
-- `CheckpointProposal { version, bucket_id, commitment, window }` —
-  what providers sign for `provider_checkpoint`. The `window` field prevents
-  cross-window replay.
 - The replica sync `roots` array (`[Option<H256>; 7]`) — signed for
   `confirm_replica_sync` to attest which roots the replica actually has.
 
@@ -865,47 +792,6 @@ pub enum Event<T: Config> {
         slashed_amount: BalanceOf<T>,
     },
 
-    // ─────────────────────────────────────────────────────────────
-    // Provider-initiated checkpoint events
-    // ─────────────────────────────────────────────────────────────
-
-    /// A primary provider successfully submitted a checkpoint for a window.
-    /// `signers` lists every primary that contributed a valid signature;
-    /// `reward` is what was actually drawn from the pool (zero if empty).
-    ProviderCheckpointSubmitted {
-        bucket_id: BucketId,
-        mmr_root: H256,
-        window: u64,
-        leader: T::AccountId,
-        signers: Vec<T::AccountId>,
-        reward: BalanceOf<T>,
-    },
-    /// Admin updated this bucket's checkpoint window config.
-    CheckpointConfigUpdated {
-        bucket_id: BucketId,
-        interval: BlockNumberFor<T>,
-        grace_period: BlockNumberFor<T>,
-        enabled: bool,
-    },
-    /// A leader was penalised for missing their window. Reporter received 10%.
-    CheckpointMissPenalized {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        window: u64,
-        penalty: BalanceOf<T>,
-    },
-    /// Provider drained accumulated rewards for a bucket.
-    CheckpointRewardClaimed {
-        bucket_id: BucketId,
-        provider: T::AccountId,
-        amount: BalanceOf<T>,
-    },
-    /// Funder added balance to a bucket's checkpoint reward pool.
-    CheckpointPoolFunded {
-        bucket_id: BucketId,
-        funder: T::AccountId,
-        amount: BalanceOf<T>,
-    },
 }
 ```
 
@@ -1030,9 +916,8 @@ impl<T: Config> Pallet<T> {
     /// Finalise a previously-announced deregistration (step 2 of 2).
     ///
     /// Callable once `T::DeregisterAnnouncementPeriod` has elapsed since
-    /// `deregister_provider`. Drains pending `CheckpointRewards` for this
-    /// provider into their free balance, unreserves the remaining stake,
-    /// and removes the provider record. Still requires `committed_bytes == 0`.
+    /// `deregister_provider`. Unreserves the remaining stake and removes the
+    /// provider record. Still requires `committed_bytes == 0`.
     #[pallet::weight(...)]
     pub fn complete_deregister(origin: OriginFor<T>) -> DispatchResult;
 
@@ -1438,96 +1323,6 @@ impl<T: Config> Pallet<T> {
         origin: OriginFor<T>,
         bucket_id: BucketId,
         additional_signatures: BoundedVec<(T::AccountId, Signature), T::MaxPrimaryProviders>,
-    ) -> DispatchResult;
-
-    // ─────────────────────────────────────────────────────────────
-    // Provider-initiated checkpoints (window-based)
-    // ─────────────────────────────────────────────────────────────
-    //
-    // Lets primary providers autonomously checkpoint on a schedule without
-    // requiring the client to be online. Blocks are divided into windows of
-    // length `config.interval`; for each window a deterministic leader is
-    // elected from `primary_providers` by hashing `(bucket_id, window)`.
-    //
-    //   window n            window n+1
-    //   ├── grace ──┤───── fallback ─────┤
-    //
-    // - During the grace period (`config.grace_period` blocks at the start),
-    //   ONLY the elected leader may submit via `provider_checkpoint`.
-    // - After the grace period, any primary provider may submit (fallback).
-    // - If the window closes with no submission, anyone can call
-    //   `report_missed_checkpoint` to slash the leader's stake.
-
-    /// Submit a checkpoint for the current window (provider-initiated).
-    ///
-    /// Caller must be the elected leader during the grace period, or any
-    /// primary provider afterwards. Signatures cover a `CheckpointProposal`
-    /// (including the `window` field, which prevents cross-window replay).
-    /// Must collect at least `bucket.min_providers` valid signatures.
-    ///
-    /// On success: snapshot is updated, `LastCheckpointWindow` is set to
-    /// `window`, historical roots are rotated, and the submitter accrues
-    /// `T::CheckpointReward` from the bucket's `CheckpointPool` (or zero if
-    /// the pool is empty — the checkpoint is still valid).
-    #[pallet::weight(...)]
-    pub fn provider_checkpoint(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        commitment: Commitment,
-        window: u64,
-        signatures: BoundedVec<
-            (T::AccountId, MultiSignature),
-            T::MaxPrimaryProviders,
-        >,
-    ) -> DispatchResult;
-
-    /// Configure provider-initiated checkpoint windows for a bucket (admin only).
-    ///
-    /// Setting `enabled: false` disables provider-initiated checkpoints
-    /// (client-initiated `checkpoint` still works). When unset, the bucket
-    /// uses `T::DefaultCheckpointInterval` / `T::DefaultCheckpointGrace`.
-    #[pallet::weight(...)]
-    pub fn configure_checkpoint_window(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        interval: BlockNumberFor<T>,
-        grace_period: BlockNumberFor<T>,
-        enabled: bool,
-    ) -> DispatchResult;
-
-    /// Report a missed checkpoint window and penalise the leader.
-    ///
-    /// Permissionless. Callable only after the window has fully passed (past
-    /// its grace period) and no checkpoint was submitted. The leader for
-    /// `window` is slashed by `T::CheckpointMissPenalty` (from reserved
-    /// stake), the reporter receives 10% of the actual slash, and
-    /// `LastCheckpointWindow` is bumped to `window` to prevent re-reporting.
-    #[pallet::weight(...)]
-    pub fn report_missed_checkpoint(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        window: u64,
-    ) -> DispatchResult;
-
-    /// Claim accumulated checkpoint rewards for a bucket.
-    ///
-    /// Drains `CheckpointRewards[(caller, bucket_id)]` into the caller's free
-    /// balance. Provider-keyed map layout means a provider can claim across
-    /// many buckets cheaply, and `complete_deregister` drains everything in
-    /// one pass.
-    #[pallet::weight(...)]
-    pub fn claim_checkpoint_rewards(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-    ) -> DispatchResult;
-
-    /// Fund a bucket's checkpoint reward pool. Permissionless — anyone can
-    /// top up. Reserves `amount` from the caller into `CheckpointPool`.
-    #[pallet::weight(...)]
-    pub fn fund_checkpoint_pool(
-        origin: OriginFor<T>,
-        bucket_id: BucketId,
-        amount: BalanceOf<T>,
     ) -> DispatchResult;
 
     // ─────────────────────────────────────────────────────────────
@@ -2230,7 +2025,7 @@ confirm using an older historical root they successfully synced to.
 
 `Commitment` groups the `(mmr_root, start_seq, leaf_count)` triplet that
 identifies an MMR commitment over a contiguous range of leaves. It is a field
-group inside `CommitmentPayload`, `CheckpointProposal`, and `BucketSnapshot`,
+group inside `CommitmentPayload` and `BucketSnapshot`,
 and the single argument the checkpoint/challenge extrinsics take in place of
 three loose fields.
 
@@ -2277,14 +2072,6 @@ pub struct CommitmentPayload {
     /// Replay-protection nonce — the anchor (relay-chain) block number at the
     /// time the signer signed. Checked against `current_anchor_block()`.
     pub nonce: u64,
-}
-
-pub struct CheckpointProposal {
-    pub version: u8,            // CURRENT_VERSION = 1
-    pub bucket_id: BucketId,
-    pub commitment: Commitment,
-    /// Window number this proposal is for — prevents cross-window replay.
-    pub window: u64,
 }
 ```
 
