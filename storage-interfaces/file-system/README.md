@@ -30,7 +30,7 @@ let data = fs_client.download_file(drive_id, "/report.pdf").await?;
 `create_drive` allocates the underlying Layer-0 bucket, requests storage
 agreements with providers, and stamps the drive's initial empty root CID
 on-chain. `min_providers` defaults to 3 for periods >1000 blocks and 1
-otherwise. Examples in `examples/`.
+otherwise. Examples in `client/examples/`.
 
 ## Components
 
