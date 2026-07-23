@@ -194,6 +194,7 @@ Two types of nodes work together:
 web3-storage/
 ├── crates/
 │   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
+│   ├── primitives/         # Shared types: storage, file-system, s3
 │   └── storage-subxt/      # Static subxt runtime bindings
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain HTTP storage server
