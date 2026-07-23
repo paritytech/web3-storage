@@ -246,7 +246,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 
 **Primitives (`crates/primitives/storage/`)**: Shared types used across pallet, provider node, and client.
 
-**Smart Contracts (`precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/drafts/smart-contracts.md](docs/drafts/smart-contracts.md).
+**Smart Contracts (`crates/pallets/*/precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/drafts/smart-contracts.md](docs/drafts/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 

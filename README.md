@@ -194,6 +194,7 @@ Two types of nodes work together:
 web3-storage/
 ├── crates/
 │   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
+│   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
 │   ├── primitives/         # Shared types: storage, file-system, s3
 │   └── storage-subxt/      # Static subxt runtime bindings
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
@@ -201,7 +202,6 @@ web3-storage/
 ├── provider/               # provider-negotiation: off-chain client<->provider wire protocol crate
 ├── client/                 # Layer 0 Rust client SDK
 ├── storage-interfaces/     # Layer 1 interfaces: file-system, s3
-├── precompiles/            # pallet_revive precompiles: storage-provider, drive-registry, s3-registry
 ├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
