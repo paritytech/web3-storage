@@ -6,6 +6,7 @@ members = [
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
 	"crates/storage-subxt",
+	"crates/utils/storage-indexers",
 	"primitives",
 	"provider-node",
 	"provider/negotiation",
@@ -40,6 +41,7 @@ pallet-storage-provider = { path = "crates/pallets/storage-provider", default-fe
 pallet-storage-provider-precompile = { path = "precompiles/storage-provider-precompile", default-features = false }
 provider-negotiation = { path = "provider/negotiation" }
 storage-client = { path = "client" }
+storage-indexers = { path = "crates/utils/storage-indexers" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "primitives", default-features = false }
 storage-provider-node = { path = "provider-node" }
