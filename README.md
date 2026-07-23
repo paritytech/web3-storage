@@ -191,18 +191,23 @@ Two types of nodes work together:
 ## Project Structure
 
 ```
-scalable-web3-storage/
-├── crates/pallets/       # FRAME pallets (on-chain logic)
-├── runtimes/             # Parachain runtimes (web3-storage-local, web3-storage-paseo)
-├── provider-node/        # Off-chain storage server (HTTP API)
-├── client/               # Client SDK for applications
-├── crates/primitives/    # Shared primitives crates (storage, file-system, s3)
-├── scripts/              # Helper scripts
-└── docs/                 # Documentation
-    ├── getting-started/  # Quick start guides
-    ├── testing/          # Testing procedures
-    ├── reference/        # API references
-    └── design/           # Architecture docs
+web3-storage/
+├── crates/
+│   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
+│   └── storage-subxt/      # Static subxt runtime bindings
+├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
+├── provider-node/          # Off-chain HTTP storage server
+├── provider/               # provider-negotiation: off-chain client<->provider wire protocol crate
+├── client/                 # Layer 0 Rust client SDK
+├── storage-interfaces/     # Layer 1 interfaces: file-system, s3
+├── precompiles/            # pallet_revive precompiles: storage-provider, drive-registry, s3-registry
+├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
+├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared
+├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
+├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
+├── chain-specs/            # Chain specification files
+├── zombienet/              # Local relay+parachain network config (with zombienet.toml at root)
+└── docs/                   # getting-started, reference, design (review-gated), drafts, filesystems
 ```
 
 ## Development
