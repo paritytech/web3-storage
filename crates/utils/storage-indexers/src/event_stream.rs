@@ -18,10 +18,15 @@ use subxt::utils::H256;
 use subxt::{OnlineClient, PolkadotConfig};
 use tokio::sync::mpsc;
 
-/// First delay after a failed re-subscription attempt.
+/// Roughly a few blocks' worth of events; decoded events can be large
+/// (BoundedVec payloads), so keep the buffer modest and let `send().await`
+/// backpressure a slow consumer.
+const CHANNEL_CAPACITY: usize = 256;
+
+/// First delay once the subscription stops delivering.
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
-/// Ceiling for the exponential backoff between re-subscription attempts.
+/// Ceiling for the exponential backoff.
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 /// The `pallet-storage-provider` pallet (Layer 0 raw storage).
@@ -43,8 +48,11 @@ pub const STORAGE_PALLETS: [&str; 3] = [
 /// A decoded runtime event together with the block it was emitted in.
 #[derive(Clone, Debug)]
 pub struct BlockEvent {
+    /// Hash of the finalized block the event was emitted in.
     pub block_hash: H256,
-    pub block_number: u32,
+    /// Number of the finalized block the event was emitted in.
+    pub block_number: u64,
+    /// The decoded runtime event.
     pub event: storage_subxt::api::Event,
 }
 
@@ -64,6 +72,15 @@ pub struct EventFilter {
     /// Pallet names to decode; `None` = all pallets.
     pallets: Option<HashSet<&'static str>>,
     predicate: Option<Predicate>,
+}
+
+impl std::fmt::Debug for EventFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventFilter")
+            .field("pallets", &self.pallets)
+            .field("predicate", &self.predicate.is_some())
+            .finish()
+    }
 }
 
 impl EventFilter {
@@ -146,10 +163,11 @@ impl EventFilter {
 /// # Resilience
 ///
 /// The stream connects over a reconnecting WebSocket transport, and if the
-/// block subscription itself ends it is re-established with capped exponential
-/// backoff (1s doubling to 30s). Events from blocks finalized while the
-/// connection is down are NOT backfilled — after a reconnect the stream
-/// resumes from the node's current finalized head.
+/// block subscription itself stops delivering it is re-established with capped
+/// exponential backoff (1s doubling to 30s, reset once blocks flow again).
+/// Events from blocks finalized while the connection is down are NOT
+/// backfilled — after a reconnect the stream resumes from the node's current
+/// finalized head.
 ///
 /// # Example
 ///
@@ -169,6 +187,7 @@ impl EventFilter {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug)]
 pub struct EventStream {
     rx: mpsc::Receiver<BlockEvent>,
     task_handle: tokio::task::JoinHandle<()>,
@@ -181,39 +200,49 @@ impl EventStream {
         let api = OnlineClient::<PolkadotConfig>::from_rpc_client(RpcClient::new(rpc)).await?;
         let mut block_sub = api.stream_blocks().await?;
 
-        let (tx, rx) = mpsc::channel::<BlockEvent>(1000);
+        let (tx, rx) = mpsc::channel::<BlockEvent>(CHANNEL_CAPACITY);
 
         let task_handle = tokio::spawn(async move {
+            // Throttles every non-delivery path below; reset only when a block
+            // actually arrives, so a flapping connection keeps escalating
+            // instead of hot-looping on instantly-succeeding re-subscribes.
+            let mut backoff = INITIAL_BACKOFF;
             loop {
                 let block = match block_sub.next().await {
-                    Some(Ok(block)) => block,
+                    Some(Ok(block)) => {
+                        backoff = INITIAL_BACKOFF;
+                        block
+                    }
                     // Transient item error (e.g. a reconnect notice from the
-                    // transport); the subscription itself is still alive.
+                    // transport); the subscription itself is still alive, but
+                    // throttle so persistent errors cannot spin.
                     Some(Err(e)) => {
                         tracing::warn!("Block subscription error: {e}");
+                        tokio::select! {
+                            // Consumer gone: stop.
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(backoff) => {}
+                        }
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
                         continue;
                     }
                     // Subscription ended (typically connection loss) →
-                    // re-subscribe with capped exponential backoff. The
-                    // transport reconnects on its own; this re-establishes the
-                    // subscription on top of it.
+                    // re-subscribe. The transport reconnects on its own; this
+                    // re-establishes the subscription on top of it.
                     None => {
-                        tracing::warn!("Block subscription ended; re-subscribing");
-                        let mut backoff = INITIAL_BACKOFF;
+                        tracing::warn!("Block subscription ended; re-subscribing in {backoff:?}");
                         block_sub = loop {
+                            tokio::select! {
+                                // Consumer gone: stop retrying.
+                                _ = tx.closed() => return,
+                                _ = tokio::time::sleep(backoff) => {}
+                            }
+                            backoff = (backoff * 2).min(MAX_BACKOFF);
                             match api.stream_blocks().await {
                                 Ok(sub) => break sub,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Re-subscribe failed: {e}; retrying in {backoff:?}"
-                                    );
-                                    tokio::select! {
-                                        // Consumer gone: stop retrying.
-                                        _ = tx.closed() => return,
-                                        _ = tokio::time::sleep(backoff) => {}
-                                    }
-                                    backoff = (backoff * 2).min(MAX_BACKOFF);
-                                }
+                                Err(e) => tracing::warn!(
+                                    "Re-subscribe failed: {e}; retrying in {backoff:?}"
+                                ),
                             }
                         };
                         continue;
@@ -221,16 +250,19 @@ impl EventStream {
                 };
 
                 let block_hash = block.hash();
-                let block_number = block.number() as u32;
+                let block_number = block.number();
 
-                let at = match block.at().await {
-                    Ok(at) => at,
+                let block_ref = match block.at().await {
+                    Ok(block_ref) => block_ref,
                     Err(e) => {
                         tracing::warn!("Failed to access block {block_number}: {e}");
                         continue;
                     }
                 };
-                let events = match at.events().fetch().await {
+                // Response size is bounded by the RPC client's max response
+                // size (jsonrpsee default), so a malicious node cannot feed us
+                // an arbitrarily large events blob.
+                let events = match block_ref.events().fetch().await {
                     Ok(events) => events,
                     Err(e) => {
                         tracing::warn!("Failed to get events for block {block_number}: {e}");
@@ -252,8 +284,10 @@ impl EventStream {
                     let decoded = match event.decode_as::<storage_subxt::api::Event>() {
                         Ok(decoded) => decoded,
                         Err(e) => {
+                            // {:?} escapes control characters in these
+                            // node-supplied names, preventing log injection.
                             tracing::warn!(
-                                "Failed to decode {}.{}: {e}",
+                                "Failed to decode {:?}.{:?}: {e}",
                                 event.pallet_name(),
                                 event.event_name()
                             );
@@ -265,8 +299,11 @@ impl EventStream {
                         block_number,
                         event: decoded,
                     };
+                    if !filter.matches_event(&block_event) {
+                        continue;
+                    }
                     // Receiver dropped → consumer is gone, stop streaming.
-                    if filter.matches_event(&block_event) && tx.send(block_event).await.is_err() {
+                    if tx.send(block_event).await.is_err() {
                         return;
                     }
                 }
