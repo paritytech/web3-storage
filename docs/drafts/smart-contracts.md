@@ -2,7 +2,7 @@
 
 Web3-storage exposes its client-side surface to Solidity / PolkaVM contracts via `pallet_revive` and two custom precompiles. A dApp can buy storage on behalf of its users, end agreements, or stitch the storage pallets into larger on-chain workflows — without ever signing a substrate-native extrinsic.
 
-This document covers the **on-chain shape** of that integration. For the example dApp, see [`examples/contracts/`](../../examples/contracts/README.md); for the test driver, see [`examples/papi/sc-flow.js`](../../examples/papi/sc-flow.js).
+This document covers the **on-chain shape** of that integration. For the example dApp, see [`examples/contracts/`](../../examples/contracts/README.md); for the test driver, see [`examples/papi/sc-flow.ts`](../../examples/papi/sc-flow.ts).
 
 ## Architecture
 
@@ -120,7 +120,7 @@ For extrinsics with parameterized weights (e.g. `end_agreement(a: u32)`), we pas
 
 Four scripts cover the surface end-to-end:
 
-- **`just sc-demo`** (`examples/papi/sc-flow.js`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
+- **`just sc-demo`** (`examples/papi/sc-flow.ts`) — full marketplace dApp story via `StorageMarketplace.sol`: deploy, `buyStorage` with `msg.value`, off-chain upload/challenge round-trip, `endMyAgreement`. Asserts provider earned tokens + contract events fired.
 - **`just sc-coverage`** (`examples/papi/sc-coverage.js`) — direct precompile invocations (no intermediate contract) for every selector across all three precompiles. Each call submits as a signed substrate tx whose `dest` is the precompile address; on success, the script asserts the underlying pallet's storage / event was updated.
 - **`just sc-team-drive`** (`examples/papi/sc-team-drive.js`) — drive-registry dApp via `SharedTeamDrive.sol`: deploy, `createTeam`, `invite` / `kick`, `disband`.
 - **`just sc-token-gated`** (`examples/papi/sc-token-gated.js`) — s3-registry dApp via `TokenGatedDrive.sol`: deploy, `initialize`, `mint` an NFT-shaped access token per S3 object, `transfer`, `burn` (deletes object metadata), `shutdown`.

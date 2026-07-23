@@ -26,14 +26,6 @@ thiserror = { workspace = true, optional = true }
 [build-dependencies]
 prost-build = { workspace = true }
 
-[[example]]
-name = "basic_usage"
-path = "../examples/basic_usage.rs"
-
-[[example]]
-name = "pallet_interaction"
-path = "../examples/pallet_interaction.rs"
-
 [features]
 default = ["std"]
 std = [

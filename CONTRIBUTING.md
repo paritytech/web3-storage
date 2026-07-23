@@ -62,7 +62,7 @@ This repository is dual-licensed. The license that applies depends on the crate:
 | License | Crates |
 |---------|--------|
 | [GPL-3.0-only](LICENSE-GPL3) | `runtimes/`, `provider-node/`, `user-interfaces/` |
-| [Apache-2.0](LICENSE-APACHE2) | `crates/pallets/` (pallets and their precompiles), `primitives/`, `client/`, `storage-interfaces/` |
+| [Apache-2.0](LICENSE-APACHE2) | `crates/pallets/` (pallets and their precompiles), `crates/primitives/`, `client/`, `storage-interfaces/` |
 
 Each crate declares its applicable license in its `Cargo.toml` or
 `package.json`.
