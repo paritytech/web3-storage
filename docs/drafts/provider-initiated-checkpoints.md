@@ -8,10 +8,11 @@
 > review-gated `docs/design/` in #305, and the entire implementation (pallet
 > extrinsics/storage/events, provider-node coordinator + HTTP endpoints, SDK
 > wrappers, UI panels) was removed for #306. This document is the archive:
-> the original (unvalidated) design below, plus an
-> [Implementation Archive](#implementation-archive-code-removed-in-306) of the
-> removed code, so the feature can be re-evaluated and re-implemented later if
-> a validated rationale emerges. The "Problem Statement" / "Why" reasoning
+> the original (unvalidated) design below, an
+> [as-shipped specification + re-implementation guide](#re-implementation-guide-as-shipped-specification),
+> and an [Implementation Archive](#implementation-archive-code-removed-in-306)
+> of the removed code, so the feature can be re-evaluated and re-implemented
+> later if a validated rationale emerges. The "Problem Statement" / "Why" reasoning
 > below has **not** been validated — treat with skepticism.
 
 ## Problem Statement
@@ -871,6 +872,194 @@ Provider-initiated checkpoints solve the "always online" problem by:
 5. **Same security guarantees**: Multi-provider consensus prevents cheating
 
 This enables true decentralization where mobile apps and regular consumers can use the storage system without running their own infrastructure.
+
+---
+
+# Re-implementation Guide (as-shipped specification)
+
+The "Detailed Design" above is the **original proposal** and drifted from what
+was actually built (different extrinsic set, no separate `fallback_checkpoint`,
+different storage names, different HTTP endpoints). This section is the
+**normative spec of the implementation as it shipped**, plus the defects to fix
+if it is rebuilt. Read this first; use the
+[Implementation Archive](#implementation-archive-code-removed-in-306) below for
+the verbatim code and the removed-test behavior tables.
+
+> **Precondition (from #306):** do not re-implement until the rationale is
+> re-evaluated and reviewed — the "Why" above was never validated. A reviewed
+> design must move back into `docs/design/` (review-gated) first.
+
+## On-chain specification
+
+**Clock.** Every duration below is in **anchor (relay-chain) blocks** read via
+`Config::BlockNumberProvider` (`current_anchor_block()`), never the parachain
+height — see the repo-wide `BlockNumberFor` = anchor-clock convention.
+
+**Types** (`crates/primitives/storage/src/lib.rs`):
+
+- `CheckpointWindowConfig<BlockNumber> { interval, grace_period, enabled }`
+- `CheckpointProposal { version: u8 = 1, bucket_id, commitment: Commitment, window: u64 }`
+  — the **signed payload is the SCALE encoding of this struct**; `window`
+  provides replay protection across windows. Providers sign with the sr25519
+  key registered as their on-chain `public_key`.
+
+**Window / leader math** (pallet helpers, archived below):
+
+```text
+window(b)        = b / interval          (0 when interval == 0)
+window_start(w)  = w * interval
+grace_end(w)     = window_start(w) + grace_period   (inclusive)
+leader_index     = u32::from_le(blake2_256(bucket_id.to_le_bytes(8) || window.to_le_bytes(8))[0..4]) % num_primary_providers
+```
+
+Config per bucket comes from `CheckpointConfigs`, falling back to the runtime
+defaults with `enabled: true` — i.e. **the feature was on by default for every
+bucket**; reconsider that default at re-evaluation time.
+
+**Config constants** (both runtimes): `DefaultCheckpointInterval = 100` anchor
+blocks (~10 min), `DefaultCheckpointGrace = 20` (~2 min),
+`CheckpointReward = 1` token, `CheckpointMissPenalty = 0.5` token (reporter
+bounty = 10% of the penalty actually slashed).
+
+**Storage:** `CheckpointConfigs: Map<BucketId → CheckpointWindowConfig>`,
+`LastCheckpointWindow: Map<BucketId → u64>` (`None` = never checkpointed),
+`CheckpointRewards: DoubleMap<(AccountId, BucketId) → Balance>` —
+**provider-first key order** so `complete_deregister` can drain via
+`iter_prefix(&provider)` — and `CheckpointPool: Map<BucketId → Balance>`.
+
+**Extrinsics** (shipped at call indices 32–36; re-check free indices when
+re-adding):
+
+1. `provider_checkpoint(bucket_id, commitment, window, signatures: BoundedVec<(AccountId, MultiSignature), MaxPrimaryProviders>)`
+   — validation order: config `enabled`; `window == window(now)`;
+   `window > LastCheckpointWindow` (else `CheckpointAlreadySubmitted`); bucket
+   exists; `num_primary_providers > 0`; **during grace only the elected leader
+   may submit, after grace any primary provider** (fallback is built in — there
+   is no separate `fallback_checkpoint` extrinsic); frozen constraint
+   `start_seq >= frozen_start_seq`; every signature verifies over
+   `SCALE(CheckpointProposal)` and each signer is a primary provider (bitfield
+   built into `primary_signers`); `signing_count >= bucket.min_providers`.
+   Effects: update historical roots; replace `bucket.snapshot` with
+   `commitment_nonce: 0` (**deliberate**: provider checkpoints sign
+   `CheckpointProposal`, not `CommitmentPayload`, so `extend_checkpoint`'s
+   late-signature flow does not apply to them); bump `total_snapshots`; set
+   `LastCheckpointWindow = window`; if `CheckpointPool >= CheckpointReward`,
+   decrement the pool and credit `CheckpointRewards[submitter][bucket]`
+   (claimed later), else the checkpoint succeeds with reward 0. Emits
+   `ProviderCheckpointSubmitted { bucket_id, mmr_root, window, leader: submitter, signers, reward }`.
+2. `configure_checkpoint_window(bucket_id, interval, grace_period, enabled)` —
+   bucket admin only; `enabled = false` disables the provider-initiated path
+   (client-initiated `checkpoint` is unaffected).
+3. `report_missed_checkpoint(bucket_id, window)` — permissionless. Requires
+   `window < window(now)`, `window > LastCheckpointWindow`,
+   `now > window_start(window + 1)` (grace fully elapsed). Slashes the
+   **elected leader of that window** by `CheckpointMissPenalty` via
+   `slash_reserved`, pays the reporter 10% of the actually-slashed amount,
+   decrements `ProviderInfo.stake`, and sets `LastCheckpointWindow = window`
+   to prevent re-reporting.
+4. `claim_checkpoint_rewards(bucket_id)` — `take`s the caller's accumulated
+   `CheckpointRewards` entry into free balance (`NoRewardsToClaim` when zero).
+5. `fund_checkpoint_pool(bucket_id, amount)` — permissionless top-up.
+
+**Interaction with provider exit:** `complete_deregister` must drain the
+provider's pending `CheckpointRewards` (all buckets, via `iter_prefix`) into
+free balance before unreserving stake; its benchmark seeded
+`MaxBucketsPerMember` entries to price the drain.
+
+## Known defects in the shipped implementation — fix these if rebuilding
+
+1. **Funds handling is unsound.** `fund_checkpoint_pool` only
+   `reserve`s on the funder and bumps a counter; the reserve is never
+   transferred or released. Rewards (`claim_checkpoint_rewards`,
+   the `complete_deregister` drain) and the reporter bounty are paid with
+   `T::Currency::deposit_creating`, i.e. **minted from nothing** while the
+   funder's reserve stays locked forever. Re-implementation should hold the
+   pool in a real (pallet sub-)account and pay by transfer.
+2. **Miss penalty diverges from the design.** The proposal penalized all
+   providers of the bucket; shipped code slashes only the elected leader.
+   Also `report_missed_checkpoint` sets `LastCheckpointWindow = window`, which
+   silently blocks reporting *older* missed windows and blocks a late (still
+   valid at head) submission for that window.
+3. **Coordinator was a skeleton.** `get_active_checkpoint_duties()` returned
+   `[]` (the chain query for "buckets where I am primary and checkpoints are
+   enabled" was a TODO), so the poll loop never did anything —
+   only the operator-triggered `/checkpoint/trigger` path worked;
+   `is_leader` was hard-coded `true` for forced duties (no node-side leader
+   election); `peer_endpoints` was always empty (peer discovery
+   unimplemented, so multi-provider signature collection never ran);
+   the signature threshold was hard-coded `min_required = 1` instead of
+   reading `bucket.min_providers`; `fetch_checkpoint_config` fell back to
+   literal `(100, 20)` instead of the runtime constants; submission waited
+   for finalization (slow for a 6 s poll loop).
+4. **Dead errors.** `CheckpointWindowNotStarted`, `NoMissedCheckpoint` and
+   `InsufficientCheckpointPool` were declared but never returned.
+5. **Weights.** `provider_checkpoint` was `Linear<1, 5>` over signature count
+   (`MaxPrimaryProviders = 5`); re-benchmark everything, including
+   `complete_deregister` (its current weight still prices the removed drain).
+
+## Off-chain specification (provider node)
+
+Module `provider-node/src/checkpoint_coordinator.rs` (full code archived
+below): a tokio background service created in `command.rs` behind
+`--enable-checkpoint-coordinator` / `ENABLE_CHECKPOINT_COORDINATOR` (requires
+`--keyfile` + reachable chain), polling every 6 s, controlled via
+`CoordinatorCommand::{Stop, Pause, Resume, ForceCheckpoint(bucket)}` over an
+mpsc channel that `ProviderState.checkpoint_cmd_tx` exposes to the HTTP layer.
+Flow per duty: build `CheckpointProposal` from local storage state → sign
+locally → `POST /checkpoint/sign` to each peer → submit `provider_checkpoint`
+through `CheckpointChainClient` (implemented on `SubxtChainClient` with a
+dynamic tx). HTTP surface (wire formats in
+[Implemented HTTP API (as shipped)](#implemented-http-api-as-shipped)):
+
+- `POST /checkpoint/sign` — unauthenticated peer endpoint; verifies the
+  proposal against local `(mmr_root, start_seq, leaf_count)`, returns
+  `{signer, signature, agreed, local_mmr_root}`; empty signature +
+  `agreed: false` on divergence; 503 `signing_unavailable` without a key.
+- `GET /checkpoint/duty?bucket_id=` — local readiness
+  (`ready = leaf_count > 0`) + current commitment fields.
+- `POST /checkpoint/trigger?bucket_id=` — **Writer-authenticated**; sends
+  `ForceCheckpoint` to the coordinator; 500 if the coordinator isn't running.
+
+## Client surface to restore
+
+- `packages/layer0`: tx wrappers `configureCheckpointWindow`,
+  `fundCheckpointPool`, `submitProviderCheckpoint`, `claimCheckpointRewards`,
+  `reportMissedCheckpoint` (each `submitTx` + `requireOneEvent` on its event);
+  HTTP helpers `fetchCheckpointDuty`, `signCheckpointProposal`.
+- `packages/layer1`: `getCheckpointDuty` / `triggerCheckpoint` +
+  `CheckpointDuty` type (consumed by drive-ui/s3-ui checkpoint panels).
+- UIs: provider dashboard bucket detail (config / pool / pending reward /
+  overdue flag, where `overdue = expected_window > last_window + 1` on the
+  anchor clock); drive-ui + s3-ui duty display + trigger button.
+- Example `examples/papi/checkpoint-missed.ts` (+ `just papi-checkpoint-missed`)
+  exercising the miss-report slashing path end-to-end.
+
+## Re-implementation order
+
+1. `crates/primitives/storage`: re-add the two types.
+2. `crates/pallets/storage-provider`: Config items → storage → events/errors →
+   helpers (`impls/checkpoints.rs`) → the five extrinsics → the
+   `complete_deregister` drain → `mock.rs` config (10/5/10/50 test values) →
+   unit tests (behavior tables below) → benchmarks.
+3. Mocks in `drive-registry` / `s3-registry` (`100/20/1e12/5e11`) and both
+   runtimes' `storage.rs` (constants + Config wiring; paseo uses
+   `pub storage`).
+4. Weights: `frame-omni-bencher v1 benchmark pallet` (or `/cmd bench`) for
+   pallet + both runtimes.
+5. Regenerate chain artifacts: `just subxt-codegen` (paseo bindings +
+   `.scale`) and `packages/papi` metadata (`papi update parachain` against a
+   running chain; if regenerating descriptors from a replaced `.scale`, delete
+   `.papi/descriptors/generated.json` first or `papi generate` no-ops).
+6. Provider node: module + endpoints + CLI flag + `command.rs` wiring +
+   `ProviderState.checkpoint_cmd_tx` + `CheckpointChainClient` impl; restore
+   coordinator/API/auth tests; re-add the flag to `just start-provider` and
+   the four CI provider launches in
+   `.github/workflows/integration-tests.yml`.
+7. SDK + example + e2e (former tests 5.4/5.5/5.7 in
+   `examples/papi/e2e/05-checkpoint-and-challenges.ts`) + UIs.
+8. Docs: extrinsic entries + workflow + error-table rows in
+   `EXTRINSICS_REFERENCE.md`, runtime params in `CLAUDE.md`, and move the
+   reviewed design into `docs/design/`.
 
 ---
 
