@@ -66,7 +66,7 @@ Examples in use across the three UIs:
 - `drive-list`, `drive-list-item-{id}`, `drive-list-delete-{id}`
 - `new-drive-dialog`, `new-drive-name`, `new-drive-submit`
 - `file-browser`, `breadcrumbs`, `breadcrumb-{i}`, `entry-row-{type}-{name}`, `entries-grid`, `entries-table`, `upload-input`
-- `checkpoint-panel`, `checkpoint-trigger`, `checkpoint-refresh`
+- `checkpoint-panel`, `checkpoint-refresh`
 - `manage-access-dialog`, `members-table`, `member-row-{address}`, `add-member-address`, `add-member-role`, `add-member-submit`, `add-member-error`
 - `upload-button`, `upload-cancel`, `view-mode-toggle`, `refresh-button`, `new-folder-button`
 

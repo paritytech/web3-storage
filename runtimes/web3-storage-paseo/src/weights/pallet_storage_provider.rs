@@ -86,8 +86,6 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::PendingChallenges` (r:1 w:0)
 	/// Proof: `StorageProvider::PendingChallenges` (`max_values`: None, `max_size`: Some(52), added: 2527, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::CheckpointRewards` (r:1001 w:1000)
-	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
 	/// Storage: `System::Account` (r:1 w:1)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
 	/// Storage: `StorageProvider::ProviderReplayStates` (r:0 w:1)
@@ -399,109 +397,6 @@ impl<T: frame_system::Config> pallet_storage_provider::WeightInfo for WeightInfo
 			.saturating_add(Weight::from_parts(0, 15165))
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(1))
-	}
-	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
-	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:1 w:1)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::CheckpointPool` (r:1 w:1)
-	/// Proof: `StorageProvider::CheckpointPool` (`max_values`: None, `max_size`: Some(40), added: 2515, mode: `MaxEncodedLen`)
-	fn fund_checkpoint_pool() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `324`
-		//  Estimated: `3789`
-		// Minimum execution time: 31_348_000 picoseconds.
-		Weight::from_parts(32_731_000, 0)
-			.saturating_add(Weight::from_parts(0, 3789))
-			.saturating_add(T::DbWeight::get().reads(3))
-			.saturating_add(T::DbWeight::get().writes(2))
-	}
-	/// Storage: `StorageProvider::CheckpointConfigs` (r:1 w:0)
-	/// Proof: `StorageProvider::CheckpointConfigs` (`max_values`: None, `max_size`: Some(33), added: 2508, mode: `MaxEncodedLen`)
-	/// Storage: UNKNOWN KEY `0x9bb69ec987231f7f0cbd722b75106ba8` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0x9bb69ec987231f7f0cbd722b75106ba8` (r:1 w:0)
-	/// Storage: UNKNOWN KEY `0x350d85fadd8417f489a666f6123a7db6` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0x350d85fadd8417f489a666f6123a7db6` (r:1 w:0)
-	/// Storage: `StorageProvider::LastCheckpointWindow` (r:1 w:1)
-	/// Proof: `StorageProvider::LastCheckpointWindow` (`max_values`: None, `max_size`: Some(32), added: 2507, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Buckets` (r:1 w:1)
-	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `StorageProvider::Providers` (r:5 w:0)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	/// Storage: UNKNOWN KEY `0x0d92b8e41ef4ec7e624648bf10db8090` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0x0d92b8e41ef4ec7e624648bf10db8090` (r:1 w:0)
-	/// Storage: `StorageProvider::CheckpointPool` (r:1 w:1)
-	/// Proof: `StorageProvider::CheckpointPool` (`max_values`: None, `max_size`: Some(40), added: 2515, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::CheckpointRewards` (r:1 w:1)
-	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
-	/// The range of component `s` is `[1, 5]`.
-	fn provider_checkpoint(s: u32, ) -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `629 + s * (258 ±0)`
-		//  Estimated: `4094 + s * (2835 ±0)`
-		// Minimum execution time: 88_603_000 picoseconds.
-		Weight::from_parts(43_281_925, 0)
-			.saturating_add(Weight::from_parts(0, 4094))
-			// Standard Error: 102_450
-			.saturating_add(Weight::from_parts(50_235_350, 0).saturating_mul(s.into()))
-			.saturating_add(T::DbWeight::get().reads(8))
-			.saturating_add(T::DbWeight::get().reads((1_u64).saturating_mul(s.into())))
-			.saturating_add(T::DbWeight::get().writes(4))
-			.saturating_add(Weight::from_parts(0, 2835).saturating_mul(s.into()))
-	}
-	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
-	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `StorageProvider::CheckpointConfigs` (r:0 w:1)
-	/// Proof: `StorageProvider::CheckpointConfigs` (`max_values`: None, `max_size`: Some(33), added: 2508, mode: `MaxEncodedLen`)
-	fn configure_checkpoint_window() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `429`
-		//  Estimated: `3894`
-		// Minimum execution time: 13_519_000 picoseconds.
-		Weight::from_parts(14_444_000, 0)
-			.saturating_add(Weight::from_parts(0, 3894))
-			.saturating_add(T::DbWeight::get().reads(1))
-			.saturating_add(T::DbWeight::get().writes(1))
-	}
-	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
-	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `StorageProvider::CheckpointConfigs` (r:1 w:0)
-	/// Proof: `StorageProvider::CheckpointConfigs` (`max_values`: None, `max_size`: Some(33), added: 2508, mode: `MaxEncodedLen`)
-	/// Storage: UNKNOWN KEY `0x9bb69ec987231f7f0cbd722b75106ba8` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0x9bb69ec987231f7f0cbd722b75106ba8` (r:1 w:0)
-	/// Storage: UNKNOWN KEY `0x350d85fadd8417f489a666f6123a7db6` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0x350d85fadd8417f489a666f6123a7db6` (r:1 w:0)
-	/// Storage: `StorageProvider::LastCheckpointWindow` (r:1 w:1)
-	/// Proof: `StorageProvider::LastCheckpointWindow` (`max_values`: None, `max_size`: Some(32), added: 2507, mode: `MaxEncodedLen`)
-	/// Storage: UNKNOWN KEY `0xdee29e3e21435d9f7d94f1b5a5909309` (r:1 w:0)
-	/// Proof: UNKNOWN KEY `0xdee29e3e21435d9f7d94f1b5a5909309` (r:1 w:0)
-	/// Storage: `System::Account` (r:2 w:2)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	/// Storage: `StorageProvider::Providers` (r:1 w:1)
-	/// Proof: `StorageProvider::Providers` (`max_values`: None, `max_size`: Some(360), added: 2835, mode: `MaxEncodedLen`)
-	fn report_missed_checkpoint() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `1000`
-		//  Estimated: `6196`
-		// Minimum execution time: 69_088_000 picoseconds.
-		Weight::from_parts(75_991_000, 0)
-			.saturating_add(Weight::from_parts(0, 6196))
-			.saturating_add(T::DbWeight::get().reads(9))
-			.saturating_add(T::DbWeight::get().writes(4))
-	}
-	/// Storage: `StorageProvider::CheckpointRewards` (r:1 w:1)
-	/// Proof: `StorageProvider::CheckpointRewards` (`max_values`: None, `max_size`: Some(88), added: 2563, mode: `MaxEncodedLen`)
-	/// Storage: `System::Account` (r:1 w:1)
-	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(128), added: 2603, mode: `MaxEncodedLen`)
-	fn claim_checkpoint_rewards() -> Weight {
-		// Proof Size summary in bytes:
-		//  Measured:  `397`
-		//  Estimated: `3593`
-		// Minimum execution time: 31_675_000 picoseconds.
-		Weight::from_parts(34_579_000, 0)
-			.saturating_add(Weight::from_parts(0, 3593))
-			.saturating_add(T::DbWeight::get().reads(2))
-			.saturating_add(T::DbWeight::get().writes(2))
 	}
 	/// Storage: `StorageProvider::Buckets` (r:1 w:0)
 	/// Proof: `StorageProvider::Buckets` (`max_values`: None, `max_size`: None, mode: `Measured`)

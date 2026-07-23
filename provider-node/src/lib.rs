@@ -8,13 +8,11 @@
 //! - Uploading and downloading content-addressed chunks
 //! - Committing data to the bucket's MMR
 //! - Syncing data between providers (for replicas)
-//! - Coordinating provider-initiated checkpoints
 
 pub mod api;
 pub mod auth;
 pub mod chain_state_coordinator;
 pub mod challenge_responder;
-pub mod checkpoint_coordinator;
 pub mod cli;
 pub mod command;
 pub mod error;
@@ -40,10 +38,6 @@ pub use challenge_responder::{
     ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponderHandle,
     ChallengeResponseResult, DetectedChallenge, ResponderCommand,
 };
-pub use checkpoint_coordinator::{
-    CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, CheckpointDuty, CheckpointResult, CoordinatorCommand,
-};
 pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
@@ -63,7 +57,6 @@ use sp_core::crypto::Ss58Codec;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 /// Everything a servable [`ProviderState`] requires.
 pub struct ProviderDeps {
@@ -90,8 +83,6 @@ pub struct ProviderState {
     pub s3_index: S3IndexManager,
     /// File system drive index
     pub fs_index: FsIndexManager,
-    /// Channel to send commands to the checkpoint coordinator (if running).
-    pub checkpoint_cmd_tx: std::sync::Mutex<Option<mpsc::Sender<CoordinatorCommand>>>,
     /// Membership cache for role lookups.
     pub membership_cache: Arc<auth::MembershipCache>,
     /// Maximum allowed clock skew for request timestamps.
@@ -121,7 +112,6 @@ impl ProviderState {
             keypair,
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
-            checkpoint_cmd_tx: std::sync::Mutex::new(None),
             membership_cache: membership,
             auth_max_skew,
             cors_allowed_origins: None,
@@ -151,13 +141,6 @@ impl ProviderState {
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
         self
-    }
-
-    /// Set the checkpoint coordinator command sender (called after coordinator starts).
-    pub fn set_checkpoint_handle(&self, handle: &CheckpointCoordinatorHandle) {
-        if let Ok(mut tx) = self.checkpoint_cmd_tx.lock() {
-            *tx = Some(handle.command_sender());
-        }
     }
 
     /// Sign a message and return the signature as `0x`-prefixed hex.

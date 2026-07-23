@@ -31,7 +31,6 @@ import { Layer1Client, type Layer1ClientOptions } from "../base-client.js";
 import { resolveBucketProviders, resolveCreationTerms } from "../provider-url.js";
 import type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
   FileWithType,
@@ -358,33 +357,5 @@ export class FileSystemClient extends Layer1Client {
       dirCount: Number(body.dir_count ?? 0),
       totalSize: BigInt(body.total_size ?? 0),
     };
-  }
-
-  // ── Checkpoint (provider HTTP) ──────────────────────────────────────────
-
-  async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${bucketId}`,
-      { headers: await this.authHeaders("GET", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Checkpoint duty failed: ${response.status}`);
-    }
-    return response.json();
-  }
-
-  async triggerCheckpoint(bucketId: bigint): Promise<void> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${bucketId}`,
-      { method: "POST", headers: await this.authHeaders("POST", bucketId) },
-      this.fetchOpts,
-    );
-    if (!response.ok) {
-      throw new Error(`Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`);
-    }
   }
 }

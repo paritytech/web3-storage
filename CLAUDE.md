@@ -359,12 +359,6 @@ pub const MinStakePerByte: Balance = 1_000;
 pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
 pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
 pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
-
-// Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100; // anchor blocks (~10 min)
-pub const DefaultCheckpointGrace: BlockNumber = 20;     // anchor blocks (~2 min)
-pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
-pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
 
 ### Provider Settings (configured per provider)
