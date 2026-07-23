@@ -301,7 +301,7 @@ The project uses Zombienet for local relay chain + parachain testing:
 just start-chain
 
 # Or manually:
-.bin/zombienet spawn zombienet.toml
+.bin/zombienet spawn zombienet/zombienet-parachain-local.toml
 ```
 
 **Network URLs**:

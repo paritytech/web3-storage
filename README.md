@@ -206,7 +206,7 @@ web3-storage/
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
 ├── scripts/                # Helper scripts (chain spec, health checks, smoke test)
 ├── chain-specs/            # Chain specification files
-├── zombienet/              # Local relay+parachain network config (with zombienet.toml at root)
+├── zombienet/              # Local relay+parachain network configs (zombienet-parachain-local.toml, storage-paseo-local.toml)
 └── docs/                   # getting-started, reference, design (review-gated), drafts, filesystems
 ```
 
@@ -316,7 +316,7 @@ See [Client README](./client/README.md) for complete examples.
 
 ## Deployment
 
-For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet.toml` for current local network shape.
+For local dev, follow [Layer 1 Quick Start](./docs/getting-started/LAYER1_QUICKSTART.md). For testnet/production, no canonical guide exists yet — see `chain-specs/` and `zombienet/zombienet-parachain-local.toml` for current local network shape.
 
 ## Contributing
 
