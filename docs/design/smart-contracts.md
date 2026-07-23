@@ -24,9 +24,9 @@ The contract's caller is computed by `AccountId32Mapper` (substrate-native, iden
 
 | Address                                       | Matcher           | Crate                                                                                                 | Pallet                       |
 | --------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `0x0000000000000000000000000000000009010000`  | `Fixed(0x0901)`   | [`pallet-storage-provider-precompile`](../../crates/precompiles/storage-provider)                     | `pallet_storage_provider`    |
-| `0x0000000000000000000000000000000009020000`  | `Fixed(0x0902)`   | [`pallet-drive-registry-precompile`](../../crates/precompiles/drive-registry)                         | `pallet_drive_registry`      |
-| `0x0000000000000000000000000000000009030000`  | `Fixed(0x0903)`   | [`pallet-s3-registry-precompile`](../../crates/precompiles/s3-registry)                               | `pallet_s3_registry`         |
+| `0x0000000000000000000000000000000009010000`  | `Fixed(0x0901)`   | [`pallet-storage-provider-precompile`](../../crates/pallets/storage-provider/precompiles)                     | `pallet_storage_provider`    |
+| `0x0000000000000000000000000000000009020000`  | `Fixed(0x0902)`   | [`pallet-drive-registry-precompile`](../../crates/pallets/drive-registry/precompiles)                         | `pallet_drive_registry`      |
+| `0x0000000000000000000000000000000009030000`  | `Fixed(0x0903)`   | [`pallet-s3-registry-precompile`](../../crates/pallets/s3-registry/precompiles)                               | `pallet_s3_registry`         |
 
 Both use `HAS_CONTRACT_INFO = false` (no storage deposits or contract metadata; pure stateless dispatch).
 

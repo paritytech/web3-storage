@@ -8,8 +8,7 @@ keywords = ["SPDX-License-Identifier"]
 includes = [
 	"client/**/*.rs",
 	"crates/pallets/**/*.rs",
-	"crates/precompiles/**/*.rs",
-	"crates/precompiles/**/*.sol",
+	"crates/pallets/**/*.sol",
 	"examples/contracts/**/*.sol",
 	"examples/papi/**/*.ts",
 	"packages/**/*.js",

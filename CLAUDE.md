@@ -217,14 +217,13 @@ export function sameAddress(a, b) {
 ```
 web3-storage/
 ├── crates/
-│   ├── pallets/               # FRAME pallets (on-chain logic)
-│   │   ├── storage-provider/  # Storage provider pallet (Layer 0)
-│   │   ├── drive-registry/    # Drive Registry pallet (Layer 1 file system)
-│   │   └── s3-registry/       # S3 Registry pallet (Layer 1 S3)
-│   └── precompiles/           # pallet_revive precompiles (Solidity → pallets)
-│       ├── storage-provider/  # 0x…0901 — bucket lifecycle
-│       ├── drive-registry/    # 0x…0902 — drive lifecycle
-│       └── s3-registry/       # 0x…0903 — S3 lifecycle
+│   └── pallets/               # FRAME pallets (on-chain logic)
+│       ├── storage-provider/  # Storage provider pallet (Layer 0)
+│       │   └── precompiles/   # 0x…0901 — bucket lifecycle precompile
+│       ├── drive-registry/    # Drive Registry pallet (Layer 1 file system)
+│       │   └── precompiles/   # 0x…0902 — drive lifecycle precompile
+│       └── s3-registry/       # S3 Registry pallet (Layer 1 S3)
+│           └── precompiles/   # 0x…0903 — S3 lifecycle precompile
 ├── runtimes/                   # Parachain runtimes
 │   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
 │   │   ├── src/lib.rs         # Runtime configuration
@@ -299,7 +298,7 @@ web3-storage/
 
 **Primitives (`primitives/`)**: Shared types used across pallet, provider node, and client.
 
-**Smart Contracts (`crates/precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/design/smart-contracts.md](docs/design/smart-contracts.md).
+**Smart Contracts (`crates/pallets/*/precompiles/`, `examples/contracts/`)**: `pallet_revive` (PolkaVM-based smart contracts) is wired into both runtimes. Two custom precompiles expose the client-side bucket lifecycle and drive registry to Solidity contracts. The `StorageMarketplace.sol` example shows how a dApp buys storage on behalf of its users; `just sc-demo` runs the end-to-end PAPI test. Full design in [docs/design/smart-contracts.md](docs/design/smart-contracts.md).
 
 #### Layer 1 (File System Interface)
 
