@@ -144,7 +144,7 @@ start-chain: check build-runtime
     echo ""
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
-    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml
+    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/zombienet-parachain-local.toml
 
 # Start the blockchain (relay chain + paseo storage parachain)
 start-paseo-chain: check build-paseo-runtime

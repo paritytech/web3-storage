@@ -222,67 +222,7 @@ export function sameAddress(a, b) {
 
 ### Directory Structure
 
-```
-web3-storage/
-├── crates/
-│   ├── pallets/               # FRAME pallets (on-chain logic)
-│   │   ├── storage-provider/  # Storage provider pallet (Layer 0)
-│   │   │   └── precompiles/   # 0x…0901 — bucket lifecycle precompile
-│   │   ├── drive-registry/    # Drive Registry pallet (Layer 1 file system)
-│   │   │   └── precompiles/   # 0x…0902 — drive lifecycle precompile
-│   │   └── s3-registry/       # S3 Registry pallet (Layer 1 S3)
-│   │       └── precompiles/   # 0x…0903 — S3 lifecycle precompile
-│   ├── primitives/             # Shared primitives crates
-│   │   ├── storage/           # Layer 0 shared types (storage-primitives)
-│   │   ├── file-system/       # File system types (file-system-primitives)
-│   │   └── s3/                # S3 interface types (s3-primitives)
-│   └── storage-subxt/          # Static subxt runtime bindings
-├── runtimes/                   # Parachain runtimes
-│   ├── web3-storage-local/     # Local testnet runtime (storage-parachain-runtime)
-│   │   ├── src/lib.rs         # Runtime configuration
-│   │   └── Cargo.toml         # Runtime dependencies
-│   └── web3-storage-paseo/     # Paseo testnet runtime (storage-paseo-runtime)
-├── provider-node/              # Off-chain HTTP storage server
-│   ├── src/                   # Provider implementation
-│   │   ├── main.rs           # Server entry point
-│   │   ├── storage.rs        # Storage layer
-│   │   └── mmr.rs            # MMR commitment logic
-│   └── Cargo.toml            # Provider dependencies
-├── client/                     # Layer 0 Client SDK
-│   ├── src/                   # SDK implementation
-│   │   ├── lib.rs            # Main client API
-│   │   └── types.rs          # Client types
-│   ├── examples/             # Usage examples
-│   └── README.md             # SDK documentation
-├── examples/contracts/         # Example Solidity dApps (StorageMarketplace.sol)
-├── storage-interfaces/         # Layer 1 - High-level interfaces
-│   └── file-system/           # File System Interface
-│       └── client/            # File System Client SDK
-│           ├── src/
-│           │   ├── lib.rs     # Main file system client
-│           │   └── substrate.rs # Blockchain integration (subxt)
-│           ├── examples/
-│           │   └── basic_usage.rs # Complete workflow example
-│           └── README.md      # File system client docs
-├── scripts/                    # Helper scripts
-│   ├── build-chain-spec.sh   # Build runtime + emit chain spec (used by `just generate-chain-spec`)
-│   ├── check-chain.sh        # Relay + parachain health probe
-│   └── quick-test.sh         # Curl-based smoke test of provider HTTP API
-├── chain-specs/                # Chain specification files
-├── docs/                       # Documentation
-│   ├── README.md             # Documentation index
-│   ├── getting-started/      # Quick start guides
-│   ├── testing/              # Testing procedures
-│   ├── reference/            # API references
-│   ├── design/               # Architecture docs
-│   └── filesystems/          # Layer 1 File System docs
-│       ├── README.md         # File system overview
-│       ├── ARCHITECTURE.md   # Encoding, security, chain integration
-│       ├── USER_GUIDE.md     # User guide
-│       ├── API_REFERENCE.md  # API documentation
-│       └── ADMIN_GUIDE.md    # Admin guide
-└── justfile                    # Development commands
-```
+See [Project Structure](README.md#project-structure) in the root README for the canonical annotated directory tree.
 
 ### Key Components
 
@@ -361,7 +301,7 @@ The project uses Zombienet for local relay chain + parachain testing:
 just start-chain
 
 # Or manually:
-.bin/zombienet spawn zombienet.toml
+.bin/zombienet spawn zombienet/zombienet-parachain-local.toml
 ```
 
 **Network URLs**:

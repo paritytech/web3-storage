@@ -18,16 +18,6 @@ And advanced management tools:
 - **`EventSubscriber`** - Real-time blockchain event monitoring
 - **`CheckpointPersistence`** - State persistence with backup rotation
 
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-storage-client = { path = "path/to/client" }
-tokio = { version = "1", features = ["full"] }
-```
-
 ## Quick Start
 
 ### Setup
