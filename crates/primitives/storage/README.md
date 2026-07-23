@@ -7,10 +7,10 @@ and common error types.
 ## Build & Test
 
 ```bash
-cargo build -p storage-provider-primitives --release
-cargo test -p storage-provider-primitives
+cargo build -p storage-primitives --release
+cargo test -p storage-primitives
 ```
 
 ## License
 
-Licensed under [Apache-2.0](../LICENSE-APACHE2).
+Licensed under [Apache-2.0](../../../LICENSE-APACHE2).

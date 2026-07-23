@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
+file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 tokio = { version = "1", features = ["full"] }
 ```
 

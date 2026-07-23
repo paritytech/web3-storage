@@ -54,7 +54,7 @@ The system handles all of this automatically!
 # Add to your Cargo.toml
 [dependencies]
 file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
+file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 ```
 
 ### Initialize Client
@@ -543,7 +543,7 @@ let drive_id = fs_client.create_drive_with_providers(
 - Known reliable providers from past experience
 - Testing with specific provider configurations
 
-For more details, see [Storage Marketplace Design](../design/marketplace.md).
+For more details, see [Storage Marketplace Design](../drafts/marketplace.md).
 
 ---
 
@@ -620,7 +620,7 @@ If providers disagree on the data state, the system detects and handles it:
 // 4. Continues with majority consensus
 ```
 
-For more details, see [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md).
+For more details, see [Checkpoint Protocol Design](../drafts/CHECKPOINT_PROTOCOL.md).
 
 ---
 
@@ -879,7 +879,7 @@ See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for deta
 
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
-- **[Examples](../../storage-interfaces/file-system/examples/)** - Code examples
+- **[Examples](../../storage-interfaces/file-system/client/examples/)** - Code examples
 
 ## Additional Resources
 
