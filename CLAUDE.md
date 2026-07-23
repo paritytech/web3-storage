@@ -570,29 +570,30 @@ handle.stop().await?;         // Stop background loop
 **Key Components**:
 - `CheckpointManager`: Coordinates multi-provider checkpoint collection and consensus
 - `CheckpointPersistence`: Persists checkpoint state to disk with backup rotation
-- `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
+- `EventStream` (from `storage-indexers`, re-exported by `storage-client`): real-time blockchain event monitoring (checkpoints, challenges)
 - `ProviderHealthHistory`: Tracks provider reliability and response times
 
 See [Checkpoint Protocol Design](docs/drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 ### Event Subscription
 
-Subscribe to real-time blockchain events:
+Subscribe to real-time, strongly-typed blockchain events via the `storage-indexers` crate (re-exported by `storage-client`).
+The stream rides a reconnecting WebSocket transport and yields the generated `storage_subxt::api::Event` runtime enum - no hand-rolled event types:
 
 ```rust
-use storage_client::{EventSubscriber, EventFilter, StorageEvent};
+use futures::StreamExt;
+use storage_client::storage_subxt::api;
+use storage_client::{EventFilter, EventStream};
 
-let subscriber = EventSubscriber::connect(chain_endpoint).await?;
+// Filter by pallet up front (StorageProvider / DriveRegistry / S3Registry),
+// optionally refine with a predicate on the decoded event.
+let mut stream = EventStream::connect(chain_endpoint, EventFilter::storage_pallets()).await?;
 
-// Subscribe to specific events
-let filter = EventFilter::bucket(bucket_id);
-let mut stream = subscriber.subscribe(filter).await?;
-
-while let Some(event) = stream.next().await {
-    match event {
-        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => { /* ... */ }
-        StorageEvent::ChallengeCreated { challenge_id, .. } => { /* ... */ }
-        StorageEvent::ProviderSlashed { provider, amount, .. } => { /* ... */ }
+while let Some(ev) = stream.next().await {
+    match ev.event {
+        api::Event::StorageProvider(event) => { /* ev.block_number, ev.block_hash available */ }
+        api::Event::DriveRegistry(event) => { /* ... */ }
+        api::Event::S3Registry(event) => { /* ... */ }
         _ => {}
     }
 }
