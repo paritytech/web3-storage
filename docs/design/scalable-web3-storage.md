@@ -4,13 +4,14 @@
 | --- | --- |
 | **Authors** | eskimor |
 | **Status** | Draft |
-| **Version** | 2.3 |
+| **Version** | 2.4 |
 | **Related** | [Implementation Details](./scalable-web3-storage-implementation.md), [Proof-of-DOT Infrastructure Strategy](https://docs.google.com/document/d/1fNv75FCEBFkFoG__s_Xu10UZd0QsGIE9AKnrouzz-U8/) |
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.4 | Changeable provider stake (agreements snapshot stake, not just price; lowering allowed via O(1) `cur_until`/`higher_stake_lock`, no grow-only rule); stake backs verifiable `committed_bytes`, not self-declared `max_capacity`; per-bucket `agreement_id` bound into commitments (obsolete/expired commitments void — replaces the old time-based `nonce`/`MaxNonceAge` replay guard, now removed); terms `version` pin (bumped on price ↑ / stake ↓ / virtual-member-leaving — the worse-direction terms a request doesn't pass explicitly) replaces `max_payment`. `extend_agreement` is now **owner-only** (permissionless extension let a provider force-settle the elapsed term and defer expiry, dodging the owner's burn; permissionless persistence returns later via a replacement-agreement mechanism). Deregistration reverted to **one-step** (`deregister_provider` withdraws immediately once `committed_bytes == 0`); the added two-step announcement window (`DeregisterAnnouncementPeriod` / `complete_deregister` / `cancel_deregister`) is removed — liability tracks the active agreement (all challenge paths, incl. `challenge_checkpoint`, now reject a provider with no live agreement), so there is no post-expiry challenge to race. Reverse indexes (`MemberBuckets`, new `ProviderBuckets`) are now unbounded set-membership double-maps (dropped the artificial `MaxBucketsPerMember` cap) and read **only via versioned runtime API** (`member_buckets`/`provider_buckets`/paged `provider_agreements`), never raw storage — convenience indexes, droppable once off-chain indexing exists. Removed: `create_bucket_with_storage` (unsound on-chain provider search) and all provider-initiated checkpoint machinery (redundant with replica sync). **Read**: "Provider Stake" and "Storage Agreements" here; impl doc "Changeable Stake" / "Stake vs. capacity" / "Term Pinning" and `StorageAgreement` / `CommitmentPayload`. |
 | 2.3 | Private buckets clarified (visibility flag, Reader role, primary challenges gated to members + primary-agreement owners, tier-split challenge stats). **Read**: new "Bucket Visibility & Access" section; "The Challenge Game". |
 | 2.2 | Challenge cost model reworked and clarified: a valid response never touches the provider's stake. The challenger's deposit covers the on-chain response cost; authorized challengers (bucket members + agreement owners) get a split where the provider bears a fraction (challenger's share floored at 50%, as leverage—not cheap recovery), while the general public pays in full (anti-DoS, since a provider can't serve everyone equally). Stake is slashed only on a missing/invalid response. |
 | 2.1 | Clarification on rewards for the challenger: There should be none, just refund. Plus some corrections with regards to PDP and Filecoin. |
@@ -373,8 +374,9 @@ A content hash names data but doesn't guarantee anyone stores it. A bucket makes
   snapshots at any point. Version N is always accessible even after version N+1 exists.
 
 - **Permissionless persistence**: A frozen bucket (append-only) can be funded by anyone—not just the owner. You care
-  about open-source documentation? Fund a replica. You care about historical records? Extend the agreements. Data
-  survives even if the original owner disappears.
+  about open-source documentation, or historical records? Fund a replica (permissionless), and the data survives even
+  if the original owner disappears. (Extending an existing *primary* agreement is owner-only — a third party keeps data
+  alive by adding its own replica, not by mutating someone else's agreement.)
 
 ### Two Classes of Providers
 
@@ -557,12 +559,17 @@ Every provider-bucket relationship is governed by a storage agreement:
 StorageAgreement
 ├── owner: AccountId        // can top up, transfer ownership
 ├── max_bytes: u64          // quota for this provider
-├── payment_locked: Balance // prepaid storage payment
-├── price_per_byte: Balance // locked at creation
+├── payment_locked: Balance // prepaid storage payment (price consumed at creation)
+├── stake: Balance          // provider stake snapshotted at creation/extension
 ├── expires_at: Block       // when agreement ends
 ├── role: Primary | Replica
 └── (replica only) sync_balance, sync_price, last_sync
 ```
+
+**The agreement fixes the terms it was struck under.** Payment is prepaid, so price needs no separate snapshot; the
+provider's stake *is* snapshotted, so a provider can change its stake for future deals without touching this one (see
+"Provider Stake"). Clients pin the provider's terms `version` when requesting, so they never receive an agreement on
+worse terms than they chose.
 
 **Binding commitment**: Neither party can exit early. Provider committed to store for the agreed duration. Client
 committed to pay for the agreed duration.
@@ -570,7 +577,7 @@ committed to pay for the agreed duration.
 **Why binding?**
 - Providers need predictability to provision storage
 - Clients need assurance data won't be dropped mid-term
-- Price volatility is handled by locking price at creation/extension
+- Price volatility is handled by prepaying at creation/extension; stake volatility by snapshotting stake into the agreement
 - Third parties can rely on data staying available until agreement expiration (at least)
 
 ### Provider Stake
@@ -579,8 +586,8 @@ Providers register with a global stake that covers all their agreements:
 
 ```
 Provider
-├── stake: Balance          // total locked stake
-├── committed_bytes: u64    // sum of max_bytes across agreements
+├── stake: Balance          // stake for NEW agreements (raiseable/lowerable)
+├── committed_bytes: u64    // sum of max_bytes across agreements (verifiable)
 ├── stats: { agreements, extensions, burns,
 │            challenges_received_authorized,  // responded-to, from counterparties
 │            challenges_received_public,      // responded-to, from strangers
@@ -591,6 +598,17 @@ Provider
 **Full stake at risk**: A single failed challenge slashes the provider's *entire stake*, not just the stake for that
 bucket. This makes cheating economics absurd—deleting 1% of data to save $0.12/year risks losing thousands of dollars in
 stake.
+
+**Stake is changeable, agreements snapshot it.** A provider can raise stake any time and lower it without weakening
+existing agreements: each agreement records the stake in force when it was struck (as it already does for price), and the
+provider stays liable at each agreement's snapshot until that agreement ends. `stake` is just the figure applied to *new*
+agreements; a lowering only frees capital once the agreements made under the higher figure expire. (This is done with
+O(1) bookkeeping, not by scanning agreements — see the implementation doc's "Changeable Stake".)
+
+**Stake backs committed bytes, not self-declared capacity.** The stake requirement is enforced against
+`committed_bytes`—the bytes a provider actually agreed to store—because that is the only figure the chain can verify. A
+provider's advertised `max_capacity` is a courtesy signal (it sets it, it could misreport it) and carries no stake
+guarantee.
 
 ### The Challenge Game
 
