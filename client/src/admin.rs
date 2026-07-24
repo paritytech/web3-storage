@@ -11,12 +11,12 @@
 
 use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
+use storage_subxt::api::storage_provider::events::BucketCreated;
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
@@ -117,41 +117,26 @@ impl AdminClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to submit tx: {e}")))?;
 
-        let tx_in_block = tx_progress
-            .wait_for_finalized()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
-        let raw_block_hash = tx_in_block.block_hash();
-        let events = tx_in_block
-            .wait_for_success()
+        let events = tx_progress
+            .wait_for_finalized_success()
             .await
             .map_err(|e| ClientError::Chain(format!("Transaction failed: {e}")))?;
 
-        let block_hash = H256::from_slice(raw_block_hash.as_bytes());
-        let block_number = chain
-            .api()
-            .at_block(raw_block_hash)
-            .await
-            .map(|b| b.block_number() as u32)
-            .unwrap_or(0);
+        let created = events
+            .find_first::<BucketCreated>()
+            .ok_or_else(|| {
+                ClientError::Chain("BucketCreated event not found in transaction".to_string())
+            })?
+            .map_err(|e| {
+                ClientError::Chain(format!("Failed to decode BucketCreated event: {e}"))
+            })?;
 
-        let parsed =
-            StorageProviderEventParser::from_extrinsic_events(&events, block_hash, block_number);
-
-        for event in parsed {
-            if let StorageEvent::BucketCreated { bucket_id, .. } = event {
-                tracing::info!(
-                    "Storage agreement established; bucket {} created with provider {}",
-                    bucket_id,
-                    provider,
-                );
-                return Ok(bucket_id);
-            }
-        }
-
-        Err(ClientError::Chain(
-            "BucketCreated event not found in transaction".to_string(),
-        ))
+        tracing::info!(
+            "Storage agreement established; bucket {} created with provider {}",
+            created.bucket_id,
+            provider,
+        );
+        Ok(created.bucket_id)
     }
 
     /// Add a member to a bucket with a specific role.

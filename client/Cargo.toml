@@ -9,7 +9,9 @@ description = "Client library for scalable Web3 storage"
 
 [dependencies]
 provider-negotiation = { workspace = true }
+storage-indexers = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }
+storage-subxt = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["std"] }

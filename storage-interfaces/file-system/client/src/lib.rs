@@ -42,15 +42,14 @@ mod substrate;
 use file_system_primitives::{
     compute_cid, Cid, DirectoryEntry, DirectoryNode, EntryType, FileManifest,
 };
-use sp_core::H256;
 use sp_runtime::{AccountId32, BoundedVec};
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage_client::{
     BatchedCheckpointConfig, BatchedInterval, CheckpointCallback, CheckpointLoopHandle,
-    CheckpointManager, ClientConfig, EventParser, StorageUserClient,
+    CheckpointManager, ClientConfig, StorageUserClient,
 };
-use substrate::{FileSystemEvent, FileSystemEventParser};
+use storage_subxt::api::drive_registry::events::DriveCreated;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -895,17 +894,19 @@ impl FileSystemClient {
                 FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
             })?;
 
-        // Scan finalized events for the DriveRegistry::DriveCreated event.
-        // ExtrinsicEvents doesn't carry block hash / number, and this caller only needs
-        // the drive_id, so pass placeholders for the parser's block-context fields.
-        for parsed in FileSystemEventParser::from_extrinsic_events(&events, H256::zero(), 0) {
-            tracing::info!("DriveRegistry event: {parsed:?}");
-            if let FileSystemEvent::DriveCreated { drive_id, .. } = parsed {
-                return Ok(drive_id);
-            }
-        }
+        let created = events
+            .find_first::<DriveCreated>()
+            .ok_or(FsClientError::EventNotFound)?
+            .map_err(|e| {
+                FsClientError::Blockchain(format!("Failed to decode DriveCreated event: {e}"))
+            })?;
 
-        Err(FsClientError::EventNotFound)
+        tracing::info!(
+            "Drive {} created (bucket {})",
+            created.drive_id,
+            created.bucket_id
+        );
+        Ok(created.drive_id)
     }
 
     /// Query bucket_id for a drive from on-chain storage
