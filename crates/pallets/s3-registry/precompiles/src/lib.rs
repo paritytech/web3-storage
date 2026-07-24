@@ -29,7 +29,7 @@ use pallet_storage_provider::BalanceOf;
 use sp_core::H256;
 use tracing::error;
 
-alloy::sol!("src/IS3Registry.sol");
+alloy::sol!("src/interface/IS3Registry.sol");
 use IS3Registry::IS3RegistryCalls;
 
 const LOG_TARGET: &str = "web3-storage::s3-registry-precompile";

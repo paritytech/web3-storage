@@ -28,7 +28,7 @@ use pallet_storage_provider::BalanceOf;
 use storage_primitives::Role;
 use tracing::error;
 
-alloy::sol!("src/IDriveRegistry.sol");
+alloy::sol!("src/interface/IDriveRegistry.sol");
 use IDriveRegistry::IDriveRegistryCalls;
 
 const LOG_TARGET: &str = "web3-storage::drive-registry-precompile";

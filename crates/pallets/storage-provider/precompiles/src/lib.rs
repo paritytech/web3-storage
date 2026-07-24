@@ -29,7 +29,7 @@ use pallet_storage_provider::{BalanceOf, WeightInfo};
 use storage_primitives::{BucketId, EndAction, Role};
 use tracing::error;
 
-alloy::sol!("src/IWeb3Storage.sol");
+alloy::sol!("src/interface/IWeb3Storage.sol");
 use IWeb3Storage::IWeb3StorageCalls;
 
 const LOG_TARGET: &str = "web3-storage::precompile";
