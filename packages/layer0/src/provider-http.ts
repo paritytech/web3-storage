@@ -194,33 +194,6 @@ export async function fetchCheckpointSignature(
   });
 }
 
-export async function fetchCheckpointDuty(
-  providerUrl: string,
-  bucketId: bigint | number,
-): Promise<any> {
-  return providerFetch(providerUrl, "/checkpoint/duty", {
-    params: { bucket_id: bucketId },
-  });
-}
-
-export async function signCheckpointProposal(
-  providerUrl: string,
-  bucketId: bigint | number,
-  duty: { mmr_root: string; start_seq: number | string; leaf_count: number | string },
-  window: number | bigint,
-): Promise<any> {
-  return providerFetch(providerUrl, "/checkpoint/sign", {
-    method: "POST",
-    body: {
-      bucket_id: Number(bucketId),
-      mmr_root: duty.mmr_root,
-      start_seq: duty.start_seq,
-      leaf_count: duty.leaf_count,
-      window: Number(window),
-    },
-  });
-}
-
 /**
  * Build the proof payload for `respond_to_challenge` by reading the challenge
  * from chain state and fetching MMR + chunk proofs from the provider node.

@@ -1199,17 +1199,6 @@ replicas (which lack natural client verification) and fire-and-forget archivalâ€
 periodic proofs similar to Filecoin's PDP could be added as a premium feature. This can
 be layered on later without changing the core protocol.
 
-### Capped Split for the General Public
-
-Today the general public gets no cost split (challengers pay the response in
-full) to close the DDoS hole. A capped version could give the public *some*
-leverage without reopening that hole: apply the split to anonymous challenges
-too, but only up to a per-provider budget over a rolling window of X blocks.
-Once the budget is spent, further public challenges revert to full pay until the
-window resets. The budget caps the total a crowd can extract per window, so the
-DDoS attack is bounded rather than open-ended. Left out of the initial design;
-addable later without changing the core mechanism.
-
 ### Isolation Mode
 
 Admins can instruct providers to temporarily refuse serving non-members, then challenge a specific provider. If that

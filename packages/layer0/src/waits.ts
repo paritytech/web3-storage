@@ -105,9 +105,9 @@ export async function waitForNextBlock(papi: PolkadotClient): Promise<void> {
 /**
  * Wait until the chain's best head is strictly greater than `target`.
  *
- * Callers that need to land an extrinsic at a specific block window (e.g.
- * `provider_checkpoint`, `report_missed_checkpoint`) use this to time their
- * submission so the runtime sees the block range they computed against.
+ * Callers that need to land an extrinsic at a specific block window use this
+ * to time their submission so the runtime sees the block range they computed
+ * against.
  */
 export async function waitForBlock(
   papi: PolkadotClient,

@@ -91,8 +91,8 @@ just build
 
 ## Further reading
 
-- [User Guide](docs/filesystems/USER_GUIDE.md) — complete user workflows
-- [Architecture](docs/filesystems/ARCHITECTURE.md) — encoding, security, chain integration
-- [API Reference](docs/filesystems/API_REFERENCE.md) — complete API docs
-- [Client README](storage-interfaces/file-system/client/README.md) — SDK docs
-- [Architecture](docs/filesystems/ARCHITECTURE.md) — encoding, security, chain integration
+- [User Guide](../filesystems/USER_GUIDE.md) — complete user workflows
+- [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration
+- [API Reference](../filesystems/API_REFERENCE.md) — complete API docs
+- [Client README](../../storage-interfaces/file-system/client/README.md) — SDK docs
+- [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration

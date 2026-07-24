@@ -9,10 +9,9 @@ use crate::{
     create_router,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, CheckpointCoordinator, CheckpointCoordinatorConfig,
-    CheckpointCoordinatorHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps,
-    ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
-    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
+    ChallengeResponderHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps, ProviderState,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
+    StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -112,11 +111,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start optional background services (failures are non-fatal)
     let _chain_state_handle = start_chain_state_coordinator(&cli, state.clone());
-    let checkpoint_handle =
-        start_checkpoint_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
-    if let Some(ref handle) = checkpoint_handle {
-        state.set_checkpoint_handle(handle);
-    }
     let _replica_sync_handle =
         start_replica_sync_coordinator(&cli, chain_client.as_ref(), state.clone()).await;
     let _challenge_responder_handle =
@@ -180,41 +174,6 @@ fn start_chain_state_coordinator(
 
     tracing::info!("Chain-state coordinator started (retries until the chain is reachable)");
     Some(coordinator.start())
-}
-
-async fn start_checkpoint_coordinator(
-    cli: &Cli,
-    chain_client: Option<&SubxtChainClient>,
-    state: Arc<ProviderState>,
-) -> Option<CheckpointCoordinatorHandle> {
-    if !cli.checkpoint.enable_checkpoint_coordinator {
-        return None;
-    }
-
-    let chain_client = match chain_client {
-        Some(c) => c.clone(),
-        None => {
-            tracing::error!(
-                "Checkpoint coordinator needs a chain client (--keyfile + reachable chain). Disabled."
-            );
-            return None;
-        }
-    };
-
-    let config = CheckpointCoordinatorConfig::default();
-
-    let coordinator = CheckpointCoordinator::new(config, state, Box::new(chain_client));
-
-    match coordinator.start(None).await {
-        Ok(handle) => {
-            tracing::info!("Checkpoint coordinator started");
-            Some(handle)
-        }
-        Err(e) => {
-            tracing::error!("Failed to start checkpoint coordinator: {}", e);
-            None
-        }
-    }
 }
 
 async fn start_replica_sync_coordinator(

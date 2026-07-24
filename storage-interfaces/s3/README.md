@@ -32,7 +32,7 @@ This module provides an S3-compatible storage interface (Layer 1) on top of the 
 
 | Component | Path | Description |
 |-----------|------|-------------|
-| **s3-primitives** | `primitives/` | Core types and validation functions (no_std compatible) |
+| **s3-primitives** | `crates/primitives/s3/` (repo root) | Core types and validation functions (no_std compatible) |
 | **pallet-s3-registry** | `../../crates/pallets/s3-registry/` | On-chain S3 bucket and object metadata storage |
 | **s3-client** | `client/` | High-level SDK for S3 operations |
 

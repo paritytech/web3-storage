@@ -984,6 +984,6 @@ fs_client.disable_auto_checkpoints().await?;
 
 ## Related Documents
 
-- [Execution Flows](./EXECUTION_FLOWS.md) - Detailed sequence diagrams
+- [Execution Flows](../reference/EXECUTION_FLOWS.md) - Detailed sequence diagrams
 - [Architecture](../filesystems/ARCHITECTURE.md) - System architecture
 - [API Reference](../filesystems/API_REFERENCE.md) - Complete API docs

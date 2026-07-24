@@ -596,7 +596,7 @@ pub struct DirectoryEntry {
 
 ### Checkpoint Operations
 
-Layer 1 checkpoint methods delegate to Layer 0's `CheckpointManager` for multi-provider coordination and consensus verification. See [Checkpoint Protocol Design](../design/CHECKPOINT_PROTOCOL.md) for details.
+Layer 1 checkpoint methods delegate to Layer 0's `CheckpointManager` for multi-provider coordination and consensus verification. See [Checkpoint Protocol Design](../drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 **Key Concepts:**
 - Layer 1 maps `drive_id` → `bucket_id` automatically
@@ -1335,4 +1335,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **[User Guide](./USER_GUIDE.md)** - User-friendly documentation
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[Architecture](./ARCHITECTURE.md)** - Encoding, security, chain integration
-- **[Examples](../../storage-interfaces/file-system/examples/)** - Code samples
+- **[Examples](../../storage-interfaces/file-system/client/examples/)** - Code samples

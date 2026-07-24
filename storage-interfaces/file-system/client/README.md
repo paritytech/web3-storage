@@ -14,17 +14,6 @@ The File System Client provides a familiar file system abstraction over Layer 0'
 - **Flexible Commits** - Choose when changes are committed (immediate, batched, or manual)
 - **Built on Layer 0** - Leverages Scalable Web3 Storage's provider network and game-theoretic guarantees
 
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
-tokio = { version = "1", features = ["full"] }
-```
-
 ## Quick Start
 
 ### Prerequisites

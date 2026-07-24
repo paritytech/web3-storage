@@ -185,14 +185,6 @@ pub struct CheckpointSignatureResponse {
     pub nonce: u64,
 }
 
-/// Response from triggering a checkpoint via the coordinator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerCheckpointResponse {
-    pub bucket_id: BucketId,
-    pub triggered: bool,
-    pub message: String,
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Proof Types
 // ─────────────────────────────────────────────────────────────────────────────
