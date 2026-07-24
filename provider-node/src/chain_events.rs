@@ -95,6 +95,9 @@ impl From<provider_events::BucketCheckpointed> for BlockEvent {
 }
 
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
+// TODO: the try-each-variant chain below scales poorly as more events become
+// coordinator-relevant; revisit a direct pallet-event -> BlockEvent mapping
+// together with the dynamic-subxt vs runtime-API decision.
 pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BlockEvent> {
     events
         .iter()
