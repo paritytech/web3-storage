@@ -173,8 +173,8 @@ impl EventFilter {
 ///
 /// ```no_run
 /// use futures::StreamExt;
-/// use storage_indexers::storage_subxt::api;
 /// use storage_indexers::{EventFilter, EventStream};
+/// use storage_subxt::api;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut stream =
