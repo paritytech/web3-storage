@@ -336,12 +336,9 @@ impl ReplicaSyncCoordinator {
             BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
-            BlockEvent::BucketCheckpointUpdated { bucket_id } => self
-                .state
-                .storage
-                .list_buckets()
-                .iter()
-                .any(|b| b.bucket_id == *bucket_id),
+            BlockEvent::BucketCheckpointUpdated { bucket_id } => {
+                self.state.storage.get_bucket(*bucket_id).is_some()
+            }
             _ => false,
         }
     }
