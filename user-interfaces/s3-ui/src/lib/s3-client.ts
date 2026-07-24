@@ -24,7 +24,6 @@ import {
   removeMember as removeMemberTx,
   requireOneEvent,
   setMember as setMemberTx,
-  signProviderRequest,
   submitTx,
   toSs58,
   type ChainSigner,
@@ -115,14 +114,6 @@ export interface CheckpointInfo {
   startSeq: bigint;
   leafCount: bigint;
   checkpointBlock: number;
-}
-
-export interface CheckpointDuty {
-  bucketId: number;
-  mmrRoot: string;
-  startSeq: number;
-  leafCount: number;
-  ready: boolean;
 }
 
 export interface ChallengeResult {
@@ -453,7 +444,7 @@ export class S3Client {
       .sort((a, b) => b.matchScore - a.matchScore);
   }
 
-  // ── Checkpoint (chain-state read + provider HTTP duty/trigger) ──────────────
+  // ── Checkpoint (chain-state read) ────────────────────────────────────────
 
   async getCheckpointInfo(bucketId: bigint): Promise<CheckpointInfo | null> {
     const api = this.requireApi();
@@ -469,33 +460,6 @@ export class S3Client {
       leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
-  }
-
-  async getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/duty?bucket_id=${Number(bucketId)}`,
-    );
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      throw new Error(`Checkpoint duty failed: ${response.status}`);
-    }
-    return response.json();
-  }
-
-  async triggerCheckpoint(bucketId: bigint): Promise<void> {
-    if (!this.signer) throw new Error("Connect a wallet to trigger a checkpoint");
-    const providerUrl = await this.getProviderUrl(bucketId);
-    const headers = await signProviderRequest(this.signer, "POST", bucketId);
-    const response = await httpFetch(
-      `${providerUrl}/checkpoint/trigger?bucket_id=${Number(bucketId)}`,
-      { method: "POST", headers },
-    );
-    if (!response.ok) {
-      throw new Error(
-        `Checkpoint trigger failed: ${response.status} ${await response.text().catch(() => "")}`,
-      );
-    }
   }
 
   // ── Challenge (write via SDK submitTx; reads/subscriptions are chain queries) ─

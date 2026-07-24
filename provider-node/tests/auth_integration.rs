@@ -601,48 +601,6 @@ async fn commit_reader_blocked() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Checkpoint endpoint auth tests
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// `/checkpoint/trigger` drives a fee-paying on-chain submission, so an
-/// unauthenticated POST must be rejected before it reaches the coordinator.
-#[tokio::test]
-async fn checkpoint_trigger_missing_auth_returns_401() {
-    let server = AuthTestServer::with_role(Role::Writer).await;
-
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/trigger?bucket_id=1"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"], "auth_required");
-}
-
-/// A Reader-signed trigger must be rejected — triggering a checkpoint is a
-/// write-level action.
-#[tokio::test]
-async fn checkpoint_trigger_reader_blocked() {
-    let server = AuthTestServer::with_role(Role::Reader).await;
-    let alice = sr25519::Pair::from_string("//Alice", None).unwrap();
-    let ts = current_timestamp();
-    let header = make_auth_header(&alice, "POST", 1, ts);
-
-    let resp = server
-        .client
-        .post(server.url("/checkpoint/trigger?bucket_id=1"))
-        .header("Authorization", &header)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
-
 /// A validly-signed request from an account that is not a member of the bucket
 /// must be rejected on the L0 write path — a correct signature only proves
 /// identity, not authorization. (The FS path has `fs_unknown_account_*`; this

@@ -214,7 +214,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
         --storage-mode "{{MODE}}" \
         --bind-addr "0.0.0.0:{{PORT}}" \
         --chain-rpc "{{ CHAIN_WS }}" \
-        --enable-checkpoint-coordinator \
         $EXTRA_ARGS
 
 # Register on-chain then start the provider node (original behavior)
@@ -373,11 +372,6 @@ papi-setup:
 # Marketplace-style read-only walk of the Providers storage map
 papi-provider-discovery BYTES="1073741824" DURATION="100" MAX_PRICE="10": papi-setup
     node --import tsx examples/papi/provider-discovery.ts "{{ CHAIN_WS }}" "{{ BYTES }}" "{{ DURATION }}" "{{ MAX_PRICE }}"
-
-# Missed checkpoint slashing flow: configure_checkpoint_window (tight) ->
-# wait past window -> report_missed_checkpoint (slashes leader, pays reporter).
-papi-checkpoint-missed PROVIDER_URL=PROVIDER_URL PROVIDER_SEED="//Alice" CLIENT_SEED="//Bob": papi-setup
-    node --import tsx examples/papi/checkpoint-missed.ts "{{ CHAIN_WS }}" "{{ PROVIDER_URL }}" "{{ PROVIDER_SEED }}" "{{ CLIENT_SEED }}"
 
 # ============================================================
 # E2E Test Suite

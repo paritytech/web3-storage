@@ -317,46 +317,6 @@ fn agreement_entry_points_reject_deregistering_provider() {
 }
 
 #[test]
-fn complete_deregister_drains_checkpoint_rewards() {
-    new_test_ext().execute_with(|| {
-        let multiaddr = b"/ip4/127.0.0.1/tcp/3000".to_vec();
-        assert_ok!(StorageProvider::register_provider(
-            RuntimeOrigin::signed(1),
-            multiaddr.try_into().unwrap(),
-            test_public_key(),
-            200
-        ));
-
-        // Seed pending rewards across two buckets for this provider. We
-        // poke storage directly because the on-chain reward-credit path
-        // requires a full checkpoint setup that's orthogonal to this
-        // test.
-        CheckpointRewards::<Test>::insert(1, 100u64, 30u64);
-        CheckpointRewards::<Test>::insert(1, 200u64, 70u64);
-        // Unrelated provider's reward in another bucket — must survive.
-        CheckpointRewards::<Test>::insert(2, 100u64, 999u64);
-
-        let free_before = Balances::free_balance(1);
-
-        assert_ok!(StorageProvider::deregister_provider(RuntimeOrigin::signed(
-            1
-        )));
-        let deregister_at = Providers::<Test>::get(1).unwrap().deregister_at.unwrap();
-        run_to_block(deregister_at);
-        assert_ok!(StorageProvider::complete_deregister(RuntimeOrigin::signed(
-            1
-        )));
-
-        // 200 (stake) + 30 + 70 (drained rewards) = 300 added to free balance.
-        assert_eq!(Balances::free_balance(1), free_before + 300);
-        // Provider's reward entries are gone.
-        assert_eq!(CheckpointRewards::<Test>::iter_prefix(1u64).count(), 0);
-        // Unrelated provider's reward is untouched.
-        assert_eq!(CheckpointRewards::<Test>::get(2u64, 100u64), 999);
-    });
-}
-
-#[test]
 fn deregister_provider_fails_with_active_agreements() {
     new_test_ext().execute_with(|| {
         register_provider(2, 200);

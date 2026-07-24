@@ -237,7 +237,7 @@ pub async fn dev_discovery() -> Option<DiscoveryClient> {
 /// Spawn an in-process provider node on a random port and return its URL.
 ///
 /// Uses `//Alice` as the signing key so endpoints that sign commitments
-/// (`/commit`, `/commitment`, `/checkpoint/sign`, `/delete`) work end-to-end.
+/// (`/commit`, `/commitment`, `/checkpoint-signature`, `/delete`) work end-to-end.
 /// `//Alice` is granted `Admin` on every bucket.
 pub async fn start_test_provider() -> String {
     let deps = ProviderDeps {
