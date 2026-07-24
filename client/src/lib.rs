@@ -117,6 +117,11 @@ pub use provider_negotiation as agreement;
 
 /// Typed block / event subscription over the chain, re-exported from
 /// `storage-indexers`.
+///
+/// The stream constructors deliberately return [`IndexerError`] rather than
+/// wrapping it in [`ClientError`](base::ClientError): the streams are a
+/// standalone building block usable without the rest of this SDK, and their
+/// failure modes (transport, connect, subscribe) are its whole error surface.
 pub use storage_indexers::{
     BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
     S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,

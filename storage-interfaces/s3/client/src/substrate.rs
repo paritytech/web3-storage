@@ -10,7 +10,7 @@ use storage_client::Signer;
 use storage_subxt::api::s3_registry::events::S3BucketCreated;
 use subxt::ext::scale_value::{At, Composite, Value, ValueDef};
 use subxt::{OnlineClient, PolkadotConfig};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Pallet name in the runtime configuration.
 pub const PALLET_NAME: &str = "S3Registry";
@@ -146,7 +146,10 @@ impl SubstrateClient {
 
         match events.find_first::<S3BucketCreated>() {
             Some(Ok(ev)) => return Ok(ev.s3_bucket_id),
-            Some(Err(e)) => debug!("Failed to decode S3BucketCreated event: {e}"),
+            // A decode failure of a generated event means the bindings drifted
+            // from the runtime — recoverable here via the name query, but worth
+            // surfacing louder than the benign not-found case.
+            Some(Err(e)) => warn!("Failed to decode S3BucketCreated event: {e}"),
             None => debug!("S3BucketCreated event not found in transaction"),
         }
 

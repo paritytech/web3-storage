@@ -63,6 +63,15 @@ impl BlockStream {
     pub async fn connect(ws_url: &str) -> Result<Self, IndexerError> {
         let rpc = ReconnectingRpcClient::builder().build(ws_url).await?;
         let api = OnlineClient::<PolkadotConfig>::from_rpc_client(RpcClient::new(rpc)).await?;
+        Self::from_client(api).await
+    }
+
+    /// Start streaming finalized blocks from an existing client, sharing its
+    /// transport and already-fetched metadata. For resilience the client
+    /// should sit on a reconnecting transport (as [`connect`](Self::connect)
+    /// sets up); on a plain connection a dropped socket ends re-subscription
+    /// attempts at the transport level.
+    pub async fn from_client(api: OnlineClient<PolkadotConfig>) -> Result<Self, IndexerError> {
         let mut block_sub = api.stream_blocks().await?;
 
         let (tx, rx) = mpsc::channel::<FinalizedBlock>(CHANNEL_CAPACITY);

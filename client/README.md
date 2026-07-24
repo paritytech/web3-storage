@@ -15,7 +15,7 @@ This SDK provides specialized client types for different user roles in the stora
 And advanced management tools:
 
 - **`CheckpointManager`** - Multi-provider checkpoint coordination and consensus
-- **`EventSubscriber`** - Real-time blockchain event monitoring
+- **`EventStream`** - Real-time typed blockchain event monitoring (re-exported from `storage-indexers`)
 - **`CheckpointPersistence`** - State persistence with backup rotation
 
 ## Quick Start
@@ -319,13 +319,12 @@ match client.upload(1, data, Default::default()).await {
 - ✅ Provider health tracking and metrics
 - ✅ Auto-challenge recommendations
 
-### EventSubscriber
+### EventStream
 
-- ✅ Real-time blockchain event streaming
-- ✅ Event filtering (by bucket, provider, type)
-- ✅ Checkpoint and challenge event monitoring
-- ✅ Callback-based subscription
-- ✅ Automatic reconnection
+- ✅ Real-time typed event streaming (`storage_subxt::api::Event`)
+- ✅ Two-stage filtering: pallet gate before decoding, predicate after (`EventFilter`)
+- ✅ Automatic reconnection with capped exponential backoff
+- ✅ Best-effort backfill of blocks missed during connection gaps
 
 ## Examples
 
@@ -479,44 +478,43 @@ persistence.save(&state)?;
 
 ### Real-Time Event Subscription
 
-Monitor blockchain events in real-time:
+Monitor blockchain events in real-time via `EventStream` (from the `storage-indexers` crate, re-exported here).
+The stream yields the generated `storage_subxt::api::Event` runtime enum, so you match on typed events instead of hand-rolled ones:
 
 ```rust
-use storage_client::{
-    EventSubscriber, EventFilter, StorageEvent,
-    subscribe_checkpoints, subscribe_challenges,
-};
+use futures::StreamExt;
+use storage_client::{EventFilter, EventStream};
+use storage_subxt::api;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet::Event as SpEvent;
 
-// Create subscriber
-let subscriber = EventSubscriber::new("ws://127.0.0.1:2222").await?;
+// Stream events from the three storage pallets
+let mut stream =
+    EventStream::connect("ws://127.0.0.1:2222", EventFilter::storage_pallets()).await?;
 
-// Subscribe to bucket events
-let filter = EventFilter::bucket(bucket_id);
-let mut stream = subscriber.subscribe(filter).await?;
-
-while let Some(event) = stream.next().await {
-    match event {
-        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, block } => {
-            println!("Bucket {} checkpointed at block {}", bucket_id, block);
+while let Some(ev) = stream.next().await {
+    match ev.event {
+        api::Event::StorageProvider(SpEvent::BucketCheckpointed { bucket_id, .. }) => {
+            println!("Bucket {bucket_id} checkpointed at block {}", ev.block_number);
         }
-        StorageEvent::ChallengeCreated { challenge_id, provider, .. } => {
-            println!("Challenge {} against {}", challenge_id, provider);
-        }
-        StorageEvent::ProviderSlashed { provider, amount, .. } => {
-            println!("Provider {} slashed {} tokens", provider, amount);
+        api::Event::StorageProvider(SpEvent::ChallengeCreated {
+            challenge_id, provider, ..
+        }) => {
+            println!("Challenge {challenge_id:?} against {provider}");
         }
         _ => {}
     }
 }
 
-// Or use convenience functions
-let mut checkpoint_stream = subscribe_checkpoints("ws://127.0.0.1:2222", bucket_id).await?;
-let mut challenge_stream = subscribe_challenges("ws://127.0.0.1:2222", bucket_id).await?;
-
-// Subscribe with callback
-subscribe_with_callback("ws://127.0.0.1:2222", filter, |event| {
-    println!("Event: {:?}", event);
-}).await?;
+// Narrow to a single bucket with a predicate (applied after decoding;
+// the pallet gate above is applied before decoding)
+let filter = EventFilter::storage_provider().with_predicate(move |ev| {
+    matches!(
+        ev.event,
+        api::Event::StorageProvider(SpEvent::BucketCheckpointed { bucket_id, .. })
+            if bucket_id == my_bucket
+    )
+});
+let mut stream = EventStream::connect("ws://127.0.0.1:2222", filter).await?;
 ```
 
 ## Layer 1 File System Interface

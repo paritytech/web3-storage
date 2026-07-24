@@ -330,7 +330,7 @@ The Polkadot SDK provides:
 ## Dependencies
 
 - **Polkadot SDK**: See `Cargo.toml` workspace dependencies
-- **Rust**: 1.74+ with `wasm32-unknown-unknown` target
+- **Rust**: pinned by `rust-toolchain.toml` (currently 1.93.0) with `wasm32v1-none` target
 - **Just**: Command runner (`cargo install just`)
 - **Zombienet**: Network spawner (auto-downloaded by `just setup`)
 - **Polkadot**: Relay chain binary (auto-downloaded)
