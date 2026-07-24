@@ -9710,6 +9710,7 @@ dependencies = [
  "storage-indexers",
  "storage-primitives",
  "storage-provider-node",
+ "storage-subxt",
  "subxt",
  "subxt-signer 0.50.2",
  "tempfile",

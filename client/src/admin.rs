@@ -15,8 +15,8 @@ use crate::substrate::{extrinsics, storage, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use storage_indexers::storage_subxt::api::storage_provider::events::BucketCreated;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
+use storage_subxt::api::storage_provider::events::BucketCreated;
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.

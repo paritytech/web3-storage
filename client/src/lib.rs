@@ -116,10 +116,7 @@ pub mod verification;
 pub use provider_negotiation as agreement;
 
 /// Typed block / event subscription over the chain, re-exported from
-/// `storage-indexers` (which also re-exports the generated `storage-subxt`
-/// bindings as `storage_subxt`).
-pub use storage_indexers;
-pub use storage_indexers::storage_subxt;
+/// `storage-indexers`.
 pub use storage_indexers::{
     BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
     S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,

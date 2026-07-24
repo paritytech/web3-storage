@@ -582,8 +582,8 @@ The stream rides a reconnecting WebSocket transport and yields the generated `st
 
 ```rust
 use futures::StreamExt;
-use storage_client::storage_subxt::api;
 use storage_client::{EventFilter, EventStream};
+use storage_subxt::api;
 
 // Filter by pallet up front (StorageProvider / DriveRegistry / S3Registry),
 // optionally refine with a predicate on the decoded event.
