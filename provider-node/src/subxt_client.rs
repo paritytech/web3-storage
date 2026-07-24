@@ -21,6 +21,7 @@ use crate::replica_sync_coordinator::{
 use crate::Error;
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
+use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::BucketId;
 use subxt::dynamic::Value;
@@ -79,6 +80,13 @@ where
 pub struct SubxtChainClient {
     chain_rx: ChainWatch,
     signer: subxt_signer::sr25519::Keypair,
+    /// Serializes transaction submission across all clones. subxt 0.50 reads
+    /// the nonce from state at the anchored finalized block (not the pool), so
+    /// two concurrent submissions from the same signer would pick the same
+    /// nonce and one would be rejected. Held until finalization for the same
+    /// reason: the nonce only advances once the first transaction lands.
+    // ponytail: per-node serialization; a real nonce manager if duty-tx volume ever grows.
+    submit_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SubxtChainClient {
@@ -98,7 +106,11 @@ impl SubxtChainClient {
             sp_core::crypto::AccountId32::from(signer.public_key().0).to_ss58check()
         );
 
-        Ok(Self { chain_rx, signer })
+        Ok(Self {
+            chain_rx,
+            signer,
+            submit_lock: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
     /// The current live connection, or an error while the chain has never
@@ -163,6 +175,9 @@ impl SubxtChainClient {
         what: &str,
     ) -> Result<(), Error> {
         const RETRY_DELAY: Duration = Duration::from_secs(6);
+
+        // One transaction at a time across every clone (see `submit_lock`).
+        let _guard = self.submit_lock.lock().await;
 
         for attempt in 0..2 {
             let retrying = attempt > 0;
