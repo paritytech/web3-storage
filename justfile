@@ -144,7 +144,7 @@ start-chain: check build-runtime
     echo ""
     echo "=== Starting Blockchain (Relay Chain + Parachain) ==="
     echo ""
-    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet.toml
+    PROJECT_ROOT=$(pwd) .bin/zombienet spawn -p native zombienet/zombienet-parachain-local.toml
 
 # Start the blockchain (relay chain + paseo storage parachain)
 start-paseo-chain: check build-paseo-runtime
@@ -188,7 +188,7 @@ start-e2e-chain RUNTIME="web3-storage-paseo": check
 #   just start-provider                                       # inmemory, //Alice key, port 3333, auth enforced
 #   just start-provider MODE=disk PORT=3334                    # disk storage on port 3334
 #   just start-provider KEYFILE=/path/to/seed MODE=disk        # custom key from file
-start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="" DISABLE_AUTH="false": build-provider
+start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data" KEYFILE="": build-provider
     #!/usr/bin/env bash
     set -euo pipefail
     echo ""
@@ -199,9 +199,6 @@ start-provider MODE="inmemory" PORT=PROVIDER_PORT STORAGE_PATH="./provider-data"
     EXTRA_ARGS=""
     if [ "{{MODE}}" = "disk" ]; then
         EXTRA_ARGS="--storage-path {{STORAGE_PATH}}"
-    fi
-    if [ "{{DISABLE_AUTH}}" = "true" ]; then
-        EXTRA_ARGS="$EXTRA_ARGS --disable-auth-i-know-what-i-am-doing"
     fi
     if [ -n "{{KEYFILE}}" ]; then
         KEY_ARGS="--keyfile {{KEYFILE}}"

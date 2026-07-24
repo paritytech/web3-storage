@@ -22,6 +22,13 @@ use subxt::PolkadotConfig;
 /// that lag behind this many events fall back to a bootstrap scan.
 pub const EVENT_CHANNEL_CAPACITY: usize = 256;
 
+/// Sending half of the per-block event fan-out, owned by the chain-state
+/// coordinator.
+pub type BlockEventTx = tokio::sync::broadcast::Sender<BlockEvent>;
+
+/// A coordinator's subscription to the per-block event fan-out.
+pub type BlockEventRx = tokio::sync::broadcast::Receiver<BlockEvent>;
+
 /// One coordinator-relevant occurrence on the chain.
 #[derive(Clone, Debug)]
 pub enum BlockEvent {
@@ -88,6 +95,9 @@ impl From<provider_events::BucketCheckpointed> for BlockEvent {
 }
 
 /// Decode one block's events into the coordinator-relevant [`BlockEvent`]s.
+// TODO: the try-each-variant chain below scales poorly as more events become
+// coordinator-relevant; revisit a direct pallet-event -> BlockEvent mapping
+// together with the dynamic-subxt vs runtime-API decision.
 pub fn decode_block_events(events: &subxt::events::Events<PolkadotConfig>) -> Vec<BlockEvent> {
     events
         .iter()

@@ -4,7 +4,7 @@
 //!
 //! Usage: cargo run --example basic_usage [chain_ws] [provider_url] [seed]
 
-use s3_client::{PutObjectOptions, S3Client};
+use s3_client::{PutObjectOptions, S3Client, Signer};
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 use std::env;
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Account: {seed}\n");
 
     println!("Creating S3 client...");
-    let client = S3Client::new(chain_url, provider_url, seed).await?;
+    let client = S3Client::new(chain_url, provider_url, Signer::from_seed(seed)?).await?;
     println!("S3 client created successfully!\n");
 
     // Resolve owner/provider accounts. Owner derives from `seed`; provider is

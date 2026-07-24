@@ -13,45 +13,43 @@ use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::event_subscription::{EventParser, StorageEvent, StorageProviderEventParser};
 use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::Signer;
 use sp_core::H256;
+use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, Commitment, EndAction, Role};
 use subxt::ext::scale_value::{Composite, ValueDef, Variant};
 
 /// Client for bucket administrators.
 pub struct AdminClient {
     base: BaseClient,
-    admin_account: String, // Substrate account ID
+    signer: Signer,
 }
 
 impl AdminClient {
-    /// Create a new admin client.
-    pub fn new(config: ClientConfig, admin_account: String) -> ClientResult<Self> {
+    /// Create a new admin client. `signer` submits every extrinsic and
+    /// identifies the admin account.
+    pub fn new(config: ClientConfig, signer: Signer) -> ClientResult<Self> {
         Ok(Self {
             base: BaseClient::new(config)?,
-            admin_account,
+            signer,
         })
     }
 
+    /// The admin account: the signer's public key.
+    fn admin_account(&self) -> AccountId32 {
+        AccountId32::new(self.signer.keypair().public_key().0)
+    }
+
     /// Create with default configuration.
-    pub fn with_defaults(admin_account: String) -> ClientResult<Self> {
-        Self::new(ClientConfig::default(), admin_account)
+    pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
+        Self::new(ClientConfig::default(), signer)
     }
 
-    /// Connect to the blockchain. Must be called before any on-chain operations.
+    /// Connect to the blockchain and install the signer. Must be called before
+    /// any on-chain operations.
     pub async fn connect(&mut self) -> ClientResult<()> {
-        self.base.connect_chain().await
-    }
-
-    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
-    /// Must be called after connect().
-    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
-        self.base.set_dev_signer(name)
-    }
-
-    /// Set a custom keypair signer loaded from a keyfile or seed.
-    /// Must be called after connect().
-    pub fn set_signer(&mut self, signer: subxt_signer::sr25519::Keypair) -> ClientResult<()> {
-        self.base.set_signer(signer)
+        self.base.connect_chain().await?;
+        self.base.set_signer(self.signer.clone())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -67,9 +65,9 @@ impl AdminClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient};
+    /// # use storage_client::{AdminClient, NegotiateRequest, ProviderClient, Signer};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+    /// let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
     /// let signed = ProviderClient::negotiate_terms(
     ///     "http://provider.example:3333",
     ///     &NegotiateRequest {
@@ -101,7 +99,7 @@ impl AdminClient {
         tracing::info!(
             "Establishing storage agreement with provider {} for owner {} (max_bytes={}, duration={}, nonce={})",
             provider,
-            self.admin_account,
+            self.admin_account(),
             terms.max_bytes,
             terms.duration,
             terms.nonce,
@@ -701,14 +699,13 @@ impl AdminClient {
     /// Get the buckets this admin account is a member of.
     pub async fn list_my_buckets(&self) -> ClientResult<Vec<BucketId>> {
         let chain = self.base.chain()?;
-        let admin_account = SubstrateClient::parse_account(&self.admin_account)?;
 
         let at = chain
             .api()
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::member_buckets(&admin_account);
+        let (addr, keys) = storage::member_buckets(&self.admin_account());
         let thunk = at
             .storage()
             .try_fetch(addr, keys)

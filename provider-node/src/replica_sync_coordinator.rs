@@ -11,7 +11,7 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::chain_events::BlockEvent;
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
 use sp_core::H256;
@@ -308,7 +308,7 @@ impl ReplicaSyncCoordinator {
     /// events, on `Resubscribed` / lag, and on the safety-net interval.
     pub async fn start(
         self,
-        events_rx: broadcast::Receiver<BlockEvent>,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) -> Result<ReplicaSyncCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<SyncCommand>(32);
@@ -336,12 +336,9 @@ impl ReplicaSyncCoordinator {
             BlockEvent::ReplicaAgreementEstablished { provider, .. } => {
                 our_account.as_ref().is_none_or(|me| me == provider)
             }
-            BlockEvent::BucketCheckpointUpdated { bucket_id } => self
-                .state
-                .storage
-                .list_buckets()
-                .iter()
-                .any(|b| b.bucket_id == *bucket_id),
+            BlockEvent::BucketCheckpointUpdated { bucket_id } => {
+                self.state.storage.get_bucket(*bucket_id).is_some()
+            }
             _ => false,
         }
     }
@@ -350,7 +347,7 @@ impl ReplicaSyncCoordinator {
     async fn run_loop(
         mut self,
         mut command_rx: mpsc::Receiver<SyncCommand>,
-        mut events_rx: broadcast::Receiver<BlockEvent>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) {
@@ -505,7 +502,7 @@ impl ReplicaSyncCoordinator {
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
         let mut duties = Vec::new();
 
-        let current_block = self.chain_client.get_current_block().await?;
+        let anchor_block = self.chain_client.get_current_block().await?;
 
         let local_buckets: Vec<u64> = self
             .state
@@ -534,7 +531,7 @@ impl ReplicaSyncCoordinator {
             }
 
             if let Some((_, last_block)) = agreement.last_sync {
-                let elapsed = current_block.saturating_sub(last_block);
+                let elapsed = anchor_block.saturating_sub(last_block);
                 if elapsed < agreement.min_sync_interval {
                     tracing::debug!(
                         "Bucket {} sync interval not elapsed: {} < {}",

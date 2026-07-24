@@ -12,7 +12,9 @@
 use crate::base::{BaseClient, ChunkingStrategy, ClientConfig, ClientError, ClientResult};
 use crate::encryption::{Cipher, EncryptionKey, XChaCha20Poly1305Cipher};
 use crate::verification::ClientVerifier;
+use crate::Signer;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use provider_negotiation::build_auth_header;
 use sp_core::H256;
 use storage_primitives::{blake2_256, BucketId};
 
@@ -21,21 +23,43 @@ pub struct StorageUserClient {
     base: BaseClient,
     verifier: ClientVerifier,
     cipher: Option<Box<dyn Cipher>>,
+    auth_signer: Signer,
 }
 
 impl StorageUserClient {
     /// Create a new storage user client.
-    pub fn new(config: ClientConfig) -> ClientResult<Self> {
+    ///
+    /// `auth_signer` authenticates every bucket-scoped provider request; the
+    /// provider always enforces auth, so it is mandatory.
+    pub fn new(config: ClientConfig, auth_signer: Signer) -> ClientResult<Self> {
         Ok(Self {
             base: BaseClient::new(config)?,
             verifier: ClientVerifier::new(),
             cipher: None,
+            auth_signer,
         })
     }
 
-    /// Create with default configuration.
-    pub fn with_defaults() -> ClientResult<Self> {
-        Self::new(ClientConfig::default())
+    /// Attach the signed `Authorization` header (`method` = upper-case HTTP verb).
+    fn sign(
+        &self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        bucket_id: BucketId,
+    ) -> reqwest::RequestBuilder {
+        let signer = self.auth_signer.keypair();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        let header = build_auth_header(
+            &signer.public_key().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| signer.sign(msg).0,
+        );
+        req.header("Authorization", header)
     }
 
     /// Enable client-side encryption with a custom cipher (builder pattern).
@@ -68,9 +92,9 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let data = b"Hello, decentralized world!";
     /// let data_root = client.upload(1, data, Default::default()).await?;
     /// println!("Uploaded data with root: 0x{}", hex::encode(data_root.as_bytes()));
@@ -154,10 +178,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let data = client.download(&data_root, 0, 1024).await?;
     /// println!("Downloaded {} bytes", data.len());
     /// # Ok(())
@@ -237,10 +261,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(hash: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let (data, children) = client.read_node(&hash).await?;
     /// println!("Read {} bytes", data.len());
     /// # Ok(())
@@ -316,10 +340,10 @@ impl StorageUserClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::StorageUserClient;
+    /// # use storage_client::{ClientConfig, Signer, StorageUserClient};
     /// # use sp_core::H256;
     /// # async fn example(data_root: H256) -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = StorageUserClient::with_defaults()?;
+    /// let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
     /// let commitment = client.commit(1, vec![data_root], 0u64).await?;
     /// println!("Committed with MMR root: {}", commitment.mmr_root);
     /// # Ok(())
@@ -342,13 +366,12 @@ impl StorageUserClient {
             nonce,
         };
 
-        let response = self
+        let req = self
             .base
             .http
             .post(format!("{provider_url}/commit"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "POST", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(
@@ -501,13 +524,12 @@ impl StorageUserClient {
             }),
         };
 
-        let response = self
+        let req = self
             .base
             .http
             .put(format!("{provider_url}/node"))
-            .json(&request)
-            .send()
-            .await?;
+            .json(&request);
+        let response = self.sign(req, "PUT", bucket_id).send().await?;
 
         if !response.status().is_success() {
             return Err(ClientError::Api(format!(

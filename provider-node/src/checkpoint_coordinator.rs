@@ -6,7 +6,7 @@
 //! providers to autonomously submit checkpoints without requiring the
 //! client to be online.
 
-use crate::chain_events::BlockEvent;
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{Pair, H256};
@@ -19,11 +19,6 @@ use tokio::sync::{broadcast, mpsc};
 /// Configuration for the checkpoint coordinator.
 #[derive(Clone, Debug)]
 pub struct CheckpointCoordinatorConfig {
-    /// Retained for compatibility; duty checks are clocked by finalized
-    /// blocks from the chain-state coordinator, not by wall time (checkpoint
-    /// windows are a function of block height, so block arrival is the only
-    /// meaningful tick).
-    pub poll_interval: Duration,
     /// Timeout for collecting signatures from peers.
     pub signature_timeout: Duration,
     /// Whether to automatically submit checkpoints when leader.
@@ -33,7 +28,6 @@ pub struct CheckpointCoordinatorConfig {
 impl Default for CheckpointCoordinatorConfig {
     fn default() -> Self {
         Self {
-            poll_interval: Duration::from_secs(6), // ~1 block
             signature_timeout: Duration::from_secs(30),
             auto_submit: true,
         }
@@ -231,7 +225,7 @@ impl CheckpointCoordinator {
     /// windows are a function of block height, so this is the natural clock).
     pub async fn start(
         self,
-        events_rx: broadcast::Receiver<BlockEvent>,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) -> Result<CheckpointCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<CoordinatorCommand>(32);
@@ -256,7 +250,7 @@ impl CheckpointCoordinator {
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<CoordinatorCommand>,
-        mut events_rx: broadcast::Receiver<BlockEvent>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) {
@@ -384,7 +378,7 @@ impl CheckpointCoordinator {
             return Ok(None);
         }
 
-        let current_block = self.chain_client.get_current_block().await?;
+        let anchor_block = self.chain_client.get_current_block().await?;
 
         let (interval, grace_period) = self
             .chain_client
@@ -393,7 +387,7 @@ impl CheckpointCoordinator {
             .unwrap_or((100u32, 20u32));
 
         let window = if interval > 0 {
-            current_block / interval as u64
+            anchor_block / interval as u64
         } else {
             0
         };
@@ -401,7 +395,7 @@ impl CheckpointCoordinator {
         tracing::info!(
             "Checkpoint duty: bucket={} block={} interval={} window={} mmr_root=0x{} leaves={}",
             bucket_id,
-            current_block,
+            anchor_block,
             interval,
             window,
             hex::encode(&bucket.mmr_root.as_bytes()[..4]),

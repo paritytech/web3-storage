@@ -30,11 +30,11 @@ let data = fs_client.download_file(drive_id, "/report.pdf").await?;
 `create_drive` allocates the underlying Layer-0 bucket, requests storage
 agreements with providers, and stamps the drive's initial empty root CID
 on-chain. `min_providers` defaults to 3 for periods >1000 blocks and 1
-otherwise. Examples in `examples/`.
+otherwise. Examples in `client/examples/`.
 
 ## Components
 
-### `primitives/`
+### `crates/primitives/file-system/` (repo root)
 Core data structures and types for the file system.
 
 **Key Types:**
@@ -48,7 +48,7 @@ Core data structures and types for the file system.
 - CID computation and manipulation
 - DAG helper functions
 
-### `pallet-registry/`
+### Drive Registry pallet (`crates/pallets/drive-registry/`)
 On-chain registry pallet for drive management.
 
 **User-Facing Extrinsics:**
@@ -140,7 +140,7 @@ just fs-test-all   # primitives + pallet-registry + client (unit tests)
 - [Layer 1 Architecture](../../docs/filesystems/ARCHITECTURE.md)
 - [Layer 0 Design](../../docs/design/scalable-web3-storage.md)
 - [Layer 0 Implementation](../../docs/design/scalable-web3-storage-implementation.md)
-- [Protobuf schemas](./primitives/proto/filesystem.proto)
+- [Protobuf schemas](../../crates/primitives/file-system/proto/filesystem.proto)
 
 ## License
 

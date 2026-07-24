@@ -10,7 +10,7 @@
 //! on a slow safety-net interval — a missed challenge means getting slashed,
 //! so the event path is backstopped rather than trusted blindly.
 
-use crate::chain_events::BlockEvent;
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::{Error, ProviderState};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -222,7 +222,7 @@ impl ChallengeResponder {
     /// interval.
     pub async fn start(
         self,
-        events_rx: broadcast::Receiver<BlockEvent>,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) -> Result<ChallengeResponderHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<ResponderCommand>(32);
@@ -244,7 +244,7 @@ impl ChallengeResponder {
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<ResponderCommand>,
-        mut events_rx: broadcast::Receiver<BlockEvent>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(ChallengeResponseResult) + Send + Sync>>,
     ) {
@@ -477,7 +477,7 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 /// the decoded `provider` field matches `our_bytes`; `None` when the
 /// challenge targets a different provider.
 ///
-/// Layout of `Challenge<T>` (see `pallet/src/lib.rs`):
+/// Layout of `Challenge<T>` (see `crates/pallets/storage-provider/src/lib.rs`):
 ///   bucket_id (u64)         — 8
 ///   provider (AccountId32)  — 32
 ///   challenger (AccountId32)— 32

@@ -44,6 +44,17 @@ pub trait MembershipResolver: Send + Sync {
     async fn fetch_members(&self, bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String>;
 }
 
+/// A [`MembershipResolver`] that returns a fixed member set for every bucket.
+/// Used by integration tests across crates.
+pub struct StaticMembershipResolver(pub Vec<(AccountId32, Role)>);
+
+#[async_trait::async_trait]
+impl MembershipResolver for StaticMembershipResolver {
+    async fn fetch_members(&self, _bucket_id: u64) -> Result<Vec<(AccountId32, Role)>, String> {
+        Ok(self.0.clone())
+    }
+}
+
 /// Membership cache backed by chain queries via subxt.
 pub struct MembershipCache {
     cache: DashMap<u64, CachedMembership>,
@@ -163,65 +174,124 @@ impl MembershipResolver for ChainMembershipResolver {
             None => return Ok(vec![]),
         };
 
+        // `members` is a `BoundedVec<Member>`. Depending on how the runtime's
+        // scale-info nests it, scale_value may wrap the sequence (and each
+        // `AccountId32`) in extra single-field composites, so walk the value
+        // tree and pull out every `{ account, role }` struct rather than
+        // assuming a fixed shape.
         let mut members = Vec::new();
-        if let subxt::ext::scale_value::ValueDef::Composite(
-            subxt::ext::scale_value::Composite::Unnamed(items),
-        ) = &members_val.value
-        {
-            for item in items {
-                let account_val = item.at("account");
-                let role_val = item.at("role");
+        collect_members(members_val, &mut members);
 
-                if let (Some(account_v), Some(role_v)) = (account_val, role_val) {
-                    let account_bytes = extract_account_bytes(account_v);
-                    if let Some(bytes) = account_bytes {
-                        let account = AccountId32::from(bytes);
-                        let role = extract_role(role_v);
-                        members.push((account, role));
-                    }
-                }
-            }
+        if members.is_empty() {
+            tracing::warn!(bucket_id, value = ?members_val, "auth: decoded zero members");
+        } else {
+            tracing::debug!(bucket_id, count = members.len(), "auth: resolved members");
         }
 
         Ok(members)
     }
 }
 
+/// Recursively pull `(account, role)` pairs out of a decoded `members` value,
+/// tolerating any wrapper composites that `BoundedVec` / `AccountId32` type
+/// info introduces. A `Member` is the composite that carries both an
+/// `account` and a `role` field.
+fn collect_members<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<(AccountId32, Role)>) {
+    use subxt::dynamic::At;
+    use subxt::ext::scale_value::{Composite, ValueDef};
+
+    if let (Some(account_v), Some(role_v)) = (val.at("account"), val.at("role")) {
+        if let Some(bytes) = extract_account_bytes(account_v) {
+            out.push((AccountId32::from(bytes), extract_role(role_v)));
+            return;
+        }
+    }
+
+    match &val.value {
+        ValueDef::Composite(Composite::Named(fields)) => {
+            for field in fields {
+                collect_members(&field.1, out);
+            }
+        }
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            for item in items {
+                collect_members(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract a 32-byte account id, descending through any wrapper composites
+/// (`AccountId32` -> `[u8; 32]` can be one or more composite layers) and
+/// collecting the `u8` leaves.
 fn extract_account_bytes<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<[u8; 32]> {
+    let mut bytes = Vec::with_capacity(32);
+    collect_u8_leaves(val, &mut bytes);
+    if bytes.len() == 32 {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Some(arr)
+    } else {
+        None
+    }
+}
+
+fn collect_u8_leaves<T>(val: &subxt::ext::scale_value::Value<T>, out: &mut Vec<u8>) {
     use subxt::ext::scale_value::{Composite, Primitive, ValueDef};
     match &val.value {
+        ValueDef::Primitive(Primitive::U128(n)) => out.push(*n as u8),
         ValueDef::Composite(Composite::Unnamed(items)) => {
-            let bytes: Vec<u8> = items
-                .iter()
-                .filter_map(|item| match &item.value {
-                    ValueDef::Primitive(Primitive::U128(n)) => Some(*n as u8),
-                    _ => None,
-                })
-                .collect();
-            if bytes.len() == 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&bytes);
-                Some(arr)
-            } else {
-                None
+            for item in items {
+                collect_u8_leaves(item, out);
             }
+        }
+        ValueDef::Composite(Composite::Named(fields)) => {
+            for field in fields {
+                collect_u8_leaves(&field.1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Decode a `Role`, descending through wrapper composites to the enum variant.
+fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
+    find_role_variant(val).unwrap_or(Role::Reader)
+}
+
+fn find_role_variant<T>(val: &subxt::ext::scale_value::Value<T>) -> Option<Role> {
+    use subxt::ext::scale_value::{Composite, ValueDef};
+    match &val.value {
+        ValueDef::Variant(variant) => match variant.name.as_str() {
+            "Admin" => Some(Role::Admin),
+            "Writer" => Some(Role::Writer),
+            "Reader" => Some(Role::Reader),
+            _ => None,
+        },
+        ValueDef::Composite(Composite::Unnamed(items)) => {
+            items.iter().find_map(|v| find_role_variant(v))
+        }
+        ValueDef::Composite(Composite::Named(fields)) => {
+            fields.iter().find_map(|f| find_role_variant(&f.1))
         }
         _ => None,
     }
 }
 
-fn extract_role<T>(val: &subxt::ext::scale_value::Value<T>) -> Role {
-    use subxt::ext::scale_value::ValueDef;
-    if let ValueDef::Variant(variant) = &val.value {
-        match variant.name.as_str() {
-            "Admin" => Role::Admin,
-            "Writer" => Role::Writer,
-            "Reader" => Role::Reader,
-            _ => Role::Reader, // default to least privilege
-        }
-    } else {
-        Role::Reader
-    }
+/// Wrap a payload the way Polkadot message-signing surfaces do before signing:
+/// `<Bytes>` ++ payload ++ `</Bytes>`. Browser extensions (`signRaw`) and PAPI's
+/// `PolkadotSigner.signBytes` apply this wrapper so a signed message can never be
+/// mistaken for a signed extrinsic. The auth message is always short, so no
+/// hashing step applies.
+fn wrap_bytes(msg: &[u8]) -> Vec<u8> {
+    const PREFIX: &[u8] = b"<Bytes>";
+    const SUFFIX: &[u8] = b"</Bytes>";
+    let mut out = Vec::with_capacity(PREFIX.len() + msg.len() + SUFFIX.len());
+    out.extend_from_slice(PREFIX);
+    out.extend_from_slice(msg);
+    out.extend_from_slice(SUFFIX);
+    out
 }
 
 /// Verify an sr25519 signature from an `Authorization` header.
@@ -305,9 +375,17 @@ pub fn verify_signature(
             .map_err(|_| Error::AuthRequired)?,
     );
 
-    // Verify signature
-    let message = format!("web3storage:{method}:{bucket_id}:{timestamp_str}");
-    if !sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey) {
+    // Verify signature. Two signing surfaces reach this endpoint:
+    // - the Rust SDK / provider tests sign the raw message bytes;
+    // - browser wallet extensions and PAPI's `PolkadotSigner.signBytes` never
+    //   expose a raw key and wrap the payload in `<Bytes>…</Bytes>` before
+    //   signing (see `@polkadot-api/signers-common`'s `getSignBytes`).
+    // Accept either so wallet-backed clients (the UIs) can authenticate.
+    let message = provider_negotiation::auth_message(method, bucket_id, timestamp_str);
+    let wrapped = wrap_bytes(message.as_bytes());
+    let verified = sr25519::Pair::verify(&signature, message.as_bytes(), &pubkey)
+        || sr25519::Pair::verify(&signature, &wrapped, &pubkey);
+    if !verified {
         return Err(Error::AuthRequired);
     }
 
@@ -316,9 +394,9 @@ pub fn verify_signature(
 
 /// Check that the caller has sufficient permissions.
 ///
-/// Auth is enforced by default. This is a no-op (returns `Ok`) only when the
-/// operator started the node with `--disable-auth-i-know-what-i-am-doing`, which
-/// strips the membership config from the state.
+/// Auth is always enforced. The caller must present a valid signed
+/// `Authorization` header whose account holds the [`RequiredRole`] for the
+/// bucket; otherwise the request is rejected.
 pub async fn require_role(
     state: &ProviderState,
     auth_header: Option<&str>,
@@ -327,19 +405,11 @@ pub async fn require_role(
     required: RequiredRole,
     max_skew: Duration,
 ) -> Result<(), Error> {
-    if !state.auth_enabled {
-        return Ok(());
-    }
-
-    let cache = state
-        .membership_cache
-        .as_ref()
-        .ok_or_else(|| Error::Internal("Auth enabled but no membership cache".to_string()))?;
-
     let header = auth_header.ok_or(Error::AuthRequired)?;
     let account = verify_signature(header, method, bucket_id, max_skew)?;
 
-    let role = cache
+    let role = state
+        .membership_cache
         .get_role(bucket_id, &account)
         .await
         .map_err(|e| Error::Internal(format!("Membership lookup failed: {e}")))?
@@ -370,13 +440,12 @@ mod tests {
         bucket_id: u64,
         timestamp: u64,
     ) -> String {
-        let message = format!("web3storage:{method}:{bucket_id}:{timestamp}");
-        let signature = keypair.sign(message.as_bytes());
-        format!(
-            "Web3Storage 0x{}:0x{}:{}",
-            hex::encode(keypair.public().0),
-            hex::encode(signature.0),
-            timestamp
+        provider_negotiation::build_auth_header(
+            &keypair.public().0,
+            method,
+            bucket_id,
+            timestamp,
+            |msg| keypair.sign(msg).0,
         )
     }
 
@@ -387,6 +456,36 @@ mod tests {
             .as_secs()
     }
 
+    /// Regression test for the dynamic decoding of `StorageProvider.Buckets`.
+    #[test]
+    fn collect_members_handles_chain_value_nesting() {
+        use subxt::ext::scale_value::Value;
+
+        let acct = [9u8; 32];
+        // AccountId32 -> [u8; 32]: two composite layers around the byte leaves.
+        let account = Value::unnamed_composite(vec![Value::unnamed_composite(
+            acct.iter().map(|b| Value::u128(*b as u128)),
+        )]);
+        let member = Value::named_composite(vec![
+            ("account".to_string(), account),
+            ("role".to_string(), Value::unnamed_variant("Writer", vec![])),
+        ]);
+        let sequence = Value::unnamed_composite(vec![member]);
+        // BoundedVec wrapper around the member sequence.
+        let members_val = Value::unnamed_composite(vec![sequence]);
+
+        let mut out = Vec::new();
+        collect_members(&members_val, &mut out);
+
+        assert_eq!(
+            out.len(),
+            1,
+            "member must be recovered through both wrappers"
+        );
+        assert_eq!(out[0].0, AccountId32::from(acct));
+        assert!(matches!(out[0].1, Role::Writer));
+    }
+
     #[test]
     fn test_verify_valid_signature() {
         let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
@@ -395,6 +494,30 @@ mod tests {
 
         let result = verify_signature(&header, "PUT", 1, Duration::from_secs(300));
         assert!(result.is_ok());
+        assert_eq!(result.unwrap(), AccountId32::new(keypair.public().0));
+    }
+
+    #[test]
+    fn test_verify_wrapped_signature() {
+        // Wallet signers (browser extensions, PAPI `signBytes`) wrap the message
+        // in `<Bytes>…</Bytes>` before signing and never expose a raw key. The
+        // provider must accept that form so UI/wallet clients can authenticate.
+        let keypair = sr25519::Pair::from_string("//Alice", None).unwrap();
+        let ts = current_timestamp();
+        let message = provider_negotiation::auth_message("PUT", 1, &ts.to_string());
+        let sig = keypair.sign(&wrap_bytes(message.as_bytes()));
+        let header = format!(
+            "Web3Storage 0x{}:0x{}:{}",
+            hex::encode(keypair.public().0),
+            hex::encode(sig.0),
+            ts
+        );
+
+        let result = verify_signature(&header, "PUT", 1, Duration::from_secs(300));
+        assert!(
+            result.is_ok(),
+            "wrapped (wallet-style) signature must verify"
+        );
         assert_eq!(result.unwrap(), AccountId32::new(keypair.public().0));
     }
 

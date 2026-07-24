@@ -8,10 +8,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    Error, ProviderState, ReplicaSyncChainClient, ReplicaSyncCoordinator,
-    ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
+    Error, NullNonceStore, ProviderDeps, ProviderState, ReplicaSyncChainClient,
+    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
 
 struct MockReplicaSyncChainClient {
@@ -156,7 +157,16 @@ async fn test_already_synced() {
     let _ = storage.store_node(1, data_root, data, None);
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
-    let state = Arc::new(ProviderState::with_provider_id(storage, "test".to_string()));
+    let deps = ProviderDeps {
+        storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = Arc::new(ProviderState::with_provider_id(deps, "test".to_string()));
 
     let duty = SyncDuty {
         bucket_id: 1,
@@ -370,8 +380,17 @@ async fn test_duties_filter_already_synced() {
     storage.store_node(1, data_root, data, None).unwrap();
     let (mmr_root, _, _) = storage.commit(1, vec![data_root]).unwrap();
 
-    let state = Arc::new(ProviderState::with_provider_id(
+    let deps = ProviderDeps {
         storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    let state = Arc::new(ProviderState::with_provider_id(
+        deps,
         ALICE_SS58.to_string(),
     ));
 

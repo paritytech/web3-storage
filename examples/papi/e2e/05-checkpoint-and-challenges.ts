@@ -16,6 +16,7 @@ import {
   challengeOffchain,
   claimCheckpointRewards,
   configureCheckpointWindow,
+  currentRelayBlock,
   ensureProviderRegistered,
   fetchChallengeProof,
   fetchCheckpointDuty,
@@ -28,7 +29,7 @@ import {
   submitClientCheckpoint,
   submitProviderCheckpoint,
   uploadChunk,
-  waitForBlock,
+  waitForRelayBlock,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
 import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
@@ -51,14 +52,18 @@ async function main() {
   // Create a bucket + agreement + upload data for checkpoint tests.
   const maxBytes = 1_048_576n;
   const duration = 200;
-  const { bucketId } = await negotiateAndEstablish(api, PROVIDER_URL, client, provider, {
-    maxBytes,
-    duration,
-  });
+  const { bucketId } = await negotiateAndEstablish(
+    api,
+    PROVIDER_URL,
+    client,
+    provider,
+    { maxBytes, duration },
+    true, // finalize: an immediate provider upload reads finalized membership
+  );
 
   const payload = `checkpoint-test @ ${Date.now()}`;
-  const uploadNonce = Number(await api.query.System.Number.getValue());
-  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce);
+  const uploadNonce = await currentRelayBlock(api);
+  const upload = await uploadChunk(PROVIDER_URL, bucketId, payload, uploadNonce, client);
   const uploadInfo = {
     leafIndex: upload.commit.leaf_indices[0],
     mmrRoot: upload.commit.mmr_root,
@@ -75,7 +80,7 @@ async function main() {
   tests.push({
     name: "5.1 Client checkpoint",
     fn: async () => {
-      const ckNonce = Number(await api.query.System.Number.getValue());
+      const ckNonce = await currentRelayBlock(api);
       const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
       assert.ok(ck.mmr_root, "Checkpoint should have mmr_root");
       const result = await submitClientCheckpoint(api, client, provider, bucketId, ck);
@@ -131,12 +136,12 @@ async function main() {
 
       // Compute current window with headroom.
       const HEADROOM = 8;
-      let currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
+      let currentBlock = await currentRelayBlock(api);
       let windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
       let nextWindowStart = (windowNum + 1) * WINDOW_INTERVAL;
       if (nextWindowStart - currentBlock < HEADROOM) {
-        await waitForBlock(papi, nextWindowStart - 1);
-        currentBlock = Number(await api.query.System.Number.getValue(READ_OPTS));
+        await waitForRelayBlock(papi, api, nextWindowStart - 1);
+        currentBlock = await currentRelayBlock(api);
         windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
       }
       const window = BigInt(windowNum);
