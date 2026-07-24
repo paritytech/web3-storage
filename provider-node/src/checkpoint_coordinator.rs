@@ -6,7 +6,7 @@
 //! providers to autonomously submit checkpoints without requiring the
 //! client to be online.
 
-use crate::chain_events::BlockEvent;
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::{Error, ProviderState};
 use codec::Encode;
 use sp_core::{Pair, H256};
@@ -225,7 +225,7 @@ impl CheckpointCoordinator {
     /// windows are a function of block height, so this is the natural clock).
     pub async fn start(
         self,
-        events_rx: broadcast::Receiver<BlockEvent>,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) -> Result<CheckpointCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<CoordinatorCommand>(32);
@@ -250,7 +250,7 @@ impl CheckpointCoordinator {
     async fn run_loop(
         self,
         mut command_rx: mpsc::Receiver<CoordinatorCommand>,
-        mut events_rx: broadcast::Receiver<BlockEvent>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(CheckpointResult) + Send + Sync>>,
     ) {

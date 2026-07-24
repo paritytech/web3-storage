@@ -19,7 +19,7 @@
 //! current — no field-patching, no partial updates, no second writer.
 
 use crate::chain_connection::{self, ChainHandle, ChainTransport};
-use crate::chain_events::{self, BlockEvent};
+use crate::chain_events::{self, BlockEvent, BlockEventTx};
 use crate::negotiate::NonceCounter;
 use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
 use subxt::{OnlineClient, PolkadotConfig};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
@@ -251,7 +251,7 @@ pub struct ChainStateCoordinator {
     /// and everyone else picks up the new handle from the watch channel.
     chain_tx: watch::Sender<Option<ChainHandle>>,
     /// Fan-out of decoded per-block events to the background coordinators.
-    events_tx: broadcast::Sender<BlockEvent>,
+    events_tx: BlockEventTx,
 }
 
 impl ChainStateCoordinator {
@@ -260,7 +260,7 @@ impl ChainStateCoordinator {
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
         chain_tx: watch::Sender<Option<ChainHandle>>,
-        events_tx: broadcast::Sender<BlockEvent>,
+        events_tx: BlockEventTx,
     ) -> Self {
         Self {
             transport,

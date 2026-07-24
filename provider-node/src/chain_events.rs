@@ -22,6 +22,13 @@ use subxt::PolkadotConfig;
 /// that lag behind this many events fall back to a bootstrap scan.
 pub const EVENT_CHANNEL_CAPACITY: usize = 256;
 
+/// Sending half of the per-block event fan-out, owned by the chain-state
+/// coordinator.
+pub type BlockEventTx = tokio::sync::broadcast::Sender<BlockEvent>;
+
+/// A coordinator's subscription to the per-block event fan-out.
+pub type BlockEventRx = tokio::sync::broadcast::Receiver<BlockEvent>;
+
 /// One coordinator-relevant occurrence on the chain.
 #[derive(Clone, Debug)]
 pub enum BlockEvent {

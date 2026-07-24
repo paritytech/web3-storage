@@ -11,7 +11,7 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::chain_events::BlockEvent;
+use crate::chain_events::{BlockEvent, BlockEventRx};
 use crate::replica_sync::ReplicaSync;
 use crate::{Error, ProviderState};
 use sp_core::H256;
@@ -308,7 +308,7 @@ impl ReplicaSyncCoordinator {
     /// events, on `Resubscribed` / lag, and on the safety-net interval.
     pub async fn start(
         self,
-        events_rx: broadcast::Receiver<BlockEvent>,
+        events_rx: BlockEventRx,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) -> Result<ReplicaSyncCoordinatorHandle, Error> {
         let (command_tx, command_rx) = mpsc::channel::<SyncCommand>(32);
@@ -347,7 +347,7 @@ impl ReplicaSyncCoordinator {
     async fn run_loop(
         mut self,
         mut command_rx: mpsc::Receiver<SyncCommand>,
-        mut events_rx: broadcast::Receiver<BlockEvent>,
+        mut events_rx: BlockEventRx,
         running: Arc<AtomicBool>,
         callback: Option<Arc<dyn Fn(SyncResult) + Send + Sync>>,
     ) {

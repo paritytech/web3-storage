@@ -5,7 +5,7 @@
 use crate::{
     auth::{ChainMembershipResolver, MembershipCache},
     chain_connection::{self, ChainHandle, ChainTransport},
-    chain_events::{BlockEvent, EVENT_CHANNEL_CAPACITY},
+    chain_events::{BlockEvent, BlockEventRx, BlockEventTx, EVENT_CHANNEL_CAPACITY},
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
@@ -200,7 +200,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn start_chain_state_coordinator(
     transport: ChainTransport,
     chain_tx: watch::Sender<Option<ChainHandle>>,
-    events_tx: broadcast::Sender<BlockEvent>,
+    events_tx: BlockEventTx,
     state: Arc<ProviderState>,
 ) -> Option<ChainStateCoordinatorHandle> {
     let provider_account = match sp_runtime::AccountId32::from_str(&state.provider_id) {
@@ -229,7 +229,7 @@ fn start_chain_state_coordinator(
 async fn start_checkpoint_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
-    events_rx: broadcast::Receiver<BlockEvent>,
+    events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<CheckpointCoordinatorHandle> {
     if !cli.checkpoint.enable_checkpoint_coordinator {
@@ -265,7 +265,7 @@ async fn start_checkpoint_coordinator(
 async fn start_replica_sync_coordinator(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
-    events_rx: broadcast::Receiver<BlockEvent>,
+    events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<ReplicaSyncCoordinatorHandle> {
     if !cli.replica_sync.enable_replica_sync {
@@ -306,7 +306,7 @@ async fn start_replica_sync_coordinator(
 async fn start_challenge_responder(
     cli: &Cli,
     chain_client: Option<&SubxtChainClient>,
-    events_rx: broadcast::Receiver<BlockEvent>,
+    events_rx: BlockEventRx,
     state: Arc<ProviderState>,
 ) -> Option<ChallengeResponderHandle> {
     if !cli.challenge_responder.enable_challenge_responder {
