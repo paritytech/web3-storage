@@ -21,5 +21,3 @@ pub use event_stream::{
     BlockEvent, EventFilter, EventStream, DRIVE_REGISTRY_PALLET, S3_REGISTRY_PALLET,
     STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
 };
-
-pub use storage_subxt;
