@@ -5,7 +5,7 @@
  *
  * Accounts: //Alice (provider), //Bob (client)
  *
- * Tests: client/provider checkpoints, off-chain/on-chain challenges + defense.
+ * Tests: client checkpoints, off-chain/on-chain challenges + defense.
  *
  * Usage: node e2e/05-checkpoint-and-challenges.js [chain_ws] [provider_url]
  */
@@ -14,32 +14,20 @@ import assert from "node:assert";
 import {
   challengeCheckpoint,
   challengeOffchain,
-  claimCheckpointRewards,
-  configureCheckpointWindow,
   currentRelayBlock,
   ensureProviderRegistered,
   fetchChallengeProof,
-  fetchCheckpointDuty,
   fetchCheckpointSignature,
-  fundCheckpointPool,
   makeSigner,
-  READ_OPTS,
   respondToChallenge,
-  signCheckpointProposal,
   submitClientCheckpoint,
-  submitProviderCheckpoint,
   uploadChunk,
-  waitForRelayBlock,
 } from "@web3-storage/sdk";
 import { ensureSoleAcceptingProvider } from "../support.js";
 import { negotiateAndEstablish, runSuite, submitTxExpectFailure, setupChain } from "./helpers.js";
 
 const CHAIN_WS = process.argv[2] || "ws://127.0.0.1:2222";
 const PROVIDER_URL = process.argv[3] || "http://127.0.0.1:3333";
-
-const WINDOW_INTERVAL = 20;
-const WINDOW_GRACE = 10;
-const POOL_AMOUNT = 5_000_000_000_000n;
 
 async function main() {
   const provider = makeSigner("//Alice");
@@ -125,68 +113,10 @@ async function main() {
     },
   });
 
-  tests.push({
-    name: "5.4 Provider-initiated checkpoint + reward",
-    fn: async () => {
-      await configureCheckpointWindow(api, client, bucketId, {
-        interval: WINDOW_INTERVAL,
-        gracePeriod: WINDOW_GRACE,
-      });
-      await fundCheckpointPool(api, client, bucketId, POOL_AMOUNT);
-
-      // Compute current window with headroom.
-      const HEADROOM = 8;
-      let currentBlock = await currentRelayBlock(api);
-      let windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
-      let nextWindowStart = (windowNum + 1) * WINDOW_INTERVAL;
-      if (nextWindowStart - currentBlock < HEADROOM) {
-        await waitForRelayBlock(papi, api, nextWindowStart - 1);
-        currentBlock = await currentRelayBlock(api);
-        windowNum = Math.floor(currentBlock / WINDOW_INTERVAL);
-      }
-      const window = BigInt(windowNum);
-
-      const duty = await fetchCheckpointDuty(PROVIDER_URL, bucketId);
-      assert.ok(duty.ready, "Provider should be ready to checkpoint");
-      const signed = await signCheckpointProposal(PROVIDER_URL, bucketId, duty, window);
-      assert.ok(signed.agreed, "Provider should agree to sign");
-
-      const event = await submitProviderCheckpoint(
-        api,
-        provider,
-        bucketId,
-        duty,
-        signed.signature,
-        Number(window)
-      );
-      assert.ok(event.reward > 0n, "Reward should be positive");
-    },
-  });
-
-  tests.push({
-    name: "5.5 Claim checkpoint rewards",
-    fn: async () => {
-      const pending = await api.query.StorageProvider.CheckpointRewards.getValue(
-        provider.address,
-        bucketId,
-        READ_OPTS
-      );
-      assert.ok(pending > 0n, "Should have pending rewards");
-      const event = await claimCheckpointRewards(api, provider, bucketId);
-      assert.ok(event.amount > 0n, "Claimed amount should be positive");
-      const after = await api.query.StorageProvider.CheckpointRewards.getValue(
-        provider.address,
-        bucketId,
-        READ_OPTS
-      );
-      assert.strictEqual(after, 0n, "Rewards should be cleared after claim");
-    },
-  });
-
   // ── Failure ───────────────────────────────────────────────────────────────
 
   tests.push({
-    name: "5.6 Challenge a provider not in the snapshot",
+    name: "5.4 Challenge a provider not in the snapshot",
     fn: async () => {
       // challenge_checkpoint validates the *provider* against the snapshot at
       // creation, but NOT the leaf_index: a beyond-canonical leaf is rejected
@@ -199,16 +129,7 @@ async function main() {
         provider: client.address, // not in the snapshot's primary_providers
         target: { leaf_index: 0n, chunk_index: 0n },
       });
-      await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "5.6");
-    },
-  });
-
-  tests.push({
-    name: "5.7 No rewards to claim",
-    fn: async () => {
-      // We already claimed rewards in 5.5, so claiming again should fail.
-      const tx = api.tx.StorageProvider.claim_checkpoint_rewards({ bucket_id: bucketId });
-      await submitTxExpectFailure(tx, provider.signer, "NoRewardsToClaim", "5.7");
+      await submitTxExpectFailure(tx, client.signer, "ProviderNotInSnapshot", "5.4");
     },
   });
 

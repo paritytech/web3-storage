@@ -36,10 +36,6 @@ parameter_types! {
     pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
     // 1 token (1e12) per 1 GB (1e9 bytes) = 1000 per byte
     pub const MinStakePerByte: Balance = 1_000;
-    pub const DefaultCheckpointInterval: BlockNumber = 100; // relay blocks (~10 min)
-    pub const DefaultCheckpointGrace: BlockNumber = 20; // relay blocks (~2 min)
-    pub const CheckpointReward: Balance = 1_000_000_000_000; // 1 token
-    pub const CheckpointMissPenalty: Balance = 500_000_000_000; // 0.5 token
     /// Must be `> ChallengeTimeout` so any challenge opened up to the
     /// announcement block matures (provider stays slashable) before the
     /// provider can withdraw stake, and `> RequestTimeout` so a
@@ -107,10 +103,6 @@ impl pallet_storage_provider::Config for Runtime {
     type MaxNonceAge = MaxNonceAge;
     type SettlementTimeout = SettlementTimeout;
     type RequestTimeout = RequestTimeout;
-    type DefaultCheckpointInterval = DefaultCheckpointInterval;
-    type DefaultCheckpointGrace = DefaultCheckpointGrace;
-    type CheckpointReward = CheckpointReward;
-    type CheckpointMissPenalty = CheckpointMissPenalty;
     type MaxBucketsPerMember = ConstU32<1000>;
     type DeregisterAnnouncementPeriod = DeregisterAnnouncementPeriod;
     type MaxChallengesPerDeadline = MaxChallengesPerDeadline;

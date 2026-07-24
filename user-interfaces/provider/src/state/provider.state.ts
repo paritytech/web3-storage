@@ -25,7 +25,6 @@ import {
   OnChainBucketDetails,
 } from '@/lib/chain-client'
 import { isSameAddress } from '@web3-storage/sdk'
-import { getAnchorBlock } from '@/state/chain.state'
 import { getProviderHttp } from '@/state/network.state'
 import { challengeKey } from '@/state/challengeKey'
 
@@ -127,11 +126,6 @@ export interface BucketDetail {
     paymentLocked: bigint
     status: 'active' | 'expired' | 'terminated'
   }
-  checkpointConfig: { interval: number; gracePeriod: number; enabled: boolean } | null
-  lastCheckpointWindow: bigint | null
-  checkpointPoolBalance: bigint
-  checkpointReward: bigint
-  isCheckpointOverdue: boolean
 }
 
 // Persist challenges to localStorage so they survive page reloads.
@@ -296,10 +290,7 @@ export async function loadProviderData(
     )]
     if (bucketIds.length > 0) {
       try {
-        const chainBucketDetails = await getBucketDetails(bucketIds, address)
-        // Checkpoint windows are anchor-block / interval, so overdue detection
-        // must divide the anchor clock, not the parachain height.
-        const anchorBlock = getAnchorBlock() || 0
+        const chainBucketDetails = await getBucketDetails(bucketIds)
         const agreementsByBucket = new Map<number, typeof chainAgreements[0]>()
         for (const a of chainAgreements) {
           if (isSameAddress(a.provider, address)) agreementsByBucket.set(a.bucketId, a)
@@ -307,12 +298,7 @@ export async function loadProviderData(
         bucketDetails$.next(
           chainBucketDetails.map((bd) => {
             const agr = agreementsByBucket.get(bd.bucketId)
-            let isOverdue = false
-            if (bd.checkpointConfig?.enabled && bd.lastCheckpointWindow != null && anchorBlock > 0) {
-              const expectedWindow = BigInt(Math.floor(anchorBlock / bd.checkpointConfig.interval))
-              isOverdue = expectedWindow > bd.lastCheckpointWindow + 1n
-            }
-            return convertBucketDetail(bd, agr || null, isOverdue)
+            return convertBucketDetail(bd, agr || null)
           }).sort((a, b) => a.bucketId - b.bucketId)
         )
       } catch (e) {
@@ -689,7 +675,6 @@ function convertChallenge(chain: OnChainChallenge): Challenge {
 function convertBucketDetail(
   chain: OnChainBucketDetails,
   agreement: { bucketId: number; maxBytes: bigint; endBlock: number; startBlock: number; isPrimary: boolean; paymentLocked: bigint; status: 'active' | 'expired' | 'terminated' } | null,
-  isCheckpointOverdue: boolean
 ): BucketDetail {
   return {
     bucketId: chain.bucketId,
@@ -710,11 +695,6 @@ function convertBucketDetail(
     } : {
       maxBytes: 0n, expiresAt: 0, startedAt: 0, isPrimary: false, paymentLocked: 0n, status: 'expired' as const,
     },
-    checkpointConfig: chain.checkpointConfig,
-    lastCheckpointWindow: chain.lastCheckpointWindow,
-    checkpointPoolBalance: chain.checkpointPoolBalance,
-    checkpointReward: chain.checkpointReward,
-    isCheckpointOverdue,
   }
 }
 

@@ -131,8 +131,8 @@ All four run in CI under `.github/workflows/integration-tests.yml` against both 
 
 In v1:
 
-- **Provider-side selectors are not exposed.** `register_provider`, `add_stake`, `accept_agreement`, `respond_to_challenge`, `confirm_replica_sync`, `claim_checkpoint_rewards`, `fund_checkpoint_pool`, `deregister_*` all stay native — a dApp is a *user* of storage, not a provider.
-- **Checkpoint extrinsics are not exposed.** `checkpoint` / `provider_checkpoint` take `BucketSnapshot` + `MmrProof` + `Vec<Signature>` — the ABI design needs a follow-up.
+- **Provider-side selectors are not exposed.** `register_provider`, `add_stake`, `accept_agreement`, `respond_to_challenge`, `confirm_replica_sync`, `deregister_*` all stay native — a dApp is a *user* of storage, not a provider.
+- **Checkpoint extrinsics are not exposed.** `checkpoint` takes `BucketSnapshot` + `MmrProof` + `Vec<Signature>` — the ABI design needs a follow-up.
 - **`challenge_offchain` is not exposed** (its `MerkleProof` argument needs the same treatment).
 - **S3 `put_object_metadata` drops user metadata in v1.** The Rust extrinsic takes `Vec<(Vec<u8>, Vec<u8>)>`; the Solidity ABI for nested dynamic-bytes tuples is awkward, so the precompile selector accepts no user metadata and always passes an empty vector. Use the substrate extrinsic directly if you need it.
 - **No `pallet_revive_eth_rpc` server.** PAPI drives revive directly via the substrate-native dispatchables (`call`, `instantiate_with_code`). A separate "real dApp UX" follow-up can ship the JSON-RPC node for MetaMask / viem / hardhat compatibility.

@@ -35,7 +35,7 @@ jobs:
     outputs:
       src: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || steps.filter.outputs.src == 'true' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # paths-filter has no diff base on merge_group; run the full suite there.
@@ -65,7 +65,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -123,7 +123,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -209,8 +209,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider-inmemory.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider-inmemory.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -261,7 +260,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -340,8 +339,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -468,7 +466,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -573,8 +571,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health
@@ -625,7 +622,7 @@ jobs:
       image: ${{ needs.set-image.outputs.CI_IMAGE }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
@@ -705,8 +702,7 @@ jobs:
           echo "//Alice" > /tmp/alice-key && chmod 600 /tmp/alice-key
           nohup ./target/release/storage-provider-node \
             --keyfile /tmp/alice-key --storage-mode inmemory \
-            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 \
-            --enable-checkpoint-coordinator > /tmp/provider.log 2>&1 &
+            --bind-addr 0.0.0.0:3333 --chain-rpc ws://127.0.0.1:2222 > /tmp/provider.log 2>&1 &
 
       - name: Wait for provider health
         uses: ./.github/actions/wait-for-provider-health

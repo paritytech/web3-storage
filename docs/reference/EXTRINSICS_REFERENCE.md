@@ -142,7 +142,7 @@ multiaddr: /ip4/203.0.113.10/tcp/3333
 
 ### `completeDeregister`
 
-**Step 2 of the two-step exit.** Drains any pending checkpoint rewards into the provider's free balance, unreserves stake, and removes the provider record.
+**Step 2 of the two-step exit.** Unreserves stake and removes the provider record.
 
 **Parameters:** none
 
@@ -596,116 +596,6 @@ additionalSignatures: [
 
 ---
 
-### `providerCheckpoint`
-
-**Provider-initiated checkpoint.** Primary providers coordinate autonomously and submit on a fixed window cadence. Submitter receives `CheckpointReward` from the bucket's checkpoint pool (if funded).
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `mmrRoot`: `H256`
-- `startSeq`: `u64`
-- `leafCount`: `u64`
-- `window`: `u64` - current window number (replay protection)
-- `signatures`: `BoundedVec<(AccountId, MultiSignature), T::MaxPrimaryProviders>`
-
-**Example:**
-```
-bucketId: 0
-mmrRoot: 0x1234567890abcdef...
-startSeq: 0
-leafCount: 10
-window: 42
-signatures: [
-  (5GrwvaEF..., 0xsig1...),
-  (5FHneW46..., 0xsig2...)
-]
-```
-
-**Leader election:** `blake2_256(bucket_id || window) % primary_count`. During the grace period only the elected leader may submit; afterwards any primary may submit (fallback).
-
-**Events:** `ProviderCheckpointSubmitted { window, leader, signers, reward }`
-**Errors:** `BucketNotFound`, `ProviderCheckpointsDisabled`, `InvalidCheckpointWindow`, `CheckpointAlreadySubmitted`, `NotCheckpointLeader`, `ProviderNotInSnapshot`, `InvalidSignature`, `SnapshotViolatesFrozen`, `MinProvidersNotMet`, `InsufficientSignatures`
-
----
-
-### `configureCheckpointWindow`
-
-Admin configuration for provider-initiated checkpoints on a bucket.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `interval`: `BlockNumber` - blocks per window
-- `gracePeriod`: `BlockNumber` - leader-only window at the start
-- `enabled`: `bool`
-
-**Example:**
-```
-bucketId: 0
-interval: 100
-gracePeriod: 20
-enabled: true
-```
-
-**Events:** `CheckpointConfigUpdated`
-**Errors:** `BucketNotFound`, `NotBucketAdmin`
-
----
-
-### `reportMissedCheckpoint`
-
-**Permissionless.** If a window's grace period expires without a checkpoint, anyone can report the leader: the leader is slashed by `CheckpointMissPenalty` and the reporter receives 10% as a bounty.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `window`: `u64`
-
-**Example:**
-```
-bucketId: 0
-window: 42
-```
-
-**Events:** `CheckpointMissPenalized`
-**Errors:** `BucketNotFound`, `ProviderCheckpointsDisabled`, `InvalidCheckpointWindow`, `CheckpointAlreadySubmitted`, `WithinGracePeriod`, `ProviderNotInSnapshot`
-
----
-
-### `claimCheckpointRewards`
-
-Provider claims accumulated rewards for a bucket.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-
-**Example:**
-```
-bucketId: 0
-```
-
-**Events:** `CheckpointRewardClaimed`
-**Errors:** `NoRewardsToClaim`
-
----
-
-### `fundCheckpointPool`
-
-**Permissionless.** Anyone can top up a bucket's reward pool to incentivize provider-initiated checkpoints.
-
-**Parameters:**
-- `bucketId`: `BucketId` (u64)
-- `amount`: `Balance` - amount to add to the pool
-
-**Example:**
-```
-bucketId: 0
-amount: 100000000000000   // 100 tokens
-```
-
-**Events:** `CheckpointPoolFunded`
-**Errors:** `BucketNotFound`
-
----
-
 ### `challengeCheckpoint`
 
 Challenge a primary provider against the **current snapshot** on chain. No signature needed: the snapshot itself is proof of commitment.
@@ -961,18 +851,7 @@ createBucketWithStorage(maxBytes, duration, maxPricePerByte)
 3. [optional] extendCheckpoint(...) with late signers
 ```
 
-### 5. Provider-initiated checkpoint cadence
-
-```
-1. [admin] configureCheckpointWindow(bucketId, interval, gracePeriod, enabled=true)
-2. [anyone, optional] fundCheckpointPool(bucketId, amount)
-3. [leader] providerCheckpoint(bucketId, mmrRoot, startSeq, leafCount, window, signatures)
-4. [provider] claimCheckpointRewards(bucketId)
-   // if leader misses:
-5. [anyone] reportMissedCheckpoint(bucketId, window)   // 10% bounty
-```
-
-### 6. Challenge a provider
+### 5. Challenge a provider
 
 ```
 // against current snapshot:
@@ -987,7 +866,7 @@ challengeReplica(bucketId, provider, leafIndex, chunkIndex)
 [provider] respondToChallenge(challengeId, response)
 ```
 
-### 7. Two-step provider exit
+### 6. Two-step provider exit
 
 ```
 1. deregisterProvider()        // step 1: announce (committed_bytes must be 0)
@@ -997,7 +876,7 @@ challengeReplica(bucketId, provider, leafIndex, chunkIndex)
    cancelDeregister()          // restores acceptingPrimary/Extensions
 ```
 
-### 8. Clean up a slashed provider
+### 7. Clean up a slashed provider
 
 ```
 [anyone] removeSlashed(bucketId, slashedProvider)   // permissionless
@@ -1060,13 +939,6 @@ Common errors you might encounter:
 | `NoSnapshot` | Bucket has no checkpoint yet | Call `checkpoint` first |
 | `SnapshotViolatesFrozen` | `startSeq < frozen_start_seq` | Use `startSeq ≥ frozen_start_seq` |
 | `InsufficientSignatures` | Fewer signatures than `minProviders` | Collect more |
-| `ProviderCheckpointsDisabled` | Feature off for this bucket | `configureCheckpointWindow(..., enabled=true)` |
-| `NotCheckpointLeader` | Submitter is not the elected leader during grace period | Wait until grace period ends |
-| `CheckpointWindowNotStarted` / `InvalidCheckpointWindow` / `CheckpointAlreadySubmitted` | Window state errors | — |
-| `InsufficientCheckpointPool` | Pool too low to pay reward | `fundCheckpointPool` |
-| `NoMissedCheckpoint` | Reported window was actually submitted | — |
-| `WithinGracePeriod` | `reportMissedCheckpoint` called before grace expired | Wait |
-| `NoRewardsToClaim` | Nothing accumulated for this provider/bucket | — |
 | `NoMatchingProvider` | `createBucketWithStorage` couldn't find a fit | Relax constraints |
 | `InvalidMultiaddr` / `InvalidPublicKey` | Malformed input | Fix the value |
 | `ArithmeticOverflow` | Internal overflow | Report; should not occur |
@@ -1096,12 +968,6 @@ RequestTimeout       = 6 * RC_HOURS    // pending request expiry
 SettlementTimeout    = 24 * RC_HOURS   // owner's window after expiry
 ChallengeTimeout     = 48 * RC_HOURS   // provider's window to respond
 MaxChunkSize         = 256 * 1024      // challenge response chunk cap (256 KiB)
-
-// Provider-initiated checkpoints
-DefaultCheckpointInterval = 100         // anchor blocks (~10 min)
-DefaultCheckpointGrace    = 20          // anchor blocks (~2 min)
-CheckpointReward          = 1 token
-CheckpointMissPenalty     = 0.5 token   // reporter gets 10%
 ```
 
 **Note:** The runtime uses **12 decimal places** (like Polkadot), so:
