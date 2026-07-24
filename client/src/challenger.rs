@@ -9,7 +9,8 @@
 //! - Automated challenge strategies
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{extrinsics, storage, SubstrateClient};
+use crate::substrate::{extrinsics, fetch_current_anchor_block, storage, SubstrateClient};
+use crate::Signer;
 use sp_runtime::AccountId32;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use subxt::dynamic::At;
@@ -20,32 +21,34 @@ use subxt::PolkadotConfig;
 /// Client for challengers (third parties who verify data integrity).
 pub struct ChallengerClient {
     base: BaseClient,
-    challenger_account: String, // Substrate account ID
+    signer: Signer,
 }
 
 impl ChallengerClient {
-    /// Create a new challenger client.
-    pub fn new(config: ClientConfig, challenger_account: String) -> ClientResult<Self> {
+    /// Create a new challenger client. `signer` submits every extrinsic and
+    /// identifies the challenger account.
+    pub fn new(config: ClientConfig, signer: Signer) -> ClientResult<Self> {
         Ok(Self {
             base: BaseClient::new(config)?,
-            challenger_account,
+            signer,
         })
     }
 
+    /// The challenger account: the signer's public key.
+    fn challenger_account(&self) -> AccountId32 {
+        AccountId32::new(self.signer.keypair().public_key().0)
+    }
+
     /// Create with default configuration.
-    pub fn with_defaults(challenger_account: String) -> ClientResult<Self> {
-        Self::new(ClientConfig::default(), challenger_account)
+    pub fn with_defaults(signer: Signer) -> ClientResult<Self> {
+        Self::new(ClientConfig::default(), signer)
     }
 
-    /// Connect to the blockchain. Must be called before any on-chain operations.
+    /// Connect to the blockchain and install the signer. Must be called before
+    /// any on-chain operations.
     pub async fn connect(&mut self) -> ClientResult<()> {
-        self.base.connect_chain().await
-    }
-
-    /// Set a development signer (alice, bob, charlie, dave, eve, ferdie).
-    /// Must be called after connect().
-    pub fn set_dev_signer(&mut self, name: &str) -> ClientResult<()> {
-        self.base.set_dev_signer(name)
+        self.base.connect_chain().await?;
+        self.base.set_signer(self.signer.clone())
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -64,9 +67,9 @@ impl ChallengerClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use storage_client::{ChallengerClient, ChunkLocation};
+    /// # use storage_client::{ChallengerClient, ChunkLocation, Signer};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = ChallengerClient::with_defaults("5GrwvaEF...".to_string())?;
+    /// let client = ChallengerClient::with_defaults(Signer::from_seed("//Alice")?)?;
     ///
     /// // Challenge a random chunk
     /// let bucket_id = 1;
@@ -253,7 +256,7 @@ impl ChallengerClient {
     /// Get all active challenges created by this challenger.
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let challenger_account = SubstrateClient::parse_account(&self.challenger_account)?;
+        let challenger_account = self.challenger_account();
         let challenger_bytes: &[u8] = challenger_account.as_ref();
 
         let at = chain
@@ -382,12 +385,10 @@ impl ChallengerClient {
 
         // Compute checkpoint age from bucket snapshot
         let last_checkpoint_age = {
-            let current_block = chain
-                .api()
-                .at_current_block()
-                .await
-                .map_err(|e| ClientError::Chain(format!("Failed to get latest block: {e}")))?
-                .block_number() as u32;
+            // `checkpoint_block` is on the pallet's anchor clock (relay
+            // blocks), so measure the age on that clock, not the parachain
+            // height.
+            let anchor_block = fetch_current_anchor_block(&at).await?;
 
             let (addr, keys) = storage::bucket_info(bucket_id);
             let bucket_thunk = at
@@ -413,7 +414,7 @@ impl ChallengerClient {
                     .and_then(|v| v.as_u128())
                     .unwrap_or(0) as u32;
 
-                current_block.saturating_sub(checkpoint_block)
+                anchor_block.saturating_sub(checkpoint_block)
             } else {
                 0
             }
@@ -686,7 +687,7 @@ impl ChallengerClient {
     /// account has never opened a challenge.
     async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
         let chain = self.base.chain()?;
-        let challenger_account = SubstrateClient::parse_account(&self.challenger_account)?;
+        let challenger_account = self.challenger_account();
         let challenger_bytes: &[u8] = challenger_account.as_ref();
 
         let at = chain

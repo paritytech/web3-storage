@@ -5,7 +5,8 @@
 //!
 //! [`ChainState`] is the single source of truth for all on-chain state the
 //! provider node needs at runtime:
-//! - [`ChainState::current_block`] — latest finalized block height.
+//! - [`ChainState::current_anchor_block`] — the pallet's anchor block (the
+//!   clock all on-chain durations use), read via its runtime API.
 //! - [`ChainState::constants`] — pallet constants fetched once on connect.
 //! - [`ChainState::provider_info`] — full provider registration info.
 //! - [`ChainState::nonce_counter`] — nonce counter bootstrapped from the
@@ -44,8 +45,13 @@ const PALLET_NAME: &str = "StorageProvider";
 /// Held behind `Arc` inside [`crate::ProviderState`] so the coordinator can hold
 /// its own handle without a back-reference to the whole node state.
 pub struct ChainState {
-    /// Latest finalized block height. `0` means not yet known.
-    pub current_block: AtomicU32,
+    /// The pallet's anchor block — the clock all on-chain durations (timeouts,
+    /// `valid_until`, nonce age) are measured against — read via the
+    /// `StorageProviderApi::current_anchor_block` runtime API at the latest
+    /// finalized block. Whether that anchor is a relay, parachain, or other
+    /// block number is the pallet's concern, not the provider's. `0` means not
+    /// yet known.
+    pub current_anchor_block: AtomicU32,
     /// Pallet constants fetched once per connection. `None` until the first
     /// successful fetch; `/negotiate` returns 503 until this is `Some`.
     pub constants: RwLock<Option<PalletConstants>>,
@@ -66,12 +72,19 @@ pub struct ChainState {
 
 impl Default for ChainState {
     fn default() -> Self {
+        Self::with_nonce_store(Arc::new(NullNonceStore))
+    }
+}
+
+impl ChainState {
+    /// Fresh chain state whose nonce counter persists through `store`.
+    pub fn with_nonce_store(store: Arc<dyn NonceStore>) -> Self {
         Self {
-            current_block: AtomicU32::new(0),
+            current_anchor_block: AtomicU32::new(0),
             constants: RwLock::new(None),
             provider_info: RwLock::new(None),
             nonce_counter: RwLock::new(None),
-            nonce_store: Arc::new(NullNonceStore),
+            nonce_store: store,
         }
     }
 }
@@ -335,7 +348,7 @@ impl ChainStateCoordinator {
         let _ = self.events_tx.send(BlockEvent::Resubscribed {
             at_block: self
                 .chain_state
-                .current_block
+                .current_anchor_block
                 .load(std::sync::atomic::Ordering::Relaxed),
         });
 
@@ -361,22 +374,35 @@ impl ChainStateCoordinator {
             let block_number = block.number() as u32;
 
             tracing::debug!("Finalized block: {}", block_number);
-            self.chain_state
-                .current_block
-                .store(block_number, std::sync::atomic::Ordering::Relaxed);
 
-            let events = async {
-                let at = block
-                    .at()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get block: {e}")))?;
-                at.events()
-                    .fetch()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to fetch events: {e}")))
+            // One block-scoped handle drives both reads below.
+            let at = match block.at().await {
+                Ok(at) => at,
+                Err(e) => {
+                    tracing::warn!(
+                        "chain-state coordinator: failed to get block handle for {block_number}: {e}"
+                    );
+                    continue;
+                }
+            };
+
+            // Track the pallet's anchor block (the clock all on-chain durations
+            // are measured against) at this finalized block, via its runtime
+            // API — so the provider never needs to know which block notion the
+            // pallet uses.
+            match crate::subxt_client::fetch_current_anchor_block(&at).await {
+                Ok(anchor_block) => {
+                    self.chain_state
+                        .current_anchor_block
+                        .store(anchor_block, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => tracing::warn!(
+                    "chain-state coordinator: failed to fetch anchor block for block \
+                     {block_number}: {e}; keeping previous value"
+                ),
             }
-            .await;
-            let events = match events {
+
+            let events = match at.events().fetch().await {
                 Ok(events) => events,
                 Err(e) => {
                     tracing::warn!(
@@ -758,17 +784,17 @@ mod tests {
     #[test]
     fn chain_state_defaults_to_unknown() {
         let cs = ChainState::default();
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 0);
+        assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 0);
         assert!(cs.constants.read().is_none());
         assert!(cs.provider_info.read().is_none());
         assert!(cs.nonce_counter.read().is_none());
     }
 
     #[test]
-    fn chain_state_current_block_round_trips() {
+    fn chain_state_current_anchor_block_round_trips() {
         let cs = ChainState::default();
-        cs.current_block.store(42, Ordering::Relaxed);
-        assert_eq!(cs.current_block.load(Ordering::Relaxed), 42);
+        cs.current_anchor_block.store(42, Ordering::Relaxed);
+        assert_eq!(cs.current_anchor_block.load(Ordering::Relaxed), 42);
     }
 
     #[test]
@@ -1131,6 +1157,11 @@ mod tests {
                         "Metadata_metadata_versions" => vec![u32::from(METADATA[4])].encode(),
                         "Metadata_metadata_at_version" => Some(METADATA.to_vec()).encode(),
                         "Metadata_metadata" => METADATA.to_vec().encode(),
+                        // Anchor block the coordinator reads per finalized block.
+                        // Deliberately distinct from the mocked header number
+                        // (42) so the assertion below fails if the coordinator
+                        // ever regresses to storing the parachain height.
+                        "StorageProviderApi_current_anchor_block" => 4242u32.encode(),
                         // sp_version::RuntimeVersion, field by field.
                         "Core_version" => (
                             "test".to_string(),           // spec_name
@@ -1313,7 +1344,13 @@ mod tests {
                 .await
                 .expect("follow runs to stream end");
 
-            assert_eq!(chain_state.current_block.load(Ordering::Relaxed), 42);
+            // 4242 comes from the mocked runtime API, NOT the header number
+            // (42) — proving the anchor is sourced from the runtime API rather
+            // than the parachain height.
+            assert_eq!(
+                chain_state.current_anchor_block.load(Ordering::Relaxed),
+                4242
+            );
             let info = chain_state.provider_info.read();
             let info = info.as_ref().expect("provider info synced from chain");
             assert_eq!(info.stake, 1_000);

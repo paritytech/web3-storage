@@ -18,33 +18,22 @@ And advanced management tools:
 - **`EventSubscriber`** - Real-time blockchain event monitoring
 - **`CheckpointPersistence`** - State persistence with backup rotation
 
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-storage-client = { path = "path/to/client" }
-tokio = { version = "1", features = ["full"] }
-```
-
 ## Quick Start
 
 ### Setup
 
-All clients that need on-chain access must connect to the chain and set a signer:
+All clients take their signer at construction and must connect to the chain
+before on-chain operations:
 
 ```rust
-use storage_client::{AdminClient, ClientConfig};
+use storage_client::{AdminClient, ClientConfig, Signer};
 
 let config = ClientConfig::default(); // ws://localhost:2222
-let mut client = AdminClient::new(config, "5GrwvaEF...".to_string())?;
+// Dev account for testing — use a real keypair in production!
+let mut client = AdminClient::new(config, Signer::from_seed("//Alice")?)?;
 
 // Connect to chain
-client.base.connect_chain().await?;
-
-// Set signer (for testing - use proper keypairs in production!)
-client.base = client.base.with_dev_signer("alice")?;
+client.connect().await?;
 
 // Now ready for on-chain operations
 ```
@@ -56,16 +45,12 @@ See [INTEGRATION.md](INTEGRATION.md) for detailed substrate integration guide.
 Upload, download, and verify data:
 
 ```rust
-use storage_client::{StorageUserClient, ChunkingStrategy};
+use storage_client::{ChunkingStrategy, ClientConfig, Signer, StorageUserClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client
-    let mut client = StorageUserClient::with_defaults()?;
-
-    // Connect to chain for commit operations
-    client.base.connect_chain().await?;
-    client.base = client.base.with_dev_signer("alice")?;
+    // Create client (default config, dev Alice signer)
+    let client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 
     // Upload data
     let data = b"My important data";
@@ -123,11 +108,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Create and manage buckets:
 
 ```rust
-use storage_client::AdminClient;
+use storage_client::{AdminClient, Signer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = AdminClient::with_defaults("5GrwvaEF...".to_string())?;
+    let client = AdminClient::with_defaults(Signer::from_seed("//Alice")?)?;
 
     // Create bucket
     let bucket_id = client.create_bucket(2).await?; // min 2 providers
@@ -253,7 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 All clients can be configured with custom settings:
 
 ```rust
-use storage_client::ClientConfig;
+use storage_client::{ClientConfig, Signer};
 
 let config = ClientConfig {
     chain_ws_url: "ws://localhost:2222".to_string(),
@@ -262,7 +247,7 @@ let config = ClientConfig {
     enable_retries: true,
 };
 
-let client = StorageUserClient::new(config)?;
+let client = StorageUserClient::new(config, Signer::from_seed("//Alice")?)?;
 ```
 
 ### Error Handling
@@ -359,7 +344,7 @@ cargo run --example complete_workflow
 ### Automated Spot-Checking
 
 ```rust
-let mut client = StorageUserClient::with_defaults()?;
+let mut client = StorageUserClient::new(ClientConfig::default(), Signer::from_seed("//Alice")?)?;
 
 // Perform 10 random spot-checks
 let (passed, failed) = client.spot_check_batch(

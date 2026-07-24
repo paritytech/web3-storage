@@ -67,6 +67,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Everything a servable [`ProviderState`] requires.
+pub struct ProviderDeps {
+    /// Local storage backend.
+    pub storage: Arc<dyn StorageBackend>,
+    /// Persistence backing for the nonce counter — [`NullNonceStore`] in
+    /// in-memory mode, the disk store in disk mode.
+    pub nonce_store: Arc<dyn NonceStore>,
+    /// Membership cache for role lookups.
+    pub membership: Arc<auth::MembershipCache>,
+    /// Maximum allowed clock skew for request timestamps.
+    pub auth_max_skew: Duration,
+}
+
 /// Provider node state shared across handlers.
 pub struct ProviderState {
     /// Local storage backend
@@ -81,32 +94,29 @@ pub struct ProviderState {
     pub fs_index: FsIndexManager,
     /// Channel to send commands to the checkpoint coordinator (if running).
     pub checkpoint_cmd_tx: std::sync::Mutex<Option<mpsc::Sender<CoordinatorCommand>>>,
-    /// Whether membership auth is enforced. Enforced by default at startup; the
-    /// node clears this only when started with
-    /// `--disable-auth-i-know-what-i-am-doing`.
-    pub auth_enabled: bool,
-    /// Membership cache for role lookups. Set whenever auth is enforced (i.e.
-    /// always, unless the operator opted out via the escape-hatch flag).
-    pub membership_cache: Option<Arc<auth::MembershipCache>>,
+    /// Membership cache for role lookups.
+    pub membership_cache: Arc<auth::MembershipCache>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
     /// permissive policy; `Some(list)` restricts to exactly those origins.
     pub cors_allowed_origins: Option<Vec<String>>,
     /// Live chain state kept in sync by the chain-state coordinator — the single
-    /// writer for `current_block`, `constants`, `provider_info`, and
+    /// writer for `current_anchor_block`, `constants`, `provider_info`, and
     /// `nonce_counter`. `/negotiate` gates on all four before signing.
     pub chain_state: Arc<ChainState>,
 }
 
 impl ProviderState {
     /// Shared constructor body for [`with_provider_id`](Self::with_provider_id)
-    /// and [`with_seed`](Self::with_seed). All other fields take their defaults;
-    fn from_parts(
-        storage: Arc<dyn StorageBackend>,
-        provider_id: String,
-        keypair: Option<sr25519::Pair>,
-    ) -> Self {
+    /// and [`with_seed`](Self::with_seed).
+    fn from_parts(deps: ProviderDeps, provider_id: String, keypair: Option<sr25519::Pair>) -> Self {
+        let ProviderDeps {
+            storage,
+            nonce_store,
+            membership,
+            auth_max_skew,
+        } = deps;
         Self {
             storage,
             provider_id,
@@ -114,29 +124,28 @@ impl ProviderState {
             s3_index: S3IndexManager::new(),
             fs_index: FsIndexManager::new(),
             checkpoint_cmd_tx: std::sync::Mutex::new(None),
-            auth_enabled: true,
-            membership_cache: None,
-            auth_max_skew: Duration::from_secs(300),
+            membership_cache: membership,
+            auth_max_skew,
             cors_allowed_origins: None,
-            chain_state: Arc::new(ChainState::default()),
+            chain_state: Arc::new(ChainState::with_nonce_store(nonce_store)),
         }
     }
 
     /// Create state for a provider that cannot sign: `provider_id` is used as-is
     /// for identity and on-chain reconciliation, and signing endpoints stay
     /// unavailable. For a signing provider use [`with_seed`](Self::with_seed).
-    pub fn with_provider_id(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
-        Self::from_parts(storage, provider_id, None)
+    pub fn with_provider_id(deps: ProviderDeps, provider_id: String) -> Self {
+        Self::from_parts(deps, provider_id, None)
     }
 
     /// Create with a seed phrase or derivation path (e.g., "//Alice", "//Bob").
-    pub fn with_seed(storage: Arc<dyn StorageBackend>, seed: &str) -> Result<Self, String> {
+    pub fn with_seed(deps: ProviderDeps, seed: &str) -> Result<Self, String> {
         let keypair = sr25519::Pair::from_string(seed, None)
             .map_err(|e| format!("Failed to create keypair: {e:?}"))?;
 
         let provider_id = keypair.public().to_ss58check();
 
-        Ok(Self::from_parts(storage, provider_id, Some(keypair)))
+        Ok(Self::from_parts(deps, provider_id, Some(keypair)))
     }
 
     /// Restrict the browser origins allowed via CORS. `None` (the default) keeps
@@ -144,44 +153,6 @@ impl ProviderState {
     pub fn with_cors_origins(mut self, origins: Option<Vec<String>>) -> Self {
         self.cors_allowed_origins = origins;
         self
-    }
-
-    /// Enable membership-based auth, wiring in the role-lookup cache and the
-    /// maximum tolerated clock skew for request timestamps.
-    pub fn set_auth_config(
-        &mut self,
-        membership_cache: Arc<auth::MembershipCache>,
-        max_skew: Duration,
-    ) {
-        self.auth_enabled = true;
-        self.membership_cache = Some(membership_cache);
-        self.auth_max_skew = max_skew;
-    }
-
-    /// Turn off membership auth, leaving every endpoint publicly accessible.
-    /// Reserved for the `--disable-auth-i-know-what-i-am-doing` escape hatch and
-    /// for tests that exercise non-auth behavior.
-    pub fn with_auth_disabled(mut self) -> Self {
-        self.auth_enabled = false;
-        self.membership_cache = None;
-        self
-    }
-
-    /// Install the nonce-counter persistence backend.
-    ///
-    /// Must be called while `self` is still solely owned — before it is wrapped
-    /// in an `Arc` and shared with the coordinators — because `chain_state` is
-    /// mutated in place via `Arc::get_mut`. If `chain_state` is already shared
-    /// the store is left as the default `NullNonceStore` (disk-mode persistence
-    /// disabled) and an error is logged rather than silently dropping it.
-    pub fn set_nonce_store(&mut self, store: Arc<dyn NonceStore>) {
-        match Arc::get_mut(&mut self.chain_state) {
-            Some(cs) => cs.nonce_store = store,
-            None => tracing::error!(
-                "nonce store install skipped: chain_state Arc has multiple owners; \
-                 disk-mode persistence is disabled for this run"
-            ),
-        }
     }
 
     /// Set the checkpoint coordinator command sender (called after coordinator starts).
@@ -208,17 +179,22 @@ impl ProviderState {
 mod tests {
     use super::*;
 
-    fn test_storage() -> Arc<dyn StorageBackend> {
-        Arc::new(storage::Storage::new())
-    }
-
     #[test]
     fn sign_without_keypair_refuses_with_signing_unavailable() {
         // The pre-fix behaviour silently returned 64 zero bytes. The new
         // contract is that `sign()` MUST return `Err(SigningUnavailable)`
         // when no keypair is configured, so the HTTP layer can map it to a
         // 503 instead of emitting a cryptographically invalid placeholder.
-        let state = ProviderState::with_provider_id(test_storage(), "no-key-provider".to_string());
+        let deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_provider_id(deps, "no-key-provider".to_string());
         let err = state
             .sign(b"any message")
             .expect_err("must refuse to sign without a keypair");
@@ -231,7 +207,16 @@ mod tests {
         // Alice's public key. This catches any regression where sign() ever
         // returns the 0x00..00 placeholder again, and also catches the more
         // subtle case where the bytes look random but aren't valid sr25519.
-        let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
+        let deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let message = b"commitment-payload-bytes";
 
         let sig_hex = state.sign(message).expect("signing succeeds with keypair");
@@ -273,7 +258,16 @@ mod tests {
         // message produce different signatures, but both must verify. This
         // test guards against accidentally swapping to a backend that
         // returns a constant value (e.g. zero bytes).
-        let state = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
+        let deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_seed(deps, "//Alice").unwrap();
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"commitment-payload";
 
@@ -293,8 +287,26 @@ mod tests {
         // Negative control: //Bob's signature must NOT verify under //Alice.
         // Cheap protection against a future refactor that accidentally
         // stops checking the message or the key.
-        let alice = ProviderState::with_seed(test_storage(), "//Alice").unwrap();
-        let bob = ProviderState::with_seed(test_storage(), "//Bob").unwrap();
+        let alice_deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let bob_deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let alice = ProviderState::with_seed(alice_deps, "//Alice").unwrap();
+        let bob = ProviderState::with_seed(bob_deps, "//Bob").unwrap();
         let alice_pub = keypair_for("//Alice").public();
         let msg = b"checkpoint payload";
 
@@ -309,8 +321,23 @@ mod tests {
     #[test]
     fn provider_state_chain_defaults_on_new() {
         use std::sync::atomic::Ordering;
-        let state = ProviderState::with_provider_id(test_storage(), "test-provider".to_string());
-        assert_eq!(state.chain_state.current_block.load(Ordering::Relaxed), 0);
+        let deps = ProviderDeps {
+            storage: Arc::new(storage::Storage::new()),
+            nonce_store: Arc::new(NullNonceStore),
+            membership: Arc::new(auth::MembershipCache::new(
+                Box::new(auth::StaticMembershipResolver(vec![])),
+                Duration::from_secs(60),
+            )),
+            auth_max_skew: Duration::from_secs(300),
+        };
+        let state = ProviderState::with_provider_id(deps, "test-provider".to_string());
+        assert_eq!(
+            state
+                .chain_state
+                .current_anchor_block
+                .load(Ordering::Relaxed),
+            0
+        );
         assert!(state.chain_state.provider_info.read().is_none());
     }
 }

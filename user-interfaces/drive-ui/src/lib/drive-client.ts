@@ -11,7 +11,6 @@
 
 import type { PolkadotSigner } from "polkadot-api";
 import { parachain } from "@polkadot-api/descriptors";
-import { ss58Decode } from "@polkadot-labs/hdkd-helpers";
 import {
   buildSignedTermsArgs,
   createDrive as createDriveTx,
@@ -19,6 +18,7 @@ import {
   parseMultiaddrToUrl,
   toSs58,
   type ChainSigner,
+  type Keypair,
   type NegotiateRequest,
   type SignedTerms,
 } from "@web3-storage/sdk";
@@ -111,6 +111,7 @@ export class DriveClient {
   private api: ParachainApi | null = null;
   private signer: Signer | null = null;
   private signerAddress: string | null = null;
+  private keypair: Keypair | null = null;
   private fsc: FileSystemClient | null = null;
 
   private rebuild(): void {
@@ -120,14 +121,11 @@ export class DriveClient {
     }
     let chainSigner: ChainSigner | null = null;
     if (this.signer && this.signerAddress) {
-      // Wallet flows hand us a PolkadotSigner + address; recover the public
-      // key from the address. No raw keypair here, so provider requests go
-      // unsigned (same as this app always behaved).
-      const [publicKey] = ss58Decode(this.signerAddress);
       chainSigner = {
         signer: this.signer,
         address: this.signerAddress,
-        publicKey,
+        publicKey: this.signer.publicKey,
+        keypair: this.keypair ?? undefined,
       };
     }
     this.fsc = new FileSystemClient({ api: this.api, signer: chainSigner });
@@ -140,9 +138,14 @@ export class DriveClient {
     }
   }
 
-  setSigner(signer: Signer | null, address: string | null): void {
+  setSigner(
+    signer: Signer | null,
+    address: string | null,
+    keypair: Keypair | null,
+  ): void {
     this.signer = signer;
     this.signerAddress = address;
+    this.keypair = keypair;
     this.rebuild();
   }
 
@@ -352,12 +355,14 @@ export class DriveClient {
     signed: SignedTerms,
   ): Promise<DriveInfo> {
     const api = this.requireApi();
-    if (!this.signer || !this.signerAddress) throw new Error("Signer not set");
-    const [publicKey] = ss58Decode(this.signerAddress);
+    if (!this.signer || !this.signerAddress) {
+      throw new Error("Signer not set");
+    }
     const owner: ChainSigner = {
       signer: this.signer,
       address: this.signerAddress,
-      publicKey,
+      publicKey: this.signer.publicKey,
+      keypair: this.keypair ?? undefined,
     };
 
     // Finalize: the state layer reads the drive list back at the finalized

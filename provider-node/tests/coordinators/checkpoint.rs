@@ -7,10 +7,11 @@ use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::checkpoint_coordinator::SignProposalRequest;
 use storage_provider_node::{
     CheckpointChainClient, CheckpointCoordinator, CheckpointCoordinatorConfig, CheckpointDuty,
-    CheckpointResult, Error, ProviderState, Storage,
+    CheckpointResult, Error, NullNonceStore, ProviderDeps, ProviderState, Storage,
 };
 
 pub(crate) struct MockCheckpointChainClient {
@@ -79,7 +80,16 @@ fn test_state_with_bucket(bucket_id: BucketId) -> Arc<ProviderState> {
     let data_root = H256::from(hash);
     let _ = storage.store_node(bucket_id, data_root, data, None);
     storage.commit(bucket_id, vec![data_root]).unwrap();
-    Arc::new(ProviderState::with_seed(storage, "//Alice").unwrap())
+    let deps = ProviderDeps {
+        storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    };
+    Arc::new(ProviderState::with_seed(deps, "//Alice").unwrap())
 }
 
 #[test]
@@ -132,6 +142,50 @@ async fn test_duty_found_submit_ok() {
     let submitted = mock.submitted.lock().unwrap();
     assert_eq!(submitted.len(), 1);
     assert_eq!(submitted[0], (1, 5));
+}
+
+/// `get_current_block` returns the relay-chain block number since the
+/// relay-clock migration; the on-chain window is `relay_block / interval`,
+/// so the coordinator must compute duties on that scale or its
+/// `provider_checkpoint` submissions target the wrong window.
+#[tokio::test]
+async fn duty_window_derives_from_relay_scale_block() {
+    let mock = Arc::new(MockCheckpointChainClient::new(29_123_456));
+    let state = test_state_with_bucket(1);
+    let config = CheckpointCoordinatorConfig::default();
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+    let duty = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+    assert_eq!(duty.window, 291_234); // 29_123_456 / 100
+    assert_eq!(duty.interval, 100);
+    assert_eq!(duty.grace_period, 20);
+}
+
+/// The relay parent can repeat across consecutive parachain blocks
+/// (velocity > 1) and advances within a window without changing it: the
+/// duty window must move only when the relay clock crosses an interval
+/// boundary, never on a mere re-read.
+#[tokio::test]
+async fn duty_window_moves_only_on_interval_boundary() {
+    let mock = Arc::new(MockCheckpointChainClient::new(29_123_456));
+    let state = test_state_with_bucket(1);
+    let config = CheckpointCoordinatorConfig::default();
+    let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
+
+    // Repeated relay parent → identical duty.
+    let first = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+    let repeat = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+    assert_eq!(first.window, repeat.window);
+
+    // Advancing within the window keeps it.
+    *mock.block_number.lock().unwrap() = 29_123_499;
+    let same_window = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+    assert_eq!(same_window.window, first.window);
+
+    // Crossing the interval boundary moves it by one.
+    *mock.block_number.lock().unwrap() = 29_123_500;
+    let next_window = coordinator.get_checkpoint_duty(1).await.unwrap().unwrap();
+    assert_eq!(next_window.window, first.window + 1);
 }
 
 #[tokio::test]

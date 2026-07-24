@@ -477,7 +477,7 @@ const CHALLENGE_ENTRY_SIZE: usize = 144;
 /// the decoded `provider` field matches `our_bytes`; `None` when the
 /// challenge targets a different provider.
 ///
-/// Layout of `Challenge<T>` (see `pallet/src/lib.rs`):
+/// Layout of `Challenge<T>` (see `crates/pallets/storage-provider/src/lib.rs`):
 ///   bucket_id (u64)         — 8
 ///   provider (AccountId32)  — 32
 ///   challenger (AccountId32)— 32

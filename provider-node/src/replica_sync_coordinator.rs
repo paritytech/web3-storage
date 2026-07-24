@@ -505,7 +505,7 @@ impl ReplicaSyncCoordinator {
     pub async fn get_active_replica_duties(&self) -> Result<Vec<SyncDuty>, Error> {
         let mut duties = Vec::new();
 
-        let current_block = self.chain_client.get_current_block().await?;
+        let anchor_block = self.chain_client.get_current_block().await?;
 
         let local_buckets: Vec<u64> = self
             .state
@@ -534,7 +534,7 @@ impl ReplicaSyncCoordinator {
             }
 
             if let Some((_, last_block)) = agreement.last_sync {
-                let elapsed = current_block.saturating_sub(last_block);
+                let elapsed = anchor_block.saturating_sub(last_block);
                 if elapsed < agreement.min_sync_interval {
                     tracing::debug!(
                         "Bucket {} sync interval not elapsed: {} < {}",

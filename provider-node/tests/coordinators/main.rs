@@ -10,26 +10,43 @@ mod event_fanout;
 mod replica_sync;
 
 use std::sync::Arc;
+use std::time::Duration;
 use storage_primitives::blake2_256;
-use storage_provider_node::{build_padded_merkle_tree, DetectedChallenge, ProviderState, Storage};
+use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
+use storage_provider_node::{
+    build_padded_merkle_tree, DetectedChallenge, NullNonceStore, ProviderDeps, ProviderState,
+    Storage,
+};
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 pub const ALICE_SEED: &str = "//Alice";
 
+/// Standard test dependencies around the given storage backend: no nonce
+/// persistence and an empty static membership set.
+pub fn test_deps(storage: Arc<Storage>) -> ProviderDeps {
+    ProviderDeps {
+        storage,
+        nonce_store: Arc::new(NullNonceStore),
+        membership: Arc::new(MembershipCache::new(
+            Box::new(StaticMembershipResolver(vec![])),
+            Duration::from_secs(60),
+        )),
+        auth_max_skew: Duration::from_secs(300),
+    }
+}
+
 /// Create a standard test `ProviderState` for coordinator tests.
 pub fn test_state() -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
     Arc::new(ProviderState::with_provider_id(
-        storage,
+        test_deps(Arc::new(Storage::new())),
         ALICE_SS58.to_string(),
     ))
 }
 
 /// Create a test `ProviderState` with a keypair derived from the given seed.
 pub fn test_state_with_seed(seed: &str) -> Arc<ProviderState> {
-    let storage = Arc::new(Storage::new());
-    Arc::new(ProviderState::with_seed(storage, seed).unwrap())
+    Arc::new(ProviderState::with_seed(test_deps(Arc::new(Storage::new())), seed).unwrap())
 }
 
 /// Poll a condition with timeout. Returns `true` if the condition was met
@@ -81,7 +98,7 @@ pub fn test_state_with_data() -> (Arc<ProviderState>, DetectedChallenge) {
     };
 
     let state = Arc::new(ProviderState::with_provider_id(
-        storage,
+        test_deps(storage),
         ALICE_SS58.to_string(),
     ));
     (state, challenge)

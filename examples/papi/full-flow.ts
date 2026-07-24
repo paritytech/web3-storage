@@ -24,6 +24,7 @@ import {
   challengeCheckpoint,
   challengeOffchain,
   connect,
+  currentRelayBlock,
   downloadChunk,
   endAgreement,
   ensureProviderRegistered,
@@ -37,7 +38,7 @@ import {
   respondToChallenge,
   submitClientCheckpoint,
   uploadChunk,
-  waitForBlock,
+  waitForRelayBlock,
   waitForBlockProduction,
   waitForChainReady,
   waitForNextBlock,
@@ -65,7 +66,10 @@ async function setupAgreement(
   provider: ChainSigner
 ): Promise<bigint> {
   const maxBytes = 1_073_741_824n; // 1 GiB
-  const duration = 15;
+  // Relay-chain blocks (6s each). The relay clock keeps ticking while the
+  // parachain onboards or skips slots, so this needs headroom for steps 2-7
+  // before the step-8 expiry wait.
+  const duration = 40;
   console.log(
     "  Negotiating signed terms with provider (max_bytes=%s, duration=%d)...",
     maxBytes,
@@ -85,15 +89,19 @@ async function setupAgreement(
     signed.terms.valid_until
   );
   console.log("  Redeeming on-chain via establish_storage_agreement...");
-  const { bucketId } = await establishStorageAgreement(api, client, provider, signed);
+  // Finalize: the immediate upload reads bucket membership from the provider's
+  // finalized view, so an in-block establish would race it.
+  const { bucketId } = await establishStorageAgreement(api, client, provider, signed, {
+    mode: "finalized",
+  });
   console.log("  Bucket %s opened with primary agreement", bucketId);
   return bucketId;
 }
 
-async function uploadAndVerify(api: ParachainApi, bucketId: bigint) {
+async function uploadAndVerify(api: ParachainApi, bucketId: bigint, signer: ChainSigner) {
   const payload = `Hello, Web3 Storage! [${new Date().toISOString()}] provider=${PROVIDER_SEED}`;
-  const nonce = Number(await api.query.System.Number.getValue());
-  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce);
+  const nonce = await currentRelayBlock(api);
+  const { hash, data, commit } = await uploadChunk(PROVIDER_URL, bucketId, payload, nonce, signer);
   console.log("  Uploaded %d bytes, mmr_root=%s", data.length, commit.mmr_root);
 
   const downloaded = await downloadChunk(PROVIDER_URL, hash);
@@ -129,7 +137,7 @@ async function claimPaymentAfterExpiry(api: ParachainApi, papi: PolkadotClient, 
   console.log("  Provider balance before:", freeBefore.toString());
 
   console.log("  Waiting for agreement to expire...");
-  await waitForBlock(papi, expiresAt);
+  await waitForRelayBlock(papi, api, expiresAt);
   await endAgreement(api, client, provider, bucketId, "Pay");
 
   const freeAfter = (
@@ -179,7 +187,7 @@ async function main() {
     const bucketId = await setupAgreement(api, PROVIDER_URL, client, provider);
 
     console.log("\n=== Step 2: Upload data ===");
-    const upload = await uploadAndVerify(api, bucketId);
+    const upload = await uploadAndVerify(api, bucketId, client);
 
     console.log("\n=== Step 3: Off-chain challenge ===");
     const offchainId = await challengeOffchain(
@@ -209,7 +217,7 @@ async function main() {
     console.log("  Challenge defended");
 
     console.log("\n=== Step 5: Submit checkpoint ===");
-    const ckNonce = Number(await api.query.System.Number.getValue());
+    const ckNonce = await currentRelayBlock(api);
     const ck = await fetchCheckpointSignature(PROVIDER_URL, bucketId, ckNonce);
     console.log("  Checkpoint mmr_root:", ck.mmr_root);
     console.log("  Checkpoint leaf_count:", ck.leaf_count);

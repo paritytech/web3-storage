@@ -14,17 +14,6 @@ The File System Client provides a familiar file system abstraction over Layer 0'
 - **Flexible Commits** - Choose when changes are committed (immediate, batched, or manual)
 - **Built on Layer 0** - Leverages Scalable Web3 Storage's provider network and game-theoretic guarantees
 
-## Installation
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
-file-system-primitives = { path = "path/to/storage-interfaces/file-system/primitives" }
-tokio = { version = "1", features = ["full"] }
-```
-
 ## Quick Start
 
 ### Prerequisites
@@ -51,7 +40,7 @@ Before using the client, you need:
 ### Basic Usage
 
 ```rust
-use file_system_client::FileSystemClient;
+use file_system_client::{FileSystemClient, Signer};
 use file_system_primitives::CommitStrategy;
 
 #[tokio::main]
@@ -59,10 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Connect to blockchain and provider
     let mut fs_client = FileSystemClient::new(
         "ws://127.0.0.1:2222",      // Parachain endpoint
-        "http://127.0.0.1:3333"      // Provider endpoint
+        "http://127.0.0.1:3333",     // Provider endpoint
+        Signer::from_seed("//Alice")?,       // Use Alice's key for testing
     )
-    .await?
-    .with_dev_signer("alice")       // Use Alice's key for testing
     .await?;
 
     // 2. Create a drive (10 GB, 500 blocks duration)
@@ -123,33 +111,27 @@ The client uses `subxt` for blockchain interaction:
 // Connect to parachain
 let fs_client = FileSystemClient::new(
     "ws://127.0.0.1:2222",      // Your parachain WebSocket
-    "http://127.0.0.1:3333"      // Your provider HTTP endpoint
+    "http://127.0.0.1:3333",     // Your provider HTTP endpoint
+    signer,
 )
 .await?;
 ```
 
 ### Setting Up a Signer
 
-For development, use dev accounts:
+The signer is passed at construction; it signs both on-chain extrinsics and
+provider HTTP requests. For development, use dev accounts:
 
 ```rust
-// Use a development account
-let fs_client = fs_client
-    .with_dev_signer("alice")   // alice, bob, charlie, dave, eve, ferdie
-    .await?;
+// A well-known development account
+let signer = Signer::from_seed("//Alice")?;   // //Alice, //Bob, //Charlie, //Dave, //Eve, //Ferdie
 ```
 
-For production, use real keypairs:
+For production, derive from a secret URI / mnemonic or wrap an existing keypair:
 
 ```rust
-use subxt_signer::sr25519::Keypair;
-
-// Load from seed phrase or file
-let keypair = Keypair::from_seed("your seed phrase here")?;
-
-let fs_client = fs_client
-    .with_signer(keypair)
-    .await?;
+let signer = Signer::from_seed("your seed phrase here")?;
+// or: Signer::from_keypair(keypair)
 ```
 
 ### On-Chain Operations
