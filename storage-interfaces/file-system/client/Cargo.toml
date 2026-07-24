@@ -12,6 +12,7 @@ description = "Client SDK for Layer 1 file system built on Scalable Web3 Storage
 file-system-primitives = { workspace = true, features = ["std"] }
 storage-client = { workspace = true }
 storage-primitives = { workspace = true, features = ["std"] }
+storage-subxt = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

@@ -101,15 +101,12 @@
 // Re-export main types
 pub mod admin;
 pub mod base;
-pub mod block_subscription;
 pub mod challenger;
 pub mod checkpoint;
 pub mod checkpoint_persistence;
 pub mod discovery;
 pub mod encryption;
-pub mod event_subscription;
 pub mod provider;
-pub mod scale_decode;
 pub mod signer;
 pub mod storage_user;
 pub mod substrate;
@@ -118,11 +115,22 @@ pub mod verification;
 /// Negotiation wire types, re-exported from `provider-negotiation`.
 pub use provider_negotiation as agreement;
 
+/// Typed block / event subscription over the chain, re-exported from
+/// `storage-indexers`.
+///
+/// The stream constructors deliberately return [`IndexerError`] rather than
+/// wrapping it in [`ClientError`](base::ClientError): the streams are a
+/// standalone building block usable without the rest of this SDK, and their
+/// failure modes (transport, connect, subscribe) are its whole error surface.
+pub use storage_indexers::{
+    BlockEvent, BlockStream, EventFilter, EventStream, IndexerError, DRIVE_REGISTRY_PALLET,
+    S3_REGISTRY_PALLET, STORAGE_PALLETS, STORAGE_PROVIDER_PALLET,
+};
+
 // Re-export commonly used types
 pub use admin::AdminClient;
 pub use agreement::{sign_terms, AgreementTermsOf, NegotiateRequest, ReplicaTermsOf, SignedTerms};
 pub use base::{ChunkingStrategy, ClientConfig, ClientError, ClientResult};
-pub use block_subscription::BlockSubscriberStream;
 pub use challenger::ChallengerClient;
 pub use checkpoint::{
     AutoChallengeConfig, AutoChallengeResult, BatchedCheckpointConfig, BatchedInterval,
@@ -138,11 +146,6 @@ pub use checkpoint_persistence::{
 };
 pub use discovery::{
     DiscoveryClient, MatchedProvider, ProviderRecommendation, StorageRequirements,
-};
-pub use event_subscription::{
-    subscribe_bucket_events, subscribe_challenges, subscribe_checkpoints, subscribe_with_callback,
-    EventCallback, EventFilter, EventParser, EventStream, EventSubscriber, StorageEvent,
-    StorageProviderEventParser, SubscriptionHandle,
 };
 pub use provider::{ProviderClient, ProviderSettings};
 pub use signer::Signer;

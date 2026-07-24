@@ -6,16 +6,11 @@
 
 use crate::FsClientError;
 use file_system_primitives::DriveId;
-use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::str::FromStr;
-use storage_client::{scale_decode, EventParser, Signer};
-use storage_primitives::Role;
-use subxt::ext::scale_value::{At, Composite, Value};
+use storage_client::Signer;
+use subxt::ext::scale_value::Value;
 use subxt::{OnlineClient, PolkadotConfig};
-
-/// Pallet name in the runtime configuration.
-pub const PALLET_NAME: &str = "DriveRegistry";
 
 /// Substrate client for blockchain interactions.
 #[derive(Clone)]
@@ -143,136 +138,5 @@ pub mod storage {
     /// Query next drive ID.
     pub fn next_drive_id() -> DynamicAddress<()> {
         subxt::dynamic::storage::<(), Value>("DriveRegistry", "NextDriveId")
-    }
-}
-
-// ============================================================================
-// Event Parser
-// ============================================================================
-
-/// Events emitted by the [`DriveRegistry`](PALLET_NAME) pallet, decoded into
-/// strongly-typed form.
-#[derive(Clone, Debug)]
-#[allow(dead_code)] // Variant fields are public API; not every consumer reads every field.
-pub enum FileSystemEvent {
-    /// A new drive was created.
-    DriveCreated {
-        drive_id: DriveId,
-        owner: AccountId32,
-        bucket_id: u64,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// A drive was deleted; remaining agreement balance was refunded.
-    DriveDeleted {
-        drive_id: DriveId,
-        owner: AccountId32,
-        bucket_id: u64,
-        refunded: u128,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// A drive was shared with a member.
-    DriveShared {
-        drive_id: DriveId,
-        member: AccountId32,
-        role: Role,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// A member was removed from a shared drive.
-    DriveUnshared {
-        drive_id: DriveId,
-        member: AccountId32,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// An event from the DriveRegistry pallet that this parser does not yet decode.
-    Unknown {
-        variant: String,
-        block_hash: H256,
-        block_number: u32,
-    },
-}
-
-/// Parser for converting raw subxt events into typed [`FileSystemEvent`]s.
-///
-/// Mirrors `StorageProviderEventParser` from `storage-client`: stateless, with all
-/// decoding done through associated functions. Use [`EventParser::from_extrinsic_events`]
-/// to scan a finalized extrinsic's events at once.
-pub struct FileSystemEventParser;
-
-impl EventParser<FileSystemEvent> for FileSystemEventParser {
-    /// Parse a single event into a [`FileSystemEvent`].
-    ///
-    /// Returns `None` when the event comes from a pallet other than [`PALLET_NAME`]
-    /// or has unexpected field structure. Unknown variants within the right pallet
-    /// surface as [`FileSystemEvent::Unknown`].
-    fn parse_event_detail(
-        event: &subxt::events::Event<'_, PolkadotConfig>,
-        block_hash: H256,
-        block_number: u32,
-    ) -> Option<FileSystemEvent> {
-        if event.pallet_name() != PALLET_NAME {
-            return None;
-        }
-
-        let fields = match event.decode_fields_unchecked_as::<Composite<()>>() {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.event_name());
-                return None;
-            }
-        };
-
-        match event.event_name() {
-            "DriveCreated" => Some(FileSystemEvent::DriveCreated {
-                drive_id: scale_decode::field_u64(&fields, "drive_id")?,
-                owner: scale_decode::field_account(&fields, "owner")?,
-                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
-                block_hash,
-                block_number,
-            }),
-            "DriveDeleted" => Some(FileSystemEvent::DriveDeleted {
-                drive_id: scale_decode::field_u64(&fields, "drive_id")?,
-                owner: scale_decode::field_account(&fields, "owner")?,
-                bucket_id: scale_decode::field_u64(&fields, "bucket_id")?,
-                refunded: scale_decode::field_u128(&fields, "refunded")?,
-                block_hash,
-                block_number,
-            }),
-            "DriveShared" => Some(FileSystemEvent::DriveShared {
-                drive_id: scale_decode::field_u64(&fields, "drive_id")?,
-                member: scale_decode::field_account(&fields, "member")?,
-                role: field_role(&fields, "role")?,
-                block_hash,
-                block_number,
-            }),
-            "DriveUnshared" => Some(FileSystemEvent::DriveUnshared {
-                drive_id: scale_decode::field_u64(&fields, "drive_id")?,
-                member: scale_decode::field_account(&fields, "member")?,
-                block_hash,
-                block_number,
-            }),
-            other => Some(FileSystemEvent::Unknown {
-                variant: other.to_string(),
-                block_hash,
-                block_number,
-            }),
-        }
-    }
-}
-
-/// Decode a `storage_primitives::Role`-shaped variant field.
-fn field_role(fields: &Composite<()>, name: &str) -> Option<Role> {
-    match scale_decode::variant_name(fields.at(name)?)?.as_str() {
-        "Admin" => Some(Role::Admin),
-        "Writer" => Some(Role::Writer),
-        "Reader" => Some(Role::Reader),
-        _ => None,
     }
 }

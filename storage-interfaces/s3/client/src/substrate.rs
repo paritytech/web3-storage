@@ -6,10 +6,11 @@ use crate::{BucketInfo, S3ClientError};
 use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
 use sp_core::H256;
 use sp_runtime::AccountId32;
-use storage_client::{scale_decode, EventParser, Signer};
+use storage_client::Signer;
+use storage_subxt::api::s3_registry::events::S3BucketCreated;
 use subxt::ext::scale_value::{At, Composite, Value, ValueDef};
 use subxt::{OnlineClient, PolkadotConfig};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Pallet name in the runtime configuration.
 pub const PALLET_NAME: &str = "S3Registry";
@@ -143,13 +144,13 @@ impl SubstrateClient {
 
         let events = self.submit_and_finalize(tx).await?;
 
-        // Try to extract bucket ID from the S3BucketCreated event. Block hash / number
-        // aren't accessible from ExtrinsicEvents alone and this caller doesn't need them,
-        // so pass placeholders.
-        for parsed in S3EventParser::from_extrinsic_events(&events, H256::zero(), 0) {
-            if let S3Event::S3BucketCreated { s3_bucket_id, .. } = parsed {
-                return Ok(s3_bucket_id);
-            }
+        match events.find_first::<S3BucketCreated>() {
+            Some(Ok(ev)) => return Ok(ev.s3_bucket_id),
+            // A decode failure of a generated event means the bindings drifted
+            // from the runtime — recoverable here via the name query, but worth
+            // surfacing louder than the benign not-found case.
+            Some(Err(e)) => warn!("Failed to decode S3BucketCreated event: {e}"),
+            None => debug!("S3BucketCreated event not found in transaction"),
         }
 
         // Fallback: query by name
@@ -556,141 +557,4 @@ fn extract_metadata_entries<T: Clone>(value: &Value<T>, field: &str) -> Vec<Meta
         }
     }
     entries
-}
-
-// ============================================================================
-// Event Parser
-// ============================================================================
-
-/// Events emitted by the [`S3Registry`](PALLET_NAME) pallet, decoded into strongly-typed
-/// form.
-#[derive(Clone, Debug)]
-#[allow(dead_code)] // Variant fields are public API; not every consumer reads every field.
-pub enum S3Event {
-    /// A new S3-compatible bucket was created.
-    S3BucketCreated {
-        s3_bucket_id: S3BucketId,
-        name: Vec<u8>,
-        layer0_bucket_id: u64,
-        owner: AccountId32,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// An S3 bucket was deleted.
-    S3BucketDeleted {
-        s3_bucket_id: S3BucketId,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// Object metadata was stored.
-    ObjectPut {
-        s3_bucket_id: S3BucketId,
-        key: Vec<u8>,
-        cid: H256,
-        size: u64,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// An object's metadata was removed.
-    ObjectDeleted {
-        s3_bucket_id: S3BucketId,
-        key: Vec<u8>,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// An object's metadata was copied to a new key (possibly across buckets).
-    ObjectCopied {
-        src_bucket_id: S3BucketId,
-        src_key: Vec<u8>,
-        dst_bucket_id: S3BucketId,
-        dst_key: Vec<u8>,
-        block_hash: H256,
-        block_number: u32,
-    },
-
-    /// An event from the S3Registry pallet that this parser does not yet decode.
-    Unknown {
-        variant: String,
-        block_hash: H256,
-        block_number: u32,
-    },
-}
-
-/// Parser for converting raw subxt events into typed [`S3Event`]s.
-///
-/// Mirrors `StorageProviderEventParser` from `storage-client`: stateless, with all decoding
-/// done through associated functions. Use [`EventParser::from_extrinsic_events`] to scan a
-/// finalized extrinsic's events at once.
-pub struct S3EventParser;
-
-impl EventParser<S3Event> for S3EventParser {
-    /// Parse a single event into an [`S3Event`].
-    ///
-    /// Returns `None` when the event comes from a pallet other than [`PALLET_NAME`] or has
-    /// unexpected field structure. Unknown variants within the right pallet surface as
-    /// [`S3Event::Unknown`].
-    fn parse_event_detail(
-        event: &subxt::events::Event<'_, PolkadotConfig>,
-        block_hash: H256,
-        block_number: u32,
-    ) -> Option<S3Event> {
-        if event.pallet_name() != PALLET_NAME {
-            return None;
-        }
-
-        let fields = match event.decode_fields_unchecked_as::<Composite<()>>() {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::trace!("Failed to decode fields for {}: {e}", event.event_name());
-                return None;
-            }
-        };
-
-        match event.event_name() {
-            "S3BucketCreated" => Some(S3Event::S3BucketCreated {
-                s3_bucket_id: scale_decode::field_u64(&fields, "s3_bucket_id")?,
-                name: scale_decode::field_bytes(&fields, "name")?,
-                layer0_bucket_id: scale_decode::field_u64(&fields, "layer0_bucket_id")?,
-                owner: scale_decode::field_account(&fields, "owner")?,
-                block_hash,
-                block_number,
-            }),
-            "S3BucketDeleted" => Some(S3Event::S3BucketDeleted {
-                s3_bucket_id: scale_decode::field_u64(&fields, "s3_bucket_id")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectPut" => Some(S3Event::ObjectPut {
-                s3_bucket_id: scale_decode::field_u64(&fields, "s3_bucket_id")?,
-                key: scale_decode::field_bytes(&fields, "key")?,
-                cid: scale_decode::field_h256(&fields, "cid")?,
-                size: scale_decode::field_u64(&fields, "size")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectDeleted" => Some(S3Event::ObjectDeleted {
-                s3_bucket_id: scale_decode::field_u64(&fields, "s3_bucket_id")?,
-                key: scale_decode::field_bytes(&fields, "key")?,
-                block_hash,
-                block_number,
-            }),
-            "ObjectCopied" => Some(S3Event::ObjectCopied {
-                src_bucket_id: scale_decode::field_u64(&fields, "src_bucket_id")?,
-                src_key: scale_decode::field_bytes(&fields, "src_key")?,
-                dst_bucket_id: scale_decode::field_u64(&fields, "dst_bucket_id")?,
-                dst_key: scale_decode::field_bytes(&fields, "dst_key")?,
-                block_hash,
-                block_number,
-            }),
-            other => Some(S3Event::Unknown {
-                variant: other.to_string(),
-                block_hash,
-                block_number,
-            }),
-        }
-    }
 }
