@@ -95,7 +95,6 @@ fn test_state_with_bucket(bucket_id: BucketId) -> Arc<ProviderState> {
 #[test]
 fn test_config_default() {
     let config = CheckpointCoordinatorConfig::default();
-    assert_eq!(config.poll_interval, Duration::from_secs(6));
     assert!(config.auto_submit);
 }
 
@@ -207,10 +206,7 @@ async fn test_submit_fails() {
 async fn test_pause_resume() {
     let mock = MockCheckpointChainClient::new(500);
     let state = test_state_with_seed("//Alice");
-    let config = CheckpointCoordinatorConfig {
-        poll_interval: Duration::from_millis(50),
-        ..Default::default()
-    };
+    let config = CheckpointCoordinatorConfig::default();
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(mock));
 
     let handle = coordinator
@@ -234,10 +230,7 @@ async fn test_pause_resume() {
 async fn test_force_checkpoint() {
     let mock = Arc::new(MockCheckpointChainClient::new(500));
     let state = test_state_with_bucket(1);
-    let config = CheckpointCoordinatorConfig {
-        poll_interval: Duration::from_secs(60),
-        ..Default::default()
-    };
+    let config = CheckpointCoordinatorConfig::default();
     let coordinator = CheckpointCoordinator::new(config, state, Box::new(Arc::clone(&mock)));
 
     let handle = coordinator

@@ -19,11 +19,6 @@ use tokio::sync::{broadcast, mpsc};
 /// Configuration for the checkpoint coordinator.
 #[derive(Clone, Debug)]
 pub struct CheckpointCoordinatorConfig {
-    /// Retained for compatibility; duty checks are clocked by finalized
-    /// blocks from the chain-state coordinator, not by wall time (checkpoint
-    /// windows are a function of block height, so block arrival is the only
-    /// meaningful tick).
-    pub poll_interval: Duration,
     /// Timeout for collecting signatures from peers.
     pub signature_timeout: Duration,
     /// Whether to automatically submit checkpoints when leader.
@@ -33,7 +28,6 @@ pub struct CheckpointCoordinatorConfig {
 impl Default for CheckpointCoordinatorConfig {
     fn default() -> Self {
         Self {
-            poll_interval: Duration::from_secs(6), // ~1 block
             signature_timeout: Duration::from_secs(30),
             auto_submit: true,
         }
