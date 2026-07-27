@@ -248,20 +248,35 @@ pub struct CommitmentCollection {
     pub unreachable_providers: Vec<AccountId32>,
 }
 
-/// One payload group: the shared `(start_seq, leaf_count, nonce)` plus the
-/// signatures made over it.
-type PayloadGroup = ((u64, u64, u64), Vec<(AccountId32, Vec<u8>)>);
+/// Length of an sr25519 signature; the only scheme providers sign with.
+const SR25519_SIGNATURE_LEN: usize = 64;
 
-/// Signatures grouped by the `(start_seq, leaf_count, nonce)` payload they cover.
-type SigsByPayload = HashMap<(u64, u64, u64), Vec<(AccountId32, Vec<u8>)>>;
+/// The exact `CommitmentPayload` a provider signature covers.
+///
+/// The pallet re-encodes one of these and verifies *every* submitted
+/// signature against it, so signatures over differing payloads cannot be
+/// batched into a single `checkpoint` call.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+struct PayloadKey {
+    start_seq: u64,
+    leaf_count: u64,
+    nonce: u64,
+}
 
-/// Pick the `(start_seq, leaf_count, nonce)` sub-group carrying the most
-/// signatures; ties break toward the highest nonce (freshest, least likely
-/// to trip `MaxNonceAge` on-chain).
-fn modal_payload_group(groups: SigsByPayload) -> PayloadGroup {
+/// Signatures grouped by the payload they cover.
+type SigsByPayload = HashMap<PayloadKey, Vec<(AccountId32, Vec<u8>)>>;
+
+/// Pick the payload sub-group carrying the most signatures.
+///
+/// Since the nonce is client-chosen and validated on ingestion, groups here
+/// differ only in `(start_seq, leaf_count)` - i.e. providers disagreeing about
+/// the committed range. Ties break toward the larger `leaf_count` (never
+/// reward a provider for claiming a shorter, less challengeable range), then
+/// `start_seq`, so the choice never depends on `HashMap` iteration order.
+fn modal_payload_group(groups: SigsByPayload) -> (PayloadKey, Vec<(AccountId32, Vec<u8>)>) {
     groups
         .into_iter()
-        .max_by_key(|((_, _, nonce), sigs)| (sigs.len(), *nonce))
+        .max_by_key(|(key, sigs)| (sigs.len(), key.leaf_count, key.start_seq))
         .unwrap_or_default()
 }
 
@@ -822,20 +837,39 @@ impl CheckpointManager {
             }
         }
 
-        // If we have manually configured endpoints, use those
+        // If we have manually configured endpoints, use those. Their accounts
+        // must come from the nodes themselves: the checkpoint extrinsic pairs
+        // each signature with an account and the pallet rejects any signer that
+        // is not in the bucket's snapshot.
         if !self.provider_endpoints.is_empty() {
-            let providers: Vec<ProviderInfo> = self
-                .provider_endpoints
-                .iter()
-                .enumerate()
-                .map(|(i, endpoint)| ProviderInfo {
-                    account_id: AccountId32::new([i as u8; 32]), // Placeholder
-                    endpoint: endpoint.clone(),
-                    public_key: Vec::new(),
-                    last_seen: None,
-                    status: ProviderStatus::Unknown,
-                })
-                .collect();
+            let ids = futures::future::join_all(
+                self.provider_endpoints
+                    .iter()
+                    .map(|endpoint| crate::ProviderClient::fetch_provider_id(endpoint)),
+            )
+            .await;
+
+            let mut providers = Vec::new();
+            for (endpoint, id) in self.provider_endpoints.iter().zip(ids) {
+                match id {
+                    Ok(account_id) => providers.push(ProviderInfo {
+                        account_id,
+                        endpoint: endpoint.clone(),
+                        public_key: Vec::new(),
+                        last_seen: None,
+                        status: ProviderStatus::Unknown,
+                    }),
+                    Err(e) => tracing::warn!(
+                        "Skipping provider {endpoint}: could not read its account from /info: {e}"
+                    ),
+                }
+            }
+
+            if providers.is_empty() {
+                return Err(ClientError::Chain(
+                    "No configured provider endpoint reported a usable account id".to_string(),
+                ));
+            }
 
             // Update cache
             self.update_provider_cache(bucket_id, providers.clone())
@@ -862,12 +896,7 @@ impl CheckpointManager {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<ProviderInfo>, ClientError> {
-        let at = self
-            .chain_client
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = self.chain_client.at_current_block().await?;
 
         let bucket = at
             .storage()
@@ -878,11 +907,9 @@ impl CheckpointManager {
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
-        let provider_accounts: Vec<AccountId32> = bucket
-            .primary_providers
-            .0
+        let provider_accounts: Vec<AccountId32> = convert::unbounded(bucket.primary_providers)
             .iter()
-            .map(convert::account_back)
+            .map(convert::to_sp_account)
             .collect();
 
         if provider_accounts.is_empty() {
@@ -891,63 +918,46 @@ impl CheckpointManager {
             )));
         }
 
-        // Query each provider for their info
+        // Read every provider at the same block, validating the address once.
+        let entry = at
+            .storage()
+            .entry(api::storage().storage_provider().providers())
+            .map_err(|e| ClientError::Chain(format!("Failed to prepare provider query: {e}")))?;
+
         let mut providers = Vec::new();
         for account_id in provider_accounts {
-            match self.query_provider_info(&account_id).await {
-                Ok(info) => providers.push(info),
-                Err(_e) => {
-                    // Failed to get provider info, include with unknown status
-                    providers.push(ProviderInfo {
-                        account_id,
-                        endpoint: String::new(),
-                        public_key: Vec::new(),
-                        last_seen: None,
-                        status: ProviderStatus::Unknown,
-                    });
+            // A provider that is unreadable or unreachable still belongs in the
+            // list, flagged Unknown, so callers see the full membership.
+            let mut info = ProviderInfo {
+                account_id: account_id.clone(),
+                endpoint: String::new(),
+                public_key: Vec::new(),
+                last_seen: None,
+                status: ProviderStatus::Unknown,
+            };
+
+            if let Ok(Some(value)) = entry
+                .try_fetch((convert::to_subxt_account(&account_id),))
+                .await
+            {
+                if let Ok(registration) = value.decode() {
+                    match Self::parse_multiaddr_to_http(&convert::unbounded(registration.multiaddr))
+                    {
+                        Ok(endpoint) => {
+                            info.endpoint = endpoint;
+                            info.public_key = convert::unbounded(registration.public_key);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Provider {account_id} has an unusable multiaddr: {e}")
+                        }
+                    }
                 }
             }
+
+            providers.push(info);
         }
 
         Ok(providers)
-    }
-
-    /// Query provider info from chain.
-    async fn query_provider_info(
-        &self,
-        account_id: &AccountId32,
-    ) -> Result<ProviderInfo, ClientError> {
-        let at = self
-            .chain_client
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let info = at
-            .storage()
-            .try_fetch(
-                api::storage().storage_provider().providers(),
-                (convert::account(account_id),),
-            )
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?
-            .ok_or_else(|| {
-                ClientError::Chain(format!("Provider {account_id:?} not found on chain"))
-            })?
-            .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        // Parse multiaddr to HTTP endpoint
-        let endpoint = Self::parse_multiaddr_to_http(&info.multiaddr.0)?;
-
-        Ok(ProviderInfo {
-            account_id: account_id.clone(),
-            endpoint,
-            public_key: info.public_key.0,
-            last_seen: None,
-            status: ProviderStatus::Unknown,
-        })
     }
 
     /// Parse a libp2p multiaddr to an HTTP(S) base URL.
@@ -1059,7 +1069,12 @@ impl CheckpointManager {
 
     /// Collect commitments from all providers for a bucket.
     ///
-    /// This queries all providers in parallel and categorizes results.
+    /// The nonce is chosen here (the current anchor block) and sent to every
+    /// provider, which signs over it and echoes it back — so all signatures
+    /// cover one identical `CommitmentPayload`, exactly as the pallet
+    /// verifies them. Responses that deviate (wrong nonce, unusable
+    /// signature, a range that regresses below the on-chain snapshot) are
+    /// dropped rather than allowed to spoil the batch.
     pub async fn collect_commitments(
         &self,
         bucket_id: BucketId,
@@ -1073,31 +1088,50 @@ impl CheckpointManager {
             )));
         }
 
-        // Query all providers in parallel
+        // The anchor block is the pallet's clock: using it as the nonce keeps
+        // us inside `MaxNonceAge` and is a value no provider can steer.
+        let at = self
+            .chain_client
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to read chain state: {e}")))?;
+        let nonce = u64::from(crate::substrate::fetch_current_anchor_block(&at).await?);
+        let floor = Self::snapshot_floor(&at, bucket_id).await?;
+
+        // Query all providers in parallel, all over the same nonce
         let futures: Vec<_> = providers
             .iter()
-            .map(|p| self.query_provider_commitment(p, bucket_id))
+            .map(|p| self.query_provider_commitment(p, bucket_id, nonce))
             .collect();
 
         let results = futures::future::join_all(futures).await;
 
-        // Categorize results by MMR root
-        let mut commitments_by_root: HashMap<H256, Vec<(AccountId32, CommitmentResponse)>> =
-            HashMap::new();
+        // Categorize results by MMR root, keeping only usable responses
+        let mut commitments_by_root: HashMap<
+            H256,
+            Vec<(AccountId32, CommitmentResponse, Vec<u8>)>,
+        > = HashMap::new();
         let mut unreachable = Vec::new();
 
         for (provider, result) in providers.iter().zip(results) {
-            match result {
-                Ok(commitment) => {
+            let account = provider.account_id.clone();
+            let Ok(commitment) = result else {
+                unreachable.push(account);
+                continue;
+            };
+
+            match Self::validated_signature(bucket_id, &account, &commitment, nonce, floor) {
+                Some(sig_bytes) => {
                     let mmr_root = self.parse_h256(&commitment.mmr_root)?;
                     commitments_by_root
                         .entry(mmr_root)
                         .or_default()
-                        .push((provider.account_id.clone(), commitment));
+                        .push((account, commitment, sig_bytes));
                 }
-                Err(_) => {
-                    unreachable.push(provider.account_id.clone());
-                }
+                // An unusable response is no better than no response: the
+                // provider contributes nothing this round.
+                None => unreachable.push(account),
             }
         }
 
@@ -1115,59 +1149,145 @@ impl CheckpointManager {
             .flat_map(|(root, providers)| {
                 providers
                     .iter()
-                    .map(|(id, _)| (id.clone(), *root))
+                    .map(|(id, _, _)| (id.clone(), *root))
                     .collect::<Vec<_>>()
             })
             .collect();
 
-        // The pallet verifies every signature against ONE encoded
-        // (bucket_id, commitment, nonce) payload, so only signatures over the
-        // same (start_seq, leaf_count, nonce) can be submitted together.
+        // Same root still leaves room for disagreement about the committed
+        // range, and the pallet accepts only one payload per call.
         let mut by_payload = SigsByPayload::new();
-        for (id, c) in &agreeing {
-            let sig_bytes = self
-                .decode_signature(&c.provider_signature)
-                .unwrap_or_default();
+        for (id, c, sig) in &agreeing {
             by_payload
-                .entry((c.start_seq, c.leaf_count, c.nonce))
+                .entry(PayloadKey {
+                    start_seq: c.start_seq,
+                    leaf_count: c.leaf_count,
+                    nonce: c.nonce,
+                })
                 .or_default()
-                .push((id.clone(), sig_bytes));
+                .push((id.clone(), sig.clone()));
         }
-        let ((start_seq, leaf_count, nonce), signatures) = modal_payload_group(by_payload);
+        let (payload, signatures) = modal_payload_group(by_payload);
 
-        let dropped = agreeing.len() - signatures.len();
+        let dropped = agreeing.len().saturating_sub(signatures.len());
         if dropped > 0 {
             tracing::warn!(
-                "Bucket {bucket_id}: dropping {dropped} same-root signature(s) made over a \
-                 different (start_seq, leaf_count, nonce) than the modal payload"
+                "Bucket {bucket_id}: dropping {dropped} same-root signature(s) covering a \
+                 different (start_seq, leaf_count) than the majority range"
             );
         }
 
         Ok(CommitmentCollection {
             bucket_id,
             mmr_root: majority_root,
-            start_seq,
-            leaf_count,
-            nonce,
+            start_seq: payload.start_seq,
+            leaf_count: payload.leaf_count,
+            nonce: payload.nonce,
             signatures,
-            agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
+            agreeing_providers: agreeing.iter().map(|(id, _, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
             unreachable_providers: unreachable,
         })
     }
 
+    /// The committed range already on chain, if any: a checkpoint must never
+    /// move backwards from it.
+    async fn snapshot_floor<C>(
+        at: &subxt::client::ClientAtBlock<subxt::PolkadotConfig, C>,
+        bucket_id: BucketId,
+    ) -> Result<Option<(u64, u64)>, ClientError>
+    where
+        C: subxt::client::OnlineClientAtBlockT<subxt::PolkadotConfig>,
+    {
+        let bucket = at
+            .storage()
+            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?;
+
+        let Some(bucket) = bucket else {
+            return Ok(None);
+        };
+        let bucket = bucket
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
+
+        Ok(bucket
+            .snapshot
+            .map(|s| (s.commitment.start_seq, s.commitment.leaf_count)))
+    }
+
+    /// Return a provider response's signature bytes, or `None` (with a
+    /// warning) when the response cannot be part of a checkpoint.
+    fn validated_signature(
+        bucket_id: BucketId,
+        account: &AccountId32,
+        commitment: &CommitmentResponse,
+        requested_nonce: u64,
+        floor: Option<(u64, u64)>,
+    ) -> Option<Vec<u8>> {
+        if commitment.nonce != requested_nonce {
+            tracing::warn!(
+                "Bucket {bucket_id}: provider {account} echoed nonce {} instead of the requested \
+                 {requested_nonce}; its signature cannot join this checkpoint",
+                commitment.nonce
+            );
+            return None;
+        }
+
+        // A shrinking range would narrow what the provider can be challenged
+        // over — never accept it, whatever the majority says.
+        if let Some((floor_start_seq, floor_leaf_count)) = floor {
+            if commitment.start_seq < floor_start_seq || commitment.leaf_count < floor_leaf_count {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} reported range (start_seq={}, \
+                     leaf_count={}) behind the on-chain snapshot (start_seq={floor_start_seq}, \
+                     leaf_count={floor_leaf_count})",
+                    commitment.start_seq,
+                    commitment.leaf_count
+                );
+                return None;
+            }
+        }
+
+        match Self::decode_signature(&commitment.provider_signature) {
+            Ok(sig) if sig.len() == SR25519_SIGNATURE_LEN => Some(sig),
+            Ok(sig) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned a {}-byte signature, \
+                     expected {SR25519_SIGNATURE_LEN}",
+                    sig.len()
+                );
+                None
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Bucket {bucket_id}: provider {account} returned an undecodable signature: {e}"
+                );
+                None
+            }
+        }
+    }
+
     /// Query a single provider for their commitment with health tracking.
+    ///
+    /// `nonce` is the caller-chosen replay-protection value the provider signs
+    /// over; the endpoint requires it and echoes it back.
     async fn query_provider_commitment(
         &self,
         provider: &ProviderInfo,
         bucket_id: BucketId,
+        nonce: u64,
     ) -> Result<CommitmentResponse, ClientError> {
         let mut retries = 0;
         let mut delay = self.config.retry_delay;
         let start = Instant::now();
 
         loop {
-            let url = format!("{}/commitment?bucket_id={}", provider.endpoint, bucket_id);
+            let url = format!(
+                "{}/commitment?bucket_id={}&nonce={}",
+                provider.endpoint, bucket_id, nonce
+            );
 
             let result = tokio::time::timeout(self.config.provider_timeout, async {
                 self.http_client.get(&url).send().await
@@ -1274,20 +1394,28 @@ impl CheckpointManager {
             / 100.0)
             .ceil() as usize;
 
-        // Check consensus threshold
-        if collection.agreeing_providers.len() < required {
+        // Check consensus threshold against what will actually be submitted:
+        // agreeing providers whose signature survived payload grouping. The
+        // pallet counts signatures, not opinions.
+        if collection.signatures.len() < required {
             return CheckpointResult::InsufficientConsensus {
-                agreeing: collection.agreeing_providers.len(),
+                agreeing: collection.signatures.len(),
                 required,
                 disagreements: collection.disagreeing_providers,
             };
         }
 
+        let signers: Vec<AccountId32> = collection
+            .signatures
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+
         // Submit on-chain
         match self.submit_commitment_onchain(&collection).await {
             Ok(block_hash) => CheckpointResult::Submitted {
                 block_hash,
-                signers: collection.agreeing_providers,
+                signers,
             },
             Err(e) => CheckpointResult::TransactionFailed {
                 error: e.to_string(),
@@ -1296,8 +1424,12 @@ impl CheckpointManager {
     }
 
     /// Submit the commitment transaction on-chain via the `checkpoint`
-    /// extrinsic. Providers whose signatures were dropped for nonce mismatch
-    /// can still be appended later through `extend_checkpoint`.
+    /// extrinsic.
+    ///
+    /// Providers excluded from this batch cannot simply be appended later:
+    /// the pallet's `extend_checkpoint` verifies late signatures against the
+    /// stored snapshot's own nonce, so they must re-sign that payload first
+    /// (and this SDK does not expose the extrinsic yet).
     async fn submit_commitment_onchain(
         &self,
         collection: &CommitmentCollection,
@@ -1354,7 +1486,7 @@ impl CheckpointManager {
     }
 
     /// Decode a hex signature string to bytes.
-    fn decode_signature(&self, sig_str: &str) -> Result<Vec<u8>, ClientError> {
+    fn decode_signature(sig_str: &str) -> Result<Vec<u8>, ClientError> {
         let s = sig_str.strip_prefix("0x").unwrap_or(sig_str);
         hex::decode(s).map_err(|e| ClientError::Serialization(e.to_string()))
     }
@@ -2676,6 +2808,35 @@ mod tests {
         assert_eq!(cloned.nonce, 42);
     }
 
+    fn payload_key(start_seq: u64, leaf_count: u64, nonce: u64) -> PayloadKey {
+        PayloadKey {
+            start_seq,
+            leaf_count,
+            nonce,
+        }
+    }
+
+    fn commitment_response(
+        bucket_id: BucketId,
+        start_seq: u64,
+        leaf_count: u64,
+        nonce: u64,
+        signature: &str,
+    ) -> CommitmentResponse {
+        CommitmentResponse {
+            bucket_id,
+            mmr_root: format!("0x{}", hex::encode([7u8; 32])),
+            start_seq,
+            leaf_count,
+            provider_signature: signature.to_string(),
+            nonce,
+        }
+    }
+
+    fn valid_signature_hex() -> String {
+        format!("0x{}", hex::encode([9u8; SR25519_SIGNATURE_LEN]))
+    }
+
     #[test]
     fn modal_payload_group_picks_largest_group() {
         let a = AccountId32::new([1u8; 32]);
@@ -2683,32 +2844,92 @@ mod tests {
         let c = AccountId32::new([3u8; 32]);
 
         let mut groups = SigsByPayload::new();
-        groups.insert((0, 10, 100), vec![(a, vec![1]), (b, vec![2])]);
-        groups.insert((0, 10, 200), vec![(c, vec![3])]);
+        groups.insert(payload_key(0, 10, 100), vec![(a, vec![1]), (b, vec![2])]);
+        groups.insert(payload_key(0, 20, 100), vec![(c, vec![3])]);
 
-        let ((start_seq, leaf_count, nonce), sigs) = modal_payload_group(groups);
-        assert_eq!((start_seq, leaf_count, nonce), (0, 10, 100));
+        let (key, sigs) = modal_payload_group(groups);
+        assert_eq!(key, payload_key(0, 10, 100));
         assert_eq!(sigs.len(), 2);
     }
 
     #[test]
-    fn modal_payload_group_tie_breaks_on_highest_nonce() {
+    fn modal_payload_group_tie_breaks_on_larger_range() {
         let a = AccountId32::new([1u8; 32]);
         let b = AccountId32::new([2u8; 32]);
 
         let mut groups = SigsByPayload::new();
-        groups.insert((0, 10, 100), vec![(a, vec![1])]);
-        groups.insert((0, 10, 200), vec![(b, vec![2])]);
+        groups.insert(payload_key(0, 10, 100), vec![(a, vec![1])]);
+        groups.insert(payload_key(0, 20, 100), vec![(b, vec![2])]);
 
-        let ((_, _, nonce), _) = modal_payload_group(groups);
-        assert_eq!(nonce, 200, "freshest nonce wins the tie");
+        let (key, _) = modal_payload_group(groups);
+        assert_eq!(
+            key.leaf_count, 20,
+            "a tie must never install the shorter, less challengeable range"
+        );
     }
 
     #[test]
     fn modal_payload_group_empty_is_zeroed() {
-        let ((start_seq, leaf_count, nonce), sigs) = modal_payload_group(HashMap::new());
-        assert_eq!((start_seq, leaf_count, nonce), (0, 0, 0));
+        let (key, sigs) = modal_payload_group(SigsByPayload::new());
+        assert_eq!(key, PayloadKey::default());
         assert!(sigs.is_empty());
+    }
+
+    #[test]
+    fn validated_signature_accepts_matching_response() {
+        let account = AccountId32::new([1u8; 32]);
+        let response = commitment_response(1, 5, 10, 42, &valid_signature_hex());
+
+        let sig = CheckpointManager::validated_signature(1, &account, &response, 42, Some((5, 10)));
+        assert_eq!(sig, Some(vec![9u8; SR25519_SIGNATURE_LEN]));
+    }
+
+    #[test]
+    fn validated_signature_rejects_nonce_mismatch() {
+        let account = AccountId32::new([1u8; 32]);
+        // A provider echoing its own nonce cannot join a batch signed over ours.
+        let response = commitment_response(1, 5, 10, 999, &valid_signature_hex());
+
+        assert!(CheckpointManager::validated_signature(1, &account, &response, 42, None).is_none());
+    }
+
+    #[test]
+    fn validated_signature_rejects_range_regression() {
+        let account = AccountId32::new([1u8; 32]);
+
+        let shrunk_leaves = commitment_response(1, 5, 9, 42, &valid_signature_hex());
+        assert!(
+            CheckpointManager::validated_signature(1, &account, &shrunk_leaves, 42, Some((5, 10)))
+                .is_none(),
+            "leaf_count below the on-chain snapshot must be refused"
+        );
+
+        let rewound_start = commitment_response(1, 4, 10, 42, &valid_signature_hex());
+        assert!(CheckpointManager::validated_signature(
+            1,
+            &account,
+            &rewound_start,
+            42,
+            Some((5, 10))
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn validated_signature_rejects_unusable_signatures() {
+        let account = AccountId32::new([1u8; 32]);
+
+        let undecodable = commitment_response(1, 5, 10, 42, "not-hex");
+        assert!(
+            CheckpointManager::validated_signature(1, &account, &undecodable, 42, None).is_none()
+        );
+
+        let wrong_length =
+            commitment_response(1, 5, 10, 42, &format!("0x{}", hex::encode([9u8; 63])));
+        assert!(
+            CheckpointManager::validated_signature(1, &account, &wrong_length, 42, None).is_none(),
+            "a short signature must not reach the extrinsic builder"
+        );
     }
 
     // ========================================================================

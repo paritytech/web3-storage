@@ -214,8 +214,10 @@ impl FileSystemClient {
             .create_drive_on_chain(name, provider, &terms, &sig)
             .await?;
 
-        // Get the bucket_id for this drive
+        // Get the bucket_id for this drive, and remember it: the mapping is
+        // immutable, and every later file operation needs it.
         let bucket_id = self.query_drive_bucket_id(drive_id).await?;
+        self.drive_bucket_map.insert(drive_id, bucket_id);
 
         // Create an empty root directory and upload it to the provider
         let root_dir = DirectoryNode::new_empty(drive_id);
@@ -910,6 +912,11 @@ impl FileSystemClient {
 
     /// Query bucket_id for a drive from on-chain storage
     async fn query_drive_bucket_id(&self, drive_id: DriveId) -> Result<u64> {
+        // A drive's bucket never changes, so a known mapping is always valid.
+        if let Some(&bucket_id) = self.drive_bucket_map.get(&drive_id) {
+            return Ok(bucket_id);
+        }
+
         let at = self
             .substrate_client
             .api()
@@ -917,19 +924,41 @@ impl FileSystemClient {
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
 
-        let drive = at
-            .storage()
-            .try_fetch(
-                storage_subxt::api::storage().drive_registry().drives(),
-                (drive_id,),
-            )
-            .await
-            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?
-            .ok_or(FsClientError::DriveNotFound(drive_id))?
-            .decode()
-            .map_err(|e| FsClientError::Blockchain(format!("Invalid drive info encoding: {e}")))?;
+        let drive = substrate::storage::drive_info(&at, drive_id)
+            .await?
+            .ok_or(FsClientError::DriveNotFound(drive_id))?;
 
         Ok(drive.bucket_id)
+    }
+
+    /// Delete a drive on-chain, releasing its storage agreements.
+    ///
+    /// The drive's data becomes unreachable through this client afterwards.
+    pub async fn delete_drive(&mut self, drive_id: DriveId) -> Result<()> {
+        let call = substrate::extrinsics::delete_drive(drive_id);
+        let signer = self.substrate_client.signer();
+
+        self.substrate_client
+            .api()
+            .at_current_block()
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .transactions()
+            .sign_and_submit_then_watch_default(&call, signer)
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Failed to submit tx: {e}")))?
+            .wait_for_finalized_success()
+            .await
+            .map_err(|e| {
+                tracing::error!("delete_drive extrinsic failed: {e}");
+                FsClientError::Blockchain(format!("Extrinsic reverted: {e}"))
+            })?;
+
+        self.root_cache.remove(&drive_id);
+        self.drive_bucket_map.remove(&drive_id);
+
+        tracing::info!("Drive {drive_id} deleted");
+        Ok(())
     }
 }
 

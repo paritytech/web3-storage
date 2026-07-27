@@ -79,15 +79,44 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().drive_registry().create_drive(
             name,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
         )
     }
 
     /// Delete drive extrinsic.
-    #[allow(dead_code)]
     pub fn delete_drive(drive_id: DriveId) -> impl Payload {
         api::tx().drive_registry().delete_drive(drive_id)
+    }
+}
+
+/// Drive Registry storage reads.
+pub mod storage {
+    use super::*;
+    use storage_subxt::api;
+    use storage_subxt::api::runtime_types::file_system_primitives::DriveInfo;
+
+    /// Read a drive's on-chain record, or `None` if the drive does not exist.
+    pub async fn drive_info<C>(
+        at: &subxt::client::ClientAtBlock<PolkadotConfig, C>,
+        drive_id: DriveId,
+    ) -> Result<Option<DriveInfo<subxt::utils::AccountId32, u32>>, FsClientError>
+    where
+        C: subxt::client::OnlineClientAtBlockT<PolkadotConfig>,
+    {
+        let Some(value) = at
+            .storage()
+            .try_fetch(api::storage().drive_registry().drives(), (drive_id,))
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?
+        else {
+            return Ok(None);
+        };
+
+        value
+            .decode()
+            .map(Some)
+            .map_err(|e| FsClientError::Blockchain(format!("Invalid drive info encoding: {e}")))
     }
 }

@@ -12,7 +12,7 @@
 use crate::agreement::SignedTerms;
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{decoded_key, extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -505,11 +505,7 @@ impl AdminClient {
     pub async fn get_bucket_info(&self, bucket_id: BucketId) -> ClientResult<BucketInfo> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
@@ -526,8 +522,8 @@ impl AdminClient {
             .0
             .iter()
             .map(|m| MemberInfo {
-                account: format!("0x{}", hex::encode(m.account.0)),
-                role: convert::role_back(&m.role),
+                account: convert::account_hex(&m.account),
+                role: convert::to_sp_role(&m.role),
             })
             .collect();
 
@@ -554,11 +550,7 @@ impl AdminClient {
     ) -> ClientResult<Vec<AgreementInfo>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -576,12 +568,9 @@ impl AdminClient {
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
             let (_, provider): (BucketId, subxt::utils::AccountId32) =
-                match kv.key().and_then(|k| k.decode()) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode agreement storage key: {e}");
-                        continue;
-                    }
+                match decoded_key(&kv, "agreement") {
+                    Some(k) => k,
+                    None => continue,
                 };
 
             let agreement = match kv.value().decode() {
@@ -593,7 +582,7 @@ impl AdminClient {
             };
 
             agreements.push(AgreementInfo {
-                provider: format!("0x{}", hex::encode(provider.0)),
+                provider: convert::account_hex(&provider),
                 max_bytes: agreement.max_bytes,
                 payment_locked: agreement.payment_locked,
                 expires_at: agreement.expires_at,
@@ -608,16 +597,12 @@ impl AdminClient {
     pub async fn list_my_buckets(&self) -> ClientResult<Vec<BucketId>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().member_buckets(),
-                (convert::account(&self.admin_account()),),
+                (convert::to_subxt_account(&self.admin_account()),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch member buckets: {e}")))?;
@@ -630,7 +615,7 @@ impl AdminClient {
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode member buckets: {e}")))?;
 
-        Ok(bucket_ids.0)
+        Ok(convert::unbounded(bucket_ids))
     }
 }
 

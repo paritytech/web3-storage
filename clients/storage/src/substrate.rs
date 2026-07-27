@@ -42,6 +42,25 @@ impl SubstrateClient {
         &self.api
     }
 
+    /// Resolve the current block to read chain state at.
+    ///
+    /// Every read path needs this, and every one reports the same failure, so
+    /// the error wrapping lives here rather than at ~20 call sites.
+    pub async fn at_current_block(
+        &self,
+    ) -> Result<
+        subxt::client::ClientAtBlock<
+            PolkadotConfig,
+            subxt::client::OnlineClientAtBlockImpl<PolkadotConfig>,
+        >,
+        ClientError,
+    > {
+        self.api
+            .at_current_block()
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))
+    }
+
     /// Get the signer if available.
     pub fn signer(&self) -> Result<&Signer, ClientError> {
         self.signer
@@ -143,7 +162,7 @@ pub mod extrinsics {
         sig: &sp_runtime::MultiSignature,
     ) -> impl Payload {
         api::tx().storage_provider().establish_storage_agreement(
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
         )
@@ -161,7 +180,10 @@ pub mod extrinsics {
         let sigs = signatures
             .into_iter()
             .map(|(account, sig)| {
-                Ok((convert::account(&account), convert::sr25519_signature(sig)?))
+                Ok((
+                    convert::to_subxt_account(&account),
+                    convert::sr25519_signature(sig)?,
+                ))
             })
             .collect::<Result<Vec<_>, ClientError>>()?;
 
@@ -181,7 +203,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().challenge_checkpoint(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::chunk_location(&target),
         )
     }
@@ -200,7 +222,7 @@ pub mod extrinsics {
     ) -> Result<impl Payload, ClientError> {
         Ok(api::tx().storage_provider().challenge_offchain(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::commitment(&commitment),
             convert::chunk_location(&target),
             nonce,
@@ -241,7 +263,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().challenge_replica(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::chunk_location(&target),
         )
     }
@@ -254,7 +276,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().set_member(
             bucket_id,
-            convert::account(&member),
+            convert::to_subxt_account(&member),
             convert::role(role),
         )
     }
@@ -263,7 +285,7 @@ pub mod extrinsics {
     pub fn remove_bucket_member(bucket_id: u64, member: AccountId32) -> impl Payload {
         api::tx()
             .storage_provider()
-            .remove_member(bucket_id, convert::account(&member))
+            .remove_member(bucket_id, convert::to_subxt_account(&member))
     }
 
     /// Create a freeze_bucket extrinsic payload.
@@ -282,7 +304,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().extend_agreement(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             additional_duration,
             max_payment,
         )
@@ -297,7 +319,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().top_up_agreement(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             additional_bytes,
             max_payment,
         )
@@ -311,7 +333,7 @@ pub mod extrinsics {
     ) -> impl Payload {
         api::tx().storage_provider().end_agreement(
             bucket_id,
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::end_action(action),
         )
     }
@@ -344,6 +366,25 @@ pub mod extrinsics {
 }
 
 // Helper functions for common operations
+
+/// Decode a storage entry's key, or `None` (with a warning naming `entry`) if
+/// it cannot be decoded — so map scans skip an unreadable row instead of
+/// failing the whole iteration.
+pub fn decoded_key<Addr>(
+    kv: &subxt::storage::StorageKeyValue<'_, Addr>,
+    entry: &str,
+) -> Option<Addr::KeyParts>
+where
+    Addr: subxt::storage::Address,
+{
+    match kv.key().and_then(|k| k.decode()) {
+        Ok(parts) => Some(parts),
+        Err(e) => {
+            tracing::warn!("Failed to decode {entry} storage key: {e}");
+            None
+        }
+    }
+}
 
 /// The pallet's anchor block — the clock every on-chain duration is measured
 /// against — via the `StorageProviderApi::current_anchor_block` runtime API.

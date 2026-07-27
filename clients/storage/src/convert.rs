@@ -7,7 +7,6 @@
 //! types (orphan rule). `sp_core::H256` needs no conversion — it is the same
 //! `primitive_types::H256` that subxt re-exports.
 
-use codec::{Decode, Encode};
 use storage_subxt::api::runtime_types;
 
 use crate::agreement::AgreementTermsOf;
@@ -16,13 +15,19 @@ use runtime_types::bounded_collections::bounded_vec::BoundedVec;
 use runtime_types::storage_primitives as rt;
 
 /// `sp_runtime::AccountId32` → `subxt::utils::AccountId32` (both wrap `[u8; 32]`).
-pub fn account(a: &sp_runtime::AccountId32) -> subxt::utils::AccountId32 {
+pub fn to_subxt_account(a: &sp_runtime::AccountId32) -> subxt::utils::AccountId32 {
     subxt::utils::AccountId32(*AsRef::<[u8; 32]>::as_ref(a))
 }
 
 /// `subxt::utils::AccountId32` → `sp_runtime::AccountId32`.
-pub fn account_back(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
+pub fn to_sp_account(a: &subxt::utils::AccountId32) -> sp_runtime::AccountId32 {
     sp_runtime::AccountId32::new(a.0)
+}
+
+/// Render a chain-side account as the `0x…` hex string the SDK's public
+/// structs carry.
+pub fn account_hex(a: &subxt::utils::AccountId32) -> String {
+    format!("0x{}", hex::encode(a.0))
 }
 
 /// Wrap a `Vec` in the generated `BoundedVec` newtype (bounds are enforced
@@ -31,13 +36,23 @@ pub fn bounded<T>(v: Vec<T>) -> BoundedVec<T> {
     BoundedVec(v)
 }
 
-/// `sp_runtime::MultiSignature` → generated `MultiSignature` via SCALE
-/// round-trip: the enums are layout-identical (variant indices 0..=3), and
-/// the generated side is the only runtime type with codec derives (forced in
-/// the `just subxt-codegen` recipe). Covered per-variant by unit tests below.
+/// Unwrap a generated `BoundedVec` newtype.
+pub fn unbounded<T>(v: BoundedVec<T>) -> Vec<T> {
+    v.0
+}
+
+/// `sp_runtime::MultiSignature` → generated `MultiSignature`.
+///
+/// An explicit variant match, so a signature scheme added to either side is a
+/// compile error rather than a runtime surprise.
 pub fn multisig(sig: &sp_runtime::MultiSignature) -> runtime_types::sp_runtime::MultiSignature {
-    Decode::decode(&mut sig.encode().as_slice())
-        .expect("sp_runtime::MultiSignature and the generated MultiSignature are SCALE-identical")
+    use runtime_types::sp_runtime::MultiSignature as RtSig;
+    match sig {
+        sp_runtime::MultiSignature::Ed25519(s) => RtSig::Ed25519(s.0),
+        sp_runtime::MultiSignature::Sr25519(s) => RtSig::Sr25519(s.0),
+        sp_runtime::MultiSignature::Ecdsa(s) => RtSig::Ecdsa(s.0),
+        sp_runtime::MultiSignature::Eth(s) => RtSig::Eth(s.0),
+    }
 }
 
 /// Raw sr25519 signature bytes (as served by provider HTTP endpoints) →
@@ -81,7 +96,7 @@ pub fn role(r: storage_primitives::Role) -> rt::Role {
 }
 
 /// Generated `Role` → [`storage_primitives::Role`].
-pub fn role_back(r: &rt::Role) -> storage_primitives::Role {
+pub fn to_sp_role(r: &rt::Role) -> storage_primitives::Role {
     match r {
         rt::Role::Admin => storage_primitives::Role::Admin,
         rt::Role::Writer => storage_primitives::Role::Writer,
@@ -134,7 +149,7 @@ pub fn agreement_terms(
 ) -> rt::agreement_term::AgreementTerms<subxt::utils::AccountId32, u128, u32> {
     use rt::agreement_term as at;
     at::AgreementTerms {
-        owner: account(&t.owner),
+        owner: to_subxt_account(&t.owner),
         max_bytes: t.max_bytes,
         duration: t.duration,
         price_per_byte: t.price_per_byte,
@@ -154,40 +169,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multisig_round_trips_every_variant() {
-        // (variant index, payload length): Ed25519, Sr25519, Ecdsa, Eth.
-        for (idx, len) in [(0u8, 64usize), (1, 64), (2, 65), (3, 65)] {
-            let mut encoded = vec![idx];
-            encoded.extend(std::iter::repeat_n(0xAB, len));
-            let sp_sig = sp_runtime::MultiSignature::decode(&mut encoded.as_slice())
-                .expect("valid sp MultiSignature bytes");
-            let converted = multisig(&sp_sig);
-            assert_eq!(converted.encode(), encoded, "variant index {idx}");
-        }
+    fn multisig_maps_every_variant_and_keeps_bytes() {
+        use runtime_types::sp_runtime::MultiSignature as RtSig;
+
+        let ed = [0xA1u8; 64];
+        let sr = [0xB2u8; 64];
+        let ecdsa = [0xC3u8; 65];
+        let eth = [0xD4u8; 65];
+
+        assert_eq!(
+            multisig(&sp_runtime::MultiSignature::Ed25519(ed.into())),
+            RtSig::Ed25519(ed)
+        );
+        assert_eq!(
+            multisig(&sp_runtime::MultiSignature::Sr25519(sr.into())),
+            RtSig::Sr25519(sr)
+        );
+        assert_eq!(
+            multisig(&sp_runtime::MultiSignature::Ecdsa(ecdsa.into())),
+            RtSig::Ecdsa(ecdsa)
+        );
+        assert_eq!(
+            multisig(&sp_runtime::MultiSignature::Eth(eth.into())),
+            RtSig::Eth(eth)
+        );
     }
 
     #[test]
     fn sr25519_signature_rejects_wrong_length() {
         assert!(sr25519_signature(vec![0u8; 63]).is_err());
         assert!(sr25519_signature(vec![0u8; 65]).is_err());
-        let ok = sr25519_signature(vec![7u8; 64]).unwrap();
         assert_eq!(
-            ok.encode(),
-            {
-                let mut e = vec![1u8];
-                e.extend([7u8; 64]);
-                e
-            },
-            "Sr25519 variant index is 1"
+            sr25519_signature(vec![7u8; 64]).unwrap(),
+            runtime_types::sp_runtime::MultiSignature::Sr25519([7u8; 64])
         );
     }
 
     #[test]
     fn account_round_trips() {
         let sp = sp_runtime::AccountId32::new([42u8; 32]);
-        let sx = account(&sp);
+        let sx = to_subxt_account(&sp);
         assert_eq!(sx.0, [42u8; 32]);
-        assert_eq!(account_back(&sx), sp);
+        assert_eq!(to_sp_account(&sx), sp);
     }
 
     #[test]

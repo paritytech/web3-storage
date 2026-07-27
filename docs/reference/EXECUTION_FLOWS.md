@@ -304,7 +304,7 @@ sequenceDiagram
 
 ## Checkpoint (Commitment) Flow
 
-### Extrinsic: `submit_commitment`
+### Extrinsic: `checkpoint`
 
 This is how off-chain state becomes on-chain:
 
@@ -317,17 +317,22 @@ sequenceDiagram
 
     Note over U,C: Step 1: Collect signatures from providers
 
+    Note over SC: nonce = current anchor block (client-chosen, one per round)
+
     loop For each primary provider
-        SC->>PN: GET /commitment?bucket_id=X
-        PN->>PN: Sign CommitmentPayload
-        PN-->>SC: { mmr_root, start_seq, provider_signature }
+        SC->>PN: GET /commitment?bucket_id=X&nonce=N
+        PN->>PN: Sign CommitmentPayload over the given nonce
+        PN-->>SC: { mmr_root, start_seq, leaf_count, provider_signature, nonce }
     end
 
+    Note over SC: Drop responses with a mismatched nonce, an unusable<br/>signature, or a range behind the on-chain snapshot
     Note over SC: Verify all providers agree on same mmr_root
 
     Note over U,C: Step 2: Submit checkpoint on-chain
 
-    U->>C: submit_commitment(bucket_id, mmr_root, start_seq, leaf_count, signatures[])
+    U->>C: checkpoint(bucket_id, commitment, nonce, signatures[])
+
+    Note over C: commitment = Commitment { mmr_root, start_seq, leaf_count }
 
     Note over C: signatures = [(provider1, sig1), (provider2, sig2), ...]
 
@@ -338,7 +343,9 @@ sequenceDiagram
         C->>C: idx = bucket.primary_providers.position(provider)?
 
         Note over C: Build payload
-        C->>C: payload = CommitmentPayload::new(bucket_id, mmr_root, start_seq, leaf_count)
+        C->>C: payload = CommitmentPayload::new(bucket_id, commitment, nonce)
+
+        Note over C: One payload for every signature — hence one shared nonce
 
         Note over C: Verify signature against provider's public key
         C->>C: provider_info = Providers::get(provider)?
@@ -354,7 +361,7 @@ sequenceDiagram
     Note over C: Create/update snapshot
     Note over C: bucket.snapshot = Some(BucketSnapshot {<br/> mmr_root,<br/> start_seq,<br/> leaf_count,<br/> checkpoint_block: current_block,<br/> primary_signers<br/>})
 
-    C-->>U: Event::CommitmentSubmitted { bucket_id, mmr_root, signers }
+    C-->>U: Event::BucketCheckpointed { bucket_id, commitment, providers }
 ```
 
 ### Why Signature Verification Matters

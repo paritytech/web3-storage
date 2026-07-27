@@ -9,8 +9,9 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::SubstrateClient;
+use crate::substrate::{decoded_key, SubstrateClient};
 use sp_core::crypto::Ss58Codec;
+use std::ops::ControlFlow;
 use storage_subxt::api;
 use storage_subxt::api::runtime_types::pallet_storage_provider::pallet as pallet_types;
 
@@ -100,7 +101,7 @@ pub struct ProviderInfo {
 impl From<pallet_types::ProviderInfo> for ProviderInfo {
     fn from(p: pallet_types::ProviderInfo) -> Self {
         Self {
-            multiaddr: String::from_utf8_lossy(&p.multiaddr.0).into_owned(),
+            multiaddr: String::from_utf8_lossy(&convert::unbounded(p.multiaddr)).into_owned(),
             stake: p.stake,
             committed_bytes: p.committed_bytes,
             max_capacity: p.settings.max_capacity,
@@ -201,16 +202,17 @@ impl DiscoveryClient {
 
         let mut results: Vec<MatchedProvider> = Vec::new();
 
-        for (account_str, info) in self.all_providers().await? {
+        self.for_each_provider(|account_str, info| {
             // Hard filter: enforce the caller's price ceiling. Other partial-match
             // conditions (capacity, duration) still surface via score_provider.
-            if info.price_per_byte > requirements.max_price_per_byte {
-                continue;
+            if info.price_per_byte <= requirements.max_price_per_byte {
+                results.push(score_provider(account_str, info, &requirements));
             }
-
-            let matched = score_provider(account_str, info, &requirements);
-            results.push(matched);
-        }
+            // Scoring is global, so every provider has to be considered before
+            // the ranking can be truncated.
+            ControlFlow::Continue(())
+        })
+        .await?;
 
         // Sort: score descending, price ascending for ties (mirrors pallet logic)
         results.sort_by(|a, b| {
@@ -256,32 +258,35 @@ impl DiscoveryClient {
             limit
         );
 
+        // Only the requested page is retained, so iteration can stop as soon
+        // as it is filled.
+        let wanted = (offset as usize).saturating_add(limit as usize);
         let mut matching: Vec<(String, ProviderInfo)> = Vec::new();
 
-        for (account_str, info) in self.all_providers().await? {
+        self.for_each_provider(|account_str, info| {
             // Must be accepting some kind of agreement
             if !info.accepting_primary && info.replica_sync_price.is_none() {
-                continue;
+                return ControlFlow::Continue(());
             }
 
             // Must have sufficient available capacity (0 = unlimited)
             if info.max_capacity > 0 {
                 let available = info.max_capacity.saturating_sub(info.committed_bytes);
                 if available < bytes_needed {
-                    continue;
+                    return ControlFlow::Continue(());
                 }
             }
 
             matching.push((account_str, info));
-        }
+            if matching.len() >= wanted {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?;
 
-        let page: Vec<(String, ProviderInfo)> = matching
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .collect();
-
-        Ok(page)
+        Ok(matching.into_iter().skip(offset as usize).collect())
     }
 
     /// Get recommendations for provider selection based on requirements and budget.
@@ -369,16 +374,12 @@ impl DiscoveryClient {
 
         let account_id = SubstrateClient::parse_account(account)?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(&account_id),),
+                (convert::to_subxt_account(&account_id),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
@@ -414,16 +415,12 @@ impl DiscoveryClient {
 
         let account_id = SubstrateClient::parse_account(account)?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(&account_id),),
+                (convert::to_subxt_account(&account_id),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
@@ -449,16 +446,21 @@ impl DiscoveryClient {
         Ok(true) // Unlimited capacity
     }
 
-    /// Iterate the full `Providers` map, yielding `(ss58_account, info)` pairs.
+    /// Stream the `Providers` map, handing each `(ss58_account, info)` to
+    /// `visit` as it arrives.
+    ///
+    /// Callers filter inside the closure so only what they keep is held in
+    /// memory, and returning [`ControlFlow::Break`] stops iteration — which
+    /// also stops fetching further storage pages.
+    ///
     /// Entries that fail to decode are skipped with a warning.
-    async fn all_providers(&self) -> ClientResult<Vec<(String, ProviderInfo)>> {
+    async fn for_each_provider<F>(&self, mut visit: F) -> ClientResult<()>
+    where
+        F: FnMut(String, ProviderInfo) -> ControlFlow<()>,
+    {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -466,28 +468,27 @@ impl DiscoveryClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
 
-        let mut all: Vec<(String, ProviderInfo)> = Vec::new();
-
         while let Some(result) = iter.next().await {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let (account,) = match kv.key().and_then(|k| k.decode()) {
-                Ok(k) => k,
-                Err(e) => {
-                    tracing::warn!("Failed to decode provider storage key: {e}");
-                    continue;
-                }
+            let (account,) = match decoded_key(&kv, "provider") {
+                Some(k) => k,
+                None => continue,
             };
-            let account_str = convert::account_back(&account).to_ss58check();
+            let account_str = convert::to_sp_account(&account).to_ss58check();
 
             match kv.value().decode() {
-                Ok(info) => all.push((account_str, ProviderInfo::from(info))),
+                Ok(info) => {
+                    if visit(account_str, ProviderInfo::from(info)).is_break() {
+                        break;
+                    }
+                }
                 Err(e) => tracing::warn!("Failed to decode provider {account_str}: {e}"),
             }
         }
 
-        Ok(all)
+        Ok(())
     }
 
     /// List all registered providers (paginated).
@@ -498,15 +499,21 @@ impl DiscoveryClient {
     ) -> ClientResult<Vec<(String, ProviderInfo)>> {
         tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
 
-        let page: Vec<(String, ProviderInfo)> = self
-            .all_providers()
-            .await?
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .collect();
+        // Stop as soon as the requested page is covered.
+        let wanted = (offset as usize).saturating_add(limit as usize);
+        let mut page: Vec<(String, ProviderInfo)> = Vec::new();
 
-        Ok(page)
+        self.for_each_provider(|account_str, info| {
+            page.push((account_str, info));
+            if page.len() >= wanted {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .await?;
+
+        Ok(page.into_iter().skip(offset as usize).collect())
     }
 }
 

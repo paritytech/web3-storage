@@ -2,7 +2,7 @@
 
 //! Substrate/chain integration for S3 client.
 
-use crate::{BucketInfo, S3ClientError};
+use crate::{BucketInfo, Result, S3ClientError};
 use s3_primitives::{ListObjectsParams, ListObjectsResponse, S3BucketId};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -47,12 +47,12 @@ pub struct SubstrateClient {
 
 impl SubstrateClient {
     /// Create a new substrate client.
-    pub async fn new(chain_url: &str, signer: Signer) -> std::result::Result<Self, String> {
+    pub async fn new(chain_url: &str, signer: Signer) -> Result<Self> {
         info!("Connecting to chain at {}", chain_url);
 
         let client = OnlineClient::<PolkadotConfig>::from_url(chain_url)
             .await
-            .map_err(|e| format!("Failed to connect to chain: {e}"))?;
+            .map_err(|e| S3ClientError::ChainError(format!("Failed to connect to chain: {e}")))?;
 
         let account_id: [u8; 32] = signer.keypair().public_key().0;
         info!("Connected to chain, account: 0x{}", hex::encode(account_id));
@@ -73,12 +73,16 @@ impl SubstrateClient {
     async fn submit_and_finalize<Call: subxt::tx::Payload>(
         &self,
         tx: Call,
-    ) -> std::result::Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>, String> {
+    ) -> Result<subxt::extrinsics::ExtrinsicEvents<PolkadotConfig>> {
         let mut last_err = String::new();
         for attempt in 0..3u32 {
             let at = match self.client.at_current_block().await {
                 Ok(at) => at,
-                Err(e) => return Err(format!("Failed to submit tx: {e}")),
+                Err(e) => {
+                    return Err(S3ClientError::ChainError(format!(
+                        "Failed to submit tx: {e}"
+                    )))
+                }
             };
             match at
                 .transactions()
@@ -86,10 +90,9 @@ impl SubstrateClient {
                 .await
             {
                 Ok(progress) => {
-                    return progress
-                        .wait_for_finalized_success()
-                        .await
-                        .map_err(|e| format!("Transaction failed: {e}"));
+                    return progress.wait_for_finalized_success().await.map_err(|e| {
+                        S3ClientError::ChainError(format!("Transaction failed: {e}"))
+                    });
                 }
                 Err(e) => {
                     last_err = e.to_string();
@@ -105,12 +108,16 @@ impl SubstrateClient {
                             .await;
                         continue;
                     }
-                    return Err(format!("Failed to submit tx: {e}"));
+                    return Err(S3ClientError::ChainError(format!(
+                        "Failed to submit tx: {e}"
+                    )));
                 }
             }
         }
 
-        Err(format!("Failed to submit tx after retries: {last_err}"))
+        Err(S3ClientError::ChainError(format!(
+            "Failed to submit tx after retries: {last_err}"
+        )))
     }
 
     /// Create an S3 bucket.
@@ -126,12 +133,12 @@ impl SubstrateClient {
         provider: AccountId32,
         terms: &storage_client::AgreementTermsOf,
         sig: &sp_runtime::MultiSignature,
-    ) -> std::result::Result<S3BucketId, String> {
+    ) -> Result<S3BucketId> {
         debug!("Creating S3 bucket: {}", name);
 
         let tx = api::tx().s3_registry().create_s3_bucket(
             name.as_bytes().to_vec(),
-            convert::account(&provider),
+            convert::to_subxt_account(&provider),
             convert::agreement_terms(terms),
             convert::multisig(sig),
         );
@@ -148,14 +155,13 @@ impl SubstrateClient {
         }
 
         // Fallback: query by name
-        self.get_bucket_id_by_name(name)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Failed to get bucket ID after creation".to_string())
+        self.get_bucket_id_by_name(name).await?.ok_or_else(|| {
+            S3ClientError::ChainError("Failed to get bucket ID after creation".to_string())
+        })
     }
 
     /// Delete an S3 bucket.
-    pub async fn delete_s3_bucket(&self, bucket_id: S3BucketId) -> std::result::Result<(), String> {
+    pub async fn delete_s3_bucket(&self, bucket_id: S3BucketId) -> Result<()> {
         debug!("Deleting S3 bucket: {}", bucket_id);
 
         let tx = api::tx().s3_registry().delete_s3_bucket(bucket_id);
@@ -173,7 +179,7 @@ impl SubstrateClient {
         size: u64,
         content_type: &str,
         user_metadata: Vec<(Vec<u8>, Vec<u8>)>,
-    ) -> std::result::Result<(), String> {
+    ) -> Result<()> {
         debug!("Putting object metadata: bucket={}, key={}", bucket_id, key);
 
         let tx = api::tx().s3_registry().put_object_metadata(
@@ -190,11 +196,7 @@ impl SubstrateClient {
     }
 
     /// Delete object metadata.
-    pub async fn delete_object_metadata(
-        &self,
-        bucket_id: S3BucketId,
-        key: &str,
-    ) -> std::result::Result<(), String> {
+    pub async fn delete_object_metadata(&self, bucket_id: S3BucketId, key: &str) -> Result<()> {
         debug!(
             "Deleting object metadata: bucket={}, key={}",
             bucket_id, key
@@ -215,7 +217,7 @@ impl SubstrateClient {
         src_key: &str,
         dst_bucket_id: S3BucketId,
         dst_key: &str,
-    ) -> std::result::Result<(), String> {
+    ) -> Result<()> {
         debug!(
             "Copying object metadata: {}:{} -> {}:{}",
             src_bucket_id, src_key, dst_bucket_id, dst_key
@@ -233,15 +235,12 @@ impl SubstrateClient {
     }
 
     /// Get bucket ID by name.
-    pub async fn get_bucket_id_by_name(
-        &self,
-        name: &str,
-    ) -> std::result::Result<Option<S3BucketId>, S3ClientError> {
+    pub async fn get_bucket_id_by_name(&self, name: &str) -> Result<Option<S3BucketId>> {
         let at = self
             .client
             .at_current_block()
             .await
-            .map_err(|e| S3ClientError::InternalError(e.to_string()))?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
         let result = at
             .storage()
             .try_fetch(
@@ -249,34 +248,33 @@ impl SubstrateClient {
                 (convert::bounded(name.as_bytes().to_vec()),),
             )
             .await
-            .map_err(|e| S3ClientError::InternalError(e.to_string()))?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
         Ok(result.and_then(|v| v.decode().ok()))
     }
 
     /// Get bucket info by ID.
-    pub async fn get_bucket_info(
-        &self,
-        bucket_id: S3BucketId,
-    ) -> std::result::Result<Option<BucketInfo>, String> {
+    pub async fn get_bucket_info(&self, bucket_id: S3BucketId) -> Result<Option<BucketInfo>> {
         let at = self
             .client
             .at_current_block()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
         let result = at
             .storage()
             .try_fetch(api::storage().s3_registry().s3_buckets(), (bucket_id,))
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
         match result {
             Some(value) => {
-                let info = value.decode().map_err(|e| e.to_string())?;
+                let info = value
+                    .decode()
+                    .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
                 Ok(Some(BucketInfo {
                     s3_bucket_id: bucket_id,
-                    name: String::from_utf8_lossy(&info.name.0).to_string(),
+                    name: String::from_utf8_lossy(&convert::unbounded(info.name)).to_string(),
                     layer0_bucket_id: info.layer0_bucket_id,
                     object_count: info.object_count,
                     total_size: info.total_size,
@@ -292,12 +290,12 @@ impl SubstrateClient {
         &self,
         bucket_id: S3BucketId,
         key: &str,
-    ) -> std::result::Result<Option<ChainObjectMetadata>, String> {
+    ) -> Result<Option<ChainObjectMetadata>> {
         let at = self
             .client
             .at_current_block()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
         let result = at
             .storage()
             .try_fetch(
@@ -305,25 +303,25 @@ impl SubstrateClient {
                 (bucket_id, convert::bounded(key.as_bytes().to_vec())),
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
         match result {
             Some(value) => {
-                let metadata = value.decode().map_err(|e| e.to_string())?;
+                let metadata = value
+                    .decode()
+                    .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
                 Ok(Some(ChainObjectMetadata {
                     cid: metadata.cid,
                     size: metadata.size,
                     last_modified: metadata.last_modified,
-                    content_type: metadata.content_type.0,
-                    etag: metadata.etag.0,
-                    user_metadata: metadata
-                        .user_metadata
-                        .0
+                    content_type: convert::unbounded(metadata.content_type),
+                    etag: convert::unbounded(metadata.etag),
+                    user_metadata: convert::unbounded(metadata.user_metadata)
                         .into_iter()
                         .map(|e| MetadataEntry {
-                            key: e.key.0,
-                            value: e.value.0,
+                            key: convert::unbounded(e.key),
+                            value: convert::unbounded(e.value),
                         })
                         .collect(),
                 }))
@@ -333,31 +331,57 @@ impl SubstrateClient {
     }
 
     /// List user's buckets.
-    pub async fn list_user_buckets(&self) -> std::result::Result<Vec<BucketInfo>, String> {
+    pub async fn list_user_buckets(&self) -> Result<Vec<BucketInfo>> {
         let at = self
             .client
             .at_current_block()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
         let result = at
             .storage()
             .try_fetch(
                 api::storage().s3_registry().user_buckets(),
-                (subxt::utils::AccountId32(self.account_id),),
+                (convert::to_subxt_account(&AccountId32::new(
+                    self.account_id,
+                )),),
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
 
         let bucket_ids: Vec<u64> = match result {
-            Some(value) => value.decode().map_err(|e| e.to_string())?.0,
+            Some(value) => convert::unbounded(
+                value
+                    .decode()
+                    .map_err(|e| S3ClientError::ChainError(e.to_string()))?,
+            ),
             None => vec![],
         };
 
+        // One read per bucket, but issued together rather than in series.
+        let entry = at
+            .storage()
+            .entry(api::storage().s3_registry().s3_buckets())
+            .map_err(|e| S3ClientError::ChainError(e.to_string()))?;
+
+        let fetched = futures::future::join_all(
+            bucket_ids
+                .iter()
+                .map(|id| async { (*id, entry.try_fetch((*id,)).await) }),
+        )
+        .await;
+
         let mut buckets = Vec::new();
-        for id in bucket_ids {
-            if let Ok(Some(info)) = self.get_bucket_info(id).await {
-                buckets.push(info);
-            }
+        for (id, result) in fetched {
+            let Ok(Some(value)) = result else { continue };
+            let Ok(info) = value.decode() else { continue };
+            buckets.push(BucketInfo {
+                s3_bucket_id: id,
+                name: String::from_utf8_lossy(&convert::unbounded(info.name)).to_string(),
+                layer0_bucket_id: info.layer0_bucket_id,
+                object_count: info.object_count,
+                total_size: info.total_size,
+                created_at: info.created_at,
+            });
         }
 
         Ok(buckets)
@@ -368,11 +392,11 @@ impl SubstrateClient {
         &self,
         bucket_id: S3BucketId,
         params: ListObjectsParams,
-    ) -> std::result::Result<ListObjectsResponse, String> {
+    ) -> Result<ListObjectsResponse> {
         let bucket_info = self
             .get_bucket_info(bucket_id)
             .await?
-            .ok_or("Bucket not found")?;
+            .ok_or(S3ClientError::BucketNotFound(bucket_id.to_string()))?;
 
         // TODO: Implement proper pagination by iterating over Objects storage
         // For now, return empty list (objects can be queried individually)

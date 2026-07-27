@@ -12,7 +12,7 @@
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
 use crate::discovery::ProviderInfo;
-use crate::substrate::{extrinsics, SubstrateClient};
+use crate::substrate::{decoded_key, extrinsics, SubstrateClient};
 use crate::Signer;
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -128,16 +128,12 @@ impl ProviderClient {
     ) -> ClientResult<Option<ProviderInfo>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(account),),
+                (convert::to_subxt_account(account),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
@@ -261,16 +257,12 @@ impl ProviderClient {
         provider: &AccountId32,
     ) -> ClientResult<Option<u64>> {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().provider_replay_states(),
-                (convert::account(provider),),
+                (convert::to_subxt_account(provider),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch replay state: {e}")))?;
@@ -287,8 +279,9 @@ impl ProviderClient {
     /// Read the chain's `StorageProvider::RequestTimeout` runtime constant —
     /// the validity window (in blocks) applied to provider-signed terms.
     ///
-    /// Returns `Ok(None)` if the constant is absent from the node's metadata.
-    pub async fn fetch_request_timeout(chain_ws_url: &str) -> ClientResult<Option<u32>> {
+    /// Errors if the node's metadata does not carry the constant (i.e. the
+    /// generated bindings have drifted from the runtime).
+    pub async fn fetch_request_timeout(chain_ws_url: &str) -> ClientResult<u32> {
         let chain = SubstrateClient::connect(chain_ws_url).await?;
         let value = chain
             .api()
@@ -303,7 +296,7 @@ impl ProviderClient {
             )
             .map_err(|e| ClientError::Chain(format!("Failed to decode RequestTimeout: {e}")))?;
 
-        Ok(Some(value))
+        Ok(value)
     }
 
     /// Negotiate provider-signed agreement terms over HTTP.
@@ -369,13 +362,9 @@ impl ProviderClient {
     /// List all active agreements for this provider.
     pub async fn list_active_agreements(&self) -> ClientResult<Vec<ActiveAgreement>> {
         let chain = self.base.chain()?;
-        let provider = convert::account(&self.provider_account());
+        let provider = convert::to_subxt_account(&self.provider_account());
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -390,12 +379,9 @@ impl ProviderClient {
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
             let (bucket_id, agreement_provider): (BucketId, subxt::utils::AccountId32) =
-                match kv.key().and_then(|k| k.decode()) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode agreement storage key: {e}");
-                        continue;
-                    }
+                match decoded_key(&kv, "agreement") {
+                    Some(k) => k,
+                    None => continue,
                 };
             if agreement_provider != provider {
                 continue;
@@ -411,7 +397,7 @@ impl ProviderClient {
 
             agreements.push(ActiveAgreement {
                 bucket_id,
-                owner: format!("0x{}", hex::encode(agreement.owner.0)),
+                owner: convert::account_hex(&agreement.owner),
                 max_bytes: agreement.max_bytes,
                 expires_at: agreement.expires_at,
                 is_primary: matches!(agreement.role, ProviderRole::Primary),
@@ -515,13 +501,9 @@ impl ProviderClient {
     /// List all active challenges against this provider.
     pub async fn list_active_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let provider = convert::account(&self.provider_account());
+        let provider = convert::to_subxt_account(&self.provider_account());
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -538,12 +520,9 @@ impl ProviderClient {
             // Challenges is a double map (deadline, index) -> Challenge; the
             // stable index comes from the storage key, never from iteration
             // order.
-            let (deadline, index): (u32, u16) = match kv.key().and_then(|k| k.decode()) {
-                Ok(k) => k,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenge storage key: {e}");
-                    continue;
-                }
+            let (deadline, index): (u32, u16) = match decoded_key(&kv, "challenge") {
+                Some(k) => k,
+                None => continue,
             };
 
             let challenge = match kv.value().decode() {
@@ -579,16 +558,12 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = self.provider_account();
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(&provider_account),),
+                (convert::to_subxt_account(&provider_account),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
@@ -632,16 +607,12 @@ impl ProviderClient {
         let chain = self.base.chain()?;
         let provider_account = self.provider_account();
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         let value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(&provider_account),),
+                (convert::to_subxt_account(&provider_account),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;

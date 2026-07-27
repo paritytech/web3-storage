@@ -10,9 +10,10 @@
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
 use crate::convert;
-use crate::substrate::{extrinsics, fetch_current_anchor_block, SubstrateClient};
+use crate::substrate::{decoded_key, extrinsics, fetch_current_anchor_block, SubstrateClient};
 use crate::Signer;
 use sp_runtime::AccountId32;
+use std::collections::HashMap;
 use storage_primitives::{BucketId, ChunkLocation, Commitment};
 use storage_subxt::api;
 use storage_subxt::api::storage_provider::events::ChallengeCreated;
@@ -257,13 +258,9 @@ impl ChallengerClient {
     /// Get all active challenges created by this challenger.
     pub async fn list_my_challenges(&self) -> ClientResult<Vec<ChallengeInfo>> {
         let chain = self.base.chain()?;
-        let challenger = convert::account(&self.challenger_account());
+        let challenger = convert::to_subxt_account(&self.challenger_account());
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -280,12 +277,9 @@ impl ChallengerClient {
             // Challenges is a double map (deadline, index) -> Challenge; the
             // stable index comes from the storage key, never from iteration
             // order.
-            let (deadline, index): (u32, u16) = match kv.key().and_then(|k| k.decode()) {
-                Ok(k) => k,
-                Err(e) => {
-                    tracing::warn!("Failed to decode challenge storage key: {e}");
-                    continue;
-                }
+            let (deadline, index): (u32, u16) = match decoded_key(&kv, "challenge") {
+                Some(k) => k,
+                None => continue,
             };
 
             let challenge = match kv.value().decode() {
@@ -303,7 +297,7 @@ impl ChallengerClient {
             challenges.push(ChallengeInfo {
                 challenge_id: ChallengeId { deadline, index },
                 bucket_id: challenge.bucket_id,
-                provider: format!("0x{}", hex::encode(challenge.provider.0)),
+                provider: convert::account_hex(&challenge.provider),
                 deadline,
                 deposit: challenge.deposit,
                 status: ChallengeStatus::Pending,
@@ -325,18 +319,14 @@ impl ChallengerClient {
         let chain = self.base.chain()?;
         let provider_account = SubstrateClient::parse_account(&provider)?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         // Query provider info for stats
         let provider_value = at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().providers(),
-                (convert::account(&provider_account),),
+                (convert::to_subxt_account(&provider_account),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
@@ -425,31 +415,18 @@ impl ChallengerClient {
         let candidates = self.agreement_providers().await?;
 
         // Step 2: score each provider, keep only those below the threshold
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let registered = self.provider_stats().await?;
 
         let mut scored: Vec<(BucketId, AccountId32, u8)> = Vec::new();
 
         for (bucket_id, provider) in &candidates {
-            let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(api::storage().storage_provider().providers(), (*provider,))
-                .await
-            else {
+            let Some(score) = registered.get(&provider.0) else {
                 continue;
             };
 
-            let Ok(info) = value.decode() else {
-                continue;
-            };
-
-            let rep =
-                reputation_score(info.stats.challenges_received, info.stats.challenges_failed);
+            let rep = reputation_score(score.challenges_received, score.challenges_failed);
             if rep < min_reputation_threshold {
-                scored.push((*bucket_id, convert::account_back(provider), rep));
+                scored.push((*bucket_id, convert::to_sp_account(provider), rep));
             }
         }
 
@@ -521,11 +498,7 @@ impl ChallengerClient {
     ) -> ClientResult<Option<u128>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
         // Challenges is a double map (deadline, index) -> Challenge: a point
         // fetch answers pending-vs-settled directly.
         let entry = at
@@ -581,17 +554,13 @@ impl ChallengerClient {
     async fn fetch_challenger_stats(&self) -> ClientResult<FetchedChallengerStats> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let value = match at
             .storage()
             .try_fetch(
                 api::storage().storage_provider().challenger_stats(),
-                (convert::account(&self.challenger_account()),),
+                (convert::to_subxt_account(&self.challenger_account()),),
             )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch ChallengerStats: {e}")))?
@@ -611,18 +580,16 @@ impl ChallengerClient {
         })
     }
 
-    /// Collect unique `(bucket_id, provider)` pairs from all storage
-    /// agreements, deduplicated by provider.
+    /// List every provider that holds a storage agreement, paired with **one**
+    /// of its buckets — whichever is seen first while iterating. Each provider
+    /// appears exactly once, so callers challenge a provider at most once per
+    /// round.
     async fn agreement_providers(
         &self,
     ) -> ClientResult<Vec<(BucketId, subxt::utils::AccountId32)>> {
         let chain = self.base.chain()?;
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let at = chain.at_current_block().await?;
 
         let mut iter = at
             .storage()
@@ -630,7 +597,7 @@ impl ChallengerClient {
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate agreements: {e}")))?;
 
-        let mut raw: Vec<(BucketId, subxt::utils::AccountId32)> = Vec::new();
+        let mut providers: Vec<(BucketId, subxt::utils::AccountId32)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
         while let Some(result) = iter.next().await {
@@ -638,20 +605,62 @@ impl ChallengerClient {
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
             let (bucket_id, provider): (BucketId, subxt::utils::AccountId32) =
-                match kv.key().and_then(|k| k.decode()) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::warn!("Failed to decode agreement storage key: {e}");
-                        continue;
-                    }
+                match decoded_key(&kv, "agreement") {
+                    Some(k) => k,
+                    None => continue,
                 };
 
             if seen.insert(provider.0) {
-                raw.push((bucket_id, provider));
+                providers.push((bucket_id, provider));
             }
         }
 
-        Ok(raw)
+        Ok(providers)
+    }
+
+    /// Reputation inputs for every registered provider, keyed by account bytes.
+    ///
+    /// One paged scan of `Providers` rather than a point fetch per candidate:
+    /// the callers below score every agreement holder, so the whole map is
+    /// wanted anyway.
+    async fn provider_stats(&self) -> ClientResult<HashMap<[u8; 32], ProviderScore>> {
+        let chain = self.base.chain()?;
+
+        let at = chain.at_current_block().await?;
+
+        let mut iter = at
+            .storage()
+            .iter(api::storage().storage_provider().providers(), ())
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
+
+        let mut stats = HashMap::new();
+
+        while let Some(result) = iter.next().await {
+            let kv =
+                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
+
+            let (account,): (subxt::utils::AccountId32,) = match decoded_key(&kv, "provider") {
+                Some(k) => k,
+                None => continue,
+            };
+
+            match kv.value().decode() {
+                Ok(info) => {
+                    stats.insert(
+                        account.0,
+                        ProviderScore {
+                            stake: info.stake,
+                            challenges_received: info.stats.challenges_received,
+                            challenges_failed: info.stats.challenges_failed,
+                        },
+                    );
+                }
+                Err(e) => tracing::warn!("Failed to decode provider {}: {e}", account.0[0]),
+            }
+        }
+
+        Ok(stats)
     }
 
     /// Find the most profitable providers to challenge, ranked by expected value.
@@ -659,36 +668,22 @@ impl ChallengerClient {
     /// Scores all providers by reputation (from on-chain stats) and stake.
     /// Providers with lower reputation and higher stake are ranked highest.
     pub async fn find_challenge_targets(&self, limit: usize) -> ClientResult<Vec<ChallengeTarget>> {
-        let chain = self.base.chain()?;
-
         // Step 1: collect unique (bucket_id, provider) pairs from all agreements
         let candidates = self.agreement_providers().await?;
 
         // Step 2: score each provider
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
+        let registered = self.provider_stats().await?;
 
         let mut targets: Vec<ChallengeTarget> = Vec::new();
 
         for (bucket_id, provider) in &candidates {
-            let Ok(Some(value)) = at
-                .storage()
-                .try_fetch(api::storage().storage_provider().providers(), (*provider,))
-                .await
-            else {
+            let Some(score) = registered.get(&provider.0) else {
                 continue;
             };
 
-            let Ok(info) = value.decode() else {
-                continue;
-            };
-
-            let stake = info.stake;
-            let received = info.stats.challenges_received;
-            let failed = info.stats.challenges_failed;
+            let stake = score.stake;
+            let received = score.challenges_received;
+            let failed = score.challenges_failed;
 
             let rep = reputation_score(received, failed);
 
@@ -712,7 +707,7 @@ impl ChallengerClient {
             let expected_value = (potential_reward as f64 * success_probability) as u128;
 
             targets.push(ChallengeTarget {
-                provider: format!("0x{}", hex::encode(provider.0)),
+                provider: convert::account_hex(provider),
                 bucket_id: *bucket_id,
                 potential_reward,
                 success_probability,
@@ -754,6 +749,13 @@ impl ChallengerClient {
 // ─────────────────────────────────────────────────────────────────────────────
 // Private helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// The `Providers` fields the challenge-scoring paths read.
+struct ProviderScore {
+    stake: u128,
+    challenges_received: u32,
+    challenges_failed: u32,
+}
 
 /// Compute a 0–100 reputation score from on-chain challenge stats.
 /// Providers with no recorded challenges score 100 (benefit of the doubt).
