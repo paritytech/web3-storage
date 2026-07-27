@@ -10,12 +10,12 @@ includes = [
 	"crates/pallets/**/*.rs",
 	"crates/pallets/**/*.sol",
 	"crates/primitives/**/*.rs",
+	"crates/providers/**/*.rs",
 	"examples/contracts/**/*.sol",
 	"examples/papi/**/*.ts",
 	"packages/**/*.js",
 	"packages/**/*.ts",
 	"packages/**/*.tsx",
-	"provider/**/*.rs",
 	"storage-interfaces/**/*.rs",
 	"user-interfaces/photos/contracts/**/*.sol",
 ]
