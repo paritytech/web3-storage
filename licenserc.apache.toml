@@ -16,7 +16,6 @@ includes = [
 	"packages/**/*.js",
 	"packages/**/*.ts",
 	"packages/**/*.tsx",
-	"provider/**/*.rs",
 	"user-interfaces/photos/contracts/**/*.sol",
 ]
 excludes = [

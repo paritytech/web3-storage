@@ -196,11 +196,10 @@ web3-storage/
 │   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
 │   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
 │   ├── primitives/         # Shared types: storage, file-system, s3
-│   ├── providers/          # provider-auth (signed HTTP auth) + provider-negotiation (client<->provider wire protocol)
+│   ├── providers/          # provider-negotiation: off-chain client<->provider wire protocol crate
 │   └── storage-subxt/      # Static subxt runtime bindings
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain HTTP storage server
-├── provider/               # provider-negotiation: off-chain client<->provider wire protocol crate
 ├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
 ├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared

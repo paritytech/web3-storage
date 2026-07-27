@@ -10,7 +10,8 @@ members = [
 	"crates/pallets/drive-registry",
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
-	# Provider crates
+
+	# Provider Node crates
 	"crates/providers/auth",
 	"crates/providers/negotiation",
 
