@@ -37,6 +37,20 @@ const ALREADY_DONE_ERRORS: [&str; 2] = [
     "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
 ];
 
+/// Outcome of one submit-and-watch pass (see
+/// [`SubxtChainClient::submit_and_finalize`]).
+enum Attempt {
+    /// The transaction landed, or a duplicate rejection proved an earlier
+    /// attempt did.
+    Landed,
+    /// Transport-level failure: the transaction may or may not have landed, so
+    /// resubmitting is safe only because a duplicate rejection counts as
+    /// success.
+    Retryable(Error),
+    /// The chain rejected the call itself; resubmitting would fail identically.
+    Rejected(Error),
+}
+
 /// Query the pallet's `StorageProviderApi::current_anchor_block` runtime API —
 /// the block every on-chain duration (timeouts, expiries, `valid_until`, nonce
 /// age) is measured against. Reading it through the runtime API keeps the
@@ -177,52 +191,60 @@ impl SubxtChainClient {
         // One transaction at a time across every clone (see `submit_lock`).
         let _guard = self.submit_lock.lock().await;
 
-        for attempt in 0..2 {
-            let retrying = attempt > 0;
-            let submitted = async {
-                self.api()?
-                    .at_current_block()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
-                    .transactions()
-                    .sign_and_submit_then_watch_default(tx, &self.signer)
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
-            }
-            .await;
+        let first_failure = match self.try_submit(tx, what, false).await {
+            Attempt::Landed => return Ok(()),
+            Attempt::Rejected(e) => return Err(e),
+            Attempt::Retryable(e) => e,
+        };
 
-            let progress = match submitted {
-                Ok(progress) => progress,
-                Err(e) if !retrying => {
-                    tracing::warn!("{what}: submission failed ({e}); retrying once");
-                    tokio::time::sleep(RETRY_DELAY).await;
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
+        tracing::warn!("{what}: {first_failure}; retrying once");
+        tokio::time::sleep(RETRY_DELAY).await;
 
-            return match progress.wait_for_finalized_success().await {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    if retrying && Self::is_already_done(&e) {
-                        tracing::info!(
-                            "{what}: duplicate rejected on retry ({e}); first attempt landed"
-                        );
-                        Ok(())
-                    } else if !retrying && !Self::is_dispatch_failure(&e) {
-                        // Non-dispatch failure (e.g. the watch subscription
-                        // died): the tx may or may not have landed — resubmit
-                        // and let the duplicate classification above decide.
-                        tracing::warn!("{what}: tx watch failed ({e}); retrying once");
-                        tokio::time::sleep(RETRY_DELAY).await;
-                        continue;
-                    } else {
-                        Err(Error::Internal(format!("Transaction failed: {e}")))
-                    }
-                }
-            };
+        match self.try_submit(tx, what, true).await {
+            Attempt::Landed => Ok(()),
+            Attempt::Retryable(e) | Attempt::Rejected(e) => Err(e),
         }
-        unreachable!("loop either returns or continues at most once")
+    }
+
+    /// One submit-and-watch pass. `retrying` marks the second attempt, where a
+    /// duplicate rejection proves the first one landed.
+    async fn try_submit(
+        &self,
+        tx: &subxt::tx::DynamicPayload<Vec<Value>>,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        let submitted = async {
+            self.api()?
+                .at_current_block()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+                .transactions()
+                .sign_and_submit_then_watch_default(tx, &self.signer)
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))
+        }
+        .await;
+
+        let progress = match submitted {
+            Ok(progress) => progress,
+            Err(e) => return Attempt::Retryable(e),
+        };
+
+        match progress.wait_for_finalized_success().await {
+            Ok(_) => Attempt::Landed,
+            Err(e) if retrying && Self::is_already_done(&e) => {
+                tracing::info!("{what}: duplicate rejected on retry ({e}); first attempt landed");
+                Attempt::Landed
+            }
+            // Non-dispatch failure (e.g. the watch subscription died): the tx
+            // may or may not have landed, so resubmit and let the duplicate
+            // classification above decide.
+            Err(e) if !Self::is_dispatch_failure(&e) => {
+                Attempt::Retryable(Error::Internal(format!("tx watch failed: {e}")))
+            }
+            Err(e) => Attempt::Rejected(Error::Internal(format!("Transaction failed: {e}"))),
+        }
     }
 
     /// Convert a multiaddr string to an HTTP endpoint.
