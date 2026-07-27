@@ -10,6 +10,7 @@ members = [
 	"crates/pallets/drive-registry",
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
+	"crates/pallets/storage-provider/mbt",
 
 	# Provider Node crates
 	"crates/providers/auth",
@@ -153,6 +154,7 @@ scale-info = { version = "2.11.6", default-features = false, features = [
 ] }
 
 # External dependencies
+anyhow = "1.0"
 async-trait = "0.1"
 base64 = "0.22"
 bincode = "1.3"
@@ -191,6 +193,8 @@ subxt-rpcs = { version = "0.50.2" }
 subxt-signer = { version = "0.50.2", features = ["sr25519"] }
 
 # Testing
+itf = "0.4"
+quint-connect = "0.1.2"
 sp-keyring = { version = "48.0.0", default-features = false }
 sp-keystore = { version = "0.49.0", default-features = false }
 tempfile = "3"
