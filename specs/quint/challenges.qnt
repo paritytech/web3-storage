@@ -38,6 +38,12 @@
 //     flows are tracked (they are what conservation is about).
 //   - No cancel action: the design specifies challenger cancellation, the
 //     pallet does not implement it (finding, by inspection).
+//   - The Deleted defense is adjudicated as "an admin-signed deletion past
+//     the challenged seq exists". On-chain, verify_signature resolves the
+//     admin's key through the Providers map, so a non-provider bucket admin
+//     can never produce a verifiable deletion signature and the defense
+//     always slashes (finding, by inspection; the MBT driver registers the
+//     admin as a zero-stake provider to give the spec's semantics a chance).
 //   - Providers do not challenge themselves (the pallet allows it; it only
 //     aliases the reserved pot without affecting these invariants).
 module challenges {
@@ -303,22 +309,30 @@ module challenges {
   }
 
   // Client submits a checkpoint carrying the primary's signature; canonical
-  // range only ever moves forward.
+  // range only ever moves forward. The chain resolves the signature against
+  // the bucket's primary list, and P1 leaves it when its expired agreement
+  // is torn down at deregistration announcement — hence the deregisterAt
+  // guard (checkpoint itself has no time bound).
   action doCheckpointC(c: Commitment): bool = all {
     prov.get(P1).signed.contains(c),
+    prov.get(P1).deregisterAt == -1,
     rangeEnd(c) >= rangeEnd(canonical.c),
     canonical' = { c: c, signers: Set(P1) },
     now' = now, prov' = prov, free' = free, reserved' = reserved,
     adminDeletedTo' = adminDeletedTo, open' = open, nextIdx' = nextIdx, log' = log,
   }
 
-  // Replica syncs a primary-signed commitment and confirms on-chain
-  // (confirm_replica_sync): fetches the data, records last_sync.
+  // Replica syncs the current canonical snapshot and confirms on-chain.
+  // confirm_replica_sync only accepts a root matching the bucket's snapshot
+  // (position 0 of `find_matching_root`; historical positions carry no
+  // sequence metadata and are out of scope) and requires it to differ from
+  // the last synced root. Fetches the data, records last_sync.
   action replicaSyncC(c: Commitment): bool = {
     val p = prov.get(P2)
     all {
       now < AGREEMENT_END,
-      prov.get(P1).signed.contains(c),
+      canonical.c == c,
+      c.root != p.lastSync.root,
       prov' = prov.put(P2, { ...p, lastSync: c, leaves: p.leaves.union(seqsOf(c)) }),
       now' = now, free' = free, reserved' = reserved, canonical' = canonical,
       adminDeletedTo' = adminDeletedTo, open' = open, nextIdx' = nextIdx, log' = log,
@@ -418,12 +432,17 @@ module challenges {
   }
 
   // deregister_provider: only with no live agreements (committed_bytes == 0).
+  // On-chain the expired agreement row must first be torn down via
+  // claim_expired_agreement, which requires the anchor strictly past expiry
+  // (SettlementTimeout collapsed to 0) and no pending challenges on the
+  // bucket — hence the strict `>` and the pending == 0 guard.
   action announceDeregP(p: Acct): bool = {
     val ps = prov.get(p)
     all {
       ps.registered,
       ps.deregisterAt == -1,
-      now >= AGREEMENT_END,
+      now > AGREEMENT_END,
+      ps.pending == 0,
       prov' = prov.put(p, { ...ps, deregisterAt: now + DEREG_PERIOD }),
       now' = now, free' = free, reserved' = reserved, canonical' = canonical,
       adminDeletedTo' = adminDeletedTo, open' = open, nextIdx' = nextIdx, log' = log,

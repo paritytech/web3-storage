@@ -53,6 +53,7 @@ module challengesCodeTest {
   run supersededEscapeTest =
     init
       .then(signOffchainC(cA))
+      .then(doCheckpointC(cA))
       .then(replicaSyncC(cA))
       .then(signOffchainC(cB))
       .then(doCheckpointC(cB))
@@ -190,6 +191,7 @@ module challengesDesignTest {
   run supersededEscapeStillTest =
     init
       .then(signOffchainC(cA))
+      .then(doCheckpointC(cA))
       .then(replicaSyncC(cA))
       .then(signOffchainC(cB))
       .then(doCheckpointC(cB))
