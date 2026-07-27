@@ -25,7 +25,7 @@ just start-provider
 just fs-demo-ci
 ```
 
-`fs-demo-ci` runs `storage-interfaces/file-system/client/examples/ci_integration_test.rs`
+`fs-demo-ci` runs `clients/file-system/examples/ci_integration_test.rs`
 against the running infrastructure: it creates a drive via the `DriveRegistry`
 pallet, exercises directory and file operations through the provider's
 `/fs/{bucket}/...` HTTP endpoints, and asserts the round-trip. It assumes the
@@ -94,5 +94,5 @@ just build
 - [User Guide](../filesystems/USER_GUIDE.md) — complete user workflows
 - [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration
 - [API Reference](../filesystems/API_REFERENCE.md) — complete API docs
-- [Client README](../../storage-interfaces/file-system/client/README.md) — SDK docs
+- [Client README](../../clients/file-system/README.md) — SDK docs
 - [Architecture](../filesystems/ARCHITECTURE.md) — encoding, security, chain integration

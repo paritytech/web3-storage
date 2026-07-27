@@ -372,14 +372,14 @@ cargo test -p file-system-client test_create_directory
 
 For more details, see:
 
-- **[User Guide](../../../docs/filesystems/USER_GUIDE.md)** - Complete user workflows
-- **[Admin Guide](../../../docs/filesystems/ADMIN_GUIDE.md)** - System administration
-- **[API Reference](../../../docs/filesystems/API_REFERENCE.md)** - Complete API docs
-- **[Architecture](../../../docs/filesystems/ARCHITECTURE.md)** - Encoding, security, chain integration
+- **[User Guide](../../docs/filesystems/USER_GUIDE.md)** - Complete user workflows
+- **[Admin Guide](../../docs/filesystems/ADMIN_GUIDE.md)** - System administration
+- **[API Reference](../../docs/filesystems/API_REFERENCE.md)** - Complete API docs
+- **[Architecture](../../docs/filesystems/ARCHITECTURE.md)** - Encoding, security, chain integration
 
 ## License
 
-[Apache-2.0](../../../LICENSE-APACHE2)
+[Apache-2.0](../../LICENSE-APACHE2)
 
 ## Contributing
 
@@ -389,4 +389,4 @@ Contributions welcome! Please:
 3. Update documentation
 4. Keep Layer 0 dependencies minimal
 
-See [CLAUDE.md](../../../CLAUDE.md) for code standards.
+See [CLAUDE.md](../../CLAUDE.md) for code standards.

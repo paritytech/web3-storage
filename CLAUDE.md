@@ -238,7 +238,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Serves data via HTTP API
 - Signs checkpoints for on-chain submission
 
-**Client SDK (`client/`)**: Rust library for applications to:
+**Client SDK (`clients/storage/`)**: Rust library for applications to:
 - Create buckets and agreements (on-chain)
 - Upload/download data (off-chain HTTP)
 - Submit checkpoints (on-chain)
@@ -264,7 +264,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Bucket-to-drive mapping
 - Drive lifecycle (create, update, clear, delete)
 
-**File System Client (`storage-interfaces/file-system/client/`)**: High-level SDK providing:
+**File System Client (`clients/file-system/`)**: High-level SDK providing:
 - Familiar file/folder interface over Layer 0 blob storage
 - Automatic drive creation and provider selection
 - Directory operations (create, list, navigate)
@@ -273,7 +273,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Content-addressed storage with CID verification
 - Flexible commit strategies
 
-**Example:** `storage-interfaces/file-system/client/examples/basic_usage.rs`
+**Example:** `clients/file-system/examples/basic_usage.rs`
 - Complete workflow: drive creation → directories → file uploads/downloads
 - Real blockchain integration with event extraction
 - Demonstrates the full Layer 1 capabilities
