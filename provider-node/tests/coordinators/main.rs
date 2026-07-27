@@ -5,7 +5,6 @@
 //! Each sub-module covers one coordinator; shared helpers live here.
 
 mod challenge;
-mod checkpoint;
 mod event_fanout;
 mod replica_sync;
 

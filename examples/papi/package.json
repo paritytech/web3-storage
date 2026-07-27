@@ -7,7 +7,6 @@
   "scripts": {
     "demo": "node --import tsx full-flow.ts",
     "demo:provider-discovery": "node --import tsx provider-discovery.ts",
-    "demo:checkpoint-missed": "node --import tsx checkpoint-missed.ts",
     "demo:sc-flow": "node --import tsx sc-flow.ts",
     "e2e": "node --import tsx e2e/runner.bin.ts",
     "typecheck": "tsc --noEmit"

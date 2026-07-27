@@ -387,7 +387,7 @@ Once infrastructure is running:
 - [Architecture](../filesystems/ARCHITECTURE.md)
 
 ### S3 Interface
-- [S3 README](../../storage-interfaces/s3/README.md)
+- [S3 README](../../clients/s3/README.md)
 
 ### Architecture
 - [System Design](../design/scalable-web3-storage.md)

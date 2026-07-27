@@ -238,7 +238,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Serves data via HTTP API
 - Signs checkpoints for on-chain submission
 
-**Client SDK (`client/`)**: Rust library for applications to:
+**Client SDK (`clients/storage/`)**: Rust library for applications to:
 - Create buckets and agreements (on-chain)
 - Upload/download data (off-chain HTTP)
 - Submit checkpoints (on-chain)
@@ -264,7 +264,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Bucket-to-drive mapping
 - Drive lifecycle (create, update, clear, delete)
 
-**File System Client (`storage-interfaces/file-system/client/`)**: High-level SDK providing:
+**File System Client (`clients/file-system/`)**: High-level SDK providing:
 - Familiar file/folder interface over Layer 0 blob storage
 - Automatic drive creation and provider selection
 - Directory operations (create, list, navigate)
@@ -273,7 +273,7 @@ See [Project Structure](README.md#project-structure) in the root README for the 
 - Content-addressed storage with CID verification
 - Flexible commit strategies
 
-**Example:** `storage-interfaces/file-system/client/examples/basic_usage.rs`
+**Example:** `clients/file-system/examples/basic_usage.rs`
 - Complete workflow: drive creation → directories → file uploads/downloads
 - Real blockchain integration with event extraction
 - Demonstrates the full Layer 1 capabilities
@@ -330,7 +330,7 @@ The Polkadot SDK provides:
 ## Dependencies
 
 - **Polkadot SDK**: See `Cargo.toml` workspace dependencies
-- **Rust**: 1.74+ with `wasm32-unknown-unknown` target
+- **Rust**: pinned by `rust-toolchain.toml` (currently 1.93.0) with `wasm32v1-none` target
 - **Just**: Command runner (`cargo install just`)
 - **Zombienet**: Network spawner (auto-downloaded by `just setup`)
 - **Polkadot**: Relay chain binary (auto-downloaded)
@@ -359,12 +359,6 @@ pub const MinStakePerByte: Balance = 1_000;
 pub const ChallengeTimeout: BlockNumber = 48 * RC_HOURS;
 pub const SettlementTimeout: BlockNumber = 24 * RC_HOURS;
 pub const RequestTimeout: BlockNumber = 6 * RC_HOURS;
-
-// Provider-initiated checkpoint config
-pub const DefaultCheckpointInterval: BlockNumber = 100; // anchor blocks (~10 min)
-pub const DefaultCheckpointGrace: BlockNumber = 20;     // anchor blocks (~2 min)
-pub const CheckpointReward: Balance = 1_000_000_000_000;     // 1 token
-pub const CheckpointMissPenalty: Balance = 500_000_000_000;  // 0.5 token
 ```
 
 ### Provider Settings (configured per provider)
@@ -509,29 +503,30 @@ handle.stop().await?;         // Stop background loop
 **Key Components**:
 - `CheckpointManager`: Coordinates multi-provider checkpoint collection and consensus
 - `CheckpointPersistence`: Persists checkpoint state to disk with backup rotation
-- `EventSubscriber`: Real-time blockchain event monitoring (checkpoints, challenges)
+- `EventStream` (from `storage-indexers`, re-exported by `storage-client`): real-time blockchain event monitoring (checkpoints, challenges)
 - `ProviderHealthHistory`: Tracks provider reliability and response times
 
 See [Checkpoint Protocol Design](docs/drafts/CHECKPOINT_PROTOCOL.md) for details.
 
 ### Event Subscription
 
-Subscribe to real-time blockchain events:
+Subscribe to real-time, strongly-typed blockchain events via the `storage-indexers` crate (re-exported by `storage-client`).
+The stream rides a reconnecting WebSocket transport and yields the generated `storage_subxt::api::Event` runtime enum - no hand-rolled event types:
 
 ```rust
-use storage_client::{EventSubscriber, EventFilter, StorageEvent};
+use futures::StreamExt;
+use storage_client::{EventFilter, EventStream};
+use storage_subxt::api;
 
-let subscriber = EventSubscriber::connect(chain_endpoint).await?;
+// Filter by pallet up front (StorageProvider / DriveRegistry / S3Registry),
+// optionally refine with a predicate on the decoded event.
+let mut stream = EventStream::connect(chain_endpoint, EventFilter::storage_pallets()).await?;
 
-// Subscribe to specific events
-let filter = EventFilter::bucket(bucket_id);
-let mut stream = subscriber.subscribe(filter).await?;
-
-while let Some(event) = stream.next().await {
-    match event {
-        StorageEvent::BucketCheckpointed { bucket_id, mmr_root, .. } => { /* ... */ }
-        StorageEvent::ChallengeCreated { challenge_id, .. } => { /* ... */ }
-        StorageEvent::ProviderSlashed { provider, amount, .. } => { /* ... */ }
+while let Some(ev) = stream.next().await {
+    match ev.event {
+        api::Event::StorageProvider(event) => { /* ev.block_number, ev.block_hash available */ }
+        api::Event::DriveRegistry(event) => { /* ... */ }
+        api::Event::S3Registry(event) => { /* ... */ }
         _ => {}
     }
 }

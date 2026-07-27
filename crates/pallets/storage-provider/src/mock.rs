@@ -90,11 +90,6 @@ impl pallet_storage_provider::Config for Test {
     type MaxNonceAge = ConstU64<200>;
     type SettlementTimeout = ConstU64<50>;
     type RequestTimeout = ConstU64<50>;
-    // Provider-initiated checkpoint config
-    type DefaultCheckpointInterval = ConstU64<10>; // 10 blocks for testing
-    type DefaultCheckpointGrace = ConstU64<5>; // 5 blocks grace
-    type CheckpointReward = ConstU64<10>; // 10 units reward
-    type CheckpointMissPenalty = ConstU64<50>; // 50 units penalty
     type MaxBucketsPerMember = ConstU32<100>;
     // Must be > ChallengeTimeout (100) AND > RequestTimeout (50) per the
     // pallet's `integrity_test`. 100 + 50 grace; small enough that tests can

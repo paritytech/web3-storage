@@ -53,7 +53,7 @@ The system handles all of this automatically!
 ```bash
 # Add to your Cargo.toml
 [dependencies]
-file-system-client = { path = "path/to/storage-interfaces/file-system/client" }
+file-system-client = { path = "path/to/clients/file-system" }
 file-system-primitives = { path = "path/to/crates/primitives/file-system" }
 ```
 
@@ -879,7 +879,7 @@ See [Architecture Document](./ARCHITECTURE.md#content-addressing--cids) for deta
 
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[API Reference](./API_REFERENCE.md)** - Complete API documentation
-- **[Examples](../../storage-interfaces/file-system/client/examples/)** - Code examples
+- **[Examples](../../clients/file-system/examples/)** - Code examples
 
 ## Additional Resources
 

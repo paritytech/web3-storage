@@ -40,7 +40,7 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 - **[Smart Contracts](./drafts/smart-contracts.md)** — `pallet_revive` integration, custom precompile ABI, address mapping, payment flow. Candidate for promotion to `reference/` (it's API-reference material, not a draft design).
 - **[Marketplace](./drafts/marketplace.md)** — provider capacity, discovery, and matching.
 - **[Checkpoint Protocol](./drafts/CHECKPOINT_PROTOCOL.md)** — multi-provider checkpoint coordination.
-- **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state.
+- **[Provider-Initiated Checkpoints](./drafts/provider-initiated-checkpoints.md)** — extension where providers proactively commit state; removed in #306, archived (design + implementation) for potential re-evaluation.
 - **[Client-Side Encryption](./drafts/CLIENT_SIDE_ENCRYPTION.md)** — wire format, cipher choice.
 - **[S3 Metadata Index](./drafts/S3_METADATA_INDEX.md)** — how prefix/delimiter queries are served.
 - **[Challenge Economics — Extensions](./drafts/challenge-economics-extensions.md)** — speculative "Capped Split for the general public"; also records that the design's two-tier challenger split isn't implemented yet.
@@ -55,8 +55,8 @@ Unratified / WIP notes. **These need triage** ([#308](https://github.com/parityt
 
 ## Clients
 
-- **[Storage Client SDK](../client/README.md)** — Layer-0 Rust client.
-- **[S3 Interface](../storage-interfaces/s3/README.md)** — Layer-1 S3-compatible Rust client.
+- **[Storage Client SDK](../clients/storage/README.md)** — Layer-0 Rust client.
+- **[S3 Interface](../clients/s3/README.md)** — Layer-1 S3-compatible Rust client.
 - **TypeScript SDK** — `@web3-storage/sdk` at `packages/sdk` (`./fs`, `./s3`, `./revive` subpaths).
 
 ## External

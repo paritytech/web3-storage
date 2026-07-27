@@ -37,7 +37,6 @@ export const parseMultiaddrToHttp = parseMultiaddrToUrl;
 
 export type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
   FsEntry,
@@ -46,7 +45,6 @@ export type {
 } from "@web3-storage/sdk/fs";
 import type {
   BucketMember,
-  CheckpointDuty,
   CreateDriveOptions,
   DriveInfo,
   FsEntry,
@@ -461,14 +459,6 @@ export class DriveClient {
       leafCount: snapshot.commitment.leaf_count,
       checkpointBlock: snapshot.checkpoint_block,
     };
-  }
-
-  getCheckpointDuty(bucketId: bigint): Promise<CheckpointDuty | null> {
-    return this.requireFs().getCheckpointDuty(bucketId);
-  }
-
-  triggerCheckpoint(bucketId: bigint): Promise<void> {
-    return this.requireFs().triggerCheckpoint(bucketId);
   }
 }
 

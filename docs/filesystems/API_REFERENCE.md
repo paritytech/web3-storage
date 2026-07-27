@@ -1335,4 +1335,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **[User Guide](./USER_GUIDE.md)** - User-friendly documentation
 - **[Admin Guide](./ADMIN_GUIDE.md)** - System administration
 - **[Architecture](./ARCHITECTURE.md)** - Encoding, security, chain integration
-- **[Examples](../../storage-interfaces/file-system/client/examples/)** - Code samples
+- **[Examples](../../clients/file-system/examples/)** - Code samples

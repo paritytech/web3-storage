@@ -61,7 +61,7 @@ just demo
 2. **Inspect chain health**: `bash scripts/check-chain.sh` (relay + parachain
    status), `just health` (provider node health), `just stats` (provider stats).
 
-3. **Build something on top**: see [Client Documentation](./client/README.md)
+3. **Build something on top**: see [Client Documentation](./clients/storage/README.md)
    for the Layer-0 SDK, or [`FILE_SYSTEM_QUICKSTART.md`](./docs/getting-started/FILE_SYSTEM_QUICKSTART.md)
    for the Layer-1 file-system interface.
 
@@ -196,12 +196,11 @@ web3-storage/
 │   ├── pallets/            # FRAME pallets: storage-provider, drive-registry, s3-registry
 │   │                       #   each with a precompiles/ subfolder (pallet_revive precompiles)
 │   ├── primitives/         # Shared types: storage, file-system, s3
+│   ├── providers/          # provider-negotiation: off-chain client<->provider wire protocol crate
 │   └── storage-subxt/      # Static subxt runtime bindings
 ├── runtimes/               # Parachain runtimes: web3-storage-local, web3-storage-paseo
 ├── provider-node/          # Off-chain HTTP storage server
-├── provider/               # provider-negotiation: off-chain client<->provider wire protocol crate
-├── client/                 # Layer 0 Rust client SDK
-├── storage-interfaces/     # Layer 1 interfaces: file-system, s3
+├── clients/                # Rust client SDKs: storage (Layer 0), file-system, s3 (Layer 1)
 ├── packages/               # JS/TS workspace: @web3-storage/{core,layer0,layer1,papi,sdk}
 ├── user-interfaces/        # Web apps: landing, drive-ui, provider, s3-ui, photos, shared
 ├── examples/               # contracts/ (Solidity dApps), papi/ (end-to-end PAPI demos)
@@ -274,7 +273,7 @@ let downloaded = client.download(bucket_id, result.seq).await?;
 assert_eq!(data, downloaded);
 ```
 
-See [Client README](./client/README.md) for complete examples.
+See [Client README](./clients/storage/README.md) for complete examples.
 
 ## Key Features
 
