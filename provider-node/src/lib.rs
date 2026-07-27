@@ -10,7 +10,6 @@
 //! - Syncing data between providers (for replicas)
 
 pub mod api;
-pub mod auth;
 pub mod chain_state_coordinator;
 pub mod challenge_responder;
 pub mod cli;
@@ -66,7 +65,7 @@ pub struct ProviderDeps {
     /// in-memory mode, the disk store in disk mode.
     pub nonce_store: Arc<dyn NonceStore>,
     /// Membership cache for role lookups.
-    pub membership: Arc<auth::MembershipCache>,
+    pub membership: Arc<provider_auth::MembershipCache>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
 }
@@ -84,7 +83,7 @@ pub struct ProviderState {
     /// File system drive index
     pub fs_index: FsIndexManager,
     /// Membership cache for role lookups.
-    pub membership_cache: Arc<auth::MembershipCache>,
+    pub membership_cache: Arc<provider_auth::MembershipCache>,
     /// Maximum allowed clock skew for request timestamps.
     pub auth_max_skew: Duration,
     /// Browser origins allowed via CORS. `None` (the default) keeps the
@@ -169,8 +168,8 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),
@@ -191,8 +190,8 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),
@@ -242,8 +241,8 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),
@@ -271,8 +270,8 @@ mod tests {
         let alice_deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),
@@ -280,8 +279,8 @@ mod tests {
         let bob_deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),
@@ -305,8 +304,8 @@ mod tests {
         let deps = ProviderDeps {
             storage: Arc::new(storage::Storage::new()),
             nonce_store: Arc::new(NullNonceStore),
-            membership: Arc::new(auth::MembershipCache::new(
-                Box::new(auth::StaticMembershipResolver(vec![])),
+            membership: Arc::new(provider_auth::MembershipCache::new(
+                Box::new(provider_auth::StaticMembershipResolver(vec![])),
                 Duration::from_secs(60),
             )),
             auth_max_skew: Duration::from_secs(300),

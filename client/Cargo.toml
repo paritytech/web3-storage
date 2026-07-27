@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Client library for scalable Web3 storage"
 
 [dependencies]
+provider-auth = { workspace = true }
 provider-negotiation = { workspace = true }
 storage-indexers = { workspace = true }
 storage-primitives = { workspace = true, features = ["serde", "std"] }

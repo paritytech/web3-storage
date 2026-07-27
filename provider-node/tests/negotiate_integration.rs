@@ -9,6 +9,7 @@
 //! per-IP rate limiter.
 
 use axum::http::StatusCode;
+use provider_auth::{MembershipCache, StaticMembershipResolver};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
@@ -17,7 +18,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::ReplicaTerms;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::ProviderInfo;
 use storage_provider_node::{
     create_router, DiskStorage, NegotiateRequest, NonceCounter, NonceStore, NullNonceStore,

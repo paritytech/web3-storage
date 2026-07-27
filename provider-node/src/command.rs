@@ -3,7 +3,6 @@
 //! Node startup and runtime orchestration.
 
 use crate::{
-    auth::{ChainMembershipResolver, MembershipCache},
     chain_state_coordinator::ChainStateCoordinator,
     cli::{Cli, StorageMode, DEFAULT_PROVIDER_ID},
     create_router,
@@ -14,6 +13,7 @@ use crate::{
     StorageBackend,
 };
 use clap::Parser;
+use provider_auth::{ChainMembershipResolver, MembershipCache};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

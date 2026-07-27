@@ -115,6 +115,20 @@ pub enum Error {
     RateLimited,
 }
 
+impl From<provider_auth::AuthError> for Error {
+    fn from(err: provider_auth::AuthError) -> Self {
+        use provider_auth::AuthError;
+        match err {
+            AuthError::AuthRequired => Error::AuthRequired,
+            AuthError::TimestampExpired => Error::TimestampExpired,
+            AuthError::InsufficientRole => Error::InsufficientRole,
+            AuthError::MembershipLookup(e) => {
+                Error::Internal(format!("Membership lookup failed: {e}"))
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,

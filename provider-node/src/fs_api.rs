@@ -9,7 +9,6 @@
 //! Example: `PUT /fs/1/file?path=/docs/report.pdf`
 
 use crate::api::check_role;
-use crate::auth::RequiredRole;
 use crate::error::Error;
 use crate::fs_index::FsEntryMeta;
 use crate::storage::{build_padded_merkle_tree, hex_encode};
@@ -21,6 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_auth::RequiredRole;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;

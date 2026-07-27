@@ -13,13 +13,13 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::{current_timestamp, make_auth_header};
+use provider_auth::{MembershipCache, StaticMembershipResolver};
 use reqwest::Client;
 use serde_json::Value;
 use sp_core::{sr25519, Pair};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{create_router, NullNonceStore, ProviderDeps, ProviderState, Storage};
 use tokio::net::TcpListener;
 

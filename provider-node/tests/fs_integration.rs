@@ -6,12 +6,12 @@ mod common;
 
 use axum::http::StatusCode;
 use common::SignedClient;
+use provider_auth::{MembershipCache, StaticMembershipResolver};
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
-use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
 
 struct TestServer {
