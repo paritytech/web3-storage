@@ -11,7 +11,9 @@ members = [
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
 
+	# Provider crates
 	"crates/providers/negotiation",
+
 	"crates/storage-subxt",
 	"crates/utils/storage-indexers",
 	"provider-node",
