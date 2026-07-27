@@ -860,8 +860,7 @@ impl FileSystemClient {
         }
     }
 
-    // ============ Chain Interaction (Placeholder) ============
-    // NOTE: In a real implementation, these would use subxt or similar
+    // ============ Chain Interaction ============
 
     async fn create_drive_on_chain(
         &self,
@@ -917,55 +916,20 @@ impl FileSystemClient {
             .at_current_block()
             .await
             .map_err(|e| FsClientError::Blockchain(format!("Storage query failed: {e}")))?;
-        let storage_client = at.storage();
 
-        // Build the storage key for Drives storage map
-        use sp_core::twox_128;
+        let drive = at
+            .storage()
+            .try_fetch(
+                storage_subxt::api::storage().drive_registry().drives(),
+                (drive_id,),
+            )
+            .await
+            .map_err(|e| FsClientError::Blockchain(format!("Storage fetch failed: {e}")))?
+            .ok_or(FsClientError::DriveNotFound(drive_id))?
+            .decode()
+            .map_err(|e| FsClientError::Blockchain(format!("Invalid drive info encoding: {e}")))?;
 
-        let pallet_hash = twox_128(b"DriveRegistry");
-        let storage_hash = twox_128(b"Drives");
-        let key = drive_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key);
-
-        let mut storage_key = Vec::new();
-        storage_key.extend_from_slice(&pallet_hash);
-        storage_key.extend_from_slice(&storage_hash);
-        storage_key.extend_from_slice(&key_hash);
-        storage_key.extend_from_slice(&key);
-
-        // `fetch_raw` no longer returns an Option in subxt 0.50; a missing
-        // value surfaces as `StorageError::NoValueFound` instead.
-        let bytes_opt = match storage_client.fetch_raw(storage_key).await {
-            Ok(bytes) => Some(bytes),
-            Err(subxt::error::StorageError::NoValueFound) => None,
-            Err(e) => {
-                return Err(FsClientError::Blockchain(format!(
-                    "Storage fetch failed: {e}"
-                )))
-            }
-        };
-
-        if let Some(bytes) = bytes_opt {
-            // DriveInfo structure (simplified):
-            // - owner: AccountId32 (32 bytes)
-            // - bucket_id: u64 (8 bytes)
-            // - created_at: BlockNumber (4 bytes)
-            // - ... more fields
-
-            if bytes.len() >= 32 + 8 {
-                // Skip owner (32 bytes), then read bucket_id (8 bytes)
-                let bucket_id_offset = 32;
-                let mut bucket_id_bytes = [0u8; 8];
-                bucket_id_bytes.copy_from_slice(&bytes[bucket_id_offset..bucket_id_offset + 8]);
-                return Ok(u64::from_le_bytes(bucket_id_bytes));
-            }
-
-            return Err(FsClientError::Blockchain(
-                "Invalid drive info encoding".to_string(),
-            ));
-        }
-
-        Err(FsClientError::DriveNotFound(drive_id))
+        Ok(drive.bucket_id)
     }
 }
 

@@ -32,7 +32,8 @@ use crate::challenger::{ChallengeId, ChallengerClient};
 use crate::checkpoint_persistence::{
     CheckpointPersistence, PersistedCheckpointState, PersistenceConfig, StateBuilder,
 };
-use crate::substrate::SubstrateClient;
+use crate::convert;
+use crate::substrate::{extrinsics, SubstrateClient};
 use crate::{ClientError, CommitmentResponse};
 use sp_core::H256;
 use sp_runtime::AccountId32;
@@ -40,8 +41,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use storage_primitives::{BucketId, ChunkLocation};
-use subxt::dynamic::Value;
+use storage_primitives::{BucketId, ChunkLocation, Commitment};
+use storage_subxt::api;
 use tokio::sync::{mpsc, RwLock};
 
 // ============================================================================
@@ -231,7 +232,13 @@ pub struct CommitmentCollection {
     pub start_seq: u64,
     /// Number of leaves in the MMR.
     pub leaf_count: u64,
+    /// The shared `CommitmentPayload` nonce every signature in `signatures`
+    /// was made over. The pallet verifies all signatures against one encoded
+    /// `(bucket_id, commitment, nonce)` payload.
+    pub nonce: u64,
     /// Signatures from agreeing providers: (account_id, signature_bytes).
+    /// Only providers whose response matched the modal
+    /// `(start_seq, leaf_count, nonce)` payload are included.
     pub signatures: Vec<(AccountId32, Vec<u8>)>,
     /// Providers that agreed on the majority root.
     pub agreeing_providers: Vec<AccountId32>,
@@ -239,6 +246,23 @@ pub struct CommitmentCollection {
     pub disagreeing_providers: Vec<(AccountId32, H256)>,
     /// Providers that couldn't be reached.
     pub unreachable_providers: Vec<AccountId32>,
+}
+
+/// One payload group: the shared `(start_seq, leaf_count, nonce)` plus the
+/// signatures made over it.
+type PayloadGroup = ((u64, u64, u64), Vec<(AccountId32, Vec<u8>)>);
+
+/// Signatures grouped by the `(start_seq, leaf_count, nonce)` payload they cover.
+type SigsByPayload = HashMap<(u64, u64, u64), Vec<(AccountId32, Vec<u8>)>>;
+
+/// Pick the `(start_seq, leaf_count, nonce)` sub-group carrying the most
+/// signatures; ties break toward the highest nonce (freshest, least likely
+/// to trip `MaxNonceAge` on-chain).
+fn modal_payload_group(groups: SigsByPayload) -> PayloadGroup {
+    groups
+        .into_iter()
+        .max_by_key(|((_, _, nonce), sigs)| (sigs.len(), *nonce))
+        .unwrap_or_default()
 }
 
 /// Detected conflict between providers.
@@ -838,37 +862,28 @@ impl CheckpointManager {
         &self,
         bucket_id: BucketId,
     ) -> Result<Vec<ProviderInfo>, ClientError> {
-        use sp_core::twox_128;
-
-        let api = self.chain_client.api();
-
-        // Build storage key for Buckets map
-        let pallet_hash = twox_128(b"StorageProvider");
-        let storage_hash = twox_128(b"Buckets");
-        let key_bytes = bucket_id.to_le_bytes();
-        let key_hash = sp_core::blake2_128(&key_bytes);
-
-        let mut bucket_storage_key = Vec::new();
-        bucket_storage_key.extend_from_slice(&pallet_hash);
-        bucket_storage_key.extend_from_slice(&storage_hash);
-        bucket_storage_key.extend_from_slice(&key_hash);
-        bucket_storage_key.extend_from_slice(&key_bytes);
-
-        let at = api
+        let at = self
+            .chain_client
+            .api()
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let bucket_bytes = match at.storage().fetch_raw(bucket_storage_key).await {
-            Ok(bytes) => bytes,
-            Err(subxt::error::StorageError::NoValueFound) => {
-                return Err(ClientError::Chain(format!("Bucket {bucket_id} not found")))
-            }
-            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch bucket: {e}"))),
-        };
+        let bucket = at
+            .storage()
+            .try_fetch(api::storage().storage_provider().buckets(), (bucket_id,))
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch bucket: {e}")))?
+            .ok_or_else(|| ClientError::Chain(format!("Bucket {bucket_id} not found")))?
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode bucket: {e}")))?;
 
-        // Extract primary_providers from bucket raw bytes
-        let provider_accounts = self.extract_primary_providers_from_raw(&bucket_bytes)?;
+        let provider_accounts: Vec<AccountId32> = bucket
+            .primary_providers
+            .0
+            .iter()
+            .map(convert::account_back)
+            .collect();
 
         if provider_accounts.is_empty() {
             return Err(ClientError::Chain(format!(
@@ -897,192 +912,42 @@ impl CheckpointManager {
         Ok(providers)
     }
 
-    /// Query provider info from chain using raw storage.
+    /// Query provider info from chain.
     async fn query_provider_info(
         &self,
         account_id: &AccountId32,
     ) -> Result<ProviderInfo, ClientError> {
-        use sp_core::twox_128;
-
-        let api = self.chain_client.api();
-
-        // Build storage key for Providers map
-        let pallet_hash = twox_128(b"StorageProvider");
-        let storage_hash = twox_128(b"Providers");
-        let key_bytes: &[u8] = account_id.as_ref();
-        let key_hash = sp_core::blake2_128(key_bytes);
-
-        let mut provider_storage_key = Vec::new();
-        provider_storage_key.extend_from_slice(&pallet_hash);
-        provider_storage_key.extend_from_slice(&storage_hash);
-        provider_storage_key.extend_from_slice(&key_hash);
-        provider_storage_key.extend_from_slice(key_bytes);
-
-        let at = api
+        let at = self
+            .chain_client
+            .api()
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
 
-        let provider_bytes = match at.storage().fetch_raw(provider_storage_key).await {
-            Ok(bytes) => bytes,
-            Err(subxt::error::StorageError::NoValueFound) => {
-                return Err(ClientError::Chain(format!(
-                    "Provider {account_id:?} not found on chain"
-                )))
-            }
-            Err(e) => return Err(ClientError::Chain(format!("Failed to fetch provider: {e}"))),
-        };
-
-        // Extract multiaddr and public_key from provider raw bytes
-        let (multiaddr_bytes, public_key) =
-            self.extract_provider_fields_from_raw(&provider_bytes)?;
+        let info = at
+            .storage()
+            .try_fetch(
+                api::storage().storage_provider().providers(),
+                (convert::account(account_id),),
+            )
+            .await
+            .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?
+            .ok_or_else(|| {
+                ClientError::Chain(format!("Provider {account_id:?} not found on chain"))
+            })?
+            .decode()
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
         // Parse multiaddr to HTTP endpoint
-        let endpoint = Self::parse_multiaddr_to_http(&multiaddr_bytes)?;
+        let endpoint = Self::parse_multiaddr_to_http(&info.multiaddr.0)?;
 
         Ok(ProviderInfo {
             account_id: account_id.clone(),
             endpoint,
-            public_key,
+            public_key: info.public_key.0,
             last_seen: None,
             status: ProviderStatus::Unknown,
         })
-    }
-
-    /// Extract primary_providers from bucket raw bytes.
-    ///
-    /// Uses raw storage fetch and manual SCALE decoding.
-    fn extract_primary_providers_from_raw(
-        &self,
-        raw_bytes: &[u8],
-    ) -> Result<Vec<AccountId32>, ClientError> {
-        // Bucket SCALE structure (simplified):
-        // - members: BoundedVec<Member> - compact length + members
-        // - frozen_start_seq: Option<u64> - 1 byte tag + optional 8 bytes
-        // - min_providers: u32 - 4 bytes
-        // - primary_providers: BoundedVec<AccountId> - compact length + 32-byte AccountIds
-        //
-        // We need to skip to primary_providers and decode the list.
-        // This is complex because Member has variable size.
-        //
-        // For now, we'll scan for a pattern: a compact length followed by 32-byte chunks.
-        // This is a simplified heuristic.
-
-        let mut accounts = Vec::new();
-
-        // Try to find sequences of 32-byte account IDs
-        // Look for patterns where we have compact-encoded length followed by N * 32 bytes
-        if raw_bytes.len() >= 33 {
-            // Try different starting positions to find the primary_providers array
-            for start in 0..raw_bytes.len().saturating_sub(33) {
-                // Check if this looks like a compact-encoded length
-                let (count, offset) = match raw_bytes[start] {
-                    0..=63 => (raw_bytes[start] as usize / 4, 1), // Single byte compact
-                    _ => continue,
-                };
-
-                // Verify we have enough bytes for 'count' account IDs
-                if start + offset + count * 32 <= raw_bytes.len() && count > 0 && count <= 10 {
-                    let mut potential_accounts = Vec::new();
-                    let mut valid = true;
-
-                    for i in 0..count {
-                        let acc_start = start + offset + i * 32;
-                        let acc_end = acc_start + 32;
-                        if acc_end <= raw_bytes.len() {
-                            let mut arr = [0u8; 32];
-                            arr.copy_from_slice(&raw_bytes[acc_start..acc_end]);
-                            // Basic sanity check - account ID shouldn't be all zeros or all 0xFF
-                            if arr != [0u8; 32] && arr != [0xFF; 32] {
-                                potential_accounts.push(AccountId32::from(arr));
-                            } else {
-                                valid = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    if valid && potential_accounts.len() == count {
-                        accounts = potential_accounts;
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(accounts)
-    }
-
-    /// Extract multiaddr and public_key from provider raw bytes.
-    fn extract_provider_fields_from_raw(
-        &self,
-        raw_bytes: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>), ClientError> {
-        // ProviderInfo SCALE structure:
-        // - multiaddr: BoundedVec<u8> - compact length + bytes
-        // - public_key: BoundedVec<u8> - compact length + bytes
-        // - stake: u128 - 16 bytes
-        // - ...
-        //
-        // multiaddr is the first field, so we can decode it directly.
-
-        if raw_bytes.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
-        }
-
-        // Decode multiaddr (first field)
-        let (multiaddr, multiaddr_end) = self.decode_bounded_vec(raw_bytes, 0)?;
-
-        // Decode public_key (second field)
-        let (public_key, _) = self.decode_bounded_vec(raw_bytes, multiaddr_end)?;
-
-        Ok((multiaddr, public_key))
-    }
-
-    /// Decode a compact-prefixed bounded vec from raw bytes.
-    fn decode_bounded_vec(
-        &self,
-        bytes: &[u8],
-        start: usize,
-    ) -> Result<(Vec<u8>, usize), ClientError> {
-        if start >= bytes.len() {
-            return Ok((Vec::new(), start));
-        }
-
-        // Read compact length
-        let first_byte = bytes[start];
-        let (length, header_size) = match first_byte & 0b11 {
-            0b00 => ((first_byte >> 2) as usize, 1),
-            0b01 => {
-                if start + 2 > bytes.len() {
-                    return Ok((Vec::new(), start));
-                }
-                let val = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
-                ((val >> 2) as usize, 2)
-            }
-            0b10 => {
-                if start + 4 > bytes.len() {
-                    return Ok((Vec::new(), start));
-                }
-                let val = u32::from_le_bytes([
-                    bytes[start],
-                    bytes[start + 1],
-                    bytes[start + 2],
-                    bytes[start + 3],
-                ]);
-                ((val >> 2) as usize, 4)
-            }
-            _ => return Ok((Vec::new(), start)), // Big integer mode not supported
-        };
-
-        let data_start = start + header_size;
-        let data_end = data_start + length;
-
-        if data_end > bytes.len() {
-            return Ok((Vec::new(), start));
-        }
-
-        Ok((bytes[data_start..data_end].to_vec(), data_end))
     }
 
     /// Parse a libp2p multiaddr to an HTTP(S) base URL.
@@ -1255,27 +1120,35 @@ impl CheckpointManager {
             })
             .collect();
 
-        // Extract signature bytes from agreeing providers
-        let signatures: Vec<_> = agreeing
-            .iter()
-            .map(|(id, c)| {
-                let sig_bytes = self
-                    .decode_signature(&c.provider_signature)
-                    .unwrap_or_default();
-                (id.clone(), sig_bytes)
-            })
-            .collect();
+        // The pallet verifies every signature against ONE encoded
+        // (bucket_id, commitment, nonce) payload, so only signatures over the
+        // same (start_seq, leaf_count, nonce) can be submitted together.
+        let mut by_payload = SigsByPayload::new();
+        for (id, c) in &agreeing {
+            let sig_bytes = self
+                .decode_signature(&c.provider_signature)
+                .unwrap_or_default();
+            by_payload
+                .entry((c.start_seq, c.leaf_count, c.nonce))
+                .or_default()
+                .push((id.clone(), sig_bytes));
+        }
+        let ((start_seq, leaf_count, nonce), signatures) = modal_payload_group(by_payload);
 
-        let (start_seq, leaf_count) = agreeing
-            .first()
-            .map(|(_, c)| (c.start_seq, c.leaf_count))
-            .unwrap_or((0, 0));
+        let dropped = agreeing.len() - signatures.len();
+        if dropped > 0 {
+            tracing::warn!(
+                "Bucket {bucket_id}: dropping {dropped} same-root signature(s) made over a \
+                 different (start_seq, leaf_count, nonce) than the modal payload"
+            );
+        }
 
         Ok(CommitmentCollection {
             bucket_id,
             mmr_root: majority_root,
             start_seq,
             leaf_count,
+            nonce,
             signatures,
             agreeing_providers: agreeing.iter().map(|(id, _)| id.clone()).collect(),
             disagreeing_providers: disagreeing,
@@ -1422,7 +1295,9 @@ impl CheckpointManager {
         }
     }
 
-    /// Submit the commitment transaction on-chain.
+    /// Submit the commitment transaction on-chain via the `checkpoint`
+    /// extrinsic. Providers whose signatures were dropped for nonce mismatch
+    /// can still be appended later through `extend_checkpoint`.
     async fn submit_commitment_onchain(
         &self,
         collection: &CommitmentCollection,
@@ -1430,38 +1305,16 @@ impl CheckpointManager {
         let api = self.chain_client.api();
         let signer = self.chain_client.signer()?;
 
-        // Build signatures array for the extrinsic
-        // Format: Vec<(AccountId, MultiSignature)>
-        let signatures_value: Vec<Value> = collection
-            .signatures
-            .iter()
-            .map(|(account_id, sig_bytes)| {
-                // Create tuple (AccountId, MultiSignature)
-                Value::unnamed_composite(vec![
-                    Value::from_bytes(account_id.as_ref() as &[u8]),
-                    // MultiSignature::Sr25519(Signature)
-                    Value::unnamed_variant("Sr25519", vec![Value::from_bytes(sig_bytes)]),
-                ])
-            })
-            .collect();
-
-        // Build the extrinsic
-        let tx = subxt::dynamic::tx(
-            "StorageProvider",
-            "submit_commitment",
-            vec![
-                // bucket_id: u64
-                Value::u128(collection.bucket_id as u128),
-                // mmr_root: H256
-                Value::from_bytes(collection.mmr_root.as_bytes()),
-                // start_seq: u64
-                Value::u128(collection.start_seq as u128),
-                // leaf_count: u64
-                Value::u128(collection.leaf_count as u128),
-                // signatures: Vec<(AccountId, MultiSignature)>
-                Value::unnamed_composite(signatures_value),
-            ],
-        );
+        let tx = extrinsics::checkpoint(
+            collection.bucket_id,
+            Commitment {
+                mmr_root: collection.mmr_root,
+                start_seq: collection.start_seq,
+                leaf_count: collection.leaf_count,
+            },
+            collection.nonce,
+            collection.signatures.clone(),
+        )?;
 
         // Submit and wait for finalization
         let tx_progress = api
@@ -2810,6 +2663,7 @@ mod tests {
             mmr_root: H256::zero(),
             start_seq: 0,
             leaf_count: 10,
+            nonce: 42,
             signatures: vec![],
             agreeing_providers: vec![],
             disagreeing_providers: vec![],
@@ -2819,6 +2673,42 @@ mod tests {
         let cloned = collection.clone();
         assert_eq!(cloned.bucket_id, 1);
         assert_eq!(cloned.leaf_count, 10);
+        assert_eq!(cloned.nonce, 42);
+    }
+
+    #[test]
+    fn modal_payload_group_picks_largest_group() {
+        let a = AccountId32::new([1u8; 32]);
+        let b = AccountId32::new([2u8; 32]);
+        let c = AccountId32::new([3u8; 32]);
+
+        let mut groups = SigsByPayload::new();
+        groups.insert((0, 10, 100), vec![(a, vec![1]), (b, vec![2])]);
+        groups.insert((0, 10, 200), vec![(c, vec![3])]);
+
+        let ((start_seq, leaf_count, nonce), sigs) = modal_payload_group(groups);
+        assert_eq!((start_seq, leaf_count, nonce), (0, 10, 100));
+        assert_eq!(sigs.len(), 2);
+    }
+
+    #[test]
+    fn modal_payload_group_tie_breaks_on_highest_nonce() {
+        let a = AccountId32::new([1u8; 32]);
+        let b = AccountId32::new([2u8; 32]);
+
+        let mut groups = SigsByPayload::new();
+        groups.insert((0, 10, 100), vec![(a, vec![1])]);
+        groups.insert((0, 10, 200), vec![(b, vec![2])]);
+
+        let ((_, _, nonce), _) = modal_payload_group(groups);
+        assert_eq!(nonce, 200, "freshest nonce wins the tie");
+    }
+
+    #[test]
+    fn modal_payload_group_empty_is_zeroed() {
+        let ((start_seq, leaf_count, nonce), sigs) = modal_payload_group(HashMap::new());
+        assert_eq!((start_seq, leaf_count, nonce), (0, 0, 0));
+        assert!(sigs.is_empty());
     }
 
     // ========================================================================

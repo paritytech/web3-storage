@@ -8,10 +8,11 @@
 //! - Getting recommendations for provider selection
 
 use crate::base::{BaseClient, ClientConfig, ClientError, ClientResult};
-use crate::substrate::{storage, SubstrateClient};
+use crate::convert;
+use crate::substrate::SubstrateClient;
 use sp_core::crypto::Ss58Codec;
-use sp_runtime::AccountId32;
-use subxt::ext::scale_value::{Composite, Primitive, ValueDef, Variant};
+use storage_subxt::api;
+use storage_subxt::api::runtime_types::pallet_storage_provider::pallet as pallet_types;
 
 /// Storage requirements for provider matching.
 #[derive(Debug, Clone)]
@@ -96,6 +97,26 @@ pub struct ProviderInfo {
     pub deregister_at: Option<u32>,
 }
 
+impl From<pallet_types::ProviderInfo> for ProviderInfo {
+    fn from(p: pallet_types::ProviderInfo) -> Self {
+        Self {
+            multiaddr: String::from_utf8_lossy(&p.multiaddr.0).into_owned(),
+            stake: p.stake,
+            committed_bytes: p.committed_bytes,
+            max_capacity: p.settings.max_capacity,
+            min_duration: p.settings.min_duration,
+            max_duration: p.settings.max_duration,
+            price_per_byte: p.settings.price_per_byte,
+            accepting_primary: p.settings.accepting_primary,
+            replica_sync_price: p.settings.replica_sync_price,
+            accepting_extensions: p.settings.accepting_extensions,
+            agreements_total: p.stats.agreements_total,
+            challenges_failed: p.stats.challenges_failed,
+            deregister_at: p.deregister_at,
+        }
+    }
+}
+
 /// Provider recommendation with additional context.
 #[derive(Debug, Clone)]
 pub struct ProviderRecommendation {
@@ -171,8 +192,6 @@ impl DiscoveryClient {
         requirements: StorageRequirements,
         limit: u32,
     ) -> ClientResult<Vec<MatchedProvider>> {
-        let chain = self.base.chain()?;
-
         tracing::info!(
             "Finding providers: {} bytes, {} duration, max price {}",
             requirements.bytes_needed,
@@ -180,45 +199,9 @@ impl DiscoveryClient {
             requirements.max_price_per_byte
         );
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = at
-            .storage()
-            .iter(storage::all_providers(), ())
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
-
         let mut results: Vec<MatchedProvider> = Vec::new();
 
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let account_str = match account_ss58_from_key(kv.key_bytes()) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Failed to decode provider {account_str}: {e}");
-                    continue;
-                }
-            };
-
-            let info = match parse_provider_info(&value) {
-                Some(i) => i,
-                None => {
-                    tracing::warn!("Failed to parse provider fields for {account_str}");
-                    continue;
-                }
-            };
-
+        for (account_str, info) in self.all_providers().await? {
             // Hard filter: enforce the caller's price ceiling. Other partial-match
             // conditions (capacity, duration) still surface via score_provider.
             if info.price_per_byte > requirements.max_price_per_byte {
@@ -266,8 +249,6 @@ impl DiscoveryClient {
         offset: u32,
         limit: u32,
     ) -> ClientResult<Vec<(String, ProviderInfo)>> {
-        let chain = self.base.chain()?;
-
         tracing::info!(
             "Finding providers with {} bytes capacity (offset={}, limit={})",
             bytes_needed,
@@ -275,39 +256,9 @@ impl DiscoveryClient {
             limit
         );
 
-        let at = chain
-            .api()
-            .at_current_block()
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-
-        let mut iter = at
-            .storage()
-            .iter(storage::all_providers(), ())
-            .await
-            .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
-
         let mut matching: Vec<(String, ProviderInfo)> = Vec::new();
 
-        while let Some(result) = iter.next().await {
-            let kv =
-                result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
-
-            let account_str = match account_ss58_from_key(kv.key_bytes()) {
-                Some(s) => s,
-                None => continue,
-            };
-
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let info = match parse_provider_info(&value) {
-                Some(i) => i,
-                None => continue,
-            };
-
+        for (account_str, info) in self.all_providers().await? {
             // Must be accepting some kind of agreement
             if !info.accepting_primary && info.replica_sync_price.is_none() {
                 continue;
@@ -423,22 +374,24 @@ impl DiscoveryClient {
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_info(&account_id);
-        let thunk = at
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().providers(),
+                (convert::account(&account_id),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(None);
         };
 
-        let value = thunk
+        let info = value
             .decode()
             .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
 
-        Ok(parse_provider_info(&value))
+        Ok(Some(ProviderInfo::from(info)))
     }
 
     /// Check if a provider can accept additional bytes.
@@ -466,24 +419,23 @@ impl DiscoveryClient {
             .at_current_block()
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to get storage: {e}")))?;
-        let (addr, keys) = storage::provider_info(&account_id);
-        let thunk = at
+        let value = at
             .storage()
-            .try_fetch(addr, keys)
+            .try_fetch(
+                api::storage().storage_provider().providers(),
+                (convert::account(&account_id),),
+            )
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to fetch provider: {e}")))?;
 
-        let Some(thunk) = thunk else {
+        let Some(value) = value else {
             return Ok(false);
         };
 
-        let value = thunk
+        let info: ProviderInfo = value
             .decode()
-            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?;
-
-        let Some(info) = parse_provider_info(&value) else {
-            return Ok(false);
-        };
+            .map_err(|e| ClientError::Chain(format!("Failed to decode provider: {e}")))?
+            .into();
 
         if !info.accepting_primary && info.replica_sync_price.is_none() {
             return Ok(false);
@@ -497,15 +449,10 @@ impl DiscoveryClient {
         Ok(true) // Unlimited capacity
     }
 
-    /// List all registered providers (paginated).
-    pub async fn list_providers(
-        &self,
-        offset: u32,
-        limit: u32,
-    ) -> ClientResult<Vec<(String, ProviderInfo)>> {
+    /// Iterate the full `Providers` map, yielding `(ss58_account, info)` pairs.
+    /// Entries that fail to decode are skipped with a warning.
+    async fn all_providers(&self) -> ClientResult<Vec<(String, ProviderInfo)>> {
         let chain = self.base.chain()?;
-
-        tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
 
         let at = chain
             .api()
@@ -515,7 +462,7 @@ impl DiscoveryClient {
 
         let mut iter = at
             .storage()
-            .iter(storage::all_providers(), ())
+            .iter(api::storage().storage_provider().providers(), ())
             .await
             .map_err(|e| ClientError::Chain(format!("Failed to iterate providers: {e}")))?;
 
@@ -525,22 +472,35 @@ impl DiscoveryClient {
             let kv =
                 result.map_err(|e| ClientError::Chain(format!("Storage iteration error: {e}")))?;
 
-            let account_str = match account_ss58_from_key(kv.key_bytes()) {
-                Some(s) => s,
-                None => continue,
+            let (account,) = match kv.key().and_then(|k| k.decode()) {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!("Failed to decode provider storage key: {e}");
+                    continue;
+                }
             };
+            let account_str = convert::account_back(&account).to_ss58check();
 
-            let value = match kv.value().decode() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            if let Some(info) = parse_provider_info(&value) {
-                all.push((account_str, info));
+            match kv.value().decode() {
+                Ok(info) => all.push((account_str, ProviderInfo::from(info))),
+                Err(e) => tracing::warn!("Failed to decode provider {account_str}: {e}"),
             }
         }
 
-        let page: Vec<(String, ProviderInfo)> = all
+        Ok(all)
+    }
+
+    /// List all registered providers (paginated).
+    pub async fn list_providers(
+        &self,
+        offset: u32,
+        limit: u32,
+    ) -> ClientResult<Vec<(String, ProviderInfo)>> {
+        tracing::info!("Listing providers (offset={}, limit={})", offset, limit);
+
+        let page: Vec<(String, ProviderInfo)> = self
+            .all_providers()
+            .await?
             .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
@@ -553,140 +513,6 @@ impl DiscoveryClient {
 // ─────────────────────────────────────────────────────────────────────────────
 // Private helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Extract the provider's `AccountId32` from a `Providers` storage key and render it as
-/// SS58.
-///
-/// Key layout: `[twox128(pallet)=16][twox128(storage)=16][blake2_128(account)=16][account=32]`,
-/// so the raw account bytes live at `[48..80]`. Returns `None` when the key is too short
-/// to contain the account suffix.
-fn account_ss58_from_key(key: &[u8]) -> Option<String> {
-    if key.len() < 80 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&key[48..80]);
-    Some(AccountId32::from(bytes).to_ss58check())
-}
-
-fn named_field<'a>(
-    value: &'a subxt::ext::scale_value::Value,
-    field: &str,
-) -> Option<&'a subxt::ext::scale_value::Value> {
-    match &value.value {
-        ValueDef::Composite(Composite::Named(fields)) => {
-            fields.iter().find(|(n, _)| n == field).map(|(_, v)| v)
-        }
-        _ => None,
-    }
-}
-
-fn as_bool(value: &subxt::ext::scale_value::Value) -> bool {
-    match &value.value {
-        ValueDef::Primitive(Primitive::Bool(b)) => *b,
-        // Fallback: some decoders emit booleans as u128 0/1 without type info
-        _ => value.as_u128().map(|n| n != 0).unwrap_or(false),
-    }
-}
-
-fn decode_bytes(value: &subxt::ext::scale_value::Value) -> Vec<u8> {
-    match &value.value {
-        ValueDef::Composite(Composite::Unnamed(items)) => items
-            .iter()
-            .filter_map(|b| b.as_u128().map(|n| n as u8))
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// Parse a `ProviderInfo<T>` dynamic value into the client-side [`ProviderInfo`].
-fn parse_provider_info(value: &subxt::ext::scale_value::Value) -> Option<ProviderInfo> {
-    let multiaddr_bytes = named_field(value, "multiaddr")
-        .map(decode_bytes)
-        .unwrap_or_default();
-    let multiaddr = String::from_utf8_lossy(&multiaddr_bytes).into_owned();
-
-    let stake = named_field(value, "stake")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0);
-
-    let committed_bytes = named_field(value, "committed_bytes")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u64;
-
-    let settings = named_field(value, "settings")?;
-
-    let min_duration = named_field(settings, "min_duration")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let max_duration = named_field(settings, "max_duration")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let price_per_byte = named_field(settings, "price_per_byte")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0);
-
-    let accepting_primary = named_field(settings, "accepting_primary")
-        .map(as_bool)
-        .unwrap_or(false);
-
-    let replica_sync_price =
-        named_field(settings, "replica_sync_price").and_then(|v| match &v.value {
-            ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-            ValueDef::Variant(Variant {
-                name,
-                values: Composite::Unnamed(items),
-            }) if name == "Some" => items.first().and_then(|v| v.as_u128()),
-            _ => None,
-        });
-
-    let accepting_extensions = named_field(settings, "accepting_extensions")
-        .map(as_bool)
-        .unwrap_or(false);
-
-    let max_capacity = named_field(settings, "max_capacity")
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u64;
-
-    let stats = named_field(value, "stats");
-
-    let agreements_total = stats
-        .and_then(|s| named_field(s, "agreements_total"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let challenges_failed = stats
-        .and_then(|s| named_field(s, "challenges_failed"))
-        .and_then(|v| v.as_u128())
-        .unwrap_or(0) as u32;
-
-    let deregister_at = named_field(value, "deregister_at").and_then(|v| match &v.value {
-        ValueDef::Variant(Variant { name, .. }) if name == "None" => None,
-        ValueDef::Variant(Variant {
-            name,
-            values: Composite::Unnamed(items),
-        }) if name == "Some" => items.first().and_then(|v| v.as_u128()).map(|n| n as u32),
-        _ => None,
-    });
-
-    Some(ProviderInfo {
-        multiaddr,
-        stake,
-        committed_bytes,
-        max_capacity,
-        min_duration,
-        max_duration,
-        price_per_byte,
-        accepting_primary,
-        replica_sync_price,
-        accepting_extensions,
-        agreements_total,
-        challenges_failed,
-        deregister_at,
-    })
-}
 
 /// Score a provider against requirements, mirroring the pallet's `query_find_matching_providers`.
 fn score_provider(
