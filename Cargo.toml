@@ -1,15 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-	"client",
+	# Storage client
+	"clients/file-system",
+	"clients/s3",
+	"clients/storage",
+
+	# Storage pallet
 	"crates/pallets/drive-registry",
 	"crates/pallets/s3-registry",
 	"crates/pallets/storage-provider",
+	# Provider crates
 	"crates/providers/auth",
 	"crates/providers/negotiation",
+
 	"crates/storage-subxt",
 	"crates/utils/storage-indexers",
 	"provider-node",
+
+	# Storage runtime
 	"runtimes/web3-storage-local",
 	"runtimes/web3-storage-paseo",
 
@@ -22,12 +31,6 @@ members = [
 	"crates/pallets/drive-registry/precompiles",
 	"crates/pallets/s3-registry/precompiles",
 	"crates/pallets/storage-provider/precompiles",
-
-	# Storage Interfaces: File System Interface
-	"storage-interfaces/file-system/client",
-
-	# Storage Interfaces: S3-Compatible Interface
-	"storage-interfaces/s3/client",
 ]
 
 [workspace.package]
@@ -44,7 +47,7 @@ pallet-storage-provider = { path = "crates/pallets/storage-provider", default-fe
 pallet-storage-provider-precompile = { path = "crates/pallets/storage-provider/precompiles", default-features = false }
 provider-auth = { path = "crates/providers/auth" }
 provider-negotiation = { path = "crates/providers/negotiation" }
-storage-client = { path = "client" }
+storage-client = { path = "clients/storage" }
 storage-indexers = { path = "crates/utils/storage-indexers" }
 storage-parachain-runtime = { path = "runtimes/web3-storage-local" }
 storage-primitives = { path = "crates/primitives/storage", default-features = false }
@@ -52,13 +55,13 @@ storage-provider-node = { path = "provider-node" }
 storage-subxt = { path = "crates/storage-subxt" }
 
 # Storage Interfaces: File System Interface
-file-system-client = { path = "storage-interfaces/file-system/client" }
+file-system-client = { path = "clients/file-system" }
 file-system-primitives = { path = "crates/primitives/file-system", default-features = false }
 pallet-drive-registry = { path = "crates/pallets/drive-registry", default-features = false }
 
 # Storage Interfaces: S3-Compatible Interface
 pallet-s3-registry = { path = "crates/pallets/s3-registry", default-features = false }
-s3-client = { path = "storage-interfaces/s3/client" }
+s3-client = { path = "clients/s3" }
 s3-primitives = { path = "crates/primitives/s3", default-features = false }
 
 # Substrate frame
