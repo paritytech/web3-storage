@@ -1,16 +1,29 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
-//! Storage backends for the provider node.
+//! Storage engine for provider nodes.
 //!
-//! This module contains the `StorageBackend` trait and its implementations:
+//! Originally part of `provider-node`; extracted so the storage backends,
+//! MMR commitment logic, and drive/S3 indexes can be used independently of
+//! the HTTP server.
+//!
+//! This crate contains the `StorageBackend` trait and its implementations:
 //! - `Storage`: in-memory backend for testing and development
 //! - `DiskStorage`: persistent RocksDB backend for production
 
 pub mod disk;
+pub mod error;
+pub mod fs_index;
 pub mod in_memory;
+pub mod mmr;
+pub mod s3_index;
+pub mod types;
 
 pub use disk::{DiskNonceStore, DiskStorage};
+pub use error::Error;
+pub use fs_index::FsIndexManager;
 pub use in_memory::Storage;
+pub use s3_index::S3IndexManager;
+pub use types::{BucketStats, BucketSummary};
 
 /// Persistence layer for the nonce counter's high-water mark.
 ///
@@ -36,7 +49,7 @@ pub trait NonceStore: Send + Sync {
 /// No-op [`NonceStore`]: `load` always returns `None`, `persist` and `reset`
 /// do nothing.
 ///
-/// Used in in-memory mode and as the default for [`crate::negotiate::NonceCounter::new`]
+/// Used in in-memory mode and as the default for nonce counters
 /// so existing call sites need no changes.
 #[derive(Debug, Default)]
 pub struct NullNonceStore;
@@ -51,8 +64,6 @@ impl NonceStore for NullNonceStore {
     fn reset(&self) {}
 }
 
-use crate::error::Error;
-use crate::types::*;
 use sp_core::H256;
 use storage_primitives::{hash_children, BucketId};
 
@@ -268,7 +279,7 @@ pub trait StorageBackend: Send + Sync {
 }
 
 /// Hex encoding utility (simple implementation).
-mod hex {
+mod hex_util {
     pub fn encode(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -286,7 +297,7 @@ mod hex {
     }
 }
 
-pub use hex::{decode as hex_decode, encode as hex_encode};
+pub use hex_util::{decode as hex_decode, encode as hex_encode};
 
 /// Build a balanced Merkle tree from leaf hashes, storing intermediate nodes in storage.
 ///

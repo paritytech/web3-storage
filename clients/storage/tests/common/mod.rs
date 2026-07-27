@@ -2,6 +2,7 @@
 
 //! Shared test helpers for integration tests.
 
+use provider_storage::{NullNonceStore, Storage};
 use sp_core::crypto::Ss58Codec;
 use sp_core::Pair;
 use sp_runtime::AccountId32;
@@ -13,7 +14,7 @@ use storage_client::{
 };
 use storage_primitives::{AgreementTerms, Role};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{create_router, NullNonceStore, ProviderDeps, ProviderState, Storage};
+use storage_provider_node::{create_router, ProviderDeps, ProviderState};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, MutexGuard};
 

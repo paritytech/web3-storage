@@ -1,14 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! In-memory storage backend for the provider node.
 //!
 //! This provides a simple in-memory storage implementation.
 //! Production implementations would use disk-based storage.
 
-use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::mmr::Mmr;
 use crate::types::*;
+use crate::{BucketInfo, StorageBackend, StoredNode};
 use codec::Encode;
 use dashmap::DashMap;
 use parking_lot::RwLock;

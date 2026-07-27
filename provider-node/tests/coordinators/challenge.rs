@@ -3,15 +3,15 @@
 //! Integration tests for the challenge responder.
 
 use super::{test_state, wait_for, ALICE_SS58};
+use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use sp_core::H256;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::{blake2_256, BucketId};
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{
-    build_padded_merkle_tree, ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponseResult, DetectedChallenge, Error, NullNonceStore, ProviderDeps, ProviderState,
-    Storage,
+    ChallengeChainClient, ChallengeResponder, ChallengeResponderConfig, ChallengeResponseResult,
+    DetectedChallenge, Error, ProviderDeps, ProviderState,
 };
 
 struct MockChallengeChainClient {

@@ -7,10 +7,11 @@
 mod challenge;
 mod replica_sync;
 
+use provider_storage::{NullNonceStore, Storage};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{NullNonceStore, ProviderDeps, ProviderState, Storage};
+use storage_provider_node::{ProviderDeps, ProviderState};
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";

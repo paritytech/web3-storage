@@ -22,14 +22,15 @@
 //!    shut down cleanly when stopped.
 
 use async_trait::async_trait;
+use provider_storage::NonceStore;
 use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
-    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, NonceStore,
-    PalletConstants, ProviderInfo, ProviderLifecycleEvent,
+    ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, PalletConstants,
+    ProviderInfo, ProviderLifecycleEvent,
 };
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so

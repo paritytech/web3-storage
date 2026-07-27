@@ -11,8 +11,6 @@
 use crate::api::check_role;
 use crate::auth::RequiredRole;
 use crate::error::Error;
-use crate::fs_index::FsEntryMeta;
-use crate::storage::{build_padded_merkle_tree, hex_encode};
 use crate::ProviderState;
 use axum::{
     body::Bytes,
@@ -21,6 +19,8 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_storage::fs_index::FsEntryMeta;
+use provider_storage::{build_padded_merkle_tree, hex_encode};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;

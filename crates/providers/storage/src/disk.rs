@@ -1,14 +1,14 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Disk-based persistent storage backend using RocksDB.
 //!
 //! This provides the same interface as the in-memory storage but persists
 //! all data to disk for production use.
 
-use super::NonceStore;
-use super::{BucketInfo, StorageBackend, StoredNode};
 use crate::error::Error;
 use crate::types::*;
+use crate::NonceStore;
+use crate::{BucketInfo, StorageBackend, StoredNode};
 use codec::Encode;
 use rocksdb::{Options, DB};
 use sp_core::H256;

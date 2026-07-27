@@ -9,11 +9,11 @@ use crate::{
     create_router,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
-    StorageBackend,
+    ChallengeResponderHandle, ProviderDeps, ProviderState, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle,
 };
 use clap::Parser;
+use provider_storage::{DiskStorage, NonceStore, NullNonceStore, Storage, StorageBackend};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

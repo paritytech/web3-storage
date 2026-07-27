@@ -7060,6 +7060,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-storage"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "dashmap",
+ "hex",
+ "parity-scale-codec",
+ "parking_lot",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "sp-core",
+ "storage-primitives",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "pulley-interpreter"
 version = "35.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9701,6 +9720,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "provider-negotiation",
+ "provider-storage",
  "rand 0.8.5",
  "reqwest",
  "serde",
@@ -9892,15 +9912,14 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
- "bincode",
  "clap",
  "dashmap",
  "hex",
  "parity-scale-codec",
  "parking_lot",
  "provider-negotiation",
+ "provider-storage",
  "reqwest",
- "rocksdb",
  "serde",
  "serde_json",
  "sp-core",

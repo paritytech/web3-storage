@@ -19,11 +19,11 @@
 //! current — no field-patching, no partial updates, no second writer.
 
 use crate::negotiate::NonceCounter;
-use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
 use crate::Error;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use provider_storage::{NonceStore, NullNonceStore};
 use sp_runtime::AccountId32;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;

@@ -7,7 +7,6 @@ use crate::error::Error;
 use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
 use crate::s3_api;
-use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
@@ -19,6 +18,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use codec::Encode;
+use provider_storage::{hex_decode, hex_encode};
 use sp_core::H256;
 use std::net::SocketAddr;
 use std::sync::Arc;
