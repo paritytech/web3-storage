@@ -184,6 +184,52 @@ async fn resubscribe_triggers_bootstrap_scan() {
     handle.stop().await.unwrap();
 }
 
+#[tokio::test]
+async fn event_sent_while_paused_survives_until_resume() {
+    // The safety net is off here, so a dropped event would be unrecoverable:
+    // the queued event is the only thing that can produce a response.
+    let (state, challenge) = test_state_with_data();
+    let (deadline, index) = (challenge.deadline, challenge.index);
+    let bucket_id = challenge.bucket_id;
+    let mock = MockChallengeClient::new(challenge);
+    let responder =
+        ChallengeResponder::new(event_only_config(), state, Box::new(Arc::clone(&mock)));
+
+    let (events_tx, events_rx) = tokio::sync::broadcast::channel(16);
+    let handle = responder.start(events_rx, None).await.unwrap();
+
+    handle.pause().await.unwrap();
+    events_tx
+        .send(BlockEvent::ChallengeCreated {
+            deadline,
+            index,
+            bucket_id,
+            provider: alice_account(),
+        })
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        mock.submitted.lock().unwrap().is_empty(),
+        "a paused responder must not act on events"
+    );
+
+    handle.resume().await.unwrap();
+
+    let mock_ref = Arc::clone(&mock);
+    assert!(
+        wait_for(5, 10, || {
+            let m = Arc::clone(&mock_ref);
+            async move { !m.submitted.lock().unwrap().is_empty() }
+        })
+        .await,
+        "the event queued during the pause should be handled on resume"
+    );
+    assert_eq!(mock.submitted.lock().unwrap()[0], (deadline, index));
+
+    handle.stop().await.unwrap();
+}
+
 // ── replica sync coordinator ──────────────────────────────────────────────────
 
 /// Mock counting duty passes (each pass calls `fetch_replica_agreements`),
