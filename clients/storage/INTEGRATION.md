@@ -155,7 +155,7 @@ For production, generate and include runtime metadata:
 
 ```bash
 # Connect to your running node
-subxt metadata -f bytes > client/metadata.scale
+subxt metadata -f bytes > clients/storage/metadata.scale
 ```
 
 Then use the codegen macro in `substrate.rs`:

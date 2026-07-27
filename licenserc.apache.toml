@@ -6,7 +6,7 @@ inlineHeader = "SPDX-License-Identifier: Apache-2.0"
 keywords = ["SPDX-License-Identifier"]
 
 includes = [
-	"client/**/*.rs",
+	"clients/**/*.rs",
 	"crates/pallets/**/*.rs",
 	"crates/pallets/**/*.sol",
 	"crates/primitives/**/*.rs",
@@ -16,7 +16,6 @@ includes = [
 	"packages/**/*.ts",
 	"packages/**/*.tsx",
 	"provider/**/*.rs",
-	"storage-interfaces/**/*.rs",
 	"user-interfaces/photos/contracts/**/*.sol",
 ]
 excludes = [

@@ -533,9 +533,9 @@ For most users, consider using the **Layer 1 File System Client** instead, which
 - You want to implement your own data structures on top of blob storage
 - You need direct access to buckets and agreements
 
-**Layer 1 Documentation:** See [File System Interface Docs](../docs/filesystems/README.md)
+**Layer 1 Documentation:** See [File System Interface Docs](../../docs/filesystems/README.md)
 
-**Layer 1 Client:** `storage-interfaces/file-system/client/`
+**Layer 1 Client:** `clients/file-system/`
 
 ## Status
 
@@ -572,8 +572,8 @@ This SDK is under active development.
 
 ## License
 
-[Apache-2.0](../LICENSE-APACHE2)
+[Apache-2.0](../../LICENSE-APACHE2)
 
 ## Contributing
 
-Contributions welcome! Please see the main repository [README](../README.md) for guidelines.
+Contributions welcome! Please see the main repository [README](../../README.md) for guidelines.
