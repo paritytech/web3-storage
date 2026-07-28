@@ -204,7 +204,7 @@ async fn start_replica_sync_coordinator(
 
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(chain_client),
     );
 

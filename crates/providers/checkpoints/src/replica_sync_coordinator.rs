@@ -357,7 +357,7 @@ impl ReplicaSyncCoordinator {
                                 running: running.load(Ordering::SeqCst),
                                 paused,
                                 active_syncs: self.active_syncs.len(),
-                                tracked_buckets: self.get_tracked_buckets(),
+                                tracked_buckets: self.get_tracked_buckets().await,
                             };
                             let _ = response_tx.send(status);
                         }
@@ -412,8 +412,8 @@ impl ReplicaSyncCoordinator {
     }
 
     /// Get list of bucket IDs we're tracking as replica.
-    fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.store.local_bucket_ids()
+    async fn get_tracked_buckets(&self) -> Vec<BucketId> {
+        self.store.local_bucket_ids().await
     }
 
     /// Get replica duties for buckets where this provider is a replica.
@@ -422,7 +422,7 @@ impl ReplicaSyncCoordinator {
 
         let anchor_block = self.chain_client.get_current_block().await?;
 
-        let local_buckets: Vec<u64> = self.store.local_bucket_ids();
+        let local_buckets: Vec<u64> = self.store.local_bucket_ids().await;
 
         let provider_account = self.store.provider_id();
 
@@ -464,7 +464,7 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(local_root) = self.store.local_mmr_root(agreement.bucket_id) {
+            if let Some(local_root) = self.store.local_mmr_root(agreement.bucket_id).await {
                 if local_root == snapshot.mmr_root {
                     continue;
                 }
@@ -511,7 +511,7 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(local_root) = self.store.local_mmr_root(duty.bucket_id) {
+        if let Some(local_root) = self.store.local_mmr_root(duty.bucket_id).await {
             if local_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
@@ -583,7 +583,7 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_root = match self.store.local_mmr_root(duty.bucket_id) {
+        let local_root = match self.store.local_mmr_root(duty.bucket_id).await {
             Some(root) => root,
             None => {
                 return SyncResult::VerificationFailed {

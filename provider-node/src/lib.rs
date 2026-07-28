@@ -41,6 +41,7 @@ pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
 pub use provider_checkpoints::{
+    BucketSnapshot, Error as CheckpointsError, ReplicaAgreementInfo, ReplicaStore,
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };

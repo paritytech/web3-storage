@@ -3,7 +3,6 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
-use provider_checkpoints::{BucketSnapshot, Error, ReplicaAgreementInfo};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,8 +10,9 @@ use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
 use storage_provider_node::{
-    NullNonceStore, ProviderDeps, ProviderReplicaStore, ProviderState, ReplicaSyncChainClient,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
+    BucketSnapshot, CheckpointsError, NullNonceStore, ProviderDeps, ProviderReplicaStore,
+    ProviderState, ReplicaAgreementInfo, ReplicaSyncChainClient, ReplicaSyncCoordinator,
+    ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
 
 struct MockReplicaSyncChainClient {
@@ -21,7 +21,7 @@ struct MockReplicaSyncChainClient {
     snapshots: Mutex<HashMap<BucketId, BucketSnapshot>>,
     endpoints: Mutex<HashMap<BucketId, Vec<String>>>,
     confirmations: Mutex<Vec<BucketId>>,
-    confirm_result: Mutex<Result<(u8, u128), Error>>,
+    confirm_result: Mutex<Result<(u8, u128), CheckpointsError>>,
 }
 
 impl MockReplicaSyncChainClient {
@@ -64,7 +64,7 @@ impl MockReplicaSyncChainClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
+    async fn get_current_block(&self) -> Result<u64, CheckpointsError> {
         Ok(*self.block.lock().unwrap())
     }
 
@@ -72,11 +72,14 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         _provider_account: &str,
         _local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, CheckpointsError> {
         Ok(self.agreements.lock().unwrap().clone())
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, CheckpointsError> {
         let snapshots = self.snapshots.lock().unwrap();
         Ok(snapshots
             .get(&bucket_id)
@@ -87,7 +90,10 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
             }))
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, CheckpointsError> {
         let endpoints = self.endpoints.lock().unwrap();
         Ok(endpoints.get(&bucket_id).cloned().unwrap_or_default())
     }
@@ -96,12 +102,12 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
         &self,
         bucket_id: BucketId,
         _target_mmr_root: H256,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), CheckpointsError> {
         self.confirmations.lock().unwrap().push(bucket_id);
         let result = &*self.confirm_result.lock().unwrap();
         match result {
             Ok(v) => Ok(*v),
-            Err(e) => Err(Error::Internal(e.to_string())),
+            Err(e) => Err(CheckpointsError::Internal(e.to_string())),
         }
     }
 }
@@ -121,7 +127,7 @@ async fn test_no_agreements() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -147,7 +153,7 @@ async fn test_insufficient_balance() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -191,7 +197,7 @@ async fn test_already_synced() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -217,7 +223,7 @@ async fn test_no_data_to_sync() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -243,7 +249,7 @@ async fn test_primary_unavailable() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -261,7 +267,7 @@ async fn test_stop_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -283,7 +289,7 @@ async fn test_pause_resume() {
     };
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -328,7 +334,7 @@ async fn test_duties_filter_insufficient_balance() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -360,7 +366,7 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -395,7 +401,7 @@ async fn test_duties_filter_zero_snapshot_root() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -449,7 +455,7 @@ async fn test_duties_filter_already_synced() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -483,7 +489,7 @@ async fn test_duties_happy_path_returns_duty() {
     let config = ReplicaSyncCoordinatorConfig::default();
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -513,7 +519,7 @@ async fn test_status_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 
@@ -538,7 +544,7 @@ async fn test_force_sync_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(
         config,
-        Arc::new(ProviderReplicaStore::new(state)),
+        Arc::new(ProviderReplicaStore::from_state(&state)),
         Box::new(mock),
     );
 

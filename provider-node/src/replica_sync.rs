@@ -20,37 +20,57 @@ use storage_primitives::BucketId;
 /// (extracted to the `provider-checkpoints` crate) stays decoupled from
 /// `ProviderState`.
 pub struct ProviderReplicaStore {
-    state: Arc<ProviderState>,
+    storage: Arc<dyn StorageBackend>,
+    provider_id: String,
     replica_sync: ReplicaSync,
 }
 
 impl ProviderReplicaStore {
-    pub fn new(state: Arc<ProviderState>) -> Self {
-        let replica_sync = ReplicaSync::new(state.storage.clone());
+    /// Build from exactly what the coordinator needs: the storage backend and
+    /// the provider's account id.
+    pub fn new(storage: Arc<dyn StorageBackend>, provider_id: String) -> Self {
+        let replica_sync = ReplicaSync::new(storage.clone());
         Self {
-            state,
+            storage,
+            provider_id,
             replica_sync,
         }
+    }
+
+    /// Convenience for node wiring: borrows the two needed fields from
+    /// [`ProviderState`].
+    pub fn from_state(state: &Arc<ProviderState>) -> Self {
+        Self::new(state.storage.clone(), state.provider_id.clone())
     }
 }
 
 #[async_trait::async_trait]
 impl provider_checkpoints::ReplicaStore for ProviderReplicaStore {
     fn provider_id(&self) -> String {
-        self.state.provider_id.clone()
+        self.provider_id.clone()
     }
 
-    fn local_bucket_ids(&self) -> Vec<BucketId> {
-        self.state
-            .storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect()
+    async fn local_bucket_ids(&self) -> Vec<BucketId> {
+        let storage = self.storage.clone();
+        // The disk backend scans a RocksDB column family here; keep that off
+        // the coordinator's async task.
+        tokio::task::spawn_blocking(move || {
+            storage
+                .list_buckets()
+                .into_iter()
+                .map(|b| b.bucket_id)
+                .collect()
+        })
+        .await
+        // Join only fails if the closure panicked; propagate rather than mask.
+        .expect("blocking storage task panicked")
     }
 
-    fn local_mmr_root(&self, bucket_id: BucketId) -> Option<H256> {
-        self.state.storage.get_bucket(bucket_id).map(|b| b.mmr_root)
+    async fn local_mmr_root(&self, bucket_id: BucketId) -> Option<H256> {
+        let storage = self.storage.clone();
+        tokio::task::spawn_blocking(move || storage.get_bucket(bucket_id).map(|b| b.mmr_root))
+            .await
+            .expect("blocking storage task panicked")
     }
 
     async fn sync_from_primary(

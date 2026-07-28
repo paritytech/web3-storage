@@ -460,7 +460,12 @@ impl SubxtChainClient {
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
     async fn get_current_block(&self) -> Result<u64, CheckpointsError> {
-        Ok(self.current_anchor_block().await?)
+        // Unwrap the node error's message so the coordinator sees a single
+        // "Chain error:" prefix rather than a stacked one.
+        self.current_anchor_block().await.map_err(|e| match e {
+            Error::Internal(msg) => CheckpointsError::Chain(msg),
+            other => CheckpointsError::Chain(other.to_string()),
+        })
     }
 
     async fn fetch_replica_agreements(
@@ -473,7 +478,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             let mut agreements = Vec::new();
 
             let account_bytes = hex::decode(provider_account.trim_start_matches("0x"))
-                .map_err(|e| Error::Internal(format!("Invalid account hex: {e}")))?;
+                .map_err(|e| CheckpointsError::Chain(format!("Invalid account hex: {e}")))?;
 
             // Query local buckets for agreements
             for bucket_id in &local_buckets {
@@ -482,11 +487,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                     "StorageAgreements",
                 );
 
-                let at = self
-                    .api
-                    .at_current_block()
-                    .await
-                    .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+                let at =
+                    self.api.at_current_block().await.map_err(|e| {
+                        CheckpointsError::Chain(format!("Failed to get storage: {e}"))
+                    })?;
 
                 if let Ok(Some(value)) = at
                     .storage()
@@ -574,7 +578,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| CheckpointsError::Chain(format!("Failed to get storage: {e}")))?;
 
         match at
             .storage()
@@ -583,9 +587,9 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         {
             Ok(Some(value)) => {
                 use subxt::ext::scale_value::At;
-                let decoded = value
-                    .decode()
-                    .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+                let decoded = value.decode().map_err(|e| {
+                    CheckpointsError::Chain(format!("Failed to decode bucket: {e}"))
+                })?;
 
                 if let Some(snapshot_opt) = decoded.at(4) {
                     if let ValueDef::Variant(variant) = &snapshot_opt.value {
@@ -622,7 +626,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+            .map_err(|e| CheckpointsError::Chain(format!("Failed to get storage: {e}")))?;
 
         let bucket_value = match at
             .storage()
@@ -635,7 +639,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
 
         let decoded = bucket_value
             .decode()
-            .map_err(|e| Error::Internal(format!("Failed to decode bucket: {e}")))?;
+            .map_err(|e| CheckpointsError::Chain(format!("Failed to decode bucket: {e}")))?;
 
         let mut provider_bytes_list = Vec::new();
 
@@ -674,7 +678,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
                 .api
                 .at_current_block()
                 .await
-                .map_err(|e| Error::Internal(format!("Failed to get storage: {e}")))?;
+                .map_err(|e| CheckpointsError::Chain(format!("Failed to get storage: {e}")))?;
 
             if let Ok(Some(value)) = at
                 .storage()
@@ -734,16 +738,16 @@ impl ReplicaSyncChainClient for SubxtChainClient {
             .api
             .at_current_block()
             .await
-            .map_err(|e| Error::Internal(format!("Failed to get current block: {e}")))?
+            .map_err(|e| CheckpointsError::Chain(format!("Failed to get current block: {e}")))?
             .transactions()
             .sign_and_submit_then_watch_default(&tx, &self.signer)
             .await
-            .map_err(|e| Error::Internal(format!("Failed to submit tx: {e}")))?;
+            .map_err(|e| CheckpointsError::Chain(format!("Failed to submit tx: {e}")))?;
 
         let _events = tx_progress
             .wait_for_finalized_success()
             .await
-            .map_err(|e| Error::Internal(format!("Transaction failed: {e}")))?;
+            .map_err(|e| CheckpointsError::Chain(format!("Transaction failed: {e}")))?;
 
         tracing::info!(
             "confirm_replica_sync submitted successfully for bucket {}",

@@ -39,10 +39,10 @@ pub trait ReplicaStore: Send + Sync {
     fn provider_id(&self) -> String;
 
     /// Bucket ids present in local storage.
-    fn local_bucket_ids(&self) -> Vec<BucketId>;
+    async fn local_bucket_ids(&self) -> Vec<BucketId>;
 
     /// Current local MMR root for a bucket, if the bucket exists locally.
-    fn local_mmr_root(&self, bucket_id: BucketId) -> Option<H256>;
+    async fn local_mmr_root(&self, bucket_id: BucketId) -> Option<H256>;
 
     /// Sync a bucket from a primary provider; returns the synced MMR root.
     async fn sync_from_primary(
