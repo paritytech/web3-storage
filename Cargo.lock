@@ -7046,6 +7046,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-checkpoints"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "sp-core",
+ "storage-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "provider-negotiation"
 version = "0.1.0"
 dependencies = [
@@ -9898,6 +9911,7 @@ dependencies = [
  "hex",
  "parity-scale-codec",
  "parking_lot",
+ "provider-checkpoints",
  "provider-negotiation",
  "reqwest",
  "rocksdb",

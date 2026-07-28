@@ -115,6 +115,16 @@ pub enum Error {
     RateLimited,
 }
 
+/// Boundary conversion for the chain-client impls in `subxt_client`: the
+/// replica-sync coordinator trait lives in `provider-checkpoints` and returns
+/// that crate's error type, so `?` on node-internal failures maps them to
+/// `Chain` there.
+impl From<Error> for provider_checkpoints::Error {
+    fn from(e: Error) -> Self {
+        provider_checkpoints::Error::Chain(e.to_string())
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorResponse {
     error: String,

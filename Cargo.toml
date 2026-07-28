@@ -12,6 +12,7 @@ members = [
 	"crates/pallets/storage-provider",
 
 	# Provider crates
+	"crates/providers/checkpoints",
 	"crates/providers/negotiation",
 
 	"crates/storage-subxt",
@@ -45,6 +46,7 @@ pallet-drive-registry-precompile = { path = "crates/pallets/drive-registry/preco
 pallet-s3-registry-precompile = { path = "crates/pallets/s3-registry/precompiles", default-features = false }
 pallet-storage-provider = { path = "crates/pallets/storage-provider", default-features = false }
 pallet-storage-provider-precompile = { path = "crates/pallets/storage-provider/precompiles", default-features = false }
+provider-checkpoints = { path = "crates/providers/checkpoints" }
 provider-negotiation = { path = "crates/providers/negotiation" }
 storage-client = { path = "clients/storage" }
 storage-indexers = { path = "crates/utils/storage-indexers" }

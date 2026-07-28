@@ -3,15 +3,15 @@
 //! Integration tests for the replica sync coordinator.
 
 use super::{test_state, ALICE_SS58};
+use provider_checkpoints::{BucketSnapshot, Error, ReplicaAgreementInfo};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use storage_primitives::BucketId;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::replica_sync_coordinator::{BucketSnapshot, ReplicaAgreementInfo};
 use storage_provider_node::{
-    Error, NullNonceStore, ProviderDeps, ProviderState, ReplicaSyncChainClient,
+    NullNonceStore, ProviderDeps, ProviderReplicaStore, ProviderState, ReplicaSyncChainClient,
     ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, Storage, SyncDuty, SyncResult,
 };
 
@@ -119,7 +119,11 @@ async fn test_no_agreements() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty());
@@ -141,7 +145,11 @@ async fn test_insufficient_balance() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::InsufficientBalance { .. }));
@@ -181,7 +189,11 @@ async fn test_already_synced() {
 
     let mock = MockReplicaSyncChainClient::new();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::AlreadySynced { .. }));
@@ -203,7 +215,11 @@ async fn test_no_data_to_sync() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::NoDataToSync { .. }));
@@ -225,7 +241,11 @@ async fn test_primary_unavailable() {
     let mock = MockReplicaSyncChainClient::new();
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let result = coordinator.sync_and_confirm(&duty).await;
     assert!(matches!(result, SyncResult::PrimaryUnavailable { .. }));
@@ -239,7 +259,11 @@ async fn test_stop_command() {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let handle = coordinator.start(None).await.unwrap();
     assert!(handle.is_running());
@@ -257,7 +281,11 @@ async fn test_pause_resume() {
         poll_interval: Duration::from_millis(50),
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let handle = coordinator.start(None).await.unwrap();
 
@@ -298,7 +326,11 @@ async fn test_duties_filter_insufficient_balance() {
 
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty(), "insufficient balance should be filtered");
@@ -326,7 +358,11 @@ async fn test_duties_filter_sync_interval_not_elapsed() {
 
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(
@@ -357,7 +393,11 @@ async fn test_duties_filter_zero_snapshot_root() {
 
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty(), "zero snapshot root should be filtered");
@@ -407,7 +447,11 @@ async fn test_duties_filter_already_synced() {
         );
 
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert!(duties.is_empty(), "already synced should be filtered");
@@ -437,7 +481,11 @@ async fn test_duties_happy_path_returns_duty() {
 
     let state = test_state();
     let config = ReplicaSyncCoordinatorConfig::default();
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let duties = coordinator.get_active_replica_duties().await.unwrap();
     assert_eq!(duties.len(), 1);
@@ -463,7 +511,11 @@ async fn test_status_command() {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let handle = coordinator.start(None).await.unwrap();
 
@@ -484,7 +536,11 @@ async fn test_force_sync_command() {
         poll_interval: Duration::from_secs(60),
         ..Default::default()
     };
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(mock),
+    );
 
     let handle = coordinator.start(None).await.unwrap();
 

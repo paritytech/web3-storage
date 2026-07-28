@@ -21,7 +21,6 @@ pub mod fs_index;
 pub mod mmr;
 pub mod negotiate;
 pub mod replica_sync;
-pub mod replica_sync_coordinator;
 pub mod s3_api;
 pub mod s3_index;
 pub mod storage;
@@ -41,11 +40,11 @@ pub use challenge_responder::{
 pub use error::Error;
 pub use fs_index::FsIndexManager;
 pub use negotiate::{AgreementTermsOf, NegotiateRequest, NonceCounter, SignedTerms};
-pub use replica_sync::ReplicaSync;
-pub use replica_sync_coordinator::{
+pub use provider_checkpoints::{
     ReplicaSyncChainClient, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
     ReplicaSyncCoordinatorHandle, SyncCommand, SyncCoordinatorStatus, SyncDuty, SyncResult,
 };
+pub use replica_sync::{ProviderReplicaStore, ReplicaSync};
 pub use s3_index::S3IndexManager;
 pub use storage::{
     build_merkle_proof, build_padded_merkle_tree, hex_decode, hex_encode, BucketInfo,

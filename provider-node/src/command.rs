@@ -9,9 +9,9 @@ use crate::{
     create_router,
     subxt_client::SubxtChainClient,
     ChainStateCoordinatorHandle, ChallengeResponder, ChallengeResponderConfig,
-    ChallengeResponderHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps, ProviderState,
-    ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig, ReplicaSyncCoordinatorHandle, Storage,
-    StorageBackend,
+    ChallengeResponderHandle, DiskStorage, NonceStore, NullNonceStore, ProviderDeps,
+    ProviderReplicaStore, ProviderState, ReplicaSyncCoordinator, ReplicaSyncCoordinatorConfig,
+    ReplicaSyncCoordinatorHandle, Storage, StorageBackend,
 };
 use clap::Parser;
 use std::net::SocketAddr;
@@ -202,7 +202,11 @@ async fn start_replica_sync_coordinator(
         auto_confirm: true,
     };
 
-    let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(chain_client));
+    let coordinator = ReplicaSyncCoordinator::new(
+        config,
+        Arc::new(ProviderReplicaStore::new(state)),
+        Box::new(chain_client),
+    );
 
     match coordinator.start(None).await {
         Ok(handle) => {

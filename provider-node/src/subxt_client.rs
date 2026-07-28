@@ -13,10 +13,10 @@
 use crate::challenge_responder::{
     decode_challenge_for_provider, ChallengeChainClient, DetectedChallenge,
 };
-use crate::replica_sync_coordinator::{
-    BucketSnapshot, ReplicaAgreementInfo, ReplicaSyncChainClient,
-};
 use crate::Error;
+use provider_checkpoints::{
+    BucketSnapshot, Error as CheckpointsError, ReplicaAgreementInfo, ReplicaSyncChainClient,
+};
 use sp_core::crypto::Ss58Codec;
 use sp_core::H256;
 use storage_primitives::BucketId;
@@ -459,15 +459,15 @@ impl SubxtChainClient {
 
 #[async_trait::async_trait]
 impl ReplicaSyncChainClient for SubxtChainClient {
-    async fn get_current_block(&self) -> Result<u64, Error> {
-        self.current_anchor_block().await
+    async fn get_current_block(&self) -> Result<u64, CheckpointsError> {
+        Ok(self.current_anchor_block().await?)
     }
 
     async fn fetch_replica_agreements(
         &self,
         provider_account: &str,
         local_buckets: Vec<BucketId>,
-    ) -> Result<Vec<ReplicaAgreementInfo>, Error> {
+    ) -> Result<Vec<ReplicaAgreementInfo>, CheckpointsError> {
         let provider_account = provider_account.to_string();
         {
             let mut agreements = Vec::new();
@@ -561,7 +561,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         }
     }
 
-    async fn fetch_bucket_snapshot(&self, bucket_id: BucketId) -> Result<BucketSnapshot, Error> {
+    async fn fetch_bucket_snapshot(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<BucketSnapshot, CheckpointsError> {
         use subxt::ext::scale_value::ValueDef;
 
         let storage_address =
@@ -606,7 +609,10 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         }
     }
 
-    async fn fetch_primary_endpoints(&self, bucket_id: BucketId) -> Result<Vec<String>, Error> {
+    async fn fetch_primary_endpoints(
+        &self,
+        bucket_id: BucketId,
+    ) -> Result<Vec<String>, CheckpointsError> {
         use subxt::ext::scale_value::{At, Composite, Primitive, ValueDef};
 
         let storage_address =
@@ -694,7 +700,7 @@ impl ReplicaSyncChainClient for SubxtChainClient {
         &self,
         bucket_id: BucketId,
         target_mmr_root: H256,
-    ) -> Result<(u8, u128), Error> {
+    ) -> Result<(u8, u128), CheckpointsError> {
         // Build roots array: position 0 = current root, rest = None
         let roots_value: Vec<Value> = (0..7)
             .map(|i| {

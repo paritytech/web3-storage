@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Replica Sync Coordinator - Autonomous replica synchronization service.
 //!
@@ -9,8 +9,7 @@
 //! 4. Submits `confirm_replica_sync` transactions to receive payment
 //! 5. Handles historical roots matching for late syncs
 
-use crate::replica_sync::ReplicaSync;
-use crate::{Error, ProviderState};
+use crate::{Error, ReplicaStore};
 use sp_core::H256;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -270,9 +269,8 @@ impl ReplicaSyncCoordinatorHandle {
 /// Replica sync coordinator service.
 pub struct ReplicaSyncCoordinator {
     config: ReplicaSyncCoordinatorConfig,
-    state: Arc<ProviderState>,
+    store: Arc<dyn ReplicaStore>,
     chain_client: Box<dyn ReplicaSyncChainClient>,
-    replica_sync: ReplicaSync,
     /// Track active sync operations by bucket.
     active_syncs: HashMap<BucketId, tokio::task::JoinHandle<SyncResult>>,
 }
@@ -281,16 +279,13 @@ impl ReplicaSyncCoordinator {
     /// Create a new replica sync coordinator.
     pub fn new(
         config: ReplicaSyncCoordinatorConfig,
-        state: Arc<ProviderState>,
+        store: Arc<dyn ReplicaStore>,
         chain_client: Box<dyn ReplicaSyncChainClient>,
     ) -> Self {
-        let replica_sync = ReplicaSync::new(state.storage.clone());
-
         Self {
             config,
-            state,
+            store,
             chain_client,
-            replica_sync,
             active_syncs: HashMap::new(),
         }
     }
@@ -418,12 +413,7 @@ impl ReplicaSyncCoordinator {
 
     /// Get list of bucket IDs we're tracking as replica.
     fn get_tracked_buckets(&self) -> Vec<BucketId> {
-        self.state
-            .storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect()
+        self.store.local_bucket_ids()
     }
 
     /// Get replica duties for buckets where this provider is a replica.
@@ -432,15 +422,9 @@ impl ReplicaSyncCoordinator {
 
         let anchor_block = self.chain_client.get_current_block().await?;
 
-        let local_buckets: Vec<u64> = self
-            .state
-            .storage
-            .list_buckets()
-            .into_iter()
-            .map(|b| b.bucket_id)
-            .collect();
+        let local_buckets: Vec<u64> = self.store.local_bucket_ids();
 
-        let provider_account = self.state.provider_id.clone();
+        let provider_account = self.store.provider_id();
 
         let agreements = self
             .chain_client
@@ -480,8 +464,8 @@ impl ReplicaSyncCoordinator {
                 continue;
             }
 
-            if let Some(bucket) = self.state.storage.get_bucket(agreement.bucket_id) {
-                if bucket.mmr_root == snapshot.mmr_root {
+            if let Some(local_root) = self.store.local_mmr_root(agreement.bucket_id) {
+                if local_root == snapshot.mmr_root {
                     continue;
                 }
             }
@@ -527,8 +511,8 @@ impl ReplicaSyncCoordinator {
     /// Perform sync and submit confirmation.
     pub async fn sync_and_confirm(&self, duty: &SyncDuty) -> SyncResult {
         // Check if we already have this root
-        if let Some(bucket) = self.state.storage.get_bucket(duty.bucket_id) {
-            if bucket.mmr_root == duty.target_mmr_root {
+        if let Some(local_root) = self.store.local_mmr_root(duty.bucket_id) {
+            if local_root == duty.target_mmr_root {
                 return SyncResult::AlreadySynced {
                     bucket_id: duty.bucket_id,
                     mmr_root: duty.target_mmr_root,
@@ -599,8 +583,8 @@ impl ReplicaSyncCoordinator {
         }
 
         // Verify final state
-        let local_bucket = match self.state.storage.get_bucket(duty.bucket_id) {
-            Some(b) => b,
+        let local_root = match self.store.local_mmr_root(duty.bucket_id) {
+            Some(root) => root,
             None => {
                 return SyncResult::VerificationFailed {
                     bucket_id: duty.bucket_id,
@@ -609,13 +593,13 @@ impl ReplicaSyncCoordinator {
             }
         };
 
-        if local_bucket.mmr_root != duty.target_mmr_root {
+        if local_root != duty.target_mmr_root {
             return SyncResult::VerificationFailed {
                 bucket_id: duty.bucket_id,
                 reason: format!(
                     "Root mismatch: expected 0x{}, got 0x{}",
                     hex::encode(duty.target_mmr_root.as_bytes()),
-                    hex::encode(local_bucket.mmr_root.as_bytes())
+                    hex::encode(local_root.as_bytes())
                 ),
             };
         }
@@ -650,7 +634,7 @@ impl ReplicaSyncCoordinator {
 
     /// Sync data from a primary provider using top-down traversal.
     async fn sync_from_primary(&self, duty: &SyncDuty, primary_url: &str) -> Result<H256, Error> {
-        self.replica_sync
+        self.store
             .sync_from_primary(duty.bucket_id, primary_url)
             .await
     }

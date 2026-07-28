@@ -8,12 +8,62 @@
 //! 3. On-chain sync confirmation
 
 use crate::error::Error;
-use crate::StorageBackend;
+use crate::{ProviderState, StorageBackend};
 use base64::Engine;
 use reqwest::Client;
 use sp_core::H256;
 use std::sync::Arc;
 use storage_primitives::BucketId;
+
+/// Adapter implementing [`provider_checkpoints::ReplicaStore`] over the
+/// provider node's state and sync engine, so the replica sync coordinator
+/// (extracted to the `provider-checkpoints` crate) stays decoupled from
+/// `ProviderState`.
+pub struct ProviderReplicaStore {
+    state: Arc<ProviderState>,
+    replica_sync: ReplicaSync,
+}
+
+impl ProviderReplicaStore {
+    pub fn new(state: Arc<ProviderState>) -> Self {
+        let replica_sync = ReplicaSync::new(state.storage.clone());
+        Self {
+            state,
+            replica_sync,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl provider_checkpoints::ReplicaStore for ProviderReplicaStore {
+    fn provider_id(&self) -> String {
+        self.state.provider_id.clone()
+    }
+
+    fn local_bucket_ids(&self) -> Vec<BucketId> {
+        self.state
+            .storage
+            .list_buckets()
+            .into_iter()
+            .map(|b| b.bucket_id)
+            .collect()
+    }
+
+    fn local_mmr_root(&self, bucket_id: BucketId) -> Option<H256> {
+        self.state.storage.get_bucket(bucket_id).map(|b| b.mmr_root)
+    }
+
+    async fn sync_from_primary(
+        &self,
+        bucket_id: BucketId,
+        primary_url: &str,
+    ) -> Result<H256, provider_checkpoints::Error> {
+        self.replica_sync
+            .sync_from_primary(bucket_id, primary_url)
+            .await
+            .map_err(|e| provider_checkpoints::Error::Sync(e.to_string()))
+    }
+}
 
 /// Replica synchronization manager.
 pub struct ReplicaSync {
