@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
-use provider_storage::{BucketStats, BucketSummary};
+pub use provider_storage::{BucketStats, BucketSummary};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // On-chain Provider Info

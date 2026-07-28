@@ -70,6 +70,6 @@ requests are unsigned (dev providers run `/fs` auth disabled; signed requests ar
 `photos-flow` asserts the contract owns the drive, the user holds a Writer role on the underlying bucket,
 and `libraryOf(user)` reports the new drive. It then drives the provider's `/fs` API (mkdir an album,
 PUT a multi-MB photo + a thumbnail), computes the drive's metadata Merkle root **client-side**
-(`merkle.ts`, a byte-exact port of `provider-node/src/fs_index.rs`), anchors it via `setRoot`, and
+(`merkle.ts`, a byte-exact port of `crates/providers/storage/src/fs_index.rs`), anchors it via `setRoot`, and
 verifies the locally recomputed root equals both the on-chain anchor and the provider's `index_root`
 (plus a tamper check) — proving the control plane and the integrity anchor before any UI exists.

@@ -5,8 +5,8 @@
 // itself and verify a drive without trusting the provider.
 //
 // Mirrors, byte for byte:
-//   - `provider-node/src/fs_index.rs`     → `metadata_merkle_root`
-//   - `provider-node/src/storage/mod.rs`  → `build_padded_merkle_tree`
+//   - `crates/providers/storage/src/fs_index.rs` → `metadata_merkle_root`
+//   - `crates/providers/storage/src/lib.rs`      → `build_padded_merkle_tree`
 //   - `primitives/src/lib.rs`             → `blake2_256`, `hash_children`, `DEFAULT_CHUNK_SIZE`
 //
 // This is the multi-chunk Merkle DAG walk that `verify.ts` documents as the

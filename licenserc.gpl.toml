@@ -6,6 +6,7 @@ inlineHeader = "SPDX-License-Identifier: GPL-3.0-only"
 keywords = ["SPDX-License-Identifier"]
 
 includes = [
+	"crates/providers/**/*.rs",
 	"provider-node/**/*.rs",
 	"runtimes/**/*.rs",
 	"user-interfaces/drive-ui/**/*.ts",

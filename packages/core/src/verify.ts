@@ -3,7 +3,7 @@
 /**
  * Content-addressing verification. CIDs in this system are blake2b-256 over
  * the chunk bytes; a single-chunk blob's data_root equals its chunk hash
- * (see provider-node/src/storage single-leaf case), so whole payloads up to
+ * (see crates/providers/storage/src single-leaf case), so whole payloads up to
  * DEFAULT_CHUNK_SIZE can be verified directly against an on-chain CID.
  * Multi-chunk payloads need a Merkle DAG walk (Rust-client parity) — not
  * implemented here; callers surface those as "unverified".

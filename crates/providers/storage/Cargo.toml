@@ -3,7 +3,7 @@ name = "provider-storage"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
-license = "Apache-2.0"
+license.workspace = true
 repository.workspace = true
 description = "Storage engine for provider nodes: backends, MMR commitments, and drive/S3 indexes"
 
