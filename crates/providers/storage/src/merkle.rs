@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Balanced (padded) Merkle proof construction, plus hex encode/decode
 //! utilities. Pure math over `H256` - no storage access.

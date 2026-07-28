@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Storage engine for provider nodes: content-addressed blob storage with MMR
 //! commitments, plus the drive/S3 metadata indexes served over it. No HTTP or

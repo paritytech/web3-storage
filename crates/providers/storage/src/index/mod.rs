@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 //! Metadata indexes layered over the blob storage: per-drive file-system
 //! trees ([`fs`]) and S3-style object listings ([`s3`]).
