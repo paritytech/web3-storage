@@ -37,6 +37,12 @@ const ALREADY_DONE_ERRORS: [&str; 2] = [
     "SyncTooFrequent",   // confirm_replica_sync: a sync already confirmed
 ];
 
+/// Upper bound on one submit-and-watch pass. Generous next to normal
+/// finalization (a few blocks) so a slow chain isn't mistaken for a stuck one,
+/// but it keeps [`SubxtChainClient::submit_lock`] — held until finalization —
+/// from being wedged forever by a watch that neither resolves nor errors.
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Outcome of one submit-and-watch pass (see
 /// [`SubxtChainClient::submit_and_finalize`]).
 enum Attempt {
@@ -206,9 +212,32 @@ impl SubxtChainClient {
         }
     }
 
-    /// One submit-and-watch pass. `retrying` marks the second attempt, where a
-    /// duplicate rejection proves the first one landed.
+    /// One submit-and-watch pass, bounded by [`SUBMIT_TIMEOUT`]. `retrying`
+    /// marks the second attempt, where a duplicate rejection proves the first
+    /// one landed.
+    ///
+    /// A timed-out pass is [`Attempt::Retryable`], so a transaction that did
+    /// land while the watch hung is still recognised by the duplicate-rejection
+    /// path on the resubmit. With both passes bounded, the total `submit_lock`
+    /// hold is at most `2 * SUBMIT_TIMEOUT + RETRY_DELAY`.
     async fn try_submit(
+        &self,
+        tx: &subxt::tx::DynamicPayload<Vec<Value>>,
+        what: &str,
+        retrying: bool,
+    ) -> Attempt {
+        match tokio::time::timeout(SUBMIT_TIMEOUT, self.submit_once(tx, what, retrying)).await {
+            Ok(attempt) => attempt,
+            Err(_) => Attempt::Retryable(Error::Internal(format!(
+                "not finalized within {}s",
+                SUBMIT_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+
+    /// The single unbounded submit-and-watch pass that [`Self::try_submit`]
+    /// puts a deadline on.
+    async fn submit_once(
         &self,
         tx: &subxt::tx::DynamicPayload<Vec<Value>>,
         what: &str,
