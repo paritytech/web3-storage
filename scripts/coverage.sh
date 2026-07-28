@@ -25,6 +25,7 @@ COV_PACKAGES=(
 	pallet-s3-registry
 	storage-provider-node
 	provider-negotiation
+	provider-storage
 )
 
 # Not measured, with the reason per crate.
