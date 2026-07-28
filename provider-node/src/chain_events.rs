@@ -32,8 +32,6 @@ pub type BlockEventRx = tokio::sync::broadcast::Receiver<BlockEvent>;
 /// One coordinator-relevant occurrence on the chain.
 #[derive(Clone, Debug)]
 pub enum BlockEvent {
-    /// A finalized block was seen: the coordinators' clock.
-    NewBlock { number: u32 },
     /// `StorageProvider::ChallengeCreated` — the challenge responder point-reads
     /// the full challenge at `(deadline, index)` and responds.
     ChallengeCreated {
