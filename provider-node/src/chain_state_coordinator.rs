@@ -18,6 +18,8 @@
 //! `ProviderInfo` so `committed_bytes`, `stake`, and all settings stay
 //! current — no field-patching, no partial updates, no second writer.
 
+use crate::chain_connection::{self, ChainHandle, ChainTransport};
+use crate::chain_events::{self, BlockEvent, BlockEventTx};
 use crate::negotiate::NonceCounter;
 use crate::storage::{NonceStore, NullNonceStore};
 use crate::types::ProviderInfo;
@@ -30,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use subxt::ext::scale_value::{At, Composite, Primitive, Value, ValueDef, Variant};
 use subxt::{OnlineClient, PolkadotConfig};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Pallet whose storage, constants, and events the coordinator follows.
@@ -240,21 +243,31 @@ fn parse_provider_lifecycle_events(
 /// Start with [`ChainStateCoordinator::start`]; keep the returned
 /// [`ChainStateCoordinatorHandle`] alive for the duration of the server.
 pub struct ChainStateCoordinator {
-    chain_ws_url: String,
+    transport: ChainTransport,
     provider_account: AccountId32,
     chain_state: Arc<ChainState>,
+    /// Publishes the live connection to every chain consumer. This coordinator
+    /// is the only writer: it rebuilds the connection on stream loss or stall
+    /// and everyone else picks up the new handle from the watch channel.
+    chain_tx: watch::Sender<Option<ChainHandle>>,
+    /// Fan-out of decoded per-block events to the background coordinators.
+    events_tx: BlockEventTx,
 }
 
 impl ChainStateCoordinator {
     pub fn new(
-        chain_ws_url: String,
+        transport: ChainTransport,
         provider_account: AccountId32,
         chain_state: Arc<ChainState>,
+        chain_tx: watch::Sender<Option<ChainHandle>>,
+        events_tx: BlockEventTx,
     ) -> Self {
         Self {
-            chain_ws_url,
+            transport,
             provider_account,
             chain_state,
+            chain_tx,
+            events_tx,
         }
     }
 
@@ -291,23 +304,33 @@ impl ChainStateCoordinator {
     }
 
     /// Connect to the chain, bootstrap initial state, then drive the finalized-block
-    /// stream until it ends. Returns `Err` if connecting fails; `Ok(())` if the
-    /// stream terminates cleanly — either way the caller reconnects.
+    /// stream until it ends or stalls. Returns `Err` if connecting fails; `Ok(())`
+    /// if the stream terminates — either way the caller reconnects.
     async fn connect_and_follow(&self) -> Result<(), Error> {
-        let api = OnlineClient::<PolkadotConfig>::from_url(&self.chain_ws_url)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to chain: {e}")))?;
-        self.follow(api).await
+        let handle = chain_connection::connect(&self.transport).await?;
+        self.follow(handle).await
     }
 
-    /// Bootstrap state from `api` and follow its finalized blocks until the
-    /// stream ends. Split from [`Self::connect_and_follow`] so tests can
-    /// drive the full pipeline over a mock RPC connection.
-    async fn follow(&self, api: OnlineClient<PolkadotConfig>) -> Result<(), Error> {
+    /// Bootstrap state from the connection and follow its finalized blocks
+    /// until the stream ends or stalls. Split from
+    /// [`Self::connect_and_follow`] so tests can drive the full pipeline over
+    /// a mock RPC connection.
+    async fn follow(&self, handle: ChainHandle) -> Result<(), Error> {
+        /// How long without a finalized block before the connection is treated
+        /// as dead and rebuilt. Finality can pause briefly (session boundaries,
+        /// backend resubscriptions), so this is several times the block time;
+        /// a genuinely stalled stream otherwise hangs forever with no error.
+        const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+        let api = handle.api.clone();
         let mut blocks = api
             .stream_blocks()
             .await
             .map_err(|e| Error::Internal(format!("Failed to subscribe to blocks: {e}")))?;
+
+        // Publish the new connection only after the block stream is up, so
+        // consumers never observe a handle whose backend failed immediately.
+        self.chain_tx.send_replace(Some(handle));
         let chain = RealChainStateClient { api };
 
         tracing::info!("chain-state coordinator: connected; following finalized blocks");
@@ -320,7 +343,27 @@ impl ChainStateCoordinator {
         // rather than waiting for the next relevant event.
         refresh_provider_state(&chain, &self.chain_state, &self.provider_account).await;
 
-        while let Some(next) = blocks.next().await {
+        // Tell coordinators to reconcile: events emitted while the stream was
+        // down were missed for good, so they re-scan chain state instead.
+        let _ = self.events_tx.send(BlockEvent::Resubscribed {
+            at_block: self
+                .chain_state
+                .current_anchor_block
+                .load(std::sync::atomic::Ordering::Relaxed),
+        });
+
+        loop {
+            let next = match tokio::time::timeout(STALL_TIMEOUT, blocks.next()).await {
+                Ok(Some(next)) => next,
+                Ok(None) => break,
+                Err(_) => {
+                    tracing::warn!(
+                        "chain-state coordinator: no finalized block for {}s; rebuilding connection",
+                        STALL_TIMEOUT.as_secs()
+                    );
+                    break;
+                }
+            };
             let block = match next {
                 Ok(block) => block,
                 Err(e) => {
@@ -359,8 +402,8 @@ impl ChainStateCoordinator {
                 ),
             }
 
-            let parsed = match at.events().fetch().await {
-                Ok(events) => parse_provider_lifecycle_events(&events),
+            let events = match at.events().fetch().await {
+                Ok(events) => events,
                 Err(e) => {
                     tracing::warn!(
                         "chain-state coordinator: failed to fetch events for block {block_number}: {e}"
@@ -369,6 +412,13 @@ impl ChainStateCoordinator {
                 }
             };
 
+            // Fan out the coordinator-relevant events. Send failures just mean
+            // no coordinator is subscribed.
+            for event in chain_events::decode_block_events(&events) {
+                let _ = self.events_tx.send(event);
+            }
+
+            let parsed = parse_provider_lifecycle_events(&events);
             self.process_provider_events(&chain, &parsed, block_number)
                 .await;
         }
@@ -671,7 +721,7 @@ fn decode_byte_vec(value: &Value) -> Vec<u8> {
 
 /// Decode an [`AccountId32`] from a SCALE value (a possibly-nested composite of
 /// 32 byte primitives).
-fn decode_account(v: &Value) -> Option<AccountId32> {
+pub(crate) fn decode_account(v: &Value) -> Option<AccountId32> {
     let mut bytes = [0u8; 32];
     if collect_bytes(v, &mut bytes, 0) == 32 {
         Some(AccountId32::new(bytes))
@@ -1006,33 +1056,53 @@ mod tests {
             ])
         }
 
-        /// `System::Events` bytes holding one `StorageProvider::ProviderRegistered`
-        /// event for `provider`, encoded against the real runtime types.
-        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
-            let record = Value::named_composite([
+        /// Wrap a `StorageProvider` event value in an `EventRecord`.
+        fn event_record(event: Value) -> Value {
+            Value::named_composite([
                 ("phase", Value::unnamed_variant("Initialization", vec![])),
                 (
                     "event",
-                    Value::unnamed_variant(
-                        "StorageProvider",
-                        vec![Value::named_variant(
-                            "ProviderRegistered",
-                            [
-                                (
-                                    "provider",
-                                    Value::from_bytes(<AccountId32 as AsRef<[u8]>>::as_ref(
-                                        provider,
-                                    )),
-                                ),
-                                ("stake", Value::u128(1_000)),
-                            ],
-                        )],
-                    ),
+                    Value::unnamed_variant("StorageProvider", vec![event]),
                 ),
                 ("topics", Value::unnamed_composite(Vec::<Value>::new())),
-            ]);
+            ])
+        }
+
+        /// `System::Events` bytes holding a `ProviderRegistered` (exercising
+        /// the dynamic lifecycle decoding) and a `ChallengeCreated`
+        /// (exercising the static fan-out decoding) for `provider`, encoded
+        /// against the real runtime types.
+        fn encoded_events(md: &subxt::Metadata, provider: &AccountId32) -> Vec<u8> {
+            let provider_bytes = <AccountId32 as AsRef<[u8]>>::as_ref(provider);
+            let registered = event_record(Value::named_variant(
+                "ProviderRegistered",
+                [
+                    ("provider", Value::from_bytes(provider_bytes)),
+                    ("stake", Value::u128(1_000)),
+                ],
+            ));
+            let challenge_created = event_record(Value::named_variant(
+                "ChallengeCreated",
+                [
+                    (
+                        "challenge_id",
+                        Value::named_composite([
+                            ("deadline", Value::u128(777)),
+                            ("index", Value::u128(3)),
+                        ]),
+                    ),
+                    ("bucket_id", Value::u128(9)),
+                    ("provider", Value::from_bytes(provider_bytes)),
+                    ("challenger", Value::from_bytes([8u8; 32])),
+                    ("respond_by", Value::u128(777)),
+                ],
+            ));
             let ty = storage_value_type(md, "System", "Events");
-            encode_value(md, ty, &Value::unnamed_composite([record]))
+            encode_value(
+                md,
+                ty,
+                &Value::unnamed_composite([registered, challenge_created]),
+            )
         }
 
         fn header_json(number: u32) -> serde_json::Value {
@@ -1251,17 +1321,23 @@ mod tests {
             .await;
 
             let chain_state = Arc::new(ChainState::default());
+            let (chain_tx, chain_rx) = tokio::sync::watch::channel(None);
+            let (events_tx, mut events_rx) = tokio::sync::broadcast::channel(16);
             let coordinator = ChainStateCoordinator::new(
-                "ws://unused.invalid".to_string(),
+                ChainTransport::Rpc {
+                    url: "ws://unused.invalid".to_string(),
+                },
                 account,
                 chain_state.clone(),
+                chain_tx,
+                events_tx,
             );
 
             // The finalized stream serves exactly one block then ends, so
             // `follow` bootstraps, processes the block (decoding the
             // ProviderRegistered event and refreshing state), and returns.
             coordinator
-                .follow(api)
+                .follow(ChainHandle { api })
                 .await
                 .expect("follow runs to stream end");
 
@@ -1277,6 +1353,30 @@ mod tests {
             assert_eq!(info.stake, 1_000);
             assert!(chain_state.constants.read().is_some());
             assert!(chain_state.nonce_counter.read().is_some());
+
+            // The connection was published and the block fanned out, including
+            // the statically-decoded ChallengeCreated from the block's events.
+            assert!(chain_rx.borrow().is_some());
+            use crate::chain_events::BlockEvent;
+            let mut saw_resubscribed = false;
+            let mut saw_challenge = false;
+            while let Ok(event) = events_rx.try_recv() {
+                match event {
+                    BlockEvent::Resubscribed { .. } => saw_resubscribed = true,
+                    BlockEvent::ChallengeCreated {
+                        deadline: 777,
+                        index: 3,
+                        bucket_id: 9,
+                        ref provider,
+                    } if *provider == provider_account() => saw_challenge = true,
+                    _ => {}
+                }
+            }
+            assert!(saw_resubscribed, "follow should broadcast Resubscribed");
+            assert!(
+                saw_challenge,
+                "follow should statically decode and broadcast ChallengeCreated"
+            );
         }
     }
 }

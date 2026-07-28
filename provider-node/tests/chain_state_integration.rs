@@ -26,11 +26,27 @@ use sp_runtime::AccountId32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use storage_provider_node::chain_connection::{ChainHandle, ChainTransport};
 use storage_provider_node::{
     is_relevant_provider_event, refresh_if_relevant_event, refresh_provider_state, sync_constants,
     ChainState, ChainStateChainClient, ChainStateCoordinator, Error, NonceCounter, NonceStore,
     PalletConstants, ProviderInfo, ProviderLifecycleEvent,
 };
+
+/// Coordinator against the unreachable chain, with freshly-made (and
+/// immediately caller-dropped) channel counterparts: `send` failures are
+/// ignored by the coordinator, so this exercises the same loop as production.
+fn unreachable_coordinator(chain_state: Arc<ChainState>) -> ChainStateCoordinator {
+    ChainStateCoordinator::new(
+        ChainTransport::Rpc {
+            url: UNREACHABLE_CHAIN.to_string(),
+        },
+        provider_account(),
+        chain_state,
+        tokio::sync::watch::channel::<Option<ChainHandle>>(None).0,
+        tokio::sync::broadcast::channel(16).0,
+    )
+}
 
 /// A WS URL that refuses immediately: port 1 on loopback is never listening, so
 /// every connect attempt fails fast and the coordinator loops on the error arm.
@@ -65,11 +81,7 @@ fn sample_provider_info() -> ProviderInfo {
 #[tokio::test]
 async fn coordinator_leaves_state_at_defaults_while_chain_unreachable() {
     let chain_state = Arc::new(ChainState::default());
-    let coordinator = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-    );
+    let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
     // Give the reconnect loop time to attempt (and fail) at least one connect.
@@ -91,11 +103,7 @@ async fn coordinator_shares_chain_state_with_caller() {
     let chain_state = Arc::new(ChainState::default());
     let before = Arc::strong_count(&chain_state);
 
-    let coordinator = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-    );
+    let coordinator = unreachable_coordinator(chain_state.clone());
     let handle = coordinator.start();
 
     // The coordinator holds its own clone of the same `Arc<ChainState>`, so the
@@ -112,12 +120,7 @@ async fn coordinator_shares_chain_state_with_caller() {
 #[tokio::test]
 async fn coordinator_stop_is_prompt() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state,
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state).start();
 
     // Stopping aborts the loop even while it is mid-backoff; it must not block
     // for the full RECONNECT_DELAY.
@@ -129,12 +132,7 @@ async fn coordinator_stop_is_prompt() {
 #[tokio::test]
 async fn coordinator_keeps_retrying_without_panicking() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // Across several connect/backoff cycles the loop stays alive and never
     // dirties state. If the task had panicked, `stop()`'s join would surface it.
@@ -150,12 +148,7 @@ async fn coordinator_keeps_retrying_without_panicking() {
 #[tokio::test]
 async fn coordinator_releases_shared_state_after_stop() {
     let chain_state = Arc::new(ChainState::default());
-    let handle = ChainStateCoordinator::new(
-        UNREACHABLE_CHAIN.to_string(),
-        provider_account(),
-        chain_state.clone(),
-    )
-    .start();
+    let handle = unreachable_coordinator(chain_state.clone()).start();
 
     // `stop()` aborts the task and awaits its teardown, dropping the coordinator
     // and its `chain_state` clone. (Merely *dropping* the handle does not — tokio
