@@ -180,7 +180,7 @@ than reinventing.
   when a photo is opened.
 - **Integrity anchor (client-computed)**: the drive's metadata root is a *deterministic*
   blake2-256 Merkle tree over the drive's **sorted** `(path, data_root, size)` entries
-  (`crates/providers/storage/src/fs_index.rs`), where each file's `data_root` is the content root the client
+  (`crates/providers/storage/src/index/fs.rs`), where each file's `data_root` is the content root the client
   already produces while chunking the upload. The client therefore **computes the root itself**
   rather than trusting the provider. After any mutation it anchors the locally-computed root via
   `setRoot(rootCid)`. To verify a library it recomputes the root from a fresh `ls` plus the
@@ -193,7 +193,7 @@ than reinventing.
 ## Data mutability & editing
 
 Storage is **copy-on-write**: blobs are immutable (content-addressed by blake2-256, committed to
-an append-only MMR — `crates/providers/storage/src/in_memory.rs`). You never edit bytes in place; a
+an append-only MMR — `crates/providers/storage/src/backend/in_memory.rs`). You never edit bytes in place; a
 `PUT` to a path writes a **new** blob (new CID) and repoints that path in the tree. The album
 tree's root changes, so each mutation ends with a freshly **recomputed** root → `setRoot`.
 
@@ -364,7 +364,7 @@ Drive the provider's `/fs` API (reuse drive-ui's `drive-client` chunking, ported
 `mkdir` an album → `PUT` a real multi-MB photo + a placeholder thumbnail blob (real canvas
 downscaling is browser-only; it lands in M6). Implement the **client-side root**: the deterministic
 blake2-256 Merkle over sorted `(path, data_root, size)` entries (mirroring
-`crates/providers/storage/src/fs_index.rs`) → `setRoot(rootCid)`. Verify: re-`ls`, byte-compare a downloaded
+`crates/providers/storage/src/index/fs.rs`) → `setRoot(rootCid)`. Verify: re-`ls`, byte-compare a downloaded
 photo against its `data_root`, recompute the root locally and assert it equals the on-chain anchor
 (and, as a sanity cross-check, the provider's `index_root`); a tampered tree fails the local
 recompute. **Done:** round-trip a photo through an album with a client-computed on-chain anchor proven.

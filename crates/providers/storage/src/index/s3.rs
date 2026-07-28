@@ -225,7 +225,8 @@ impl BucketIndex {
     }
 }
 
-/// Thread-safe S3 index manager used by ProviderState.
+/// Thread-safe, cloneable handle to the per-bucket S3 object indexes,
+/// intended to be shared across request handlers.
 pub struct S3IndexManager {
     indices: DashMap<BucketId, RwLock<BucketIndex>>,
     persistence: Option<IndexPersistence>,

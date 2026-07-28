@@ -19,8 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use provider_storage::s3_index::{ListResult, ObjectMeta};
-use provider_storage::{build_padded_merkle_tree, hex_encode};
+use provider_storage::{build_padded_merkle_tree, hex_encode, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;

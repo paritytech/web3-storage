@@ -5,10 +5,9 @@
 //! This provides the same interface as the in-memory storage but persists
 //! all data to disk for production use.
 
+use super::{BucketInfo, BucketStats, BucketSummary, StorageBackend, StoredNode};
 use crate::error::Error;
-use crate::types::*;
-use crate::NonceStore;
-use crate::{BucketInfo, StorageBackend, StoredNode};
+use crate::nonce::NonceStore;
 use codec::Encode;
 use rocksdb::{Options, DB};
 use sp_core::H256;
@@ -474,7 +473,8 @@ impl DiskStorage {
     /// Return a nonce store backed by this DB's metadata column family.
     ///
     /// The returned [`DiskNonceStore`] shares the open [`DB`] handle so there
-    /// is no second DB to manage. Pass it to [`NonceCounter::with_store`].
+    /// is no second DB to manage. Pass it to the negotiation nonce counter so
+    /// the replay watermark survives restarts.
     pub fn nonce_store(&self) -> Arc<dyn NonceStore> {
         Arc::new(DiskNonceStore::new(self.db.clone()))
     }

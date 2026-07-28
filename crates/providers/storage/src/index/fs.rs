@@ -192,7 +192,8 @@ impl DriveIndex {
     }
 }
 
-/// Thread-safe FS index manager used by ProviderState.
+/// Thread-safe, cloneable handle to the per-drive file-system indexes,
+/// intended to be shared across request handlers.
 pub struct FsIndexManager {
     indices: DashMap<BucketId, RwLock<DriveIndex>>,
     persistence: Option<FsIndexPersistence>,
