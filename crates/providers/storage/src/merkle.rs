@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Balanced (padded) Merkle proof construction, plus hex encode/decode
-//! utilities. Pure math over `H256` - no storage access.
+//! Balanced (padded) Merkle proof construction. Pure math over `H256` - no
+//! storage access.
 
 use sp_core::H256;
 use storage_primitives::hash_children;
@@ -44,18 +44,4 @@ pub fn build_merkle_proof(leaf_hashes: &[H256], index: usize) -> storage_primiti
     }
 
     storage_primitives::MerkleProof { siblings, path }
-}
-
-/// Encode bytes as lowercase hex (no `0x` prefix).
-pub fn hex_encode(bytes: &[u8]) -> String {
-    hex::encode(bytes)
-}
-
-/// Decode a hex string, accepting an optional `0x` prefix.
-pub fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(s).map_err(|e| match e {
-        hex::FromHexError::OddLength => "invalid hex length",
-        _ => "invalid hex",
-    })
 }

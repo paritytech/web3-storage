@@ -19,7 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use provider_storage::{build_padded_merkle_tree, hex_encode, FsEntryMeta};
+use provider_storage::{build_padded_merkle_tree, FsEntryMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
@@ -129,7 +129,7 @@ pub async fn fs_put_file(
     state.fs_index.put_file(bucket_id, path, meta);
 
     Ok(Json(PutFileResponse {
-        data_root: format!("0x{}", hex_encode(data_root.as_bytes())),
+        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
         size,
         leaf_index,
     }))
@@ -273,7 +273,7 @@ pub async fn fs_index_root(
 
     Ok(Json(FsIndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex_encode(root.as_bytes())),
+        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
         file_count,
         dir_count,
         total_size,

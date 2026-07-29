@@ -30,5 +30,5 @@ pub use error::Error;
 pub use index::{
     FsEntryMeta, FsIndexManager, FsListEntry, ListResult, ObjectEntry, ObjectMeta, S3IndexManager,
 };
-pub use merkle::{build_merkle_proof, hex_decode, hex_encode};
+pub use merkle::build_merkle_proof;
 pub use nonce::{NonceStore, NullNonceStore};
