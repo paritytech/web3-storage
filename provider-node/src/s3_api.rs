@@ -11,8 +11,6 @@
 use crate::api::check_role;
 use crate::auth::RequiredRole;
 use crate::error::Error;
-use crate::s3_index::{ListResult, ObjectMeta};
-use crate::storage::{build_padded_merkle_tree, hex_encode};
 use crate::ProviderState;
 use axum::{
     body::Bytes,
@@ -21,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use provider_storage::{build_padded_merkle_tree, ListResult, ObjectMeta};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
@@ -109,7 +108,7 @@ pub async fn s3_put_object(
         .unwrap_or_default()
         .as_secs();
 
-    let etag = format!("0x{}", hex_encode(data_root.as_bytes()));
+    let etag = format!("0x{}", hex::encode(data_root.as_bytes()));
 
     // 6. Create ObjectMeta and insert into index
     let meta = ObjectMeta {
@@ -126,7 +125,7 @@ pub async fn s3_put_object(
 
     Ok(Json(PutObjectResponse {
         etag,
-        data_root: format!("0x{}", hex_encode(data_root.as_bytes())),
+        data_root: format!("0x{}", hex::encode(data_root.as_bytes())),
         size,
         leaf_index,
     }))
@@ -245,7 +244,7 @@ pub async fn s3_head_object(
     );
     headers.insert(
         "x-amz-data-root",
-        format!("0x{}", hex_encode(meta.data_root.as_bytes()))
+        format!("0x{}", hex::encode(meta.data_root.as_bytes()))
             .parse()
             .unwrap_or_else(|_| "".parse().unwrap()),
     );
@@ -312,7 +311,7 @@ pub async fn s3_index_root(
 
     Ok(Json(IndexRootResponse {
         bucket_id,
-        metadata_merkle_root: format!("0x{}", hex_encode(root.as_bytes())),
+        metadata_merkle_root: format!("0x{}", hex::encode(root.as_bytes())),
         object_count,
         total_size,
     }))

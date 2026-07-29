@@ -7,7 +7,6 @@ use crate::error::Error;
 use crate::fs_api;
 use crate::negotiate::{self, AgreementTermsOf, NegotiateRequest, SignedTerms};
 use crate::s3_api;
-use crate::storage::{hex_decode, hex_encode};
 use crate::types::*;
 use crate::ProviderState;
 use axum::{
@@ -234,10 +233,13 @@ async fn get_node(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<GetNodeQuery>,
 ) -> Result<Json<DownloadNodeResponse>, Error> {
-    let hash_bytes = hex_decode(&query.hash).map_err(|_| Error::InvalidHash {
-        expected: query.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
+    let hash_bytes =
+        hex::decode(query.hash.strip_prefix("0x").unwrap_or(&query.hash)).map_err(|_| {
+            Error::InvalidHash {
+                expected: query.hash.clone(),
+                actual: "invalid hex".to_string(),
+            }
+        })?;
     let hash = H256::from_slice(&hash_bytes);
 
     let node = state
@@ -250,7 +252,7 @@ async fn get_node(
         data: BASE64.encode(&node.data),
         children: node.children.map(|c| {
             c.iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect()
         }),
     }))
@@ -271,10 +273,11 @@ async fn upload_node(
     .await?;
 
     // Decode hash
-    let hash_bytes = hex_decode(&request.hash).map_err(|_| Error::InvalidHash {
-        expected: request.hash.clone(),
-        actual: "invalid hex".to_string(),
-    })?;
+    let hash_bytes = hex::decode(request.hash.strip_prefix("0x").unwrap_or(&request.hash))
+        .map_err(|_| Error::InvalidHash {
+            expected: request.hash.clone(),
+            actual: "invalid hex".to_string(),
+        })?;
     let hash = H256::from_slice(&hash_bytes);
 
     // Decode data
@@ -288,9 +291,11 @@ async fn upload_node(
         .map(|c| {
             c.iter()
                 .map(|h| {
-                    let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                        expected: h.clone(),
-                        actual: "invalid hex".to_string(),
+                    let bytes = hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| {
+                        Error::InvalidHash {
+                            expected: h.clone(),
+                            actual: "invalid hex".to_string(),
+                        }
                     })?;
                     Ok(H256::from_slice(&bytes))
                 })
@@ -317,10 +322,11 @@ async fn check_exists(
         .hashes
         .iter()
         .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
+            let bytes =
+                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
+                    expected: h.clone(),
+                    actual: "invalid hex".to_string(),
+                })?;
             Ok(H256::from_slice(&bytes))
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -330,11 +336,11 @@ async fn check_exists(
     Ok(Json(ExistsResponse {
         exists: exists
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
         missing: missing
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
     }))
 }
@@ -361,10 +367,11 @@ async fn commit(
         .data_roots
         .iter()
         .map(|h| {
-            let bytes = hex_decode(h).map_err(|_| Error::InvalidHash {
-                expected: h.clone(),
-                actual: "invalid hex".to_string(),
-            })?;
+            let bytes =
+                hex::decode(h.strip_prefix("0x").unwrap_or(h)).map_err(|_| Error::InvalidHash {
+                    expected: h.clone(),
+                    actual: "invalid hex".to_string(),
+                })?;
             Ok(H256::from_slice(&bytes))
         })
         .collect::<Result<Vec<_>, Error>>()?;
@@ -394,7 +401,7 @@ async fn commit(
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(CommitResponse {
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         start_seq,
         leaf_count,
         leaf_indices,
@@ -407,7 +414,13 @@ async fn read_chunks(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ReadQuery>,
 ) -> Result<Json<ReadResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+    let root_bytes = hex::decode(
+        query
+            .data_root
+            .strip_prefix("0x")
+            .unwrap_or(&query.data_root),
+    )
+    .map_err(|_| Error::InvalidHash {
         expected: query.data_root.clone(),
         actual: "invalid hex".to_string(),
     })?;
@@ -425,13 +438,13 @@ async fn read_chunks(
                 chunks.push(ChunkWithProof {
                     hash: format!(
                         "0x{}",
-                        hex_encode(storage_primitives::blake2_256(&data).as_bytes())
+                        hex::encode(storage_primitives::blake2_256(&data).as_bytes())
                     ),
                     data: BASE64.encode(&data),
                     proof: proof
                         .siblings
                         .iter()
-                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                         .collect(),
                 });
             }
@@ -470,7 +483,7 @@ async fn get_commitment(
 
     Ok(Json(CommitmentResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
         leaf_count: bucket.leaf_count,
         provider_signature: signature,
@@ -508,7 +521,7 @@ async fn get_checkpoint_signature(
 
     Ok(Json(CheckpointSignatureResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         start_seq: bucket.start_seq,
         leaf_count,
         provider_signature: signature,
@@ -526,7 +539,7 @@ async fn get_mmr_proof(
 
     Ok(Json(MmrProofResponse {
         leaf: MmrLeafData {
-            data_root: format!("0x{}", hex_encode(mmr_proof.leaf.data_root.as_bytes())),
+            data_root: format!("0x{}", hex::encode(mmr_proof.leaf.data_root.as_bytes())),
             data_size: mmr_proof.leaf.data_size,
             total_size: mmr_proof.leaf.total_size,
         },
@@ -534,13 +547,13 @@ async fn get_mmr_proof(
             peaks: mmr_proof
                 .peaks
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             siblings: mmr_proof
                 .leaf_proof
                 .siblings
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             path: mmr_proof.leaf_proof.path,
         },
@@ -551,7 +564,13 @@ async fn get_chunk_proof(
     State(state): State<Arc<ProviderState>>,
     Query(query): Query<ChunkProofQuery>,
 ) -> Result<Json<ChunkProofResponse>, Error> {
-    let root_bytes = hex_decode(&query.data_root).map_err(|_| Error::InvalidHash {
+    let root_bytes = hex::decode(
+        query
+            .data_root
+            .strip_prefix("0x")
+            .unwrap_or(&query.data_root),
+    )
+    .map_err(|_| Error::InvalidHash {
         expected: query.data_root.clone(),
         actual: "invalid hex".to_string(),
     })?;
@@ -563,13 +582,13 @@ async fn get_chunk_proof(
     let chunk_hash = storage_primitives::blake2_256(&chunk_data);
 
     Ok(Json(ChunkProofResponse {
-        chunk_hash: format!("0x{}", hex_encode(chunk_hash.as_bytes())),
+        chunk_hash: format!("0x{}", hex::encode(chunk_hash.as_bytes())),
         chunk_data: Some(BASE64.encode(&chunk_data)),
         proof: MerkleProofData {
             siblings: proof
                 .siblings
                 .iter()
-                .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                 .collect(),
             path: proof.path,
         },
@@ -622,7 +641,7 @@ async fn delete_data(
     let signature = state.sign(&payload.encode())?;
 
     Ok(Json(DeleteResponse {
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         start_seq,
         leaf_count,
         provider_signature: signature,
@@ -642,10 +661,10 @@ async fn get_mmr_peaks(
 
     Ok(Json(MmrPeaksResponse {
         bucket_id: query.bucket_id,
-        mmr_root: format!("0x{}", hex_encode(mmr_root.as_bytes())),
+        mmr_root: format!("0x{}", hex::encode(mmr_root.as_bytes())),
         peaks: peaks
             .iter()
-            .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+            .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
             .collect(),
     }))
 }
@@ -663,7 +682,7 @@ async fn get_mmr_subtree(
     Ok(Json(MmrSubtreeResponse {
         nodes: vec![MmrNode {
             position: 0,
-            hash: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+            hash: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
             children: None,
         }],
     }))
@@ -676,10 +695,13 @@ async fn fetch_nodes(
     let mut nodes = Vec::new();
 
     for hash_str in &request.hashes {
-        let hash_bytes = hex_decode(hash_str).map_err(|_| Error::InvalidHash {
-            expected: hash_str.clone(),
-            actual: "invalid hex".to_string(),
-        })?;
+        let hash_bytes =
+            hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str)).map_err(|_| {
+                Error::InvalidHash {
+                    expected: hash_str.clone(),
+                    actual: "invalid hex".to_string(),
+                }
+            })?;
         let hash = H256::from_slice(&hash_bytes);
 
         if let Some(node) = state.storage.get_node(&hash) {
@@ -688,7 +710,7 @@ async fn fetch_nodes(
                 data: BASE64.encode(&node.data),
                 children: node.children.map(|c| {
                     c.iter()
-                        .map(|h| format!("0x{}", hex_encode(h.as_bytes())))
+                        .map(|h| format!("0x{}", hex::encode(h.as_bytes())))
                         .collect()
                 }),
             });
@@ -717,7 +739,7 @@ async fn get_historical_roots(
 
     Ok(Json(HistoricalRootsResponse {
         bucket_id: query.bucket_id,
-        current_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        current_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         // Provider node doesn't track historical roots - chain does
         historical_roots: [
             String::new(),
@@ -830,7 +852,7 @@ async fn get_replica_sync_status(
 
     Ok(Json(BucketSyncStatusResponse {
         bucket_id: query.bucket_id,
-        local_mmr_root: format!("0x{}", hex_encode(bucket.mmr_root.as_bytes())),
+        local_mmr_root: format!("0x{}", hex::encode(bucket.mmr_root.as_bytes())),
         local_leaf_count: bucket.leaf_count,
         last_sync_block: None, // Would be tracked by coordinator
         syncing: false,        // Would check coordinator state

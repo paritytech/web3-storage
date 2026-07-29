@@ -8,14 +8,12 @@ mod challenge;
 mod event_fanout;
 mod replica_sync;
 
+use provider_storage::{build_padded_merkle_tree, NullNonceStore, Storage};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::blake2_256;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{
-    build_padded_merkle_tree, DetectedChallenge, NullNonceStore, ProviderDeps, ProviderState,
-    Storage,
-};
+use storage_provider_node::{DetectedChallenge, ProviderDeps, ProviderState};
 
 /// Full Alice SS58 address (substrate prefix 42).
 pub const ALICE_SS58: &str = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";

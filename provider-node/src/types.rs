@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use storage_primitives::BucketId;
 
+pub use provider_storage::{BucketStats, BucketSummary};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // On-chain Provider Info
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,15 +275,6 @@ pub struct DeleteResponse {
 // Bucket Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Bucket summary info.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketSummary {
-    pub bucket_id: BucketId,
-    pub mmr_root: String,
-    pub start_seq: u64,
-    pub leaf_count: u64,
-}
-
 /// Response with bucket list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListBucketsResponse {
@@ -333,15 +326,6 @@ pub struct StatsResponse {
     pub total_nodes: u64,
     pub total_bytes: u64,
     pub buckets: Vec<BucketStats>,
-}
-
-/// Per-bucket statistics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketStats {
-    pub bucket_id: BucketId,
-    pub leaf_count: u64,
-    pub node_count: u64,
-    pub bytes_stored: u64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
