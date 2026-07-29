@@ -81,8 +81,7 @@ RUST_LOG=info "$BIN" \
     --bind-addr "0.0.0.0:$PROVIDER_PORT" \
     --chain-transport light \
     --relay-chain-spec "$RELAY_SPEC" \
-    --para-chain-spec "$PARA_SPEC" \
-    --disable-auth-i-know-what-i-am-doing > "$LOG" 2>&1 &
+    --para-chain-spec "$PARA_SPEC" > "$LOG" 2>&1 &
 PROVIDER_PID=$!
 
 echo "Waiting up to ${TIMEOUT}s for the light client to sync..."
