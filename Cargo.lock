@@ -9907,6 +9907,7 @@ dependencies = [
  "sp-core",
  "sp-runtime",
  "storage-primitives",
+ "storage-subxt",
  "subxt",
  "subxt-rpcs",
  "subxt-signer 0.50.2",

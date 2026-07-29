@@ -109,7 +109,7 @@ impl ReplicaSyncChainClient for MockReplicaSyncChainClient {
 #[test]
 fn test_config_default() {
     let config = ReplicaSyncCoordinatorConfig::default();
-    assert_eq!(config.poll_interval, Duration::from_secs(12));
+    assert_eq!(config.poll_interval, Duration::from_secs(600));
     assert_eq!(config.max_concurrent_syncs, 3);
     assert!(config.auto_confirm);
 }
@@ -241,7 +241,10 @@ async fn test_stop_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
     assert!(handle.is_running());
 
     handle.stop().await.unwrap();
@@ -259,7 +262,10 @@ async fn test_pause_resume() {
     };
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     handle.pause().await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -465,7 +471,10 @@ async fn test_status_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     let status = handle.status().await.unwrap();
     assert!(status.running);
@@ -486,7 +495,10 @@ async fn test_force_sync_command() {
     };
     let coordinator = ReplicaSyncCoordinator::new(config, state, Box::new(mock));
 
-    let handle = coordinator.start(None).await.unwrap();
+    let handle = coordinator
+        .start(tokio::sync::broadcast::channel(16).1, None)
+        .await
+        .unwrap();
 
     let result = handle.force_sync(999).await;
     assert!(result.is_ok());
