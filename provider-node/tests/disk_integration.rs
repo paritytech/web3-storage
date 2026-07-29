@@ -11,13 +11,14 @@ mod common;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use common::SignedClient;
+use provider_storage::{DiskStorage, NullNonceStore};
 use reqwest::Method;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use storage_primitives::Role;
 use storage_provider_node::auth::{MembershipCache, StaticMembershipResolver};
-use storage_provider_node::{DiskStorage, NullNonceStore, ProviderDeps, ProviderState};
+use storage_provider_node::{ProviderDeps, ProviderState};
 use tempfile::TempDir;
 
 struct DiskTestServer {
